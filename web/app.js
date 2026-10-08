@@ -103,7 +103,7 @@ const els = {
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   quitBtn: $('quitBtn'),
   themeToggle: $('themeToggle'),
-  viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
+  viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), tabrow: $('tabrow'), closeAllBtn: $('closeAllBtn'),
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
   returnedBtn: $('returnedBtn'), returnedSheet: $('returnedSheet'), returnedHeading: $('returnedHeading'),
   returnedClose: $('returnedClose'), returnedDoc: $('returnedDoc'), returnedVerdict: $('returnedVerdict'),
@@ -210,17 +210,14 @@ const els = {
   fieldNameModal: $('fieldNameModal'), fieldNameList: $('fieldNameList'), fieldNameGo: $('fieldNameGo'), fieldNameCancel: $('fieldNameCancel'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
-  exportZipBtn: $('exportZipBtn'), exportPngBtn: $('exportPngBtn'),
+  exportPagesBtn: $('exportPagesBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
-  exportTableXlsxBtn: $('exportTableXlsxBtn'), exportTableCsvBtn: $('exportTableCsvBtn'),
-  exportTableOdsBtn: $('exportTableOdsBtn'),
-  exportFormJsonBtn: $('exportFormJsonBtn'), exportFormCsvBtn: $('exportFormCsvBtn'),
-  exportFormXfdfBtn: $('exportFormXfdfBtn'),
+  exportTableBtn: $('exportTableBtn'), exportFormBtn: $('exportFormBtn'),
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
   importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
   pdfaBtn: $('pdfaBtn'), pdfaModal: $('pdfaModal'), pdfaStatus: $('pdfaStatus'),
   pdfaGo: $('pdfaGo'), pdfaGsGo: $('pdfaGsGo'), pdfaClose: $('pdfaClose'),
-  exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'), closeBtn: $('closeBtn'),
+  exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
   fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'), fzKeep: $('fzKeep'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
@@ -236,6 +233,7 @@ const els = {
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
+  saveAsFormatRow: $('saveAsFormatRow'), saveAsFormat: $('saveAsFormat'), saveAsStatus: $('saveAsStatus'),
   saveAsDir: $('saveAsDir'), saveAsHere: $('saveAsHere'), saveAsUp: $('saveAsUp'),
   saveAsList: $('saveAsList'), saveAsCancel: $('saveAsCancel'), saveAsGo: $('saveAsGo'),
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
@@ -2928,24 +2926,20 @@ function syncTabs() {
   // focus fell to <body>: a keyboard user who closed a document was thrown to the top of the page.
   const focusedIndex = [...strip.children].findIndex((c) => c.contains(document.activeElement));
   const several = views.length > 1;
-  // **The strip and the close controls are two predicates now (ADR-037), and they were one.**
-  // They answer different questions: "is there a document to put in a tab" and "are there enough
-  // documents for Close view and Close all to mean different things". Splitting them is the whole
-  // of this change on the client side.
+  // **The strip and Close all are two predicates (ADR-037), and they were one.** They answer
+  // different questions: "is there a document to put in a tab" and "are there enough documents
+  // for closing every one to differ from closing this one".
   //
   // **Not `views.length >= 1`.** `views` always holds one view — the empty one the app launches
   // with (`const views = [view]`) — so that test is true with NOTHING open and would put an empty
   // strip on the launch screen. The question is whether any view holds a document, which is the
   // same thing `#viewerWrap.has-doc` and the toolbar title already key on.
   const anyDoc = views.some((v) => v.pdfDocument);
-  // The two close controls keep the appear-at-two threshold. With one document open, "Close view"
-  // and "Close all" name the same act, so the app shows one button reading "Close" — that
-  // reasoning is about what the two words MEAN and is untouched by the strip becoming visible.
-  els.closeBtn.textContent = several ? 'Close view' : 'Close';
-  els.closeBtn.title = several
-    ? 'Close this document and switch to the next one'
-    : 'Close this document and return to the empty state (Nib keeps running)';
+  // Close all sits at the end of the strip's row and keeps the appear-at-two threshold: with one
+  // document open the tab's own × is the same act. The × is the ONE way to close one document —
+  // File's Close and Close view are gone (ADR-103).
   els.closeAllBtn.hidden = !several;
+  if (els.tabrow) els.tabrow.hidden = !anyDoc;
   strip.hidden = !anyDoc;
   strip.textContent = '';
   if (!anyDoc) {
@@ -3644,8 +3638,8 @@ async function setDocumentFromServer(meta, target = view) {
 // closeDocument puts the open document down and returns the app to exactly the
 // state it launches in — the client half of POST /api/close (v1.102.6).
 //
-// Its caller is requestClose, which is bound to els.closeBtn and runs the
-// unsaved-work confirm first. (This comment used to say it had NO caller "yet" and
+// Its caller is requestClose — reached from Close all, and from a tab's × when that tab is the
+// last document — which runs the unsaved-work confirm first. (This comment used to say it had NO caller "yet" and
 // that its behaviour was therefore verified through the open path rather than by
 // driving a Close — every clause of which became false when P01.S04 landed the
 // control, and a reader trusting it would not go looking for the close-all
@@ -3817,7 +3811,7 @@ function tearDownView(v) {
 // red-proof of that guard came back green, which is how the whole thing was caught.
 async function closeView(owner = view) {
   if (!owner.pdfDocument) return;
-  // The last document: Close view and Close all are the same act, and the app owes the
+  // The last document: closing it and closing every one are the same act, and the app owes the
   // launch state rather than an emptied view record sitting in the strip.
   if (views.length === 1) return requestClose();
   if (hasUnsavedWork(owner)) {
@@ -3905,7 +3899,6 @@ els.sessionNoticeAction.onclick = async () => {
   if (!res.ok) { toast('Could not read the document to save it'); return; }
   openSaveAs(await res.blob(), (exportName || 'document') + '-cosigned.pdf', 'Save a copy');
 };
-els.closeBtn.onclick = () => closeView();
 els.closeAllBtn.onclick = requestClose;
 
 // installOpened lands a just-opened document in a view — a NEW one, unless the app is
@@ -7793,6 +7786,14 @@ function baseNameOf(v) {
 }
 
 let saveAsBlob = null; // the bytes the dialog will write on confirm
+// An export that comes in more than one format (ADR-103) hands the dialog a LIST instead of a
+// blob: `{ label, name, ext, blob | make }` each. `name` is the whole default file name for that
+// format and `ext` its extension; `make` is called when Save is pressed and returns the bytes (or
+// throws an Error whose message the dialog shows). null for every ordinary save.
+let saveAsFormats = null;
+let saveAsPutName = ''; // the name the dialog itself last wrote into the name field
+let saveAsBusy = false; // a maker is running: Save and the format are held until it answers
+let saveAsSeq = 0;      // bumped at every open and close, so a maker that outlives its dialog writes nothing
 
 // The server names the reason a listing came back empty in one word; turning it
 // into a sentence is the UI's job, the same split the decrypt dialog uses.
@@ -7851,7 +7852,7 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   if (!t.list.children.length) row('no sub-folders', 'blank', null);
 }
 
-function openSaveAs(blob, defaultName, title) {
+function openSaveAs(blob, defaultName, title, formats) {
   // One dialog, one set of bytes. `saveAsBlob` is a single module global, so a second
   // export finishing while this dialog is open used to replace both the bytes and the
   // name field under the user — including a name they had already typed. Refusing is
@@ -7861,13 +7862,101 @@ function openSaveAs(blob, defaultName, title) {
     toast('Finish the save already open first, then export again');
     return;
   }
-  saveAsBlob = blob;
+  const several = Array.isArray(formats) && formats.length > 0;
+  saveAsSeq++;
+  saveAsBusy = false;
+  saveAsBlob = several ? null : blob;
+  saveAsFormats = several ? formats : null;
+  els.saveAsFormat.textContent = '';
+  if (several) {
+    for (const f of formats) {
+      const o = document.createElement('option');
+      o.textContent = f.label;
+      els.saveAsFormat.appendChild(o);
+    }
+    els.saveAsFormat.selectedIndex = 0;
+    defaultName = formats[0].name;
+  }
+  els.saveAsFormatRow.hidden = !several;
+  els.saveAsFormat.disabled = false;
+  els.saveAsGo.disabled = false;
+  els.saveAsStatus.textContent = '';
+  saveAsPutName = defaultName;
   els.saveAsTitle.textContent = title || 'Save';
   els.saveAsName.value = defaultName;
   els.saveAsModal.hidden = false;
   els.saveAsName.focus();
   els.saveAsName.select();
   browseDir(''); // server resolves the empty path to the ~/nib default
+}
+
+// saveAsSelected is the format the Format line names RIGHT NOW, or null for an ordinary save. It
+// is the one reader of the selection: the bytes written are this format's and no other's, which
+// is what keeps one format's bytes from going out under another's name.
+function saveAsSelected() {
+  return saveAsFormats ? saveAsFormats[els.saveAsFormat.selectedIndex] || null : null;
+}
+
+// The name follows the format, but only as far as the name is still the dialog's own. A name the
+// dialog put there is replaced whole (the two picture formats differ by more than an extension:
+// "-page3.png" and "-pages.zip"); a name the user typed keeps every character except a
+// known-format extension, which is swapped; anything else is left exactly as typed — never a
+// second extension appended to it.
+els.saveAsFormat.onchange = () => {
+  const f = saveAsSelected();
+  if (!f) return;
+  els.saveAsStatus.textContent = '';
+  const cur = els.saveAsName.value;
+  if (cur === saveAsPutName) {
+    els.saveAsName.value = saveAsPutName = f.name;
+    return;
+  }
+  const old = saveAsFormats.map((x) => x.ext).find((e) => cur.toLowerCase().endsWith(e.toLowerCase()));
+  if (old && old.length < cur.length) els.saveAsName.value = cur.slice(0, cur.length - old.length) + f.ext;
+};
+
+// saveAsBytes answers the bytes to write: the blob the dialog was opened with, or the selected
+// format's — made now if it has not been made yet. While a maker runs the dialog says so ONCE
+// (a polite live region, not a ticker), and Save and the Format line are disabled: a second
+// press cannot start a second render, and the format cannot change under the bytes being made.
+// A failure is said in the dialog, which stays open. Returns null when there is nothing to write.
+async function saveAsBytes() {
+  const f = saveAsSelected();
+  if (!f) return saveAsBlob;
+  if (f.blob) return f.blob;
+  const seq = saveAsSeq;
+  saveAsBusy = true;
+  els.saveAsGo.disabled = true;
+  els.saveAsFormat.disabled = true;
+  els.saveAsStatus.textContent = 'Preparing…';
+  let made = null, failed = '';
+  try {
+    made = await f.make();
+  } catch (e) {
+    failed = (e && e.message) || 'Could not prepare the file';
+  }
+  // The dialog was cancelled (or cancelled and opened again for something else) while the maker
+  // ran: these bytes belong to a save nobody is waiting for.
+  if (seq !== saveAsSeq) return null;
+  saveAsBusy = false;
+  els.saveAsGo.disabled = false;
+  els.saveAsFormat.disabled = false;
+  if (!made) {
+    els.saveAsStatus.textContent = failed || 'Could not prepare the file';
+    return null;
+  }
+  els.saveAsStatus.textContent = '';
+  f.blob = made; // kept, so a retry after a refused write does not render again
+  return made;
+}
+
+function closeSaveAs() {
+  saveAsSeq++;
+  saveAsBusy = false;
+  els.saveAsModal.hidden = true;
+  saveAsBlob = null;
+  saveAsFormats = null;
+  els.saveAsStatus.textContent = '';
 }
 
 // b64ToBlob decodes a base64 string (e.g. an upgraded .ots from the server) into
@@ -7879,22 +7968,27 @@ function b64ToBlob(b64, mime) {
   return new Blob([bytes], { type: mime });
 }
 
-els.saveAsCancel.onclick = () => { els.saveAsModal.hidden = true; saveAsBlob = null; };
+els.saveAsCancel.onclick = closeSaveAs;
 els.saveAsUp.onclick = () => { const p = els.saveAsUp.dataset.parent; if (p) browseDir(p); };
 els.saveAsDir.onchange = () => browseDir(els.saveAsDir.value.trim());
 els.saveAsGo.onclick = async () => {
-  if (!saveAsBlob) return;
+  if (saveAsBusy) return;
+  if (!saveAsBlob && !saveAsFormats) return;
   const name = els.saveAsName.value.trim();
   const dir = els.saveAsDir.value.trim();
   if (!name) return toast('Enter a file name');
   if (!dir) return toast('Choose a folder');
+  // Name first, bytes second, and nothing between them that can change the format: the Format
+  // line is disabled for as long as a maker runs.
+  const bytes = await saveAsBytes();
+  if (!bytes) return;
   const form = new FormData();
   // Folder and name go over separately: the server joins them, because only it
   // knows the separator, and joining there is what keeps a typed "../" from
   // escaping the folder this dialog says it's writing to.
   form.append('dir', dir);
   form.append('name', name);
-  form.append('data', saveAsBlob, name);
+  form.append('data', bytes, name);
   let res = await apiFetch('/api/write', { method: 'POST', body: form });
   // 412: something is already at that name (/pending 340). Asked here, on the server's
   // answer, rather than pre-flighted from the folder listing — the dialog does not show
@@ -7911,8 +8005,7 @@ els.saveAsGo.onclick = async () => {
   }
   if (!res.ok) { toast(await errText(res, 'could not save')); return; }
   const meta = await res.json();
-  els.saveAsModal.hidden = true;
-  saveAsBlob = null;
+  closeSaveAs();
   toast('Saved to ' + meta.path);
 };
 
@@ -8415,15 +8508,6 @@ els.reduceSave.onclick = () => {
   els.reduceModal.hidden = true;
   openSaveAs(reduceBlob, reduceName + '-smaller.pdf', 'Save reduced PDF');
 };
-els.exportZipBtn.onclick = async () => {
-  // Export name captured at operation entry — see exportBase (D7).
-  const exportName = exportBase();
-  const owner = view;
-  if (!owner.pdfDocument) return toast('Open a PDF first');
-  const blob = await assembleBlob('zip', owner);
-  if (blob) openSaveAs(blob, exportName + '-pages.zip', 'Export pages (ZIP)');
-};
-
 els.saveEditableBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
@@ -8591,17 +8675,41 @@ els.fieldNameGo.onclick = async () => {
   openSaveAs(await res.blob(), exportName + '-fillable.pdf', 'Save fillable PDF');
 };
 
-els.exportPngBtn.onclick = async () => {
-  // Export name captured at operation entry — see exportBase (D7).
+// Pages as images: this page as a PNG, or every page as PNGs in a ZIP — one button, the choice
+// made in the Save dialog (ADR-103). Both are rendered when Save is pressed, not before the
+// dialog: the every-page render is the slow one and the user may want the other.
+//
+// **Everything the makers need is captured HERE, at the press** (D7, ADR-001): the view, its
+// document id, the page number and the name. A maker runs later, when a different document may
+// be the active one — or this one closed, and a view record is REUSED by the next document
+// opened into it — so each maker first checks the view still holds the document it was pressed
+// for, and refuses rather than export another.
+els.exportPagesBtn.onclick = () => {
   const exportName = exportBase();
   const owner = view;
-  if (!owner.pdfDocument) return;
-  // The page number is read ONCE, before the await: read again on the far side it
-  // would name a page of whatever document is active then, and the file would be
-  // named for a page it does not contain.
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  const docId = owner.docMeta && owner.docMeta.id;
   const pageNum = owner.viewer.currentPageNumber;
-  const [{ blob }] = await renderFilledPages(2, pageNum, undefined, undefined, owner);
-  openSaveAs(blob, exportName + '-page' + pageNum + '.png', 'Export page (PNG)');
+  const stillOpen = () => {
+    if (!views.includes(owner) || !owner.pdfDocument || (owner.docMeta && owner.docMeta.id) !== docId) {
+      throw new Error('That document is no longer open');
+    }
+  };
+  openSaveAs(null, '', 'Export pages as images', [
+    { label: 'This page (PNG)', name: exportName + '-page' + pageNum + '.png', ext: '.png',
+      make: async () => {
+        stillOpen();
+        const [{ blob }] = await renderFilledPages(2, pageNum, undefined, undefined, owner);
+        return blob;
+      } },
+    { label: 'Every page (ZIP)', name: exportName + '-pages.zip', ext: '.zip',
+      make: async () => {
+        stillOpen();
+        const blob = await assembleBlob('zip', owner);
+        if (!blob) throw new Error('Could not make the pictures');
+        return blob;
+      } },
+  ]);
 };
 
 els.exportTextBtn.onclick = async () => {
@@ -8666,26 +8774,36 @@ async function extractTable(page) {
   });
 }
 
-// exportTable extracts the current page's table and saves it as a spreadsheet.
+// The table export extracts the current page's table and saves it as a spreadsheet.
 // The grid is built client-side (only pdf.js can read PDF text); the server just
 // serializes it (CSV via encoding/csv, XLSX as minimal OOXML).
-async function exportTable(format) {
+//
+// The grid is read ONCE, at the press — so a page with no text is refused before any dialog, and
+// what is saved is the page the user was on whatever is active by the time Save is pressed — and
+// each format is serialised from it only when it is the one being saved (ADR-103).
+els.exportTableBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!view.pdfDocument) return toast('Open a PDF first');
-  const page = await view.pdfDocument.getPage(view.viewer.currentPageNumber);
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  const pageNum = owner.viewer.currentPageNumber;
+  const page = await owner.pdfDocument.getPage(pageNum);
   const grid = await extractTable(page);
   if (!grid.length) return toast('No text on this page to extract (a scanned page? run OCR first)');
-  const res = await apiFetch('/api/table?format=' + format, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grid }),
+  const one = (format, label) => ({
+    label, name: exportName + '-p' + pageNum + '-table.' + format, ext: '.' + format,
+    make: async () => {
+      const res = await apiFetch('/api/table?format=' + format, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grid }),
+      });
+      if (!res.ok) throw new Error('Could not build the spreadsheet');
+      return res.blob();
+    },
   });
-  if (!res.ok) { toast('Could not build the spreadsheet'); return; }
-  const ext = { csv: '.csv', ods: '.ods', xlsx: '.xlsx' }[format] || '.xlsx';
-  openSaveAs(await res.blob(), exportName + '-p' + view.viewer.currentPageNumber + '-table' + ext, 'Export table (' + format.toUpperCase() + ')');
-}
-els.exportTableXlsxBtn.onclick = () => exportTable('xlsx');
-els.exportTableCsvBtn.onclick = () => exportTable('csv');
-els.exportTableOdsBtn.onclick = () => exportTable('ods');
+  openSaveAs(null, '', 'Export table', [
+    one('xlsx', 'Excel workbook (.xlsx)'), one('csv', 'Comma-separated values (.csv)'), one('ods', 'OpenDocument spreadsheet (.ods)'),
+  ]);
+};
 
 els.exportImagesBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
@@ -8709,17 +8827,32 @@ els.exportImagesBtn.onclick = async () => {
 //
 // exportBase() is captured at entry per D7, so the filename names the document the
 // export came from rather than whatever is active when the bytes arrive.
-async function exportFormData(format, ext) {
+//
+// One button, three formats (ADR-103). The DEFAULT format is fetched at the press, so a document
+// with no form is refused in the server's own words before any dialog; the other two are fetched
+// only if chosen, for the document captured here — one since closed answers 409 and the dialog
+// says so, rather than the form of whatever is open by then.
+els.exportFormBtn.onclick = async () => {
   if (!view.pdfDocument) return toast('Open a PDF first');
   const exportName = exportBase();
   const opDoc = view.docMeta; // and the document itself, by id rather than by whichever is current
-  const res = await apiFetch('/api/form-data?format=' + format, { docId: opDoc && opDoc.id });
+  const fetchAs = (format) => apiFetch('/api/form-data?format=' + format, { docId: opDoc && opDoc.id });
+  const res = await fetchAs('csv');
   if (!res.ok) { toast(await errText(res, 'Could not export the form data')); return; }
-  openSaveAs(await res.blob(), exportName + '-form.' + ext, 'Export form data');
-}
-els.exportFormJsonBtn.onclick = () => exportFormData('json', 'json');
-els.exportFormCsvBtn.onclick = () => exportFormData('csv', 'csv');
-els.exportFormXfdfBtn.onclick = () => exportFormData('xfdf', 'xfdf');
+  const one = (format, label) => ({
+    label, name: exportName + '-form.' + format, ext: '.' + format,
+    make: async () => {
+      const r = await fetchAs(format);
+      if (!r.ok) throw new Error(await errText(r, 'Could not export the form data'));
+      return r.blob();
+    },
+  });
+  const csv = one('csv', 'Comma-separated values (.csv)');
+  csv.blob = await res.blob();
+  openSaveAs(null, '', 'Export form data', [
+    csv, one('json', 'JSON (.json)'), one('xfdf', 'XFDF — for Acrobat and Foxit (.xfdf)'),
+  ]);
+};
 els.exportCertBtn.onclick = () => downloadAuthed('/api/identity', 'nib-identity.cer');
 
 // printFrameCleanup removes the last print's frame and frees its bytes. Firefox's print() returns while its preview is
@@ -12137,7 +12270,7 @@ const DOC_REQUIRED = [
   // A document that came back (P03.S01): the sheet is ABOUT the open document, and has no subject without one.
   'returnedBtn',
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
-  'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
+  'exportPagesBtn', 'exportFormBtn', 'exportTableBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
   // The accessibility report (P07.S06) checks the open document; with nothing open it has no subject.
   'uaBtn',
@@ -12158,7 +12291,7 @@ const DOC_REQUIRED = [
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
-  'closeBtn', 'reloadBtn',
+  'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because
   // "a document is open" is necessary for them and not sufficient.
   'prevPageBtn', 'nextPageBtn',

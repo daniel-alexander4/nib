@@ -118,15 +118,15 @@ you publish a blank form for others to fill.
 Got a fillable form and a spreadsheet of records? **File → Fill from spreadsheet…**
 picks a CSV and fills the form once per row, handing you a **ZIP with one PDF per
 row**. The CSV's first row is the form's field names (export them with *File →
-Export → Form data (CSV)* to see the exact names); checkbox fields take
+Export & Print → Form data…*, choosing CSV, to see the exact names); checkbox fields take
 true/false/yes/1. It runs **entirely on your machine** — the same engine as the
 `nib fill` command line, just point-and-click. (The form needs real fillable
 fields; on a flat scan, run *Save as fillable form…* first.)
 
 ### Exchange form data as XFDF
 Trading form data with Acrobat or Foxit? Nib reads and writes **XFDF**, the XML
-form-data interchange format both speak. **File → Export → Form data (XFDF)**
-saves the open form's values; **File → Import form data (XFDF)…** fills the form
+form-data interchange format both speak. **File → Export & Print → Form data…**, with
+XFDF chosen as the format in the Save dialog, saves the open form's values; **File → Import form data (XFDF)…** fills the form
 from an `.xfdf` file and saves the result. On the command line it's
 `nib export-xfdf IN -o OUT.xfdf` and `nib fill IN --data DATA.xfdf -o OUT`.
 Hierarchical (dotted) field names are preserved as nested fields; like every Nib
@@ -198,7 +198,7 @@ passes. A signed document is refused, because a correction changes the bytes its
 see where that differs from the order your eye reads.
 
 ### Convert to PDF/A for archiving
-Need a document that archives will still open decades from now? **File → Export →
+Need a document that archives will still open decades from now? **File → Save a Copy →
 Archival PDF (PDF/A-2b)…** converts the open document to a **PDF/A-2b candidate**:
 Nib embeds an sRGB output profile, writes the PDF/A identification, and removes
 active content and attachments. On the command line it's `nib pdfa IN -o OUT`.
@@ -709,9 +709,10 @@ are not all the same size does not resize under you as you scroll past the bound
 
 **Where the file commands live** — the toolbar keeps what you reach for while reading:
 the document's name with a dot showing whether it needs saving, find, and — at the right
-edge — the View controls, reload and Save. Opening, saving a copy, exporting, printing and
-closing are once-per-document acts, so they are cards in the **File** tab's sidebar —
-*Open a Document*, *Save a Copy*, *Export & Print*, *Close Document*. **Ctrl+O** opens,
+edge — the View controls, reload and Save. Opening, saving a copy, exporting and printing
+are once-per-document acts, so they are cards in the **File** tab's sidebar —
+*Open a Document*, *Save a Copy*, *Export & Print*. A document is closed with the **×** on
+its tab. **Ctrl+O** opens,
 **Ctrl+S** saves and **Ctrl+F** opens find without going near either.
 
 ### Accessibility structure — what Nib does and does not claim
@@ -1012,9 +1013,8 @@ so rather than degrading. Two limits because one does not bound the other: eight
 documents is anywhere from a few hundred KB to well over a gigabyte, since Nib
 accepts documents up to 200 MB each.
 
-**Close view** puts down the document you are looking at and moves to the next
-tab; **Close all** puts down every one. With a single document open there is just
-**Close**, and the app looks exactly as it did before tabs existed. Either way, if
+The **×** on a tab closes that document and moves to the next tab; with two or
+more open, **Close all** at the end of the tabs closes every one. Either way, if
 anything has been edited since a document was opened, Nib asks first — and it asks
 about edits *since the last save*, because that is what it can actually tell:
 saving deliberately leaves the undo history intact, so a save does not silence the
@@ -1107,11 +1107,11 @@ off — a draft watermark, a markup layer, an alternate language — reordering,
 extracting or redacting pages leaves them switched off. (**Strip active content** still
 reveals them, on purpose: that's what it's for.)
 
-**Split by bookmarks** (File → Export) turns one bookmarked PDF into a folder of
+**Split by bookmarks** (File → Export & Print) turns one bookmarked PDF into a folder of
 separate files — one per top-level bookmark, named from the bookmark with an
 optional prefix. Point it at a scored orchestration and get one PDF per
 instrument/part in seconds; pick the destination folder, and the open document is
-left untouched. No bookmarks? **Split into files by page range** (File → Export)
+left untouched. No bookmarks? **Split by page range** (File → Export & Print)
 divides the page sequence instead — **every N pages**, or **custom ranges** like
 `1-3, 4-8, 9-10` where each range becomes its own file — into a folder, the open
 document untouched.
@@ -1135,16 +1135,17 @@ scans). **Compress** re-renders pages as JPEG images at a chosen quality: big
 savings on scans, but it flattens the document, so selectable text and search are
 lost — best for scanned/image-heavy PDFs.
 
-**Pull the contents out** (File → Export): **Document text (.txt)** dumps the
-document's text layer to a plain-text file, and **Embedded images (ZIP)** bundles
+**Pull the contents out** (File → Export & Print): **Document text (.txt)** dumps the
+document's text layer to a plain-text file, and **Pictures in the document (ZIP)** bundles
 the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
 re-encoded as PNG/TIFF. Text extraction reads the existing text layer, so a
 scanned (image-only) page has nothing to give and contributes nothing (there's no
 OCR), and complex multi-column layouts may not preserve reading order.
 
-**This page's table → spreadsheet** (File → Export → *This page's table (XLSX)*,
-*(CSV)*, or *(ODS)*) clusters the current page's text into rows and columns and
-saves it as an Excel **.xlsx**, an OpenDocument **.ods**, or a **.csv**. It's a **best-effort** extraction of
+**This page's table → spreadsheet** (File → Export & Print → *This page's table…*)
+clusters the current page's text into rows and columns and saves it as an Excel
+**.xlsx**, an OpenDocument **.ods**, or a **.csv** — one button, and the Save dialog's
+**Format** line chooses which. It's a **best-effort** extraction of
 grid-style tables — merged cells, multi-line cells, and irregular layouts may come
 out wrong, so **review the result**. Like the text export it reads the text layer
 (OCR a scanned page first), and like everything else the spreadsheet is built on

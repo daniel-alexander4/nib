@@ -47,7 +47,8 @@ test('the launch state matches what tier 2 asserts', async () => {
     badge: document.getElementById('sigBadge').textContent,
     badgeClass: document.getElementById('sigBadge').className,
     pageCount: document.querySelector('.pageCount').textContent,
-    closeDisabled: document.getElementById('closeBtn').disabled,
+    // Nothing to close and nothing to close it with: no strip, so no × (ADR-103).
+    noClose: !document.querySelector('#tabstrip:not([hidden]) .tabclose'),
     saveDisabled: document.getElementById('saveBtn').disabled,
   }));
   assert.equal(s.empty, 'Open a PDF to begin.');
@@ -55,7 +56,7 @@ test('the launch state matches what tier 2 asserts', async () => {
   assert.equal(s.badge, 'no document');
   assert.equal(s.badgeClass, 'badge badge-none');
   assert.equal(s.pageCount, '/ 0');
-  assert.equal(s.closeDisabled, true);
+  assert.equal(s.noClose, true);
   assert.equal(s.saveDisabled, true);
 });
 

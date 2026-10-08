@@ -183,10 +183,11 @@ test('this file leaves the shared server as it found it', async () => {
   // with it on the run that found the budget bug. The keyboard route is tried first because it is
   // the honest one, and the fallback exists so a failing assertion above cannot also break the
   // rest of the tier.
-  const r = await tabTo('#closeBtn', { max: 120, back: true });
+  const X = '#tabstrip .tab.active .tabclose';   // the one way to close one document (ADR-103)
+  const r = await tabTo(X, { max: 120, back: true });
   if (r.ok) await page.keyboard.press('Enter');
-  else await page.evaluate(() => document.getElementById('closeBtn')?.dispatchEvent(
-    new MouseEvent('click', { bubbles: true })));
+  else await page.evaluate((s) => document.querySelector(s)?.dispatchEvent(
+    new MouseEvent('click', { bubbles: true })), X);
   await page.waitForTimeout(900);
   assert.ok(openPages > 0, 'setup: no document was open, so this cleanup covered nothing');
 });

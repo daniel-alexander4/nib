@@ -5,6 +5,7 @@
 **Context:** Dan, on the fixed toolbar: *"Make suggestions as to what to do with these toolbar
 items. Preferably they could be folded into sidebar pills or settings"* — then *"go on this"* on the
 proposal below.
+**Superseded in part by [ADR-103](103-an-export-with-several-formats-is-one-button-and-a-document-is-closed-on-its-tab.md)** (the *Close Document* card in the File list below: there is none, and a document is closed on its tab).
 **Extends:** ADR-017 (the sidebar carries the commands) and ADR-018 (the sidebar is an accordion).
 ADR-017 moved the MODE's commands out of the bar and left the mode-independent ones in it; this
 divides that remainder by frequency instead of by mode.

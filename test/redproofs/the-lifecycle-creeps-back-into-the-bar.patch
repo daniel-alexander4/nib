@@ -1,34 +1,19 @@
 --- a/web/index.html
 +++ b/web/index.html
-@@ -158,6 +158,14 @@
-       <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+@@ -194,6 +194,8 @@
+       <button class="tbicon" data-forward="printBtn" title="Print (opens your browser's print dialog)" aria-label="Print" disabled>
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg><span class="tblabel">Print</span>
        </button>
-+            </div><div class="tbgroup" data-label="Close Document" data-fold="4">
-+      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
-+      <!-- Appears at two open documents, because with one document open Close view and Close all
-+      are the same act and offering both would be two buttons for one outcome. syncTabs toggles it.
-+      **This is no longer the tab strip's rule** (ADR-037): the strip appears at one document and
-+      this button does not. The two were one predicate and are now two — what these words MEAN is
-+      a different question from whether there is a document worth showing a tab for. -->
-+      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
++            </div><div class="tbgroup" data-label="Close" data-fold="4">
++      <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
              </div><div class="tbgroup" data-label="Save" data-fold="0">
- <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
-       <button id="quitBtn" title="Quit Nib — ends this process, and says what it will end first">Quit</button>
-@@ -306,15 +314,7 @@
-       <button id="exportCertBtn">Signing certificate</button>
-       <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
-             </div>
--      <div class="tbgroup" data-label="Close Document" data-fold="4">
--      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
--      <!-- Appears at two open documents, because with one document open Close view and Close all
--      are the same act and offering both would be two buttons for one outcome. syncTabs toggles it.
--      **This is no longer the tab strip's rule** (ADR-037): the strip appears at one document and
--      this button does not. The two were one predicate and are now two — what these words MEAN is
--      a different question from whether there is a document worth showing a tab for. -->
--      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
--            </div>
-+
-     </div><div class="tbtab" data-tab="markup">
- <div class="tbgroup" data-label="Detect &amp; Fill Fields" data-fold="0">
- <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
+ <button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
+       <button id="quitBtn" class="tbicon" title="Quit Nib — ends this process, and says what it will end first"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg><span class="tblabel">Quit</span></button>
+@@ -771,7 +773,6 @@
+            same act — and syncTabs toggles it and the row. -->
+       <div id="tabrow" hidden>
+       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+-      <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
+       </div>
+       <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two
+            fields — and does not fit a 200px sidebar; `#sidebar { width: 200px }` and two rails at a

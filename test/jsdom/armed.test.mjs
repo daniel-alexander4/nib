@@ -65,7 +65,7 @@ test('the armed indicator appears on arming and survives closing the document', 
   const pillWhenArmed = pill.hidden;
 
   // The event the indicator exists for.
-  doc.getElementById('closeBtn').click();
+  doc.querySelector('#tabstrip .tab.active .tabclose').click();
   await settle();
   const wrapAfterClose = doc.getElementById('viewerWrap').className;
   const pillAfterClose = pill.hidden;

@@ -161,7 +161,7 @@ echo "$Nib_out"
 #
 # 100 since ADR-095 (wrappedmatch.test.mjs): a search match that wraps a line, found by both readings — its own file
 # because it drives scanTextMatches end to end, which no other file does, over a pdf.js page it makes.
-Nib_expect_files=100
+Nib_expect_files=101
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

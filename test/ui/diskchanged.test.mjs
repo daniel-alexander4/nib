@@ -236,8 +236,8 @@ test('the reload icon discards unsaved work, and asks first', async () => {
     'closing after a reload prompted about unsaved work. The reload replaced the bytes with the file\'s own, so there is nothing unsaved to lose');
 
   // Re-opened, because the close above is an ASSERTION and the file's last test is a cleanup
-  // that closes what is open — it clicks #closeBtn, which is disabled with nothing open, and a
-  // disabled button is a 30-second Playwright timeout rather than a failed assertion. Leaving
+  // that closes what is open — it clicks the active tab's ×, which is not there with nothing open,
+  // and a missing button is a 30-second Playwright timeout rather than a failed assertion. Leaving
   // the server as this file's convention expects is part of the test, not tidiness.
   await h.openDocument(RELOAD_DOC, 2);
 });

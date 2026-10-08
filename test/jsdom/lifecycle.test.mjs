@@ -48,15 +48,20 @@ async function openDocument({ numPages = 3, outline = null } = {}) {
 // state, and the launch state is what you get when nothing is open.
 //
 // Before P06.S01 an Open replaced, so exactly one document was open however many tests
-// had run and #closeBtn was close-all by definition. Views now accumulate across the
+// had run and one Close was close-all by definition. Views now accumulate across the
 // tests in this file, so the control that returns the app to launch is #closeAllBtn
-// once it is showing. Pointed at explicitly rather than left to #closeBtn, whose
-// meaning now depends on how many documents happen to be open — which would make these
-// tests pass or fail on their position in the file.
+// once it is showing — and the one tab's × when it is not (ADR-103: File has no Close).
 async function closeDocument() {
   const all = document.getElementById('closeAllBtn');
-  (all && !all.hidden ? all : document.getElementById('closeBtn')).click();
+  (all && !all.hidden ? all : activeTabClose()).click();
   await settle();
+}
+
+// The × on the active tab: the one way to close ONE document since ADR-103.
+function activeTabClose() {
+  const x = document.querySelector('#tabstrip .tab.active .tabclose');
+  assert.ok(x, 'there is no × on the active tab, so nothing here can close a document');
+  return x;
 }
 
 const armRedact = () => document.getElementById('redactBtn').click();
@@ -153,7 +158,10 @@ test('closeDocument restores the launch chrome', async () => {
   // P05.S05 each view's list is a wrapper INSIDE #outline, so the wrappers survive an
   // emptied close by design. What must be zero is what they contain.
   assert.equal(document.querySelectorAll('#outline .outline-edit, #outline a').length, 0);
-  assert.equal(document.getElementById('closeBtn').disabled, true);
+  // Nothing left to close, and nothing to close it with: no strip, no ×, no Close all.
+  assert.equal(document.getElementById('tabstrip').hidden, true);
+  assert.equal(document.querySelectorAll('.tabclose').length, 0);
+  assert.equal(document.getElementById('closeAllBtn').hidden, true);
   // The thumbnail grid IS asserted here now, and the reason the old note gave for not
   // asserting it was measured false. It said jsdom's missing canvas leaves the grid empty
   // "whether or not the teardown clears it". Measured through this harness: the grid holds
@@ -187,7 +195,7 @@ test('the prompt fires from the server-history signal alone', async (t) => {
   await openDocument();
   h.confirms.length = 0;
 
-  document.getElementById('closeBtn').click();
+  activeTabClose().click();
   await settle();
 
   assert.equal(h.confirms.length, 1,
@@ -209,7 +217,7 @@ test('the prompt fires from the pdf.js annotation-storage signal alone', async (
 
   lastDocument.annotationStorage.set('field-1', { value: 'typed' }); // a form fill
 
-  document.getElementById('closeBtn').click();
+  activeTabClose().click();
   await settle();
   assert.equal(h.confirms.length, 1,
     'a document with pdf.js annotation edits must prompt before closing');
@@ -228,7 +236,7 @@ test('a save clears the prompt, even though the server still reports undo histor
   // The stimulus assertion. Without it, a "no prompt" at the end is equally consistent
   // with the save having worked and with the document never having been dirty at all.
   h.confirms.length = 0;
-  document.getElementById('closeBtn').click();
+  activeTabClose().click();
   await settle();
   assert.equal(h.confirms.length, 1,
     'setup: this document does not prompt BEFORE the save, so the assertion after it proves nothing');
@@ -240,7 +248,7 @@ test('a save clears the prompt, even though the server still reports undo histor
   await settle();
 
   h.confirms.length = 0;
-  document.getElementById('closeBtn').click();
+  activeTabClose().click();
   await settle();
   assert.equal(h.confirms.length, 0,
     'closing straight after a successful save still prompted. Nothing has changed since the save, so the prompt is claiming work is at risk when none is — and a prompt that always fires is one the user learns to dismiss.');

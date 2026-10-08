@@ -820,15 +820,43 @@ body > div[id$="Modal"] {
 
 /* The document switcher. Appears as soon as one document is open (ADR-037; syncTabs toggles
    [hidden]), and stays hidden with nothing open. It was hidden below two documents until then. */
+/* The strip shares a ROW with Close all (ADR-103): the strip takes the width and scrolls, the
+   button keeps its own and sits at the right-hand end. The row carries the ground and the rule
+   under it, so the two read as one bar; it is hidden whenever the strip is. */
+#tabrow {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  background: var(--crust);
+  border-bottom: 1px solid var(--surface0);
+}
 #tabstrip {
   display: flex;
   align-items: stretch;
   gap: 1px;
   overflow-x: auto;
-  flex: none;
-  background: var(--crust);
-  border-bottom: 1px solid var(--surface0);
+  flex: 1;
+  min-width: 0;
 }
+/* Close all, in the strip's idiom rather than a toolbar button's: the tab's ground, text and
+   size. --text for the reason measured on the tab label below. It never shrinks — the strip
+   scrolls instead — and at ~70px it leaves the tabs most of a 360px window. */
+#closeAllBtn {
+  flex: none;
+  margin: 0;
+  padding: 7px 12px;
+  border: none;
+  border-left: 1px solid var(--surface0);
+  border-radius: 0;
+  background: var(--mantle);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#closeAllBtn:hover { background: var(--surface0); }
+#closeAllBtn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 #tabstrip .tab {
   display: flex;
   align-items: center;
@@ -1239,6 +1267,11 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 360px;
 }
 .sigcard textarea { resize: vertical; }
+/* The Save dialog's Format line: the width of the name field above it, so the two line up. */
+#saveAsFormat {
+  background: var(--crust); color: var(--text); border: 1px solid var(--surface1);
+  border-radius: 6px; padding: 7px 9px; font: inherit; width: 360px; max-width: 100%;
+}
 
 /* auth overlay — and the launch overlay, which wears the same card (ADR-053) */
 #authOverlay, #launchOverlay {

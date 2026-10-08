@@ -1,9 +1,12 @@
 # docs/red-proofs.md, tier 2: "the lifecycle creeps back into the bar" (ADR-022, v1.124.0)
 #
-# Close Document is moved out of File mode and back into the fixed toolbar — the shape this decays
+# Close all is moved from the tab strip's row back into the fixed toolbar — the shape this decays
 # in. It is a one-line-looking diff, it is locally reasonable ("Close is important"), and it costs
 # a toolbar row at every width; ADR-017's own measurement is that putting a pane back in the bar
 # reached 34.8% of the viewport at 800px against a 33% ceiling.
+#
+# Until ADR-103 this row moved the whole Close Document card; that card is gone (a document is
+# closed on its tab), and Close all is the one closing control left that could be argued back in.
 #
 # The guard is structural and reads the DOM rather than a list of labels, because the control that
 # comes back will be whichever one somebody argues for, not one a name list predicted.

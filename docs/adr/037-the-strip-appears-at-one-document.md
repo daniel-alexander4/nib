@@ -4,6 +4,7 @@
 **Date:** 2026-09-16
 **Context:** Dan: *"Even if only one page is open it should open in a tab."* `syncTabs` in
 `web/app.js`; `#tabstrip` in `web/index.html`; `web/style.css`'s switcher rules.
+**Superseded in part by [ADR-103](103-an-export-with-several-formats-is-one-button-and-a-document-is-closed-on-its-tab.md)** (the close controls: *Close* and *Close view* are gone; *Close all* keeps the appear-at-two threshold, beside the strip).
 **Supersedes:** the appear-at-two rule stated in those three files and in `test/ui/tabs.test.mjs`,
 `test/jsdom/restore.test.mjs` and `test/jsdom/perview.test.mjs`. It was never written as an ADR —
 it lived as a comment in three places, which is why this record says where it was.

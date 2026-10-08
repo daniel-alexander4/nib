@@ -39,11 +39,14 @@ test('the launch state is the one P01 defines', () => {
 });
 
 test('document-requiring controls are disabled with nothing open', () => {
-  // Includes closeBtn, the control P01.S04 added — so the greying-out clause is
-  // now covered mechanically instead of only by a live drive.
-  for (const id of ['closeBtn', 'saveBtn', 'printBtn', 'redactBtn', 'compareBtn']) {
+  for (const id of ['saveBtn', 'printBtn', 'redactBtn', 'compareBtn']) {
     const el = document.getElementById(id);
     assert.ok(el, `${id} missing from index.html`);
     assert.equal(el.disabled, true, `${id} should be disabled with no document open`);
   }
+  // With nothing open there is no tab strip and so no × to close anything with — what "Close is
+  // disabled" said until ADR-103 took Close out of File.
+  assert.equal(document.getElementById('tabstrip').hidden, true, 'the tab strip is showing with nothing open');
+  assert.equal(document.querySelectorAll('.tabclose').length, 0, 'there is a tab × with nothing open');
+  assert.equal(document.getElementById('closeAllBtn').hidden, true, 'Close all is showing with nothing open');
 });
