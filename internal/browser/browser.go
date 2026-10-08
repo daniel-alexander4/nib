@@ -60,6 +60,8 @@ func Open(url string) (*exec.Cmd, error) {
 				// Which branch opened the window is logged, because nothing else records it and the two behave
 				// differently — printing among them (/pending 788). Never the URL: it carries the launch key.
 				log.Printf("opened the window in app mode with %s", path)
+				// And recorded, because the download folder is that browser's (ADR-102).
+				recordOpened(Window{AppMode: true, Path: path})
 				return cmd, nil
 			}
 			// It failed. Fall through to the tab fallback rather than serving a window
@@ -73,6 +75,7 @@ func Open(url string) (*exec.Cmd, error) {
 	cmd := exec.Command(name, args...)
 	err := cmd.Start()
 	if err == nil {
+		recordOpened(Window{})
 		reap(cmd)
 	}
 	return cmd, err

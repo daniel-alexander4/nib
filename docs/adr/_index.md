@@ -727,3 +727,8 @@ home today.
   "Run OCR on them again?"; a word is Nib's when ALL of it is the stamp's shape (`ownOCRWords`) and a page when taking those
   words out leaves no invisible text; structure goes with the content or the page is refused; a signed document is
   refused; `GET /api/ocr/pages` says which pages are `own` by running the removal on a copy.
+- **[ADR-102 — an update downloads to the browser's own folder, and nothing asks](102-an-update-downloads-to-the-browsers-folder-and-nothing-asks.md)**
+  — supersedes ADR-039's "the client sends a destination folder" and its `~/nib` default only. ONE door, `downloadDir`:
+  Nib's setting, else the folder set in the browser the window was opened in (`browser.Opened`; exactly the named keys
+  of `Preferences` / `prefs.js`, as untrusted text), else the system Downloads folder, else `~/nib`; a folder that is not
+  there is skipped, never created. The pill starts the download; the popup says "Downloading to <folder>".

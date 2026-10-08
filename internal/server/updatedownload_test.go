@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -64,11 +65,36 @@ func TestAssetNameRefusesAnythingButAPlainName(t *testing.T) {
 func downloadServer(t *testing.T) (*httptest.Server, *Server, *http.Client, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	// **No test here may read the developer's browser or write into their Downloads folder
+	// (ADR-102).** The route resolves its own folder now, so both readers of the machine answer
+	// "nothing" unless a test says otherwise, and the folder is then the temp HOME's `nib`.
+	stubDownloadSources(t, "", "", "")
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
 	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	c, csrf := authedClient(t, ts)
 	return ts, srv, c, csrf
+}
+
+// stubDownloadSources answers for the browser and the desktop: the folder set in the browser, the
+// browser's name, and the system Downloads folder.
+func stubDownloadSources(t *testing.T, browserDir, browserName, system string) {
+	t.Helper()
+	oldB, oldS := browserDownloadFolder, systemDownloads
+	browserDownloadFolder = func() (string, string) { return browserDir, browserName }
+	systemDownloads = func() string { return system }
+	t.Cleanup(func() { browserDownloadFolder, systemDownloads = oldB, oldS })
+}
+
+// useDownloadDir sets Settings → Updates → Download folder, the way the page does.
+func useDownloadDir(t *testing.T, ts *httptest.Server, c *http.Client, csrf, dir string) {
+	t.Helper()
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/settings", "application/json",
+		jsonBody(map[string]any{"downloadDir": dir}))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: setting the download folder to %q answered %d", dir, resp.StatusCode)
+	}
 }
 
 // waitForDownload blocks until the download reaches a terminal state, and fails if it never does.
@@ -128,11 +154,18 @@ func TestDownloadWritesTheAssetAndReportsWhereItWent(t *testing.T) {
 	stubRelease(t, "99.0.0", body) // newer than the test server's "test" version
 
 	dir := t.TempDir()
-	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download",
-		"application/x-www-form-urlencoded", strings.NewReader(url.Values{"dir": {dir}}.Encode()))
+	useDownloadDir(t, ts, c, csrf, dir)
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download", "", nil)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("download answered %d, want 200", resp.StatusCode)
+	}
+	// The popup's "Downloading to <folder>" is this answer's `dir` — the server's, never worked out
+	// of a path by the page (ADR-102).
+	var started struct{ Dir, Path string }
+	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil || started.Dir != dir {
+		t.Fatalf("the download's answer names folder %q (%v), want %q — the popup would say the wrong place",
+			started.Dir, err, dir)
 	}
 
 	// The transfer runs on its own goroutine — the point of returning early — so the assertion is
@@ -177,10 +210,11 @@ func TestDownloadRefusesWhatItShould(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	// A relative destination is refused by the shared door every folder-writing route uses.
-	if code := post(url.Values{"dir": {"relative/path"}}); code != http.StatusBadRequest {
-		t.Errorf("a relative destination answered %d, want 400", code)
-	}
+	// **The client cannot choose the FOLDER (ADR-102).** Until then the request carried one; now
+	// the server resolves it and a `dir` still sent — a stale page, or anything else holding the
+	// token — is not read. Asserted on where the file lands, below.
+	useDownloadDir(t, ts, c, csrf, dir)
+	elsewhere := t.TempDir()
 
 	// **The client cannot choose the URL.** Sending one must change nothing: the handler resolves
 	// the asset itself. If this ever starts being honoured, the route is an arbitrary-download
@@ -189,10 +223,17 @@ func TestDownloadRefusesWhatItShould(t *testing.T) {
 		_, _ = w.Write([]byte("PWNED"))
 	}))
 	defer evil.Close()
-	if code := post(url.Values{"dir": {dir}, "url": {evil.URL + "/evil.sh"}, "downloadUrl": {evil.URL + "/evil.sh"}}); code != http.StatusOK {
+	if code := post(url.Values{"dir": {elsewhere}, "url": {evil.URL + "/evil.sh"}, "downloadUrl": {evil.URL + "/evil.sh"}}); code != http.StatusOK {
 		t.Fatalf("download answered %d, want 200", code)
 	}
 	ev := waitForDownload(t, srv, "done")
+	if filepath.Dir(ev.Path) != dir {
+		t.Fatalf("the download landed in %q, want the folder set in Settings (%q) — the request's dir field chose it",
+			filepath.Dir(ev.Path), dir)
+	}
+	if left, _ := os.ReadDir(elsewhere); len(left) != 0 {
+		t.Fatalf("the folder the request named was written into: %d entries", len(left))
+	}
 	if strings.Contains(filepath.Base(ev.Path), "evil") {
 		t.Fatalf("the request's url field chose the file: %q", ev.Path)
 	}
@@ -202,8 +243,57 @@ func TestDownloadRefusesWhatItShould(t *testing.T) {
 
 	// A second download onto the same name is refused before any bytes move (412, the same split
 	// handleWriteFile draws), so a collision is not discovered at 94%.
-	if code := post(url.Values{"dir": {dir}}); code != http.StatusPreconditionFailed {
-		t.Errorf("a name collision answered %d, want 412", code)
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download", "", nil)
+	said, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("a name collision answered %d, want 412", resp.StatusCode)
+	}
+	// The popup has nothing to choose, so the sentence is all it has: it must name the folder and
+	// the file (ADR-102).
+	if !strings.Contains(string(said), dir) || !strings.Contains(string(said), filepath.Base(ev.Path)) {
+		t.Errorf("the refusal does not say which file is in which folder: %s", said)
+	}
+}
+
+// TestRevealShowsTheFolderOfAFileAlreadyThere — ADR-102. A download refused because the file is
+// already in the folder offers "Show in folder", and the folder is the one the SERVER resolved:
+// the request names none. Here no download has finished in this process at all, which is the case
+// ADR-039's reveal answered 409 to.
+func TestRevealShowsTheFolderOfAFileAlreadyThere(t *testing.T) {
+	ts, _, c, csrf := downloadServer(t)
+	stubRelease(t, "99.0.0", []byte("x"))
+	dir := t.TempDir()
+	useDownloadDir(t, ts, c, csrf, dir)
+	name := fmt.Sprintf("nib-%s-%s-%s", "99.0.0", runtime.GOOS, runtime.GOARCH)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("an earlier download"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var shown []string
+	old := openFolder
+	openFolder = func(d string) error { shown = append(shown, d); return nil }
+	t.Cleanup(func() { openFolder = old })
+
+	reveal := func(body string) int {
+		t.Helper()
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/reveal", "application/json", strings.NewReader(body))
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := reveal("{}"); code != http.StatusConflict || len(shown) != 0 {
+		t.Fatalf("reveal before anything was refused or downloaded answered %d and opened %v, want 409 and nothing", code, shown)
+	}
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download", "", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("setup: the download answered %d, want 412", resp.StatusCode)
+	}
+	// A path in the request is still not read: the folder opened is the refusal's.
+	if code := reveal(`{"path":"/etc","dir":"/etc"}`); code != http.StatusOK {
+		t.Fatalf("reveal after a file-already-there refusal answered %d, want 200", code)
+	}
+	if len(shown) != 1 || shown[0] != dir {
+		t.Fatalf("reveal opened %v, want exactly %q", shown, dir)
 	}
 }
 
@@ -260,10 +350,11 @@ func silentAsset(t *testing.T) http.HandlerFunc {
 // one where it may not return.
 func postDownloadAsync(t *testing.T, ts *httptest.Server, c *http.Client, csrf, dir string) <-chan int {
 	t.Helper()
+	useDownloadDir(t, ts, c, csrf, dir)
 	got := make(chan int, 1)
 	go func() {
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/update/download",
-			strings.NewReader(url.Values{"dir": {dir}}.Encode()))
+			strings.NewReader(""))
 		if err != nil {
 			got <- -1
 			return
@@ -346,8 +437,8 @@ func TestADownloadDoesNotReplaceAFileThatAppearedWhileItRan(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("release bytes"))
 	})
-	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download",
-		"application/x-www-form-urlencoded", strings.NewReader(url.Values{"dir": {dir}}.Encode()))
+	useDownloadDir(t, ts, c, csrf, dir)
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download", "", nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("download answered %d, want 200", resp.StatusCode)
