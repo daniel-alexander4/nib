@@ -91,6 +91,8 @@ test('autofill from the saved profile visibly updates the rendered form', async 
     `setup: the field holds ${JSON.stringify(before)}, so autofill has nothing to visibly change`);
 
   await h.mode('markup'); // Detect/Autofill moved to Mark Up with the re-cut
+  // Opened by name: Mark Up lands on Recognize Text (OCR), its first card, and no longer on this one.
+  await h.card('Detect & Fill Fields');
   await page.click('#editProfileBtn');
   await page.fill('#profileText', `fill1 = ${AUTO}`);
   await page.click('#profileSave');
