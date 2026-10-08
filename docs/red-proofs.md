@@ -4137,7 +4137,7 @@ so the predicate runs across a window where the element does not exist and throw
 
 | Defect reintroduced | Check that fired | What it said |
 | --- | --- | --- |
-| `the-lifecycle-creeps-back-into-the-bar` — Close Document moved back to `.tbfixed` | `toolbargroups.test.mjs`, tier 2 | "these once-per-document controls are back in the fixed bar: closeBtn, closeAllBtn" |
+| `the-lifecycle-creeps-back-into-the-bar` — Close all moved from the strip's row back to `.tbfixed` (the Close Document card it moved until ADR-103 is gone) | `toolbargroups.test.mjs`, tier 2 | "these once-per-document controls are back in the fixed bar: closeAllBtn" |
 
 **One row, because the decay has one shape.** Every control that comes back to the bar arrives as a
 one-line-looking diff with a locally reasonable argument behind it ("Close is important"), and each

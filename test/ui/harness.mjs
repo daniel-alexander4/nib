@@ -412,11 +412,11 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       await page.waitForFunction(() => !document.getElementById('viewerWrap').classList.contains('has-doc'));
     },
 
-    // closeDocument clicks Close — from File mode, for the reason above.
+    // closeDocument closes the ACTIVE document with the × on its tab — the one way to close one
+    // document since ADR-103 took Close out of File. The strip is above the page in every mode,
+    // so there is no mode or card to reach first.
     async closeDocument() {
-      await this.mode('file');
-      await this.card('Close Document');
-      await page.click('#closeBtn');
+      await page.click('#tabstrip .tab.active .tabclose');
       await page.waitForTimeout(400); // the confirm + the round-trip + the teardown
     },
 

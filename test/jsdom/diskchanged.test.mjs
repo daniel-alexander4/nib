@@ -241,7 +241,7 @@ test('a document reloaded by itself is not left looking unsaved', async () => {
     'precondition: no reload happened, so the close below is not testing what this test is named for');
 
   const asked = h.confirms.length;
-  doc.getElementById('closeBtn').click();
+  doc.querySelector('#tabstrip .tab.active .tabclose').click();
   await settle();
   assert.equal(h.confirms.length, asked,
     'closing a document that Nib had just reloaded from disk prompted about unsaved changes — the reload left it marked dirty, so the user is asked to discard work that only the reload appeared to create');

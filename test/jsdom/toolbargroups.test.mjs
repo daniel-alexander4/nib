@@ -163,22 +163,61 @@ test('the ⋯ More menu is built inside its own pane, not beside it', () => {
 // `responsive.test.mjs`'s to assert; what is checkable here is where each control lives.
 const LIFECYCLE = [
   'openMenuItem', 'openRecentBtn', 'officeOpenBtn',             // open
-  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'reduceBtn',   // save a copy
-  'exportZipBtn', 'exportPngBtn', 'exportCertBtn', 'printBtn',  // export & print
-  'closeBtn', 'closeAllBtn',                                    // close
+  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'reduceBtn', 'pdfaBtn',   // save a copy
+  'exportPagesBtn', 'exportTableBtn', 'exportFormBtn', 'printBtn',               // export & print
 ];
+// Closing left File with ADR-103: one document closes on its tab's ×, and Close all sits at the end
+// of the strip's row. Neither may come back to the bar — the same decay as the list above, so the
+// same guard — and neither is a File card any more.
+const CLOSE = ['closeAllBtn'];
 
 test('the file lifecycle lives in File mode, not in the fixed bar', () => {
   const filePane = doc.querySelector('.tbtab[data-tab="file"]');
   assert.ok(filePane, 'there is no File pane, so this guard is reading nothing');
 
-  const inBar = LIFECYCLE.filter((id) => doc.getElementById(id)?.closest('.tbfixed'));
+  const inBar = [...LIFECYCLE, ...CLOSE].filter((id) => doc.getElementById(id)?.closest('.tbfixed'));
   assert.deepEqual(inBar, [],
     `these once-per-document controls are back in the fixed bar: ${inBar.join(', ')}. The bar is for what you reach for continuously (ADR-022) — everything else is a card, and each control put back here costs a toolbar row at every width`);
 
   const missing = LIFECYCLE.filter((id) => !filePane.contains(doc.getElementById(id)));
   assert.deepEqual(missing, [],
     `these controls are neither in the fixed bar nor in File mode: ${missing.join(', ')} — moved out of the bar and not rehomed, which is worse than leaving them there`);
+});
+
+// ── ADR-103: closing is the strip's, and an export with several formats is one button ────
+test('Close all sits beside the tab strip, and the strip holds nothing but tabs', () => {
+  const strip = doc.getElementById('tabstrip');
+  const all = doc.getElementById('closeAllBtn');
+  assert.ok(strip && all, 'the strip or Close all is missing, so this guard is reading nothing');
+  assert.equal(all.parentElement, strip.parentElement,
+    'Close all is not beside the tab strip. It belongs at the end of the strip\'s row (ADR-103)');
+  assert.equal(strip.contains(all), false,
+    'Close all is INSIDE the tablist: every child of the strip is a tab, and syncTabs addresses them by position');
+  assert.equal(strip.compareDocumentPosition(all) & 4, 4,
+    'Close all comes before the tabs in the document, so the keyboard reaches it before the documents it closes');
+  assert.equal(all.closest('.tbtab, .tbfixed'), null,
+    'Close all is back in a toolbar pane; it would show in one mode only, or cost the bar a group');
+  assert.equal(doc.getElementById('closeBtn'), null,
+    'File has a Close button again. The tab\'s × is the one way to close one document (ADR-103)');
+  const labels = [...doc.querySelectorAll('.tbgroup')].map((g) => g.dataset.label);
+  assert.equal(labels.includes('Close Document'), false, 'the Close Document card is back');
+});
+
+test('the Export & Print card is one button per thing exported', () => {
+  const card = [...doc.querySelectorAll('.tbtab[data-tab="file"] .tbgroup')].find((g) => g.dataset.label === 'Export & Print');
+  assert.ok(card, 'there is no Export & Print card');
+  const ids = [...card.querySelectorAll('button')].map((b) => b.id);
+  assert.deepEqual(ids, [
+    'printBtn', 'exportPagesBtn', 'exportImagesBtn', 'exportTextBtn',
+    'exportTableBtn', 'exportFormBtn', 'exportBookmarkSplitBtn', 'exportPageSplitBtn',
+  ], 'the Export & Print card is not the eight buttons ADR-103 names, in its order. An export with more than one format is ONE button and the Save dialog\'s Format line chooses — a per-format button is the fifteen-button card coming back');
+  // The certificate is a real button in Secure, not a forwarding twin of one in File.
+  const cert = doc.getElementById('exportCertBtn');
+  assert.equal(cert?.closest('.tbtab')?.dataset.tab, 'secure', 'Signing certificate is not in the Secure pane');
+  assert.equal(doc.querySelectorAll('[data-forward="exportCertBtn"]').length, 0,
+    'something still forwards to exportCertBtn; the Secure button IS the button now');
+  const copy = [...doc.querySelectorAll('.tbtab[data-tab="file"] .tbgroup')].find((g) => g.dataset.label === 'Save a Copy');
+  assert.equal([...copy.querySelectorAll('button')].at(-1)?.id, 'pdfaBtn', 'Archival PDF is not the last button of Save a Copy');
 });
 
 test('what stayed in the bar is what you reach for continuously', () => {

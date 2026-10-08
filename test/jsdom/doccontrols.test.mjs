@@ -89,9 +89,10 @@ const EXEMPT = new Set([
   // Lists the copies kept when you signed (P04.S02, ADR-073) — files on this machine, not the open document; requiring
   // one would mean removing your kept PII waits on opening something unrelated.
   'keptBtn',
-  // Gated by their own state, not by the registry: saveBtn follows canSave, the find
-  // buttons follow the search results, and closeAllBtn is hidden below two documents.
-  'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',
+  // Gated by their own state, not by the registry: saveBtn follows canSave and the find
+  // buttons follow the search results. (closeAllBtn was here until ADR-103 moved it out of
+  // the toolbar to the tab strip's row, which is hidden with nothing open.)
+  'saveBtn', 'findPrevBtn', 'findNextBtn',
   // Undo/Redo are back in the bar (ADR-087) and are the same class: `reflectUndoControls` owns
   // their `disabled`, because "a document is open" is necessary and not sufficient — there must
   // also be something to undo. test/jsdom/toolbaricons.test.mjs holds that they are off with

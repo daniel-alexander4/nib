@@ -1,8 +1,6 @@
-diff --git a/web/index.html b/web/index.html
-index 89ea1db..a9b98c4 100644
 --- a/web/index.html
 +++ b/web/index.html
-@@ -1377,55 +1377,7 @@
+@@ -2193,55 +2193,7 @@
      <div class="sigcard aboutcard">
        <h3 id="aboutTitle">About Nib</h3>
  
@@ -42,12 +40,12 @@ index 89ea1db..a9b98c4 100644
 -
 -        <h4>Working with several documents</h4>
 -        <p>Opening a document <strong>adds</strong> it — the one you had stays open. A strip
--          of tabs appears above the page once there are two; click one to switch. Each
+-          of tabs sits above the page, one for each open document; click one to switch. Each
 -          document keeps its own page, zoom, scroll position and typed values while you are
 -          on another.</p>
--        <p><strong>Close view</strong> puts down the document you are looking at and moves
--          to the next tab; <strong>Close all</strong> puts down every one. With a single
--          document open there is just <strong>Close</strong>. Reloading this window brings
+-        <p>The <strong>×</strong> on a tab closes that document and moves to the next one.
+-          With two or more open, <strong>Close all</strong> at the end of the tabs closes
+-          every one. Reloading this window brings
 -          every open document back — they live in the Nib process on your computer, not in
 -          the page. Nib holds eight documents, or 512 MB of them, whichever comes first.</p>
 -

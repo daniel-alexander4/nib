@@ -340,32 +340,20 @@
       <button id="saveEditableBtn">Save editable copy</button>
       <button id="saveFillableBtn" title="Turn detected text/checkbox fields into a real fillable AcroForm PDF">Save as fillable form…</button>
       <button id="reduceBtn">Reduce file size…</button>
+      <button id="pdfaBtn" title="Convert to a PDF/A-2b archival candidate (verify the result with veraPDF)">Archival PDF (PDF/A-2b)…</button>
             </div>
       <div class="tbgroup" data-label="Export &amp; Print" data-fold="3">
-      <button id="exportZipBtn">Pages as images (ZIP)</button>
-      <button id="exportPngBtn">Current page (PNG)</button>
-      <button id="exportImagesBtn">Embedded images (ZIP)</button>
-      <button id="exportBookmarkSplitBtn">Split by bookmarks (to a folder)…</button>
-      <button id="exportPageSplitBtn">Split into files by page range (to a folder)…</button>
-      <button id="exportTextBtn">Document text (.txt)</button>
-      <button id="exportTableXlsxBtn" title="Extract this page's table to a spreadsheet (best-effort on grid tables — review the result)">This page's table (XLSX)</button>
-      <button id="exportTableCsvBtn" title="Extract this page's table to CSV (best-effort on grid tables — review the result)">This page's table (CSV)</button>
-      <button id="exportTableOdsBtn" title="Extract this page's table to an OpenDocument spreadsheet (best-effort on grid tables — review the result)">This page's table (ODS)</button>
-      <button id="pdfaBtn" title="Convert to a PDF/A-2b archival candidate (verify the result with veraPDF)">Archival PDF (PDF/A-2b)…</button>
-      <button id="exportFormJsonBtn">Form data (JSON)</button>
-      <button id="exportFormCsvBtn">Form data (CSV)</button>
-      <button id="exportFormXfdfBtn" title="Export this form's data as XFDF — the interchange format Acrobat and Foxit read">Form data (XFDF)</button>
-      <button id="exportCertBtn">Signing certificate</button>
+      <!-- One button per THING exported, never one per file format (ADR-103): where an export has
+           more than one format the choice is the Save dialog's Format line. Fifteen buttons stood
+           here until then, seven of them the same three exports under different extensions. -->
       <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
-            </div>
-      <div class="tbgroup" data-label="Close Document" data-fold="4">
-      <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
-      <!-- Appears at two open documents, because with one document open Close view and Close all
-      are the same act and offering both would be two buttons for one outcome. syncTabs toggles it.
-      **This is no longer the tab strip's rule** (ADR-037): the strip appears at one document and
-      this button does not. The two were one predicate and are now two — what these words MEAN is
-      a different question from whether there is a document worth showing a tab for. -->
-      <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
+      <button id="exportPagesBtn" title="Save this page as a PNG picture, or every page as pictures in a ZIP">Pages as images…</button>
+      <button id="exportImagesBtn" title="Save the pictures placed in this document, as they were put in, in a ZIP">Pictures in the document (ZIP)</button>
+      <button id="exportTextBtn">Document text (.txt)</button>
+      <button id="exportTableBtn" title="Extract this page's table to a spreadsheet — XLSX, CSV or ODS (best-effort on grid tables — review the result)">This page's table…</button>
+      <button id="exportFormBtn" title="Export this form's data as CSV, JSON or XFDF — XFDF is the interchange format Acrobat and Foxit read">Form data…</button>
+      <button id="exportBookmarkSplitBtn">Split by bookmarks…</button>
+      <button id="exportPageSplitBtn">Split by page range…</button>
             </div>
     </div><div class="tbtab" data-tab="markup">
 <div class="tbgroup" data-label="Detect &amp; Fill Fields" data-fold="0">
@@ -516,7 +504,9 @@
             </div>
             <div class="tbgroup" data-label="Sign &amp; Timestamp" data-fold="0">
         <button id="finalizeBtn" title="Certify this document with your key">Finalize &amp; sign…</button>
-        <button data-forward="exportCertBtn">Signing certificate</button>
+        <!-- The real button, not a twin: it was forwarded from File's Export card until ADR-103, and a
+             certificate is a signing matter that needs no open document. -->
+        <button id="exportCertBtn" title="Save the certificate others need to check your signature">Signing certificate</button>
         <button id="timestampBtn" title="Anchor this document in time with OpenTimestamps">Timestamp (OpenTimestamps)…</button>
         <button id="timestampVerifyBtn" title="Check a document against its .ots proof">Verify a timestamp…</button>
         <button id="returnedBtn" title="You signed this and it came back: what changed since your signature">Check a signed document that came back…</button>
@@ -775,7 +765,14 @@
            document rather than how many views there are. Buttons are built by syncTabs() in
            app.js from the `views` array — the server holds the documents, the strip is client
            state. -->
+      <!-- The strip and Close all share a ROW, and Close all is the strip's SIBLING, never its child
+           (ADR-103): the strip is a tablist whose every child is a tab, and syncTabs addresses them
+           by position. Close all appears at two documents — with one open, the tab's own × is the
+           same act — and syncTabs toggles it and the row. -->
+      <div id="tabrow" hidden>
       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+      <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
+      </div>
       <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two
            fields — and does not fit a 200px sidebar; `#sidebar { width: 200px }` and two rails at a
            360px viewport leaves nothing for the document.
@@ -1350,7 +1347,7 @@
     <div class="sigcard">
       <h3>Fill from spreadsheet</h3>
       <p class="libhint">Mail-merge a CSV onto this form. The first row must be the form's <strong>field
-        names</strong> (export them via <em>File → Export → Form data (CSV)</em> to see the exact names);
+        names</strong> (export them via <em>File → Export &amp; Print → Form data…</em>, choosing CSV, to see the exact names);
         each following row becomes one filled PDF, delivered as a ZIP. Checkbox fields take
         true/false/yes/1. The document must have fillable fields — if it's a flat scan, run
         <em>Save as fillable form…</em> first.</p>
@@ -1559,6 +1556,9 @@
     <div class="sigcard">
       <h3 id="saveAsTitle">Save</h3>
       <label>File name <input id="saveAsName" type="text" /></label>
+      <!-- Shown only for an export that comes in more than one format (ADR-103); every other save
+           leaves it hidden and the dialog is what it always was. -->
+      <label id="saveAsFormatRow" hidden>Format <select id="saveAsFormat"></select></label>
       <label>Folder <input id="saveAsDir" type="text" /></label>
       <div class="dirbrowse">
         <button id="saveAsUp" type="button" title="Parent folder">⬆ Up</button>
@@ -1566,7 +1566,9 @@
       </div>
       <ul id="saveAsList" class="dirlist"></ul>
       <div class="sigbtns">
-        <span class="grow"></span>
+        <!-- The spacer doubles as the dialog's status line ("Preparing…", a failure): always in
+             the tree so a screen reader hears it change, and empty for every ordinary save. -->
+        <span id="saveAsStatus" class="grow" role="status" aria-live="polite"></span>
         <button id="saveAsCancel">Cancel</button>
         <button id="saveAsGo" class="primary">Save</button>
       </div>
@@ -2227,12 +2229,12 @@
 
         <h4>Working with several documents</h4>
         <p>Opening a document <strong>adds</strong> it — the one you had stays open. A strip
-          of tabs appears above the page once there are two; click one to switch. Each
+          of tabs sits above the page, one for each open document; click one to switch. Each
           document keeps its own page, zoom, scroll position and typed values while you are
           on another.</p>
-        <p><strong>Close view</strong> puts down the document you are looking at and moves
-          to the next tab; <strong>Close all</strong> puts down every one. With a single
-          document open there is just <strong>Close</strong>. Reloading this window brings
+        <p>The <strong>×</strong> on a tab closes that document and moves to the next one.
+          With two or more open, <strong>Close all</strong> at the end of the tabs closes
+          every one. Reloading this window brings
           every open document back — they live in the Nib process on your computer, not in
           the page. Nib holds eight documents, or 512 MB of them, whichever comes first.</p>
 

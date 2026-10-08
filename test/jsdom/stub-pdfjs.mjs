@@ -84,7 +84,9 @@ function makePage(n, renders, text = '') {
         ? { promise: Promise.resolve() }
         : { promise: Promise.reject(new Error('jsdom has no canvas — rendering is tier 3')) };
     },
-    getTextContent: async () => ({ items: text ? [{ str: text, hasEOL: true }] : [] }),
+    // `transform` and `height` are there because the table export reads a run's POSITION
+    // (ADR-103's tests); one run at a fixed place is all a one-string page can honestly claim.
+    getTextContent: async () => ({ items: text ? [{ str: text, hasEOL: true, transform: [12, 0, 0, 12, 72, 700], height: 12 }] : [] }),
     getAnnotations: async () => [],
   };
 }

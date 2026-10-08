@@ -328,10 +328,10 @@ test('opening a document closes a Compare left open against the previous one', a
   // distinguishable from the switch path on the branch that installs into the view that
   // is already there.
   await openDocument();
-  // Close ALL — this needs to collapse to the single empty view, and #closeBtn is
-  // close-VIEW once several are open (P06.S02).
+  // Close ALL — this needs to collapse to the single empty view, and a tab's × closes
+  // only its own document once several are open (P06.S02).
   const all = doc.getElementById('closeAllBtn');
-  (all && !all.hidden ? all : doc.getElementById('closeBtn')).click();
+  (all && !all.hidden ? all : doc.querySelector('#tabstrip .tab.active .tabclose')).click();
   await settle();
   assert.equal(win.document.querySelectorAll('.viewerContainer').length, 1,
     'setup: the close did not collapse to a single view, so the open below will take the switch path and prove nothing');
@@ -401,7 +401,7 @@ test('closing the last document returns the app to the launch state', async () =
   const strip = doc.getElementById('tabstrip');
   // Down to one, whatever the tests above left open.
   const all = doc.getElementById('closeAllBtn');
-  (all && !all.hidden ? all : doc.getElementById('closeBtn')).click();
+  (all && !all.hidden ? all : doc.querySelector('#tabstrip .tab.active .tabclose')).click();
   await settle();
   await openDocument();
   // One document open, and since ADR-037 that means the strip is showing with exactly one tab.
@@ -410,11 +410,18 @@ test('closing the last document returns the app to the launch state', async () =
     'setup: the strip does not hold exactly one tab, so this is not the one-document case');
   assert.equal(doc.getElementById('viewerWrap').className, 'has-doc', 'setup: nothing is open to close');
 
-  doc.getElementById('closeBtn').click();
+  // Every child of the strip is a tab — Close all is beside it, never in it (ADR-103) — and with
+  // one document open Close all is not offered: the × is the same act.
+  assert.deepEqual([...strip.children].map((c) => c.getAttribute('role')), ['tab'],
+    'the strip holds something that is not a tab');
+  assert.equal(all.hidden, true, 'Close all is showing with one document open');
+  assert.equal(doc.getElementById('tabrow').hidden, false, 'the strip\'s row is hidden with a document open');
+  strip.querySelector('.tab.active .tabclose').click();
   await settle();
 
   // The launch state, not an emptied view record sitting in a strip.
   assert.equal(doc.getElementById('viewerWrap').className, '', 'closing the last document did not return to the launch state');
   assert.equal(strip.hidden, true, 'the tab strip is showing with nothing open');
-  assert.equal(doc.getElementById('closeBtn').disabled, true, 'Close is still enabled with nothing open');
+  assert.equal(strip.querySelectorAll('.tabclose').length, 0, 'a tab × is still there with nothing open');
+  assert.equal(doc.getElementById('tabrow').hidden, true, 'the strip\'s row is showing with nothing open');
 });

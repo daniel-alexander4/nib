@@ -317,6 +317,14 @@ test('every icon button in the toolbar renders its icon', async () => {
 // fixed 540px island and the pills after it were pushed to the bottom of the column — at 900px
 // tall they landed at y=724 of an 818px pane, and on a shorter window off the fold entirely.
 //
+// **Export & Print is eight items since ADR-103, not fifteen, and it is now the LAST card of its
+// mode** — so it has no next header to measure against, and no card in the app is 505px any more.
+// The test drives Markup's Annotate & Draw instead: nine buttons, the most of any card, with a
+// card after it. At 900px tall nothing would have reached the old cap, so the first read below
+// holds the "reads as a list" half; the 420px read is the one a returning cap would fail, where
+// 60vh is 252px against about 300px of items (9 of the 15 that measured 505 — arithmetic, not a
+// fresh measurement).
+//
 // The property is that the accordion behaves like a list: the content sits directly under its own
 // header, the next header comes after the content, and there is ONE scroller — the pane. A nested
 // scroller is what turns a long card into a box the surrounding list appears to flow around.
@@ -329,8 +337,8 @@ test('an expanded card sits under its own header, with one scroller', async () =
   await page.setViewportSize({ width: 1280, height: 900 });
   // Reuses the document the tests above opened rather than opening a second one — this file's
   // cleanup closes ONE, so an extra open leaves page divs behind and fails it instead of this.
-  await h.mode('file');
-  await h.card('Export & Print');   // the tallest card in the app
+  await h.mode('markup');
+  await h.card('Annotate & Draw');   // the tallest card in the app, and not the last of its mode
 
   const read = () => page.evaluate(() => {
     const pane = document.getElementById('sbFunctions');
@@ -371,8 +379,8 @@ test('an expanded card sits under its own header, with one scroller', async () =
   });
 
   const wide = await read();
-  assert.ok(wide.items >= 10,
-    `the open card shows ${wide.items} items — this guard wants the tall card, and a short one cannot demonstrate the defect`);
+  assert.ok(wide.items >= 8,
+    `the open card shows ${wide.items} items — this guard wants the tall card, and a shorter one cannot demonstrate the defect on the short window below`);
   assert.equal(wide.gapFromHeader, 0,
     `the open card's content starts ${wide.gapFromHeader}px below its own header rather than directly under it`);
   assert.equal(wide.nextHeaderOffset, 0,
@@ -391,11 +399,12 @@ test('an expanded card sits under its own header, with one scroller', async () =
   assert.equal(short.lastItemReachable, true,
     'on a short window the open card\'s last item cannot be reached by scrolling the sidebar');
 
-  // Left OPEN: this file's last test is a cleanup that closes what is open, and #closeBtn is
-  // disabled with nothing there — a disabled button is a 30-second timeout rather than a failed
+  // Left OPEN: this file's last test is a cleanup that closes what is open, and the tab's × is
+  // not there with nothing open — a missing button is a 30-second timeout rather than a failed
   // assertion. Restoring the viewport matters for the same reason.
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(200);
+  await h.mode('file'); // the mode the tests before this one end in
 });
 
 test('this file leaves the shared server as it found it', async () => {

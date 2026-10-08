@@ -732,3 +732,9 @@ home today.
   Nib's setting, else the folder set in the browser the window was opened in (`browser.Opened`; exactly the named keys
   of `Preferences` / `prefs.js`, as untrusted text), else the system Downloads folder, else `~/nib`; a folder that is not
   there is skipped, never created. The pill starts the download; the popup says "Downloading to <folder>".
+- **[ADR-103 — an export with several formats is one button, and a document is closed on its tab](103-an-export-with-several-formats-is-one-button-and-a-document-is-closed-on-its-tab.md)**
+  — supersedes ADR-022's "Close Document" card and ADR-037's "the close controls keep the appear-at-two threshold" only.
+  The format is chosen on the Save dialog's Format line (`openSaveAs`'s fourth argument; the bytes are the SELECTED
+  format's, made at Save from what was captured at the press); never a per-format button or a dropdown in a card. One
+  document closes with its tab's ×; Close all is the strip's SIBLING in `#tabrow`. PDF/A is in Save a Copy; the
+  certificate is Secure's.

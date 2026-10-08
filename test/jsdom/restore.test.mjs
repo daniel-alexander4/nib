@@ -132,5 +132,6 @@ test('when the server holds nothing at all, the app resolves to the launch empty
     'the app did not return to the launch state — the user is left holding tabs that every request refuses');
   assert.equal(doc.getElementById('empty').textContent, 'Open a PDF to begin.');
   assert.equal(doc.getElementById('tabstrip').hidden, true, 'the tab strip is showing with nothing open');
-  assert.equal(doc.getElementById('closeBtn').disabled, true, 'Close is still enabled with nothing open');
+  assert.equal(doc.querySelectorAll('.tabclose').length, 0, 'a tab × is still there with nothing open');
+  assert.equal(doc.getElementById('closeAllBtn').hidden, true, 'Close all is showing with nothing open');
 });

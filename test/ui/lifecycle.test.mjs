@@ -35,7 +35,8 @@ const chrome = () => page.evaluate(() => ({
   badgeClass: document.getElementById('sigBadge').className,
   saveDisabled: document.getElementById('saveBtn').disabled,
   saveTitle: document.getElementById('saveBtn').title,
-  closeDisabled: document.getElementById('closeBtn').disabled,
+  // "There is no way to close": no strip showing, so no × (ADR-103 — File has no Close button).
+  noClose: !document.querySelector('#tabstrip:not([hidden]) .tabclose'),
   pageCount: document.querySelector('.pageCount').textContent,
   pageNum: document.querySelector('.pageNum').value,
   thumbs: document.querySelector('.thumbgrid:not([hidden])')?.children.length ?? 0,
@@ -43,7 +44,7 @@ const chrome = () => page.evaluate(() => ({
   // inside the shared `#outline` panel, so `children.length` counts open views.
   outline: document.querySelectorAll('#outline .outline-edit, #outline a').length,
 }));
-const closeDoc = () => h.closeDocument(); // File mode first — see harness.mjs
+const closeDoc = () => h.closeDocument(); // the active tab's × — see harness.mjs
 
 // The clause tier 2 had to skip. Here the grid genuinely populates, so an empty
 // grid after a Close is EARNED — under jsdom it is empty either way, which is a
@@ -76,7 +77,7 @@ test('the empty state matches launch, thumbnail grid included', async () => {
   assert.equal(shut.badgeClass, 'badge badge-none');
   assert.equal(shut.saveDisabled, true);
   assert.equal(shut.saveTitle, 'Save (overwrites the original)');
-  assert.equal(shut.closeDisabled, true);
+  assert.equal(shut.noClose, true);
   assert.equal(shut.pageCount, '/ 0');
   assert.equal(shut.pageNum, '1');
   assert.equal(shut.thumbs, 0);
@@ -196,7 +197,7 @@ test('a failed close tears nothing down', async () => {
   const kept = await chrome();
   assert.equal(kept.wrap, 'has-doc', 'a failed close must not tear down the client');
   assert.equal(kept.pageCount, '/ 3');
-  assert.equal(kept.closeDisabled, false, 'the control must stay usable');
+  assert.equal(kept.noClose, false, 'the control must stay usable');
   const status = await page.evaluate(async () => (await nibFetch('/api/pdf')).status);
   assert.equal(status, 200, 'the server must still be serving the document');
 
