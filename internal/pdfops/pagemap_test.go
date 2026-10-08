@@ -363,3 +363,18 @@ func TestFaintPrintIsMarkedOnTheMap(t *testing.T) {
 		t.Errorf("the map holds %d of the %d runs: %+v", seen, len(want), m.Text)
 	}
 }
+
+// White is white however the page sets it. Six spellings were matched by hand and `cs`/`sc` was not among them.
+func TestWhiteIsWhiteHoweverItIsSet(t *testing.T) {
+	for _, op := range []string{"1 g", "1 G", "1 1 1 rg", "1 1 1 RG", "0 0 0 0 k", "0 0 0 0 K",
+		"/DeviceGray cs 1 sc", "/DeviceRGB cs 1 1 1 sc", "/DeviceCMYK cs 0 0 0 0 sc", "/DeviceRGB CS 1 1 1 SC"} {
+		if !isWhitePaint(op) {
+			t.Errorf("%q is white and was not read as white", op)
+		}
+	}
+	for _, op := range []string{"", "0 g", "0.999 g", "1 1 0.99 rg", "0 0 0 0.01 k", "/DeviceGray cs 0.9 sc", "/DeviceRGB cs 1 1 0 sc", "/Pattern cs /P0 scn"} {
+		if isWhitePaint(op) {
+			t.Errorf("%q is not white and was read as white", op)
+		}
+	}
+}

@@ -221,8 +221,13 @@ const overlaysOn = (n, sel) => page.evaluate(([ps, s]) => {
 }, [pageSel(n), sel]);
 
 async function detect(n) {
+  // Detect says when it is done — "Added N fillable field(s)…" or "Nothing detected…" — and that is waited for first.
+  // The count settling was the only wait, and a count that has not started moving is settled at 0: on a loaded
+  // machine a dense page (the 1040, an outlines-only form) read 0 proposals, three times in one day, and read its
+  // real figure when run alone. The old toast is cleared so the last press's sentence cannot answer for this one.
+  await page.evaluate(() => { const t = document.getElementById('toast'); if (t) t.textContent = ''; });
   await page.$eval('#detectBtn', (b) => b.click());
-  // Detection renders the page off screen and reads its text before it adds anything: wait for the count to settle.
+  await page.waitForFunction(() => /^(Added \d+ fillable|Nothing detected)/.test((document.getElementById('toast') || {}).textContent || ''), null, { timeout: 180000 });
   let last = -1, still = 0;
   for (let i = 0; i < 80 && still < 3; i++) {
     await page.waitForTimeout(250);
