@@ -23,48 +23,51 @@ identity live in an encrypted vault only your SSH key can open.
 
 ## How Nib compares
 
-How Nib's feature set lines up against the three best-known PDF editors.
+How Nib's feature set lines up against the three best-known commercial PDF editors and two popular free ones.
 **Legend:** ✅ built in · 🟡 partial or limited · ❌ not available.
 
-| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor |
-| --- | :--: | :--: | :--: | :--: |
-| Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ |
-| Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ |
-| On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ |
-| True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ |
-| Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 |
-| Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ |
-| Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ |
-| Tag an untagged document automatically ◊ | 🟡 *(headings, paragraphs, lists)* | ✅ | ✅ | ❌ |
-| Review and correct the tag tree and reading order ◊ | 🟡 *(no new or deleted tags)* | ✅ | ✅ | ✅ |
-| Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ |
-| RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ |
-| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ |
-| **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ |
-| **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ |
-| **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ |
-| PDF/A archival export | ✅ | ✅ | ✅ | ✅ |
-| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 |
-| Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 |
-| Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ |
-| AES-256 encryption | ✅ | ✅ | ✅ | ✅ |
-| **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 |
-| Runs offline §, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ |
-| **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ |
-| Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ |
-| **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier |
+| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor | PDF24 Creator | PDFgear |
+| --- | :--: | :--: | :--: | :--: | :--: | :--: |
+| Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ |
+| Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
+| On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
+| Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
+| Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
+| Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Tag an untagged document automatically ◊ | 🟡 *(headings, paragraphs, lists)* | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Review and correct the tag tree and reading order ◊ | 🟡 *(no new or deleted tags)* | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| PDF/A archival export | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ |
+| Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 | ❌ | 🟡 |
+| Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
+| AES-256 encryption | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
+| **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 | 🟡 | 🟡 |
+| Runs offline §, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ | ✅ | 🟡 |
+| **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier | 🟢 Free | 🟢 Free |
 
-<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
+<sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor and PDF24 Creator are Windows-only; PDFgear has no Linux build). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
 
 <sub>¶ [Reflow a paragraph](#reflow-a-paragraph) re-sets changed words in the document's own font, size, spacing and justification, removes the old words rather than covering them, and carries the text below — and what is anchored to it — down the page and onto the next. It changes only what it can set exactly: a paragraph it cannot rewrite faithfully is refused with the reason, and the older cover-and-replace [Edit text](#edit-existing-text) is there for those.</sub>
 
 <sub>◊ The three accessibility rows are summaries. Nib's checker covers 105 of the 106 PDF/UA-1 rules the reference validator veraPDF evaluates and never shows a clause it could not check as a pass; it has no WCAG check and offers no automatic fix. Its tagger proposes headings, paragraphs and list items for you to review before anything is written — no tables or figures — and refuses a document that is already tagged. Its tree editor changes an element's type, alt text, header scope and place, and marks decoration; it cannot add or delete a tag. For Acrobat Pro every one of these is laid out feature by feature in [docs/accessibility-parity.md](docs/accessibility-parity.md), each Acrobat claim quoted from Adobe's documentation, each Nib claim naming the test that shows it, and every gap listed. The Foxit and PDF-XChange columns are read from those vendors' own feature lists, not measured: PDF-XChange Editor Plus lists a tags pane, a reading-order pane and an accessibility check, and no automatic tagging.</sub>
 
+<sub>‖ The PDF24 Creator and PDFgear columns are read from those projects' own feature pages, help forum and changelog, not measured, and ❌ there means *not listed*. PDF24 Creator: redaction and compare are listed with no pattern search and no text diff described; signing takes a certificate but a timestamp authority is on its to-do list; it has a command-line tool (`pdf24-DocTool`). PDFgear: text editing, redaction, OCR and certificate signatures are listed, a compare tool is not; it works offline except for its cloud AI assistant, and batch work is conversion only.</sub>
+
 <sub>\* The three signing rows are about doing it *without a service*. Acrobat and Foxit both offer send-to-sign and multi-party workflows — through Acrobat Sign and Foxit eSign, which means their servers, their accounts, and your document on someone else's machine. Nib's equivalents run between the signers' own copies of Nib, pinned to keys the signers compared themselves.</sub>
 
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
-doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
-table is about the jobs Nib *does* cover, and where it works differently.
+doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. PDF24
+Creator and PDFgear are free, capable everyday tools, though neither is open source.
+The table is about the jobs Nib *does* cover, and where it works differently.
 
 **Choose Nib** when you want to own your tools: work entirely offline with no
 account or subscription, script PDF jobs from the command line, keep every
