@@ -133,14 +133,13 @@ func (w *runWalker) keepPieces(p *shapePath, gs runGState, stroked, filled, clos
 	*p = shapePath{}
 }
 
-// isWhitePaint says whether op — a device-space colour operator as the walk keeps it (`1 g`, `1 1 1 rg`, `0 0 0 0 k`)
-// — paints white. "" is a colour the walk could not carry, and the initial colour is black: neither is white.
+// isWhitePaint says whether op — a device-space colour operator as the walk keeps it (`1 g`, `1 1 1 rg`, `0 0 0 0 k`,
+// `/DeviceGray cs 1 sc`) — paints white. "" is a colour the walk could not carry, and the initial colour is black:
+// neither is white. Read through paintLightness, so white set through `cs`/`sc` is white too: it was matched against
+// six spellings, and a ground painted `/DeviceRGB cs 1 1 1 sc` was kept as a shaded box.
 func isWhitePaint(op string) bool {
-	switch op {
-	case "1 g", "1 G", "1 1 1 rg", "1 1 1 RG", "0 0 0 0 k", "0 0 0 0 K":
-		return true
-	}
-	return false
+	l, ok := paintLightness(op)
+	return ok && l >= 1-1e-9
 }
 
 // faintFrom is how light a colour must be for print in it to be FAINT, 0 black to 1 white (ADR-099). The hint a form
