@@ -66,7 +66,7 @@ func init() { registerContentTypes() }
 var webFS embed.FS
 
 // legalFS carries the AGPLv3 licence and the third-party attribution file so the
-// About dialog can show the same text that ships in the .deb/release — they're
+// About page can show the same text that ships in the .deb/release — they're
 // served straight from these embedded copies, so the in-app view can't drift.
 //
 //go:embed LICENSE THIRD-PARTY-NOTICES.md

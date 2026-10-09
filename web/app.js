@@ -240,10 +240,9 @@ const els = {
   openUp: $('openUp'), openList: $('openList'), openCancel: $('openCancel'),
   autoUpdateChk: $('autoUpdateChk'),
   downloadDirInput: $('downloadDirInput'), downloadDirWhere: $('downloadDirWhere'), downloadDirError: $('downloadDirError'),
-  aboutBtn: $('aboutBtn'), aboutModal: $('aboutModal'), aboutTitle: $('aboutTitle'),
-  aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
-  aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
-  aboutBackBtn: $('aboutBackBtn'), aboutClose: $('aboutClose'),
+  aboutVersion: $('aboutVersion'),
+  aboutLicenseBtn: $('aboutLicenseBtn'), aboutLicenseText: $('aboutLicenseText'),
+  aboutNoticesBtn: $('aboutNoticesBtn'), aboutNoticesText: $('aboutNoticesText'),
   reloadBtn: $('reloadBtn'), // Undo/Redo left the toolbar in v1.125.0; Ctrl+Z is the route (ADR-023)
   docTitle: $('docTitle'), docTitleName: $('docTitleName'), docDirty: $('docDirty'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
@@ -2459,32 +2458,26 @@ els.sessionSendBtn.onclick = openSessionSend;
 els.ssnCancel.onclick = () => { els.sessionSendModal.hidden = true; };
 els.ssnGo.onclick = sendToPeer;
 
-// About dialog: explainer by default; the licence/notices buttons swap the body
-// for the embedded /legal/ document, and Back returns to the explainer.
-function showAboutMain() {
-  els.aboutTitle.textContent = 'About Nib';
-  els.aboutMain.hidden = false;
-  els.aboutDocText.hidden = true;
-  els.aboutLicenseBtn.hidden = els.aboutNoticesBtn.hidden = false;
-  els.aboutBackBtn.hidden = true;
-}
-async function showAboutDoc(title, path) {
-  els.aboutDocText.textContent = 'Loading…';
-  els.aboutTitle.textContent = title;
-  els.aboutMain.hidden = true;
-  els.aboutDocText.hidden = false;
-  els.aboutLicenseBtn.hidden = els.aboutNoticesBtn.hidden = true;
-  els.aboutBackBtn.hidden = false;
+// The About page's two documents (ADR-108): the licence and the third-party notices, each shown
+// in place under its own button and fetched from /legal/ when it is opened — never before, the
+// notices being some 3,500 lines. The text goes in as TEXT (`textContent`), as it always has.
+async function showAboutDoc(pre, path) {
+  pre.textContent = 'Loading…';
   try {
     const res = await fetch(path);
-    els.aboutDocText.textContent = res.ok ? await res.text() : 'Could not load document.';
-  } catch { els.aboutDocText.textContent = 'Could not load document.'; }
+    pre.textContent = res.ok ? await res.text() : 'Could not load document.';
+  } catch { pre.textContent = 'Could not load document.'; }
 }
-els.aboutBtn.onclick = () => { showAboutMain(); els.aboutModal.hidden = false; };
-els.aboutClose.onclick = () => { els.aboutModal.hidden = true; };
-els.aboutBackBtn.onclick = showAboutMain;
-els.aboutLicenseBtn.onclick = () => showAboutDoc('Licence (AGPLv3)', '/legal/LICENSE');
-els.aboutNoticesBtn.onclick = () => showAboutDoc('Third-party notices', '/legal/THIRD-PARTY-NOTICES.md');
+// toggleAboutDoc is the button: it shows its document or puts it away, and says which. Focus
+// stays on the button, so there is nothing to come back from. A document put away is emptied.
+function toggleAboutDoc(btn, pre, path) {
+  const open = pre.hidden;
+  pre.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) showAboutDoc(pre, path); else pre.textContent = '';
+}
+els.aboutLicenseBtn.onclick = () => toggleAboutDoc(els.aboutLicenseBtn, els.aboutLicenseText, '/legal/LICENSE');
+els.aboutNoticesBtn.onclick = () => toggleAboutDoc(els.aboutNoticesBtn, els.aboutNoticesText, '/legal/THIRD-PARTY-NOTICES.md');
 els.keyAddBtn.onclick = () => {
   const pubKey = els.keyPaste.value.trim();
   if (!pubKey) { toast('Paste a public key first'); return; }
@@ -11668,8 +11661,8 @@ for (const m of document.querySelectorAll(modalSelector)) {
   m.setAttribute('role', 'dialog');
   m.setAttribute('aria-modal', 'true');
   if (!m.hasAttribute('tabindex')) m.setAttribute('tabindex', '-1');
-  // aria-labelledby POINTS at the heading rather than copying its text, because three
-  // of these titles are rewritten by JS at runtime (saveAsTitle, srvTitle, aboutTitle);
+  // aria-labelledby POINTS at the heading rather than copying its text, because two
+  // of these titles are rewritten by JS at runtime (saveAsTitle, srvTitle);
   // a string copied at boot would announce "Save" for an export. A dialog with no
   // heading deliberately gets no label — an invented one is a lie, and the guard is
   // what should complain.
@@ -12852,7 +12845,7 @@ all('[data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).cl
 // Controls that act on the open document. Disabled (in both the menu and the
 // toolbar twin) until one loads, so they read as "unavailable" rather than
 // silently doing nothing. Doc-free actions — verify a timestamp, receive a
-// co-signature, identity/peers/keys, the certificate export, About — stay live.
+// co-signature, identity/peers/keys, the certificate export — stay live.
 // Overlay state, declared before setDocControls(false) runs below: that call now
 // reaches reflectSignControls() -> markerFields(), which reads view.overlayFields, so the
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
@@ -15123,8 +15116,7 @@ function buildSidebarAccordion() {
     // **A group marked `data-entry` is an ENTRY, not a card (ADR-104).** Its header opens a page
     // and never expands, so it carries no `aria-expanded` — a state it does not have. It clicks
     // the group's own button rather than opening the page itself: that button is the entry in
-    // ⋯ More when the sidebar is shut, so the two cannot come to do different things, and About's
-    // is `#aboutBtn` with the handler it has always had.
+    // ⋯ More when the sidebar is shut, so the two cannot come to do different things.
     if (g.hasAttribute('data-entry')) {
       head.dataset.entry = '';
       head.onclick = () => g.querySelector('button')?.click();

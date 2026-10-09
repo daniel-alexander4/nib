@@ -21,17 +21,21 @@ const { page } = h;
 after(() => shutdown(h));
 
 test('closing a dialog opened from a menu leaves focus somewhere real', async () => {
-  // Open About the way a user does. Settings is a MODE since v1.126.0 — the ⚙ dropdown is gone —
-  // and since ADR-104 its About entry opens the dialog itself, where it used to expand a card
-  // holding the one button that did. The property under test is unchanged: focus must not be
-  // restored to an opener that is no longer on screen.
-  await h.mode('settings');
-  await h.showSidebar();
-  await page.click('#commands .tbtab[data-tab="settings"] .sbhead.groupcard:text-is("About")');
-  await page.waitForSelector('#aboutModal:not([hidden])');
+  // The dialog is the autofill profile editor, opened the way a user opens it: Mark Up, the
+  // Detect & Fill Fields card, its button. **It was About until About became a page (ADR-108).**
+  // The subject is the dialog focus contract and not either dialog, and the editor has what the
+  // fixture needs: it opens with no document (`editProfileBtn` acts on none), from a menu, it is
+  // named by its own heading, and Escape goes through its Cancel. The property under test is
+  // unchanged: focus must not be restored to an opener that is no longer on screen.
+  await h.mode('markup');
+  await h.card('Detect & Fill Fields');
+  assert.equal(await page.evaluate(() => !!document.getElementById('viewerWrap').classList.contains('has-doc')), false,
+    'setup: a document is open — this dialog is opened with none');
+  await page.click('#editProfileBtn');
+  await page.waitForSelector('#profileModal:not([hidden])');
 
   const opened = await page.evaluate(() => {
-    const m = document.getElementById('aboutModal');
+    const m = document.getElementById('profileModal');
     return {
       role: m.getAttribute('role'),
       ariaModal: m.getAttribute('aria-modal'),
@@ -40,16 +44,16 @@ test('closing a dialog opened from a menu leaves focus somewhere real', async ()
       focusInside: m.contains(document.activeElement) || document.activeElement === m,
     };
   });
-  assert.equal(opened.role, 'dialog', 'the About dialog does not announce itself as a dialog');
-  assert.equal(opened.ariaModal, 'true', 'the About dialog is not marked aria-modal');
+  assert.equal(opened.role, 'dialog', 'the profile dialog does not announce itself as a dialog');
+  assert.equal(opened.ariaModal, 'true', 'the profile dialog is not marked aria-modal');
   assert.ok(opened.labelText && opened.labelText.trim(),
     `aria-labelledby="${opened.labelledby}" does not resolve to text, so the dialog announces no name`);
   assert.ok(opened.focusInside,
-    'focus stayed outside the About dialog when it opened, so a keyboard user is still behind the scrim');
+    'focus stayed outside the profile dialog when it opened, so a keyboard user is still behind the scrim');
 
-  // Escape goes through the dialog's own Close, as the Escape handler requires.
+  // Escape goes through the dialog's own Cancel, as the Escape handler requires.
   await page.keyboard.press('Escape');
-  await page.waitForSelector('#aboutModal', { state: 'hidden' });
+  await page.waitForSelector('#profileModal', { state: 'hidden' });
 
   const after_ = await page.evaluate(() => {
     const el = document.activeElement;

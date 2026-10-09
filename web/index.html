@@ -582,9 +582,8 @@
            it is shut — both open the same page. Nothing moves between the menu and a page at run
            time, so nothing can be left half-moved.
 
-           About has no page: its entry opens the About dialog, as the one button in its card did.
-           That dialog swaps three views inside itself (the account, the licence, the notices) and
-           is the fixture the dialog-focus tier and two red proofs are recorded against. -->
+           About is a page like the other eight (ADR-108). It was a dialog until then — the one
+           entry ADR-104 left as it was. -->
       <!-- The order is by what an entry is for (Dan, 2026-10-08: "some semblance of an intuitive order"): how Nib
            looks and reads, then what it does on its own, then your identity and its backup, and About last. -->
       <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
@@ -612,7 +611,7 @@
 <button class="pageentry" data-apppage="settingsVaultPage">Vault…</button>
             </div>
       <div class="tbgroup" data-label="About" data-fold="5" data-entry>
-<button id="aboutBtn">About Nib…</button>
+<button class="pageentry" data-apppage="settingsAboutPage">About…</button>
             </div>
     </div>      </div>      <div id="thumbs" class="panel active">
         <!-- The page number and count, beside the thumbnails — where a reader thinking about
@@ -1039,6 +1038,81 @@
             <label class="check"><input type="radio" name="cardhue" value="peach" /> Peach</label>
             <label class="check"><input type="radio" name="cardhue" value="red" /> Red</label>
             <label class="check"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
+          </div>
+        </div>
+      </section>
+      <!-- About (ADR-108): the version, an honest plain-English account of what a Nib signature
+           does and doesn't prove, and the licence / third-party notices (fetched from /legal/, the
+           same files that ship). It was the About dialog, and the words are that dialog's.
+
+           **`#aboutMain` is read by a Go test** (`internal/p2p/readme_test.go`,
+           `TestAboutCopyContainsTrustClaims`): the trust claims in it are held to the readme Nib
+           appends to a co-signed document, from the opening of that div to the opening of
+           `#aboutDocs` after it. Change a sentence here and in `internal/p2p/readme.go` together.
+
+           The two documents open IN PLACE, each under its own button, and are fetched when asked
+           for — the notices are some 3,500 lines. A button shows and hides its document and says
+           which (`aria-expanded`); focus stays on it, so there is no second view to come back from. -->
+      <section id="settingsAboutPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="About" role="region" aria-labelledby="settingsAboutPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsAboutPageTitle" tabindex="-1">About</h2>
+          <div id="aboutMain">
+            <p class="pagelead">Nib fills, signs, and redacts PDFs entirely on this computer. Your
+              documents are never uploaded.</p>
+            <p class="aboutver">Version <span id="aboutVersion">—</span> ·
+              <a href="https://github.com/daniel-alexander4/nib" target="_blank" rel="noopener">project home</a></p>
+            <div class="setrow">
+              <h3 class="rowtitle">What a Nib signature proves</h3>
+              <p>When you <strong>Finalize &amp; sign</strong>, Nib certifies the document so any
+                later change is detectable. A valid signature shows three things:</p>
+              <ul>
+                <li><strong>Tamper-evidence</strong> — the document hasn't changed since it was signed.</li>
+                <li><strong>Key-holder</strong> — it was signed by whoever holds your signing key.</li>
+                <li><strong>Time</strong> — when it was signed (independently verifiable if you add a timestamp authority).</li>
+              </ul>
+            </div>
+            <div class="setrow">
+              <h3 class="rowtitle">What it doesn't prove</h3>
+              <p>Your signing identity is <strong>self-generated on this machine</strong> — it is
+                <strong>not</strong> vouched for by a certificate authority or any third party. So a
+                Nib signature does <strong>not</strong> establish your legal identity to someone who
+                doesn't already trust your key, and it is not a qualified electronic signature (QES).
+                It proves the document is intact and was signed by your key — not who you are to a
+                stranger.</p>
+            </div>
+            <div class="setrow">
+              <h3 class="rowtitle">Co-signing with other people</h3>
+              <p>A document can be signed by <strong>two or more people</strong>. Each signature
+                names the one party that signer accepted, in a visible block on the page. Where two
+                parties sign together, each names the other; where more than two do, the parties are
+                the ones named by whoever convened the proceeding — so signers who never connected to
+                each other <strong>have not checked each other's identity</strong>, and no signature
+                claims they did.</p>
+              <p>The same trust limits apply to every signature on a co-signed document: each proves
+                its own signer held their key and that the document has not changed since, and none
+                of them establishes anyone's legal identity to a stranger.</p>
+            </div>
+            <div class="setrow">
+              <h3 class="rowtitle">Working with several documents</h3>
+              <p>Opening a document <strong>adds</strong> it — the one you had stays open. A strip
+                of tabs sits above the page, one for each open document; click one to switch. Each
+                document keeps its own page, zoom, scroll position and typed values while you are
+                on another.</p>
+              <p>The <strong>×</strong> on a tab closes that document and moves to the next one.
+                With two or more open, <strong>Close all</strong> at the end of the tabs closes
+                every one. Reloading this window brings
+                every open document back — they live in the Nib process on your computer, not in
+                the page. Nib holds eight documents, or 512 MB of them, whichever comes first.</p>
+            </div>
+            <p class="sethelp">Nib is free software under the AGPLv3 and bundles third-party
+              open-source components.</p>
+          </div>
+          <div id="aboutDocs" class="setrow">
+            <button id="aboutLicenseBtn" type="button" aria-expanded="false" aria-controls="aboutLicenseText">Licence (AGPLv3)</button>
+            <pre id="aboutLicenseText" class="aboutdoc" tabindex="0" role="region" aria-label="Licence (AGPLv3)" hidden></pre>
+            <button id="aboutNoticesBtn" type="button" aria-expanded="false" aria-controls="aboutNoticesText">Third-party notices</button>
+            <pre id="aboutNoticesText" class="aboutdoc" tabindex="0" role="region" aria-label="Third-party notices" hidden></pre>
           </div>
         </div>
       </section>
@@ -2444,74 +2518,6 @@
           <span class="grow"></span>
           <button id="srvAccept" class="primary">Accept &amp; co-sign</button>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- About: the version, an honest plain-English account of what a Nib
-       signature does and doesn't prove, and the in-app licence / third-party
-       notices (fetched from /legal/, the same files that ship). -->
-  <div id="aboutModal" hidden>
-    <div class="sigcard aboutcard">
-      <h3 id="aboutTitle">About Nib</h3>
-
-      <div id="aboutMain">
-        <p class="aboutver">Version <span id="aboutVersion">—</span> ·
-          <a href="https://github.com/daniel-alexander4/nib" target="_blank" rel="noopener">project home</a></p>
-        <p>Nib fills, signs, and redacts PDFs entirely on this computer. Your
-          documents are never uploaded.</p>
-
-        <h4>What a Nib signature proves</h4>
-        <p>When you <strong>Finalize &amp; sign</strong>, Nib certifies the document so any
-          later change is detectable. A valid signature shows three things:</p>
-        <ul>
-          <li><strong>Tamper-evidence</strong> — the document hasn't changed since it was signed.</li>
-          <li><strong>Key-holder</strong> — it was signed by whoever holds your signing key.</li>
-          <li><strong>Time</strong> — when it was signed (independently verifiable if you add a timestamp authority).</li>
-        </ul>
-
-        <h4>What it doesn't prove</h4>
-        <p>Your signing identity is <strong>self-generated on this machine</strong> — it is
-          <strong>not</strong> vouched for by a certificate authority or any third party. So a
-          Nib signature does <strong>not</strong> establish your legal identity to someone who
-          doesn't already trust your key, and it is not a qualified electronic signature (QES).
-          It proves the document is intact and was signed by your key — not who you are to a
-          stranger.</p>
-
-        <h4>Co-signing with other people</h4>
-        <p>A document can be signed by <strong>two or more people</strong>. Each signature
-          names the one party that signer accepted, in a visible block on the page. Where two
-          parties sign together, each names the other; where more than two do, the parties are
-          the ones named by whoever convened the proceeding — so signers who never connected to
-          each other <strong>have not checked each other's identity</strong>, and no signature
-          claims they did.</p>
-        <p>The same trust limits apply to every signature on a co-signed document: each proves
-          its own signer held their key and that the document has not changed since, and none
-          of them establishes anyone's legal identity to a stranger.</p>
-
-        <h4>Working with several documents</h4>
-        <p>Opening a document <strong>adds</strong> it — the one you had stays open. A strip
-          of tabs sits above the page, one for each open document; click one to switch. Each
-          document keeps its own page, zoom, scroll position and typed values while you are
-          on another.</p>
-        <p>The <strong>×</strong> on a tab closes that document and moves to the next one.
-          With two or more open, <strong>Close all</strong> at the end of the tabs closes
-          every one. Reloading this window brings
-          every open document back — they live in the Nib process on your computer, not in
-          the page. Nib holds eight documents, or 512 MB of them, whichever comes first.</p>
-
-        <p class="libhint">Nib is free software under the AGPLv3 and bundles third-party
-          open-source components.</p>
-      </div>
-
-      <pre id="aboutDocText" class="aboutdoc" hidden></pre>
-
-      <div class="sigbtns">
-        <button id="aboutLicenseBtn">Licence (AGPLv3)</button>
-        <button id="aboutNoticesBtn">Third-party notices</button>
-        <button id="aboutBackBtn" hidden>← Back</button>
-        <span class="grow"></span>
-        <button id="aboutClose">Close</button>
       </div>
     </div>
   </div>

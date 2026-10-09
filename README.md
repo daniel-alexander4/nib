@@ -658,7 +658,8 @@ there, beside the document it works on: in *Signing* that is **Place Signing Fla
 **Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
 the sidebar: **Appearance** (the theme), **Colours**, **Main menu**, **Read Aloud**, **Updates**,
 **Advanced features**, **Identity & Keys** (your identity and pinned peers, and the keys that unlock
-your vault) and **Vault** (back up and restore); **About** opens the About window. A page
+your vault), **Vault** (back up and restore) and **About** (the version, what a signature proves, and
+the licence and third-party notices, each shown on the page when you press its button). A page
 opens where the document is shown, in a tab beside the document tabs marked *Settings* (or
 *Signing*) and named for the page. **There is one such tab**: open another page and it takes the
 first one's place in that tab, rather than adding a tab for every entry you click. Click a

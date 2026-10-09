@@ -167,13 +167,16 @@ test('every dialog names itself, and the name resolves', () => {
     `these dialogs have no aria-labelledby, or it points at something with no text — an unresolvable label announces nothing at all: ${broken.join(', ')}`);
 });
 
+// The dialog these two use is the autofill profile editor. It was About until About became a page
+// (ADR-108); any dialog serves, and each test asserts the one it names is there.
 test('opening a dialog moves focus into it', async () => {
-  const m = doc.getElementById('aboutModal');
+  const m = doc.getElementById('profileModal');
+  assert.ok(m, 'setup: #profileModal is gone from index.html — point this at another dialog');
   doc.getElementById('menubar')?.querySelector('button')?.focus();
   m.hidden = false;
   await settle();
   assert.ok(m.contains(doc.activeElement) || doc.activeElement === m,
-    `focus stayed on ${doc.activeElement && doc.activeElement.id} when the About dialog opened, so a keyboard user is still behind the scrim`);
+    `focus stayed on ${doc.activeElement && doc.activeElement.id} when the profile dialog opened, so a keyboard user is still behind the scrim`);
   m.hidden = true;
   await settle();
 });
@@ -199,7 +202,8 @@ test('a dialog that focuses its own field keeps it', async () => {
 });
 
 test('focus cannot leave an open dialog', async () => {
-  const m = doc.getElementById('aboutModal');
+  const m = doc.getElementById('profileModal');
+  assert.ok(m, 'setup: #profileModal is gone from index.html — point this at another dialog');
   m.hidden = false;
   await settle();
   try {
