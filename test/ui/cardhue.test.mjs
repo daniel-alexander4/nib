@@ -20,11 +20,13 @@ const cards = () => page.evaluate(() => {
     .map((e) => ({ step: e.dataset.step, bg: getComputedStyle(e).backgroundColor }));
 });
 
+// Colours is a page in the main area since ADR-104, beside the sidebar this file reads, so the
+// choice is made on it and the page closed again.
 const pick = async (value) => {
-  await h.mode('settings');
-  await h.card('Colours');
+  const id = await h.settingsPage('Colours');
   await page.click(`input[name="cardhue"][value="${value}"]`);
   await page.waitForFunction((v) => (document.documentElement.dataset.cardhue || 'all') === v, value);
+  await h.closeAppPage(id);
 };
 
 test('choosing a hue repaints every card into one colour', async () => {
@@ -32,7 +34,9 @@ test('choosing a hue repaints every card into one colour', async () => {
   // Document/`edit` until v1.128.25 moved Edit Page Text and Recognize Text to Mark Up, which
   // left that mode with five — measured, as `only 5 cards are showing`. Settings has six.
   // ADR-035 then took Tag Structure out of `edit` as well, which is why this reads Settings and
-  // not the mode with the most cards at any given moment.
+  // not the mode with the most cards at any given moment. Since ADR-104 the nine in Settings open
+  // pages instead of expanding; they are still the sidebar's coloured headers, painted by the
+  // same rule, and nine of them is still the most any mode puts on screen.
   await h.mode('settings');
   const rainbow = await cards();
   assert.ok(rainbow.length >= 6,
@@ -87,13 +91,13 @@ test('this file leaves the shared server as it found it', async () => {
 // Settings → Updates → Download folder (ADR-102). Here rather than in a file of its own because
 // this file already drives the Settings cards, and a new file moves the harness's file-count pin.
 //
-// **Only a browser can see this.** The card is a wrapping flex column, so one child wider than the
-// card widens the column and its contents run off the edge. Measured before the stylesheet rule:
-// the box was 260px in a 199px card and the line naming the folder in use was cut mid-path. jsdom
-// has no layout, so its tests of the same field were green throughout.
-test('the Download folder field, its folder line and its refusal all fit inside the card', async () => {
-  await h.mode('settings');
-  await h.card('Updates');
+// **Only a browser can see this.** As a sidebar card the box was 260px in a 199px column and the
+// line naming the folder in use was cut mid-path. It is on the Updates page now (ADR-104), which
+// is wider — and the same question still has to be asked of it, because a path has no spaces to
+// break at and a setting's block is a flex column too. jsdom has no layout, so its tests of the same field
+// were green throughout.
+test('the Download folder field, its folder line and its refusal all fit inside the page', async () => {
+  const pageId = await h.settingsPage('Updates');
   // The line is the real server's answer for this machine, whatever folder that is.
   await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent),
     null, { timeout: 15000 });
@@ -102,7 +106,7 @@ test('the Download folder field, its folder line and its refusal all fit inside 
   await page.dispatchEvent('#downloadDirInput', 'change');
   await page.waitForFunction(() => !document.getElementById('downloadDirError').hidden, null, { timeout: 15000 });
   const m = await page.evaluate(() => {
-    const g = document.getElementById('downloadDirInput').closest('.tbgroup');
+    const g = document.getElementById('downloadDirInput').closest('.setrow');
     const right = (el) => Math.round(el.getBoundingClientRect().right);
     return {
       error: document.getElementById('downloadDirError').textContent,
@@ -111,12 +115,13 @@ test('the Download folder field, its folder line and its refusal all fit inside 
     };
   });
   assert.match(m.error, /could not find that folder/, `the refusal shown is not the server's sentence: "${m.error}"`);
-  assert.ok(m.scroll <= m.client, `the Updates card's contents are ${m.scroll}px wide in a ${m.client}px card — they run off its edge`);
+  assert.ok(m.scroll <= m.client, `the Updates page's contents are ${m.scroll}px wide in a ${m.client}px page — they run off its edge`);
   for (const [id, r] of m.parts) {
-    assert.ok(r <= m.edge, `#${id} ends at ${r}px, past the card's edge at ${m.edge}px — what it says is cut off`);
+    assert.ok(r <= m.edge, `#${id} ends at ${r}px, past the page's edge at ${m.edge}px — what it says is cut off`);
   }
   // Clearing the box returns to the browser's folder and takes the refusal away.
   await page.fill('#downloadDirInput', '');
   await page.dispatchEvent('#downloadDirInput', 'change');
   await page.waitForFunction(() => document.getElementById('downloadDirError').hidden, null, { timeout: 15000 });
+  await h.closeAppPage(pageId);
 });

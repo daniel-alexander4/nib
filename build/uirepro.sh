@@ -291,7 +291,9 @@ fi
 # out of sight in the bar and in sight inside More, and the zoom level against the page.
 # 45 since /pending 850 (zoomanchor.test.mjs): the point under the pointer staying under it through a zoom is two
 # bounding rectangles and a scroll offset, and every one of them is 0 at tier 2.
-expect_files=46
+# 47 since ADR-104 (apppages.test.mjs): a Settings entry opens a page with its own tab — a real document beside a page
+# (its count, its scroll and zoom on return, its controls going inert), where focus lands, and a 375px window.
+expect_files=47
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

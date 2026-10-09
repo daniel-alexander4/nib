@@ -285,6 +285,22 @@ const els = {
 // on the twin. Declared here, not beside the sheet's functions, because activateView and closeDocument read it.
 let returnedState = null;
 
+// The app pages that are open, in the order they were opened, and the one standing in the main
+// area (ADR-104). Elements, not ids. **Beside `views` and never in it**: a page is not a document,
+// and every law about documents — operation pinning, the `X-Nib-Doc` header, the two budgets, the
+// three mutators of `views` — keys on a view being one. Declared here because `setDocControls`
+// reads `activeAppPage` in the boot block.
+const openAppPages = [];
+let activeAppPage = null;
+
+// The annotation tools' buttons (Text, Highlight, Draw and their twins). **Buttons, by tag**: the
+// attribute is shared — the compare tabs carry it (`.cmmode`), and so do the six Main menu boxes
+// (`.modeChk`, a mode of the MENU). Read as a bare `[data-mode]`, five sweeps took those boxes
+// for tools: they were disabled whenever no document was open, so the menu could not be cut
+// until a file was, and a click on one called `setTool('file')`. Found when the boxes moved to a
+// page, where a document is never showing (ADR-104).
+const TOOL_BUTTONS = 'button[data-mode]:not(.cmmode)';
+
 // Controls duplicated across the menubar and toolbar are addressed by class.
 const all = (sel) => document.querySelectorAll(sel);
 
@@ -829,6 +845,7 @@ els.authForm.addEventListener('submit', async (e) => {
 
 // --- vault backup / restore --------------------------------------------------
 els.backupBtn.onclick = () => downloadAuthed('/api/vault/export', 'vault.nib');
+$('restoreBtn').onclick = () => els.restoreInput.click();
 els.restoreInput.onchange = async () => {
   const file = els.restoreInput.files[0]; if (!file) return;
   if (!confirm('Replace your current vault with this backup? It will only open if this machine’s SSH key is enrolled in it.')) return;
@@ -2939,23 +2956,31 @@ function syncTabs() {
   // document open the tab's own × is the same act. The × is the ONE way to close one document —
   // File's Close and Close view are gone (ADR-103).
   els.closeAllBtn.hidden = !several;
-  if (els.tabrow) els.tabrow.hidden = !anyDoc;
-  strip.hidden = !anyDoc;
+  // **A page has a tab and is not a document (ADR-104).** The two predicates above are about
+  // documents and stay so: `several` and `anyDoc` read `views`, and Close all closes documents
+  // and leaves pages where they are. Only whether the ROW shows asks about pages too — a page can
+  // be open with no document.
+  const anyTab = anyDoc || openAppPages.length > 0;
+  if (els.tabrow) els.tabrow.hidden = !anyTab;
+  strip.hidden = !anyTab;
   strip.textContent = '';
-  if (!anyDoc) {
+  if (!anyTab) {
     // The strip itself is gone, so there is no tab to land on — the menubar's first control, which is
     // the fallback the dialog focus-restore uses for the same situation.
     if (focusedIndex >= 0) document.getElementById('menubar')?.querySelector('button')?.focus();
     return;
   }
-  for (const v of views) {
+  // With no document open `views` still holds its one empty view, and it gets no tab.
+  for (const v of anyDoc ? views : []) {
     // A DIV with role="tab", not a <button>. The close affordance is a real <button>
     // inside it, and a button inside a button is invalid HTML that browsers reparent —
     // which would split each tab into two siblings and take the strip's positional
     // addressing with it. role="tab" on a div plus tabIndex is the valid shape, and it
     // keeps the close control separately focusable instead of buried inside the tab.
     const b = document.createElement('div');
-    b.className = 'tab' + (v === view ? ' active' : '');
+    // The active VIEW is not the active TAB while a page is in front of it.
+    const front = v === view && !activeAppPage;
+    b.className = 'tab' + (front ? ' active' : '');
     b.tabIndex = 0;
     b.setAttribute('role', 'tab');
     // Names the region this tab switches to. A tablist whose tabs control nothing is
@@ -2964,7 +2989,7 @@ function syncTabs() {
     if (v.container.id) b.setAttribute('aria-controls', v.container.id);
     // aria-selected, not colour alone: the active tab differs from the rest by two
     // greys and an accent bar, neither of which a screen reader can report.
-    b.setAttribute('aria-selected', v === view ? 'true' : 'false');
+    b.setAttribute('aria-selected', front ? 'true' : 'false');
     const name = document.createElement('span');
     name.className = 'tabname';
     // The same fallback the rest of the app uses for a path-less document. `docMeta.name`
@@ -2973,10 +2998,10 @@ function syncTabs() {
     name.textContent = v.originalName || 'Untitled';
     b.appendChild(name);
     b.title = v.docMeta && v.docMeta.path ? v.docMeta.path : (v.originalName || 'Untitled');
-    b.onclick = () => activateView(v);
+    b.onclick = () => showDocument(v);
     // A div is not a button, so it does not activate on Enter/Space for free.
     b.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateView(v); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showDocument(v); }
     };
 
     const x = document.createElement('button');
@@ -2993,8 +3018,159 @@ function syncTabs() {
     b.appendChild(x);
     strip.appendChild(b);
   }
+  // The page tabs, after the documents', in the order the pages were opened. The same shape as a
+  // document's tab — a div with role="tab" and a real × inside — so the strip's roving order, its
+  // arrow keys and the focus rule above reach them with nothing added. Told apart by the word in
+  // front of the name (`.tabkind`, the page's `data-group`), not by colour, and named for what it
+  // is: "Updates, Settings page".
+  for (const p of openAppPages) {
+    const front = p === activeAppPage;
+    const b = document.createElement('div');
+    b.className = 'tab pagetab' + (front ? ' active' : '');
+    b.tabIndex = 0;
+    b.dataset.apppage = p.id;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', p.id);
+    b.setAttribute('aria-selected', front ? 'true' : 'false');
+    const kind = document.createElement('span');
+    kind.className = 'tabkind';
+    kind.textContent = p.dataset.group || 'Page';
+    const name = document.createElement('span');
+    name.className = 'tabname';
+    name.textContent = p.dataset.title || '';
+    b.append(kind, name);
+    b.title = `${p.dataset.group} — ${p.dataset.title}`;
+    b.setAttribute('aria-label', `${p.dataset.title}, ${p.dataset.group} page`);
+    b.onclick = () => showAppPage(p);
+    b.onkeydown = (e) => {
+      if (e.target === b && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); showAppPage(p); }
+    };
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'tabclose';
+    x.setAttribute('aria-label', `Close the ${p.dataset.title} page`);
+    x.textContent = '×';
+    x.onclick = (e) => { e.stopPropagation(); closeAppPage(p); };
+    b.appendChild(x);
+    strip.appendChild(b);
+  }
   if (focusedIndex >= 0) strip.children[Math.min(focusedIndex, strip.children.length - 1)]?.focus();
 }
+
+// ── App pages: a menu entry opens a page with its own tab (ADR-104) ──────────────────────────
+//
+// A page is a `.apppage` section in `#viewerCol`. It stands in the main area in place of the
+// viewer, as the two sheets do, and it has a tab in the strip. `openAppPages` is the registry of
+// what is open and `activeAppPage` the one showing; the functions below are their only writers
+// (`test/jsdom/apppages.test.mjs` refuses another).
+//
+// **How a menu registers a page: markup only.** A `<section class="sheet apppage">` with an id,
+// `data-group`, `data-menu`, `data-title` and a focusable heading; and a button anywhere with
+// `data-apppage="<id>"`. A page that must do something as it is left names it in `appPageLeave`.
+
+// appPageLeave: page id → what to do as that page stops being the one on screen.
+const appPageLeave = { settingsUpdatesPage: () => flushDownloadDir() };
+
+// docShowing is THE answer to "is a document on screen to act on". A document can be open and
+// not showing — a page is in front of it — and every control that acts on the document reads this
+// rather than `view.pdfDocument`, so a tool cannot be armed against a document nobody can see.
+function docShowing() { return !!view.pdfDocument && !activeAppPage; }
+
+// syncMainArea is the ONE writer of what stands in the main area: the viewer, one of the two
+// sheets, or an app page (ADR-009). It derives rather than being told — each surface owns its own
+// "I am wanted" (`activeAppPage`; a sheet's `hidden`, which its own code writes with the state
+// that goes with it) and this reads them. Before it, three sites each wrote `#viewerWrap.hidden`
+// beside their own flag, and a fourth surface would have been a fourth.
+function syncMainArea() {
+  for (const p of all('#viewerCol > .apppage')) p.hidden = p !== activeAppPage;
+  const sheet = (els.returnedSheet && !els.returnedSheet.hidden) || (els.ceremonySheet && !els.ceremonySheet.hidden);
+  if (els.viewerWrap) els.viewerWrap.hidden = !!activeAppPage || !!sheet;
+}
+
+// DOC_BAR_GROUPS are the fixed bar's groups that act on the document, by their `data-label`.
+// Reload & Quit is not among them: Reload is in DOC_REQUIRED already, and Quit is the process's.
+const DOC_BAR_GROUPS = ['Find', 'Page', 'History', 'View', 'Zoom', 'Save', 'Print'];
+
+// reflectDocShowing puts the document's controls in step with whether a document is showing.
+// A page in front is, for every control, the same as no document: Save, the DOC_REQUIRED set and
+// the editing tools go inert, and come back as they were when the document does. applySignLock
+// AFTER setDocControls, for the reason repaintForActiveView gives.
+//
+// **The fixed bar's document groups go `inert` as well.** Zoom, the page box, the view layout and
+// read-aloud are not in DOC_REQUIRED — with nothing open they have nothing to harm — but with a
+// document open BEHIND a page each of them would change it unseen: it would come back at another
+// zoom, on another page, or start reading aloud from under the page. `inert` takes the whole
+// group out of the pointer's and the keyboard's reach in one attribute, wherever the group is
+// sitting (the bar or ⋯ More). Quit and the sidebar toggle are not the document's and stay.
+function reflectDocShowing() {
+  els.saveBtn.disabled = !docShowing();
+  setDocControls(docShowing());
+  applySignLock();
+  for (const g of all('#toolbar .tbgroup[data-label]')) {
+    if (g._home && g._home.classList.contains('tbfixed') && DOC_BAR_GROUPS.includes(g.dataset.label)) g.inert = !!activeAppPage;
+  }
+}
+
+// showAppPage puts one open page in front. The sheets yield through their own doors — the
+// returned-document sheet closes and a ceremony setup parks, exactly as on a mode change — and
+// the document is quiesced the way a tab switch quiesces it: a drag in flight, reading aloud and
+// a dialog about that document do not carry on behind a page.
+function showAppPage(p) {
+  if (!openAppPages.includes(p)) return;
+  if (activeAppPage === p) return;
+  const from = activeAppPage;
+  closeReturnedSheet(false);
+  parkCeremonySheet(false);
+  if (!from) { abortDrags(); if (readingAloud) stopReadAloud(); closeDocBoundModals(); }
+  activeAppPage = p;
+  syncMainArea();
+  reflectDocShowing();
+  syncTabs();
+  if (from) appPageLeave[from.id]?.();
+}
+
+// openAppPage is what an entry does: open the page if it is not open, bring it forward if it is —
+// never a second copy — and put focus on its heading, so a keyboard or screen-reader user lands
+// on the page's name rather than staying on a menu entry beside it.
+function openAppPage(id) {
+  const p = $(id);
+  if (!p || !p.classList.contains('apppage')) return;
+  if (!openAppPages.includes(p)) openAppPages.push(p);
+  showAppPage(p);
+  p.querySelector('h2')?.focus();
+}
+
+// leaveAppPage goes back to the document — or to the empty state, with none open. The page stays
+// open in its tab. A no-op with no page in front, so every caller that is about to show a
+// document can call it without asking.
+function leaveAppPage() {
+  const from = activeAppPage;
+  if (!from) return;
+  activeAppPage = null;
+  syncMainArea();
+  reflectDocShowing();
+  syncTabs();
+  appPageLeave[from.id]?.();
+}
+
+// closeAppPage is the page tab's ×. Closing the page in front shows the document again; closing
+// another leaves what is showing alone.
+function closeAppPage(p) {
+  const i = openAppPages.indexOf(p);
+  if (i < 0) return;
+  openAppPages.splice(i, 1);
+  if (activeAppPage === p) leaveAppPage(); else syncTabs();
+}
+
+// showDocument is a document tab's click: the page in front, if there is one, yields, and the
+// view is activated. Both halves, because `activateView` returns at once for the view that is
+// already active — which is exactly the tab a user clicks to get back from a page.
+function showDocument(v) {
+  leaveAppPage();
+  activateView(v);
+}
+
+for (const b of all('button[data-apppage]')) b.onclick = () => openAppPage(b.dataset.apppage);
 
 // Modals whose contents are derived from ONE document: page ranges bounded by its
 // numPages, element references into its page DOM, bytes rendered from it, an outline read
@@ -3152,7 +3328,7 @@ function closeDocBoundModals() {
 function repaintForActiveView() {
   const open = !!view.pdfDocument;
   els.viewerWrap.classList.toggle('has-doc', open);
-  els.saveBtn.disabled = !open;
+  els.saveBtn.disabled = !docShowing(); // a view activated behind a page (its neighbour was closed) is not showing
   els.saveBtn.title = open
     ? (view.docMeta.canSave ? 'Save (overwrites ' + view.docMeta.path + ')' : 'Save a copy (downloads — opened without a local path)')
     : 'Save (overwrites the original)';
@@ -3187,7 +3363,7 @@ function repaintForActiveView() {
   reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
   reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote();
   all('.markers button').forEach((b) => setArmed(b, b.dataset.marker === view.markerMode));
-  all('[data-mode]:not(.cmmode)').forEach((t) => setArmed(t, t.dataset.mode === view.activeTool));
+  all(TOOL_BUTTONS).forEach((t) => setArmed(t, t.dataset.mode === view.activeTool));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
   reflectPanCursor(); // the view changed, and the editor mode is per view
@@ -3592,7 +3768,7 @@ async function setDocumentFromServer(meta, target = view) {
   if (target === view) {
     els.viewerWrap.classList.add('has-doc');
     all('.pageCount').forEach((s) => { s.textContent = '/ ' + target.pdfDocument.numPages; });
-    els.saveBtn.disabled = false;
+    els.saveBtn.disabled = !docShowing();
     setDocControls(true);
     els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
   }
@@ -3950,6 +4126,8 @@ async function installOpened(meta) {
       if (v) setDirty(v, openedDirty(meta));
     }
   }
+  // A document the user just opened is what she asked to see, so a page in front yields.
+  if (opened) leaveAppPage();
   return opened;
 }
 
@@ -4071,7 +4249,7 @@ async function reconcileWithServer() {
 // document already on screen is surprising rather than helpful.
 async function openOrActivate(path) {
   const already = views.find((v) => v.pdfDocument && v.docMeta && v.docMeta.path === path);
-  if (already) { if (already !== view) activateView(already); return; }
+  if (already) { showDocument(already); return; }
   return openPath(path);
 }
 
@@ -5061,7 +5239,7 @@ async function save() {
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
-    els.saveBtn.disabled = !view.pdfDocument;
+    els.saveBtn.disabled = !docShowing();
   }
 }
 
@@ -10313,7 +10491,7 @@ function setEditingEnabled(on) {
     const b = $(id); if (b) b.disabled = !on;
     all(`[data-forward="${id}"]`).forEach((t) => { t.disabled = !on; });
   }
-  all('[data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
+  all('button[data-mode]').forEach((t) => { t.disabled = !on; }); // Text/Highlight/Draw twins
 }
 
 function setSignLocked(locked) {
@@ -10372,7 +10550,7 @@ function disarmEditingTools() {
 // applySignLock reflects view.signLocked across the whole UI. Safe to call whenever the
 // lock, the open document, or the flag count changes.
 function applySignLock() {
-  const open = !!view.pdfDocument;
+  const open = docShowing();
   setEditingEnabled(open && !view.signLocked);
   els.viewerWrap.classList.toggle('signing-locked', view.signLocked);
   reflectSignControls();
@@ -10793,7 +10971,7 @@ async function saveForSigning() {
   } catch (e) {
     toast('could not prepare the document: ' + e.message);
   } finally {
-    els.saveBtn.disabled = !view.pdfDocument;
+    els.saveBtn.disabled = !docShowing();
   }
 }
 
@@ -11271,7 +11449,8 @@ els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.aut
 // where that folder came from. The page words the source and decides nothing — the four names are
 // the server's (`downloadDirFrom`), and so is the folder.
 function applyDownloadPlace(st) {
-  els.downloadDirInput.value = st.downloadDirSet || '';
+  downloadDirSaved = st.downloadDirSet || '';
+  els.downloadDirInput.value = downloadDirSaved;
   if (!st.downloadDir) { els.downloadDirWhere.textContent = ''; return; }
   const from = st.downloadDirFrom;
   let why;
@@ -11289,19 +11468,56 @@ function applyDownloadPlace(st) {
 // Not `saveSettings`: that one toasts "Could not save settings", and this refusal is a sentence
 // about what was typed, which belongs beside the box. On success the line is read back from the
 // server, because the folder now in use is its answer and not the text in the box.
-els.downloadDirInput.onchange = async () => {
-  const fail = (msg) => { els.downloadDirError.textContent = msg; els.downloadDirError.hidden = false; };
-  try {
-    const res = await apiFetch('/api/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ downloadDir: els.downloadDirInput.value.trim() }),
-    });
-    if (!res.ok) { fail(await errText(res, 'Could not save that folder.')); return; }
-    els.downloadDirError.hidden = true;
-    const st = await apiFetch('/api/status', { unpinned: true });
-    if (st.ok) applyDownloadPlace(await st.json());
-  } catch { fail('Could not save that folder.'); }
-};
+//
+// `downloadDirSaved` is what the server last said is stored and `downloadDirRefused` the text it
+// last refused; `downloadDirSaving` is the request in flight, so a blur's `change` and the click on
+// Done that caused the blur are one save and not two. It answers whether the folder was stored.
+let downloadDirSaved = '';
+let downloadDirRefused = null;
+let downloadDirSaving = null;
+function saveDownloadDir() {
+  if (downloadDirSaving) return downloadDirSaving;
+  const typed = els.downloadDirInput.value.trim();
+  const fail = (msg) => {
+    downloadDirRefused = typed;
+    els.downloadDirError.textContent = msg; els.downloadDirError.hidden = false;
+    return false;
+  };
+  downloadDirSaving = (async () => {
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ downloadDir: typed }),
+      });
+      if (!res.ok) return fail(await errText(res, 'Could not save that folder.'));
+      els.downloadDirError.hidden = true;
+      downloadDirRefused = null;
+      downloadDirSaved = typed;
+      const st = await apiFetch('/api/status', { unpinned: true });
+      if (st.ok) applyDownloadPlace(await st.json());
+      return true;
+    } catch { return fail('Could not save that folder.'); }
+  })().finally(() => { downloadDirSaving = null; });
+  return downloadDirSaving;
+}
+els.downloadDirInput.onchange = saveDownloadDir;
+
+// flushDownloadDir is what the Updates page does as it is left (ADR-104). **A folder that was typed
+// is never dropped without a word.** The box saves on `change`, which leaving by mouse or by Tab
+// causes; a page put away by something else — a document arriving, a mode change from the
+// keyboard — fires none, so the page saves what is in the box as it goes. A folder the server
+// refuses is said in a toast, because the line beside the box is no longer on screen, and the box
+// goes back to the folder that is stored.
+async function flushDownloadDir() {
+  const typed = els.downloadDirInput.value.trim();
+  if (!downloadDirSaving && (typed === downloadDirSaved || typed === downloadDirRefused)) return;
+  if (await saveDownloadDir()) return;
+  if (activeAppPage === $('settingsUpdatesPage')) return; // she is back on the page, and the line says it
+  toast(`Download folder not changed. ${els.downloadDirError.textContent}`);
+  els.downloadDirInput.value = downloadDirSaved;
+  downloadDirRefused = null;
+  els.downloadDirError.hidden = true;
+}
 
 // ── Advanced features (`/pending 451`) ───────────────────────────────────────
 //
@@ -11586,14 +11802,14 @@ function setTool(mode) {
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
   // but are wired to setCompareMode, not the annotation tools.
-  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => setArmed(b, b.dataset.mode === view.activeTool));
+  all(TOOL_BUTTONS).forEach((b) => setArmed(b, b.dataset.mode === view.activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
   // drawing a border), and re-assert the selected color so the next highlight
   // uses it (not pdf.js yellow).
   reflectAnnoControls();
   if (view.activeTool === 'HIGHLIGHT') applyHighlightColor(selectedHlColor);
 }
-document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => {
+all(TOOL_BUTTONS).forEach((b) => {
   b.onclick = () => setTool(b.dataset.mode);
 });
 
@@ -12300,12 +12516,15 @@ const DOC_REQUIRED = [
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
 ];
 function setDocControls(enabled) {
+  // A page in front of the document is, for these, no document (ADR-104, `docShowing`). Here and
+  // not at the callers: a load finishing behind a page calls this with `true`.
+  if (activeAppPage) enabled = false;
   for (const id of DOC_REQUIRED) {
     const b = $(id); if (b) b.disabled = !enabled;
     all(`[data-forward="${id}"]`).forEach((t) => { t.disabled = !enabled; });
   }
   // The toolbar's Text/Highlight/Draw twins wire by data-mode, not data-forward.
-  all('[data-mode]').forEach((t) => { t.disabled = !enabled; });
+  all('button[data-mode]').forEach((t) => { t.disabled = !enabled; });
   reflectSignControls(); // keep the Flags-panel controls in step with open/closed
   reflectUndoControls(enabled);
 }
@@ -12790,7 +13009,7 @@ function resetSharedDocState(owner = view) {
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   view.activeTool = null;
   reflectPanCursor();
-  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => setArmed(b, false));
+  all(TOOL_BUTTONS).forEach((b) => setArmed(b, false));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';
   // Compare goes with the document it was computed against (D11).
@@ -14221,11 +14440,18 @@ const SIDEBAR_FOR = {
   // was missing for several browser checks and was caught by modes.test.mjs rather than by eye.
   settings: ['commands'],
 };
+// setCardOpen is the one writer of a command card's expanded state: the class that shows its body
+// and the `aria-expanded` that says so, together. **An entry (ADR-104) is never opened and never
+// given the attribute** — its group holds only the button that ⋯ More shows, and three loops that
+// each stamped `aria-expanded="false"` on every header would have announced nine Settings entries
+// as collapsed cards.
+function setCardOpen(g, on) {
+  if (g.hasAttribute('data-entry')) return;
+  g.classList.toggle('open', on);
+  if (g._head) g._head.setAttribute('aria-expanded', String(on));
+}
 function collapseGroupCards() {
-  for (const g of all('#commands .tbgroup')) {
-    g.classList.remove('open');
-    if (g._head) g._head.setAttribute('aria-expanded', 'false');
-  }
+  for (const g of all('#commands .tbgroup')) setCardOpen(g, false);
 }
 
 function syncSidebarForMode(tab) {
@@ -14247,6 +14473,12 @@ function syncSidebarForMode(tab) {
   // The returned-document sheet goes on ANY mode change: the new mode's tools act on the viewer it stands over, and the
   // control that opened it is now in a hidden pane, so restoring focus there would drop it to <body> (WCAG 2.4.3).
   closeReturnedSheet(false);
+  // **An app page belongs to a menu, and leaving that menu leaves the page** (ADR-104) — the
+  // rule the two sheets above already follow, for the reason given there: the new mode's tools
+  // act on the document, so the document is what must be showing. The page stays open in its tab.
+  // Only for a real mode change: `applyAdvanced` calls this with no mode to re-settle the sidebar,
+  // and it is called from a box ON a page.
+  if (tab && activeAppPage && activeAppPage.dataset.menu !== tab) leaveAppPage();
   // Loaded when the panel becomes reachable rather than on a timer or at boot. It reads the local
   // mirror, so it is cheap and needs no network — but it is also not free (the server opens each
   // record), and a user who never goes near Collaborate should not pay for it.
@@ -14271,6 +14503,10 @@ function syncSidebarForMode(tab) {
   // Originate/Receive containers — and became live the moment that pane became one `Simple Sign`
   // card: Collaborate stopped landing on Flags, which is a decision ADR-ranked comments in
   // SIDEBAR_FOR call out by name. Caught by tablist.test.mjs, not by looking at it.
+  //
+  // **Settings opens nothing (ADR-104), and needs no branch here to say so.** Its groups are
+  // entries; `setCardOpen` refuses one, so `openCard` on the first collapses every other card and
+  // opens none — and a page is opened only by the entry's own click, which this never makes.
   if (panels[0] === 'commands') {
     const first = document.querySelector('.tbtab.active > .tbgroup');
     if (first) openCard(first, first._head);
@@ -14477,8 +14713,19 @@ function buildSidebarAccordion() {
     head.textContent = g.dataset.label || '';
     head.dataset.step = String(n % 6);
     head.dataset.accent = accentAt(n);
-    head.setAttribute('aria-expanded', 'false');
+    g._head = head;
     g.parentElement.insertBefore(head, g);
+    // **A group marked `data-entry` is an ENTRY, not a card (ADR-104).** Its header opens a page
+    // and never expands, so it carries no `aria-expanded` — a state it does not have. It clicks
+    // the group's own button rather than opening the page itself: that button is the entry in
+    // ⋯ More when the sidebar is shut, so the two cannot come to do different things, and About's
+    // is `#aboutBtn` with the handler it has always had.
+    if (g.hasAttribute('data-entry')) {
+      head.dataset.entry = '';
+      head.onclick = () => g.querySelector('button')?.click();
+      continue;
+    }
+    head.setAttribute('aria-expanded', 'false');
       head.onclick = () => {
       openCard(g, head);
       // The steps list is read the moment its card opens, so that is when the profile signal is
@@ -14488,7 +14735,6 @@ function buildSidebarAccordion() {
         if (g.classList.contains('open')) refreshKeptProbe(true);
       }
     };
-    g._head = head;
   }
 }
 
@@ -14538,15 +14784,10 @@ function openCard(target, head) {
   // A click on the OPEN card closes it. Without this branch the header responded to every
   // click and only ever opened, so an expanded card could not be put away.
   if (target && target.classList.contains('open')) {
-    target.classList.remove('open');
-    if (target._head) target._head.setAttribute('aria-expanded', 'false');
+    setCardOpen(target, false);
     return;
   }
-  for (const g of all('#commands .tbgroup')) {
-    const on = g === target;
-    g.classList.toggle('open', on);
-    if (g._head) g._head.setAttribute('aria-expanded', String(on));
-  }
+  for (const g of all('#commands .tbgroup')) setCardOpen(g, g === target);
   if (head) all('.sbhead[data-panel]').forEach((t) => setExpanded(t, false));
   if (target && target.classList.contains('panel')) return; // the tab wiring handles panels
   all('.panel').forEach((p) => { if (p.id !== 'commands') p.classList.remove('active'); });
@@ -14747,6 +14988,9 @@ function keptStepExtra() {
 
 // goCard / goPanel are how a row navigates: switch mode, then reveal the surface. They go through
 // the same doors a click would (setMode, openCard, showPanel), so a step that moves keeps working.
+// For a Settings entry "reveal" is opening its page (ADR-104): the entry has no `aria-expanded`, so
+// the click below always happens, and it is the same click a user makes — a page already open is
+// brought forward, not opened twice.
 function goCard(tab, label) {
   setMode(tab);
   const head = [...all('#commands .sbhead.groupcard')].find((h) => h.textContent.trim() === label);
@@ -14969,6 +15213,7 @@ function ownsUndo(el) {
 window.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
   if (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y') return;
+  if (activeAppPage) return; // undo is the document's, and the document is not what is on screen
   if (ownsUndo(e.target) || document.querySelector('div[id$="Modal"]:not([hidden])')) return;
   e.preventDefault();
   e.stopPropagation(); // pdf.js's editor shortcut must not also fire; one press, one undo
@@ -14981,6 +15226,9 @@ window.addEventListener('keydown', (e) => {
 // via [hidden]; keep that naming so the guard below keeps catching them.
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey) {
+    // With a page in front, the keys that act on the document do nothing (ADR-104). Sidebar and
+    // Open still answer: neither needs a document on screen.
+    if (activeAppPage && 'sf=+-0'.includes(e.key)) { if (e.key === 's') e.preventDefault(); return; }
     if (e.key === 's') { e.preventDefault(); save(); }
     else if (e.key === 'b') { e.preventDefault(); toggleSidebar(); }
     else if (e.key === 'o') { e.preventDefault(); openOpenDialog(); }
@@ -14995,7 +15243,7 @@ window.addEventListener('keydown', (e) => {
     else if (e.key === '0') { e.preventDefault(); fitWidth(); }
     return;
   }
-  if (!view.pdfDocument || isTypingTarget(e.target)) return;
+  if (!docShowing() || isTypingTarget(e.target)) return;
   if (document.querySelector('div[id$="Modal"]:not([hidden])')) return;
   if (e.key === 'PageDown') { e.preventDefault(); nextPage(); }
   else if (e.key === 'PageUp') { e.preventDefault(); prevPage(); }
@@ -16640,8 +16888,9 @@ function openReturnedSheet() {
   els.returnedDoc.textContent = view.originalName || view.docMeta.name || view.docMeta.path || 'This document';
   els.returnedVerdict.textContent = '';
   resetReturnedCompare();
+  leaveAppPage(); // the sheet is about the document, so the document's surface is what it stands on
   els.returnedSheet.hidden = false;
-  els.viewerWrap.hidden = true;
+  syncMainArea();
   els.returnedHeading.focus();
   checkReturned(returnedState);
 }
@@ -16653,7 +16902,7 @@ function closeReturnedSheet(restoreFocus = true) {
   const { opener } = returnedState;
   returnedState = null;
   els.returnedSheet.hidden = true;
-  els.viewerWrap.hidden = false;
+  syncMainArea();
   // AFTER the flip: focusing into a hidden subtree is a silent no-op (see parkCeremonySheet). And for the same reason an
   // opener whose pane was hidden while the sheet was up (a card or panel closed without a mode change) is passed over
   // for whichever entry to the sheet is still shown, so focus lands somewhere rather than nowhere (/pending 813).
@@ -17073,9 +17322,10 @@ document.addEventListener('keydown', (e) => {
 function showCeremonySheet(open) {
   if (!els.ceremonySheet || !els.viewerWrap) return;
   // One sheet stands in place of the viewer at a time: the ceremony's takes the screen from a returned-document one.
-  if (open) closeReturnedSheet(false);
+  // …and from an app page, which stays open in its tab.
+  if (open) { closeReturnedSheet(false); leaveAppPage(); }
   els.ceremonySheet.hidden = !open;
-  els.viewerWrap.hidden = !!open;
+  syncMainArea(); // the one writer of #viewerWrap.hidden — a page in front stays in front
 }
 
 // ── Leaving the sheet for the document, and coming back (P03.S04, D3) ─────────────────────────

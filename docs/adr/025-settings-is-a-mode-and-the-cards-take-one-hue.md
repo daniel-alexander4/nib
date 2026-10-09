@@ -7,6 +7,7 @@
 versions of that one color. Or I could choose an theme that includes all of them."*
 **Supersedes:** ADR-021's *"there is no theme picker"* — for the COLOUR axis only. The light/dark
 choice is still the sun/moon toggle and still has no list.
+**Superseded in part by [ADR-104](104-a-settings-entry-opens-a-page.md)** (*"with its items as sidebar cards"* and *"each id is a named exemption"*: a Settings entry opens a page and expands nothing, and the settings are on the pages).
 **Applies:** anything added to Settings, and anything that colours a sidebar card.
 
 ## Decision

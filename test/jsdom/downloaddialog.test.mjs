@@ -252,7 +252,7 @@ async function type(v) {
 }
 
 test('Settings shows the folder in use and where it came from, in plain words', async () => {
-  assert.equal(box().closest('.tbgroup').dataset.label, 'Updates', 'the Download folder field is not in the Updates group');
+  assert.equal(box().closest('.apppage')?.id, 'settingsUpdatesPage', 'the Download folder field is not on the Updates page (ADR-104)');
   assert.equal(box().value, '', 'with nothing set in Nib the box is not empty');
   assert.equal(line(), `Updates download to ${FOLDER} — Chrome’s download folder.`);
   for (const jargon of [/XDG/i, /profile/i, /preferences/i, /default_directory/]) {
