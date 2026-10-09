@@ -240,7 +240,9 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       await page.waitForSelector(`#tabstrip .pagetab[data-apppage="${id}"]`, { state: 'detached' });
     },
 
-    // closeAppPages closes every page that is open — what a file that opened any leaves behind.
+    // closeAppPages closes the page that is open, if one is — what a file that opened any leaves
+    // behind. The pages share one tab (ADR-107), so this is one × at most; it reads the strip
+    // rather than assuming that.
     async closeAppPages() {
       for (const id of await page.$$eval('#tabstrip .pagetab', (ts) => ts.map((t) => t.dataset.apppage))) await this.closeAppPage(id);
     },

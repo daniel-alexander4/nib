@@ -340,9 +340,15 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     s = await look();
     assert.deepEqual([s.pages, s.sheet, s.pageTabs.includes('signingCeremonyPage')], [[], true, true], 'Convene did not raise the setup sheet in the page\'s place, or closed the page');
     await page.click('#cerSheetClose');
-    // Switched off with the page open in its tab: the page says so and offers the switch, not the flows.
-    await setCeremonies(false);
+    // Switched off with the page OPEN: the page says so and offers the switch, not the flows.
+    // **Through the box itself, not by opening its page** — the Advanced features page would take
+    // the ceremony page's tab (ADR-107: the pages share one), and the page under test would be
+    // closed before it had anything to say. The box is on a hidden page, so it is pressed from the
+    // script; its handler is the one a click runs.
     await page.click('#tabstrip .pagetab[data-apppage="signingCeremonyPage"]');
+    await page.waitForSelector('#signingCeremonyPage:not([hidden])');
+    await page.$eval('#advCeremonyChk', (c) => c.click());
+    await page.waitForFunction(() => document.getElementById('ceremony').hidden);
     const off = await page.evaluate(() => {
       const vis = (e) => !!e && e.getClientRects().length > 0;
       return { convene: vis(document.getElementById('cerPageConveneBtn')), accept: vis(document.getElementById('cerPageAcceptBtn')),
@@ -351,6 +357,7 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     assert.deepEqual(off, { convene: false, accept: false, said: true }, 'with ceremonies off the page offers the flows, or does not say they are off');
     await page.click('#signingCeremonyPage [data-advoff="ceremony"] button');
     await page.waitForSelector('#settingsAdvancedPage:not([hidden])');
+    assert.deepEqual((await look()).pageTabs, ['settingsAdvancedPage'], 'the switch\'s page did not take the ceremony page\'s tab');
   } finally {
     await setCeremonies(was);
     await h.closeAppPages();

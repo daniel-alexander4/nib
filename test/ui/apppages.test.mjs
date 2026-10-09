@@ -1,7 +1,9 @@
-// A menu entry opens a PAGE with its own tab in the main area (ADR-104).
+// A menu entry opens a PAGE in the main area (ADR-104), and the pages share ONE tab (ADR-107).
 //
 // Dan, 2026-10-08: "in the Settings menu, I would like each button to popup a nice page instead
-// of expanding in the menu", then "I prefer new tabs/pages over popups".
+// of expanding in the menu", then "I prefer new tabs/pages over popups"; and then "instead of each
+// button getting it's own tab, let's use a single tab and when I click on a new button it replaces
+// the content".
 //
 // ── Why this is tier 3 ────────────────────────────────────────────────────────
 // Every claim here is one jsdom cannot make. A page beside a REAL document — the document still
@@ -67,13 +69,13 @@ test('entering Settings shows nine entries, in order, and opens nothing', async 
   assert.deepEqual(s.expanded, [], `a Settings entry is expanded in the menu on arrival: ${s.expanded.join(', ')}`);
 });
 
-test('each entry opens its page with a tab of its own, with no document open; a second click opens no second tab; × closes it', async () => {
+test('each entry opens its page, named in the page tab, with no document open; a second click opens no second tab; × closes it', async () => {
   for (const [label, id] of PAGES) {
     assert.equal(await h.settingsPage(label), id, `${label} names a different page`);
     let s = await state();
     assert.deepEqual(s.pages, [id], `${label} did not put its page, and only its page, in the main area`);
     assert.equal(s.viewer, false, `the document area is still showing beside ${label}'s page`);
-    assert.deepEqual(s.pageTabs, [id], `${label}'s page has no tab of its own`);
+    assert.deepEqual(s.pageTabs, [id], `${label}'s page is not the one in the page tab`);
     assert.deepEqual(s.docTabs, [], `a document tab appeared for ${label}'s page — nothing is open`);
     assert.deepEqual(s.selected, [id], `${label}'s tab is not the selected one`);
     assert.equal(s.hasDoc, false, `${label}'s page made the app think a document is open`);
@@ -174,17 +176,24 @@ test('a page beside a document: the document is still the one document, inert wh
   assert.deepEqual(await docControls(), { saveBtn: false, printBtn: false, redactBtn: false, rotateLeftBtn: false, highlightToolBtn: false },
     'the document is back and its controls are still inert');
 
-  // Two documents and two pages: Close all is about the documents, and leaves the pages.
+  // Two documents and the page: Close all is about the documents, and leaves the page.
   await page.click(`#tabstrip .pagetab[data-apppage="${id}"]`);
   await page.waitForSelector(`#${id}:not([hidden])`);
   await h.openDocument(DOC_B, 2);
   s = await state();
   assert.deepEqual(s.pages, [], 'a document was opened and the page stayed in front of it');
   assert.equal(s.docTabs.length, 2);
+  // Another entry, with the first page open BEHIND a document: its page takes the tab the first
+  // one had — one page tab, where it was, after the documents' — and comes forward.
+  const strip = () => page.$$eval('#tabstrip > *', (ts) => ts.map((t) => (t.classList.contains('pagetab') ? t.getAttribute('aria-label') : 'document')));
+  assert.deepEqual(await strip(), ['document', 'document', 'Main menu, Settings page'], 'setup: the strip is not two documents and the Main menu page');
   await h.settingsPage('Vault');
   s = await state();
-  assert.deepEqual([s.docTabs.length, s.pageTabs.length, s.closeAll], [2, 2, true], 'two documents and two pages: Close all should be offered, for the documents');
-  if (process.env.NIB_UI_SHOTS) await page.screenshot({ path: join(process.env.NIB_UI_SHOTS, 'tabs-two-documents-two-pages.png') });
+  assert.deepEqual(await strip(), ['document', 'document', 'Vault, Settings page'],
+    'a second entry did not replace what the page tab shows — there are two page tabs, or the tab moved, or it still names the first page');
+  assert.deepEqual([s.pages, s.selected], [['settingsVaultPage'], ['settingsVaultPage']], 'the page that took the tab was opened behind the document');
+  assert.deepEqual([s.docTabs.length, s.pageTabs.length, s.closeAll], [2, 1, true], 'two documents and a page: Close all should be offered, for the documents');
+  if (process.env.NIB_UI_SHOTS) await page.screenshot({ path: join(process.env.NIB_UI_SHOTS, 'tabs-two-documents-one-page.png') });
 
   // The document behind the page is closed by its own ×, and the one that takes its place is
   // activated BEHIND the page: it is not showing either, so nothing of its comes alive.
@@ -213,9 +222,77 @@ test('a page beside a document: the document is still the one document, inert wh
   await page.click('#closeAllBtn');
   await h.documentClosed();
   s = await state();
-  assert.deepEqual([s.docTabs.length, s.pageTabs.length, s.closeAll, s.row], [0, 2, false, true], 'Close all should close both documents and leave both pages in their tabs');
-  assert.deepEqual(s.pages, ['settingsVaultPage'], 'Close all changed which page is in front');
+  assert.deepEqual([s.docTabs.length, s.pageTabs, s.closeAll, s.row], [0, ['settingsVaultPage'], false, true], 'Close all should close both documents and leave the page in its tab');
+  assert.deepEqual(s.pages, ['settingsVaultPage'], 'Close all took the page out of the front');
   await h.closeAppPages();
+});
+
+// ── One tab for the pages (ADR-107) ───────────────────────────────────────────
+//
+// What the tier below cannot say: that the tab is drawn in the SAME PLACE when its page changes
+// (a left edge), that a folder typed on the page being replaced reaches the real server, and that
+// focus is on the new page's heading in a browser.
+test('the pages share one tab: another entry replaces what it shows, where it was; the replaced page saved what was typed on it; Signing and Settings take turns in it', async () => {
+  await h.openDocument(DOC_A, 6);
+  const tab = () => page.$eval('#tabstrip', (strip) => {
+    const ts = [...strip.querySelectorAll('.pagetab')];
+    const t = ts[0];
+    return { count: ts.length, index: [...strip.children].indexOf(t), of: strip.children.length, left: Math.round(t.getBoundingClientRect().left),
+      page: t.dataset.apppage, kind: t.querySelector('.tabkind').textContent, name: t.querySelector('.tabname').textContent,
+      label: t.getAttribute('aria-label'), controls: t.getAttribute('aria-controls'), selected: t.getAttribute('aria-selected'),
+      close: t.querySelector('.tabclose').getAttribute('aria-label') };
+  });
+  const stored = () => page.evaluate(async () => (await (await window.nibFetch('/api/status')).json()).downloadDirSet || '');
+  const good = tmpdir();
+  try {
+    await h.settingsPage('Updates');
+    await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent), null, { timeout: 15000 });
+    const first = await tab();
+    assert.deepEqual([first.count, first.index, first.of, first.label], [1, 1, 2, 'Updates, Settings page'], 'setup: the strip is not one document and the Updates page');
+
+    // A folder typed, and another entry clicked straight from the box.
+    await page.fill('#downloadDirInput', good);
+    await h.settingsPage('Colours');
+    let t = await tab();
+    assert.deepEqual(t, { ...first, page: 'settingsColoursPage', name: 'Colours', label: 'Colours, Settings page', controls: 'settingsColoursPage', close: 'Close the Colours page' },
+      'Colours did not take the tab Updates had: a second page tab, or the tab moved, or it does not name the page showing');
+    let s = await state();
+    assert.deepEqual([s.pages, s.selected, s.docTabs.length], [['settingsColoursPage'], ['settingsColoursPage'], 1]);
+    assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Colours', `the page that took the tab has focus on ${s.focus.tag}#${s.focus.id} "${s.focus.text}", not on its heading`);
+    await page.waitForFunction(async (g) => (await (await window.nibFetch('/api/status')).json()).downloadDirSet === g, good, { timeout: 15000 }).catch(() => {});
+    assert.equal(await stored(), good, 'the Updates page was replaced by another and the folder typed on it was never saved');
+
+    // A Signing page takes the same tab, and says Signing.
+    assert.equal(await h.appPage('collaborate', 'Simple Sign'), 'signingStepsPage');
+    t = await tab();
+    assert.deepEqual(t, { ...first, page: 'signingStepsPage', kind: 'Signing', name: 'Simple Sign', label: 'Simple Sign, Signing page', controls: 'signingStepsPage', close: 'Close the Simple Sign page' },
+      'a Signing page did not take the tab a Settings page held');
+    assert.deepEqual((await state()).pages, ['signingStepsPage']);
+
+    // And a Settings page takes it back, from behind the document this time.
+    await page.click('#tabstrip .tab:not(.pagetab) .tabname');
+    await page.waitForSelector('#signingStepsPage', { state: 'hidden' });
+    await h.settingsPage('Read Aloud');
+    t = await tab();
+    assert.deepEqual(t, { ...first, page: 'settingsReadAloudPage', name: 'Read Aloud', label: 'Read Aloud, Settings page', controls: 'settingsReadAloudPage', close: 'Close the Read Aloud page' },
+      'a Settings page did not take the tab back from a Signing page that was behind the document');
+    s = await state();
+    assert.deepEqual([s.pages, s.viewer], [['settingsReadAloudPage'], false], 'the page that took the tab stayed behind the document');
+
+    // The × closes the page, and with it the only page tab.
+    await h.closeAppPage('settingsReadAloudPage');
+    s = await state();
+    assert.deepEqual([s.pages, s.pageTabs, s.viewer, s.docTabs.length], [[], [], true, 1], 'the × did not close the page and bring the document back');
+  } finally {
+    // Leave the shared server as it was found.
+    await h.closeAppPages();
+    const id = await h.settingsPage('Updates');
+    await page.fill('#downloadDirInput', '');
+    await h.closeAppPage(id);
+    await page.waitForFunction(async () => !((await (await window.nibFetch('/api/status')).json()).downloadDirSet), null, { timeout: 15000 });
+    await h.closeDocument();
+    await h.documentClosed();
+  }
 });
 
 test('by keyboard: Enter on an entry opens its page; its tab is in the strip\'s arrow order with the document\'s; × by keyboard closes it', async () => {
@@ -345,9 +422,8 @@ test('with the sidebar shut the nine entries are in ⋯ More, and each opens its
       await page.click(`${MORE} .dropdown button:text-is("${label}…")`);
       await page.waitForSelector(`#${id}:not([hidden])`);
       const s = await state();
-      assert.ok(s.pageTabs.includes(id) && s.focus.tag === 'H2', `${label} from ⋯ More: tabs ${s.pageTabs.join(',')}, focus on ${s.focus.tag}`);
+      assert.ok(s.pageTabs.length === 1 && s.pageTabs[0] === id && s.focus.tag === 'H2', `${label} from ⋯ More: tabs ${s.pageTabs.join(',')}, focus on ${s.focus.tag}`);
     }
-    assert.equal((await state()).pageTabs.length, 8, 'eight pages opened from ⋯ More are not eight tabs');
   } finally {
     await h.closeAppPages();
     await h.showSidebar();
@@ -393,8 +469,9 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         assert.ok(m.windowSideways <= 0, `at ${width}px the window scrolls sideways by ${m.windowSideways}px with ${label}'s page up`);
         assert.deepEqual(m.past, [], `at ${width}px these run past the edge of ${label}'s page: ${m.past.join(', ')}`);
       }
-      // All eight tabs are in the strip now; the strip scrolls and the window does not.
-      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px eight page tabs push the window sideways`);
+      // Eight entries, one tab — the last page's; the strip does not push the window sideways.
+      assert.equal((await state()).pageTabs.length, 1, `at ${width}px eight entries left more than the one page tab`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px the page tab pushes the window sideways`);
       await h.closeAppPages();
     }
   } finally {

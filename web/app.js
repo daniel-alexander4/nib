@@ -285,8 +285,9 @@ const els = {
 // on the twin. Declared here, not beside the sheet's functions, because activateView and closeDocument read it.
 let returnedState = null;
 
-// The app pages that are open, in the order they were opened, and the one standing in the main
-// area (ADR-104). Elements, not ids. **Beside `views` and never in it**: a page is not a document,
+// The app page that is open — **never more than one (ADR-107)**: the pages share one tab, and
+// opening another replaces what it shows — and whether it is the thing standing in the main area
+// (ADR-104). Elements, not ids. **Beside `views` and never in it**: a page is not a document,
 // and every law about documents — operation pinning, the `X-Nib-Doc` header, the two budgets, the
 // three mutators of `views` — keys on a view being one. Declared here because `setDocControls`
 // reads `activeAppPage` in the boot block.
@@ -3052,11 +3053,14 @@ function syncTabs() {
     b.appendChild(x);
     strip.appendChild(b);
   }
-  // The page tabs, after the documents', in the order the pages were opened. The same shape as a
-  // document's tab — a div with role="tab" and a real × inside — so the strip's roving order, its
-  // arrow keys and the focus rule above reach them with nothing added. Told apart by the word in
-  // front of the name (`.tabkind`, the page's `data-group`), not by colour, and named for what it
-  // is: "Updates, Settings page".
+  // The page tab, after the documents' — ONE, for whichever page is open (ADR-107): `openAppPages`
+  // never holds more than one, so the tab is always the strip's last and a page that replaces
+  // another is drawn where the other was. The same shape as a document's tab — a div with
+  // role="tab" and a real × inside — so the strip's roving order, its arrow keys and the focus
+  // rule above reach it with nothing added (the focus rule is by POSITION, which is why a tab
+  // rebuilt for another page keeps the focus it held). Told apart by the word in front of the
+  // name (`.tabkind`, the page's `data-group`), not by colour, and named for the page it is
+  // showing: "Updates, Settings page".
   for (const p of openAppPages) {
     const front = p === activeAppPage;
     const b = document.createElement('div');
@@ -3091,12 +3095,13 @@ function syncTabs() {
   if (focusedIndex >= 0) strip.children[Math.min(focusedIndex, strip.children.length - 1)]?.focus();
 }
 
-// ── App pages: a menu entry opens a page with its own tab (ADR-104) ──────────────────────────
+// ── App pages: a menu entry opens a page, and the pages share ONE tab (ADR-104, ADR-107) ─────
 //
 // A page is a `.apppage` section in `#viewerCol`. It stands in the main area in place of the
 // viewer, as the two sheets do, and it has a tab in the strip. `openAppPages` is the registry of
-// what is open and `activeAppPage` the one showing; the functions below are their only writers
-// (`test/jsdom/apppages.test.mjs` refuses another).
+// what is open — one page at most, since ADR-107 — and `activeAppPage` is that page while it is
+// the thing showing; the functions below are their only writers (`test/jsdom/apppages.test.mjs`
+// refuses another).
 //
 // **How a menu registers a page: markup only.** A `<section class="sheet apppage">` with an id,
 // `data-group`, `data-menu`, `data-title` and a focusable heading; and a button anywhere with
@@ -3153,7 +3158,7 @@ function reflectDocShowing() {
   }
 }
 
-// showAppPage puts one open page in front. The sheets yield through their own doors — the
+// showAppPage puts the open page in front. The sheets yield through their own doors — the
 // returned-document sheet closes and a ceremony setup parks, exactly as on a mode change — and
 // the document is quiesced the way a tab switch quiesces it: a drag in flight, reading aloud and
 // a dialog about that document do not carry on behind a page.
@@ -3172,19 +3177,26 @@ function showAppPage(p) {
   appPageShow[p.id]?.();
 }
 
-// openAppPage is what an entry does: open the page if it is not open, bring it forward if it is —
-// never a second copy — and put focus on its heading, so a keyboard or screen-reader user lands
-// on the page's name rather than staying on a menu entry beside it.
+// openAppPage is what an entry does: bring the page forward if it is the one open, and otherwise
+// put it in the page tab IN PLACE OF whatever page that tab held (ADR-107) — and put focus on its
+// heading, so a keyboard or screen-reader user lands on the page's name rather than staying on a
+// menu entry beside it.
+//
+// **The page it replaces is left exactly once, and this adds no call to do it.** In front, it is
+// still `activeAppPage` when `showAppPage` runs, which leaves it (`appPageLeave`) as it leaves
+// any page it takes the screen from. Behind a document it was left when the document came
+// forward, and is not left again — a second leave would save the Download folder box a second
+// time, from a page nobody had touched since.
 function openAppPage(id) {
   const p = $(id);
   if (!p || !p.classList.contains('apppage')) return;
-  if (!openAppPages.includes(p)) openAppPages.push(p);
+  if (!openAppPages.includes(p)) openAppPages.splice(0, openAppPages.length, p);
   showAppPage(p);
   p.querySelector('h2')?.focus();
 }
 
 // leaveAppPage goes back to the document — or to the empty state, with none open. The page stays
-// open in its tab. A no-op with no page in front, so every caller that is about to show a
+// open in the page tab. A no-op with no page in front, so every caller that is about to show a
 // document can call it without asking.
 function leaveAppPage() {
   const from = activeAppPage;
@@ -3197,7 +3209,7 @@ function leaveAppPage() {
 }
 
 // closeAppPage is the page tab's ×. Closing the page in front shows the document again; closing
-// another leaves what is showing alone.
+// it from behind a document leaves what is showing alone.
 function closeAppPage(p) {
   const i = openAppPages.indexOf(p);
   if (i < 0) return;

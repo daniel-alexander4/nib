@@ -12,6 +12,7 @@ things: the flag tools, the Simple Sign checklist, the Send & Receive card and t
 `setMarkerMode`, `goCard` / `goPanel`, `applyAdvanced`, `applyModeVisibility`, `renderSignSteps` and
 `ceremonyPanelFromPage` in `web/app.js`; *The Signing pages* in `web/style.css`.
 **Supersedes:** nothing.
+**Superseded in part by [ADR-107](107-the-pages-share-one-tab.md)** (§1's *"with its own tab"*, and the plural in §8's *"every open page"*: a page opens in the one tab the pages share, so at most one is open. Which entries open a page, and everything else here, stands.)
 **Extends:** ADR-104 — its mechanism is used as it stands and gains one hook (`appPageShow`) and
 one rule (a hidden menu's pages close). ADR-036 (a hidden mode) and the Advanced-features switches
 keep their rules and now reach pages.
