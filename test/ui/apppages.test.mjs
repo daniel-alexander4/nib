@@ -23,14 +23,15 @@ const h = await launch();
 const { page } = h;
 after(() => shutdown(h));
 
-// The nine entries, in the order the menu shows them. Each opens a page — About too, since
+// The seven entries, in the order the menu shows them (seven since ADR-109: Updates, Advanced features
+// and Main menu are the sections of Toggle Features). Each opens a page — About too, since
 // ADR-108; it opened a dialog until then.
 const PAGES = [
-  ['Appearance', 'settingsAppearancePage'], ['Colours', 'settingsColoursPage'], ['Main menu', 'settingsMenuPage'],
-  ['Read Aloud', 'settingsReadAloudPage'], ['Updates', 'settingsUpdatesPage'], ['Advanced features', 'settingsAdvancedPage'],
+  ['Appearance', 'settingsAppearancePage'], ['Colours', 'settingsColoursPage'],
+  ['Read Aloud', 'settingsReadAloudPage'], ['Toggle Features', 'settingsFeaturesPage'],
   ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['About', 'settingsAboutPage'],
 ];
-const NINE = PAGES.map((p) => p[0]);
+const ENTRIES = PAGES.map((p) => p[0]);
 const ENTRY = '#commands .tbtab[data-tab="settings"] .sbhead.groupcard';
 const MORE = '#toolbar .tbtab[data-tab="settings"] .tbmore';
 
@@ -53,11 +54,11 @@ const state = () => page.evaluate(() => {
   };
 });
 
-test('entering Settings shows nine entries, in order, and opens nothing', async () => {
+test('entering Settings shows seven entries, in order, and opens nothing', async () => {
   await h.mode('settings');
   const entries = await page.$$eval(ENTRY, (es) => es.filter((e) => e.getClientRects().length).map((e) => ({
     text: e.textContent.trim(), tag: e.tagName, expanded: e.getAttribute('aria-expanded') })));
-  assert.deepEqual(entries.map((e) => e.text), NINE, 'the Settings menu is not the nine entries in their order');
+  assert.deepEqual(entries.map((e) => e.text), ENTRIES, 'the Settings menu is not the seven entries in their order');
   for (const e of entries) {
     assert.equal(e.tag, 'BUTTON', `${e.text} is not a button`);
     assert.equal(e.expanded, null, `${e.text} carries aria-expanded="${e.expanded}" — it announces a card that expands, and it opens a page`);
@@ -204,7 +205,7 @@ test('a page beside a document: the document is still the one document, inert wh
   assert.deepEqual(await docControls(), { saveBtn: false, printBtn: false, redactBtn: false, rotateLeftBtn: false, highlightToolBtn: false },
     'setup: the document\'s controls are not enabled with it showing, so their going inert cannot be seen');
 
-  const id = await h.settingsPage('Main menu');
+  const id = await h.settingsPage('Toggle Features');
   let s = await state();
   assert.deepEqual(s.docTabs.length, 1, `with a page open the strip counts ${s.docTabs.length} documents — one is open`);
   assert.deepEqual(s.pageTabs, [id]);
@@ -253,7 +254,7 @@ test('a page beside a document: the document is still the one document, inert wh
   // Another entry, with the first page open BEHIND a document: its page takes the tab the first
   // one had — one page tab, where it was, after the documents' — and comes forward.
   const strip = () => page.$$eval('#tabstrip > *', (ts) => ts.map((t) => (t.classList.contains('pagetab') ? t.getAttribute('aria-label') : 'document')));
-  assert.deepEqual(await strip(), ['document', 'document', 'Main menu, Settings page'], 'setup: the strip is not two documents and the Main menu page');
+  assert.deepEqual(await strip(), ['document', 'document', 'Toggle Features, Settings page'], 'setup: the strip is not two documents and the Toggle Features page');
   await h.settingsPage('Vault');
   s = await state();
   assert.deepEqual(await strip(), ['document', 'document', 'Vault, Settings page'],
@@ -312,22 +313,22 @@ test('the pages share one tab: another entry replaces what it shows, where it wa
   const stored = () => page.evaluate(async () => (await (await window.nibFetch('/api/status')).json()).downloadDirSet || '');
   const good = tmpdir();
   try {
-    await h.settingsPage('Updates');
+    await h.settingsPage('Toggle Features');
     await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent), null, { timeout: 15000 });
     const first = await tab();
-    assert.deepEqual([first.count, first.index, first.of, first.label], [1, 1, 2, 'Updates, Settings page'], 'setup: the strip is not one document and the Updates page');
+    assert.deepEqual([first.count, first.index, first.of, first.label], [1, 1, 2, 'Toggle Features, Settings page'], 'setup: the strip is not one document and the Toggle Features page');
 
     // A folder typed, and another entry clicked straight from the box.
     await page.fill('#downloadDirInput', good);
     await h.settingsPage('Colours');
     let t = await tab();
     assert.deepEqual(t, { ...first, page: 'settingsColoursPage', name: 'Colours', label: 'Colours, Settings page', controls: 'settingsColoursPage', close: 'Close the Colours page' },
-      'Colours did not take the tab Updates had: a second page tab, or the tab moved, or it does not name the page showing');
+      'Colours did not take the tab Toggle Features had: a second page tab, or the tab moved, or it does not name the page showing');
     let s = await state();
     assert.deepEqual([s.pages, s.selected, s.docTabs.length], [['settingsColoursPage'], ['settingsColoursPage'], 1]);
     assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Colours', `the page that took the tab has focus on ${s.focus.tag}#${s.focus.id} "${s.focus.text}", not on its heading`);
     await page.waitForFunction(async (g) => (await (await window.nibFetch('/api/status')).json()).downloadDirSet === g, good, { timeout: 15000 }).catch(() => {});
-    assert.equal(await stored(), good, 'the Updates page was replaced by another and the folder typed on it was never saved');
+    assert.equal(await stored(), good, 'the Toggle Features page was replaced by another and the folder typed on it was never saved');
 
     // A Signing page takes the same tab, and says Signing.
     assert.equal(await h.appPage('collaborate', 'Simple Sign'), 'signingStepsPage');
@@ -353,7 +354,7 @@ test('the pages share one tab: another entry replaces what it shows, where it wa
   } finally {
     // Leave the shared server as it was found.
     await h.closeAppPages();
-    const id = await h.settingsPage('Updates');
+    const id = await h.settingsPage('Toggle Features');
     await page.fill('#downloadDirInput', '');
     await h.closeAppPage(id);
     await page.waitForFunction(async () => !((await (await window.nibFetch('/api/status')).json()).downloadDirSet), null, { timeout: 15000 });
@@ -423,7 +424,7 @@ test('a setting changed on a page is saved, and still set when the page is opene
 });
 
 test('a download folder typed and then left is saved, or said to be refused — never dropped', async () => {
-  const id = await h.settingsPage('Updates');
+  const id = await h.settingsPage('Toggle Features');
   await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent), null, { timeout: 15000 });
   const good = tmpdir();
   const stored = () => page.evaluate(async () => (await (await window.nibFetch('/api/status')).json()).downloadDirSet || '');
@@ -437,13 +438,13 @@ test('a download folder typed and then left is saved, or said to be refused — 
 
   // A folder that is not there, and the page closed straight from the box: the refusal is said
   // where it can still be seen, and the box goes back to the folder that is stored.
-  await h.settingsPage('Updates');
+  await h.settingsPage('Toggle Features');
   assert.equal(await page.inputValue('#downloadDirInput'), good, 'the folder is not in the box when the page is opened again');
   await page.fill('#downloadDirInput', join(good, 'no', 'such', 'folder'));
   await h.closeAppPage(id);
   await page.waitForFunction(() => /Download folder not changed\..*could not find that folder/.test(document.getElementById('toast')?.textContent || ''), null, { timeout: 15000 });
   assert.equal(await stored(), good, 'a refused folder replaced the stored one');
-  await h.settingsPage('Updates');
+  await h.settingsPage('Toggle Features');
   assert.equal(await page.inputValue('#downloadDirInput'), good, 'after a refused folder the box does not show the folder that is stored');
   assert.equal(await page.isHidden('#downloadDirError'), true, 'the refusal is showing over a box that no longer holds the refused text');
 
@@ -467,7 +468,7 @@ test('a button on a page opens its dialog over the page, and the dialog gives fo
   await h.closeAppPage(id);
 });
 
-test('with the sidebar shut the nine entries are in ⋯ More, and each opens its page', async () => {
+test('with the sidebar shut the seven entries are in ⋯ More, and each opens its page', async () => {
   await h.mode('settings');
   await page.click('#toggleSidebarBtn');
   await page.waitForFunction(() => document.getElementById('sidebar').classList.contains('collapsed'));
@@ -480,7 +481,7 @@ test('with the sidebar shut the nine entries are in ⋯ More, and each opens its
         captions: [...d.querySelectorAll('.menucap')].filter(vis).length,
         other: [...d.querySelectorAll('input, select, p, label')].filter(vis).length };
     }, MORE);
-    assert.deepEqual(listed.buttons, NINE.map((n) => n + '…'), '⋯ More does not hold the nine entries in their order');
+    assert.deepEqual(listed.buttons, ENTRIES.map((n) => n + '…'), '⋯ More does not hold the seven entries in their order');
     assert.equal(listed.captions, 0, 'each entry is listed twice — a caption and a button of the same name');
     assert.equal(listed.other, 0, 'a setting is still drawn inside the menu');
     await page.keyboard.press('Escape');
@@ -503,9 +504,9 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
   // in one name with no space and no hyphen to break at, which is wider than either window.
   const long = join(tmpdir(), 'nib_' + 'a_long_folder_name_with_no_space_in_it_'.repeat(3) + Date.now());
   mkdirSync(long, { recursive: true });
-  const updates = await h.settingsPage('Updates');
+  const updates = await h.settingsPage('Toggle Features');
   await page.fill('#downloadDirInput', long);
-  await page.focus('#settingsUpdatesPage h2');
+  await page.focus('#settingsFeaturesPage h2');
   await page.waitForFunction((l) => document.getElementById('downloadDirWhere').textContent.includes(l), long, { timeout: 15000 });
   await h.closeAppPage(updates);
   // The mode is chosen before the window narrows: below 850px the mode strip is a dropdown.
@@ -518,7 +519,7 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         await page.click(`${MORE} .menutop`);
         await page.click(`${MORE} .dropdown button:text-is("${label}…")`);
         await page.waitForSelector(`#${id}:not([hidden])`);
-        if (id === 'settingsUpdatesPage') {
+        if (id === 'settingsFeaturesPage') {
           // The longest thing any page shows is the folder line, and a path has no spaces to break at.
           await page.waitForFunction(() => document.getElementById('downloadDirWhere').textContent.length > 0, null, { timeout: 15000 });
         }
@@ -546,8 +547,8 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         assert.deepEqual(m.past, [], `at ${width}px these run past the edge of ${label}'s page: ${m.past.join(', ')}`);
         if (id === 'settingsAboutPage') await aboutDocsAway();
       }
-      // Nine entries, one tab — the last page's; the strip does not push the window sideways.
-      assert.equal((await state()).pageTabs.length, 1, `at ${width}px nine entries left more than the one page tab`);
+      // Seven entries, one tab — the last page's; the strip does not push the window sideways.
+      assert.equal((await state()).pageTabs.length, 1, `at ${width}px seven entries left more than the one page tab`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px the page tab pushes the window sideways`);
       await h.closeAppPages();
     }
@@ -559,9 +560,9 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
     await aboutDocsAway();
     await h.closeAppPages();
     // Leave the shared server as it was found.
-    await h.settingsPage('Updates');
+    await h.settingsPage('Toggle Features');
     await page.fill('#downloadDirInput', '');
-    await page.focus('#settingsUpdatesPage h2');
+    await page.focus('#settingsFeaturesPage h2');
     await page.waitForFunction(() => !document.getElementById('downloadDirWhere').textContent.includes('a_long_folder_name'), null, { timeout: 15000 });
     await h.closeAppPages();
   }
@@ -575,7 +576,7 @@ test('pictures of the pages in both themes, when asked for', { skip: !process.en
   try {
     for (const theme of [start, start === 'light' ? 'dark' : 'light']) {
       await page.evaluate((t) => { document.documentElement.dataset.appearance = t; }, theme);
-      for (const [label, file] of [['Updates', 'updates'], ['Advanced features', 'advanced'], ['Identity & Keys', 'identity'], ['Colours', 'colours'], ['About', 'about']]) {
+      for (const [label, file] of [['Toggle Features', 'features'], ['Identity & Keys', 'identity'], ['Colours', 'colours'], ['About', 'about']]) {
         await h.settingsPage(label);
         await page.screenshot({ path: join(dir, `page-${file}-${theme}.png`) });
       }

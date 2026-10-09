@@ -21,7 +21,7 @@ import (
 // The four places a folder can come from, in the order they are tried. Published on /api/status as
 // `downloadDirFrom`; the page turns each into words.
 const (
-	downloadFromSetting = "setting" // Settings → Updates → Download folder
+	downloadFromSetting = "setting" // Settings → Toggle Features → Updates → Download folder
 	downloadFromBrowser = "browser" // set in the browser Nib's window is running in
 	downloadFromSystem  = "system"  // the system Downloads folder — every browser's own default
 	downloadFromNib     = "nib"     // ~/nib, when none of the above is an existing folder

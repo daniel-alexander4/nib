@@ -493,6 +493,9 @@ input[type="search"] { width: 100%; }
 .pagebody h2 { margin: -8px 0 0; font-size: 22px; font-weight: 600; }
 .pagebody h2:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 4px; }
 .pagelead { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }
+/* A page with more than one subject (Toggle Features, ADR-109) heads each with one of these: the
+   rule and the space above are what say "a different kind of switch starts here". */
+.pagebody h3.pagesection { margin: 14px 0 -6px; padding-top: 18px; width: 100%; border-top: 1px solid var(--surface0); font-size: 16px; font-weight: 600; }
 .setrow {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0;
   background: var(--mantle); border: 1px solid var(--surface0); border-radius: 10px; padding: 14px 16px;
@@ -505,7 +508,7 @@ input[type="search"] { width: 100%; }
   border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; max-width: 440px; min-width: 0;
 }
 .sethelp, .setstatus { margin: 0; font-size: 13px; line-height: 1.45; }
-/* Settings → Updates → Download folder (ADR-102). The line that says which folder is in use is
+/* Settings → Toggle Features → Updates → Download folder (ADR-102). The line that says which folder is in use is
    the one thing the field is there to show, and a path has no spaces to break at: as a sidebar
    card the 260px box ran off a 200px column and cut that line. A path breaks wherever it has to. */
 .setstatus, .pagebody .cererror { overflow-wrap: anywhere; }

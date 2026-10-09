@@ -86,7 +86,7 @@ func stubDownloadSources(t *testing.T, browserDir, browserName, system string) {
 	t.Cleanup(func() { browserDownloadFolder, systemDownloads = oldB, oldS })
 }
 
-// useDownloadDir sets Settings → Updates → Download folder, the way the page does.
+// useDownloadDir sets Settings → Toggle Features → Updates → Download folder, the way the page does.
 func useDownloadDir(t *testing.T, ts *httptest.Server, c *http.Client, csrf, dir string) {
 	t.Helper()
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/settings", "application/json",

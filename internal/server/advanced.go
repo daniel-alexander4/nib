@@ -87,7 +87,7 @@ func refuseIfOff(w http.ResponseWriter, v *vault.Vault, f advancedFeature) bool 
 		return false
 	}
 	httpError(w, http.StatusForbidden,
-		"this machine has "+f.String()+" switched off — turn it back on under Settings → Advanced features")
+		"this machine has "+f.String()+" switched off — turn it back on under Settings → Toggle Features")
 	return true
 }
 

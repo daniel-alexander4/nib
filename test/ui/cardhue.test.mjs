@@ -34,9 +34,9 @@ test('choosing a hue repaints every card into one colour', async () => {
   // Document/`edit` until v1.128.25 moved Edit Page Text and Recognize Text to Mark Up, which
   // left that mode with five — measured, as `only 5 cards are showing`. Settings has six.
   // ADR-035 then took Tag Structure out of `edit` as well, which is why this reads Settings and
-  // not the mode with the most cards at any given moment. Since ADR-104 the nine in Settings open
+  // not the mode with the most cards at any given moment. Since ADR-104 the entries in Settings open
   // pages instead of expanding; they are still the sidebar's coloured headers, painted by the
-  // same rule, and nine of them is still the most any mode puts on screen.
+  // same rule, and seven of them (ADR-109) is still enough for the six-step ladder.
   await h.mode('settings');
   const rainbow = await cards();
   assert.ok(rainbow.length >= 6,
@@ -88,16 +88,16 @@ test('this file leaves the shared server as it found it', async () => {
     'the rotation did not come back — `all` is the ABSENCE of the attribute, and a leftover value follows this server into the next file');
 });
 
-// Settings → Updates → Download folder (ADR-102). Here rather than in a file of its own because
+// Settings → Toggle Features → Updates → Download folder (ADR-102). Here rather than in a file of its own because
 // this file already drives the Settings cards, and a new file moves the harness's file-count pin.
 //
 // **Only a browser can see this.** As a sidebar card the box was 260px in a 199px column and the
-// line naming the folder in use was cut mid-path. It is on the Updates page now (ADR-104), which
+// line naming the folder in use was cut mid-path. It is on the Toggle Features page now (ADR-104, ADR-109), which
 // is wider — and the same question still has to be asked of it, because a path has no spaces to
 // break at and a setting's block is a flex column too. jsdom has no layout, so its tests of the same field
 // were green throughout.
 test('the Download folder field, its folder line and its refusal all fit inside the page', async () => {
-  const pageId = await h.settingsPage('Updates');
+  const pageId = await h.settingsPage('Toggle Features');
   // The line is the real server's answer for this machine, whatever folder that is.
   await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent),
     null, { timeout: 15000 });
@@ -115,7 +115,7 @@ test('the Download folder field, its folder line and its refusal all fit inside 
     };
   });
   assert.match(m.error, /could not find that folder/, `the refusal shown is not the server's sentence: "${m.error}"`);
-  assert.ok(m.scroll <= m.client, `the Updates page's contents are ${m.scroll}px wide in a ${m.client}px page — they run off its edge`);
+  assert.ok(m.scroll <= m.client, `the Toggle Features page's contents are ${m.scroll}px wide in a ${m.client}px page — they run off its edge`);
   for (const [id, r] of m.parts) {
     assert.ok(r <= m.edge, `#${id} ends at ${r}px, past the page's edge at ${m.edge}px — what it says is cut off`);
   }

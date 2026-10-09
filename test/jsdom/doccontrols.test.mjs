@@ -127,7 +127,7 @@ const EXEMPT = new Set([
   'quitBtn',
   // The Settings pane (v1.126.0). None of it acts on the open document, so requiring a document
   // would make Settings unreachable on a fresh install, which is exactly when it is needed. Since
-  // ADR-104 the pane holds the nine entries and nothing else, and since ADR-108 none of them has
+  // ADR-104 the pane holds entries and nothing else (seven since ADR-109), and since ADR-108 none of them has
   // an id (About's was the last): `managePeersBtn`, `manageKeysBtn` and `backupBtn` are on Settings
   // pages, in the main area, which this scan of the toolbar does not read and DOC_REQUIRED never
   // reached. So this pane needs no name here.

@@ -572,7 +572,7 @@
            **Each entry opens a PAGE; none expands in the menu and none is a popup (ADR-104).
            The pages share ONE tab, and an entry replaces what it shows (ADR-107).** Dan, 2026-10-08: "in the Settings menu, I would like each button to
            popup a nice page instead of expanding in the menu", then "I prefer new tabs/pages over
-           popups". The nine were accordion cards like every other mode's, and a card is a 200px
+           popups". The entries were accordion cards like every other mode's, and a card is a 200px
            column: Updates had a text field, a status line and a refusal in it, and Advanced
            features and Main menu each a paragraph. So a group here is an ENTRY (`data-entry`)
            holding ONE button, and the button names its page (`data-apppage`); the page is a
@@ -582,27 +582,25 @@
            it is shut — both open the same page. Nothing moves between the menu and a page at run
            time, so nothing can be left half-moved.
 
-           About is a page like the other eight (ADR-108). It was a dialog until then — the one
+           About is a page like the others (ADR-108). It was a dialog until then — the one
            entry ADR-104 left as it was. -->
       <!-- The order is by what an entry is for (Dan, 2026-10-08: "some semblance of an intuitive order"): how Nib
-           looks and reads, then what it does on its own, then your identity and its backup, and About last. -->
+           looks and reads, then what it does and offers, then your identity and its backup, and About last.
+
+           **Toggle Features is ONE entry for what were three** — Updates, Advanced features and Main menu
+           (ADR-109; Dan, 2026-10-09: "combine updates, Advanced Features and Main Menu into one, called Toggle
+           Features"). They are three SECTIONS of one page, never one list of boxes: see the page. -->
       <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
 <button class="pageentry" data-apppage="settingsAppearancePage">Appearance…</button>
             </div>
       <div class="tbgroup" data-label="Colours" data-fold="6" data-entry>
 <button class="pageentry" data-apppage="settingsColoursPage">Colours…</button>
             </div>
-      <div class="tbgroup" data-label="Main menu" data-fold="7" data-entry>
-<button class="pageentry" data-apppage="settingsMenuPage">Main menu…</button>
-            </div>
       <div class="tbgroup" data-label="Read Aloud" data-fold="4" data-entry>
 <button class="pageentry" data-apppage="settingsReadAloudPage">Read Aloud…</button>
             </div>
-      <div class="tbgroup" data-label="Updates" data-fold="3" data-entry>
-<button class="pageentry" data-apppage="settingsUpdatesPage">Updates…</button>
-            </div>
-      <div class="tbgroup" data-label="Advanced features" data-fold="7" data-entry>
-<button class="pageentry" data-apppage="settingsAdvancedPage">Advanced features…</button>
+      <div class="tbgroup" data-label="Toggle Features" data-fold="7" data-entry>
+<button class="pageentry" data-apppage="settingsFeaturesPage">Toggle Features…</button>
             </div>
       <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1" data-entry>
 <button class="pageentry" data-apppage="settingsIdentityPage">Identity &amp; Keys…</button>
@@ -894,10 +892,32 @@
           </div>
         </div>
       </section>
-      <section id="settingsUpdatesPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Updates" role="region" aria-labelledby="settingsUpdatesPageTitle" hidden>
+      <!-- Toggle Features (ADR-109): ONE page for what were three — Updates, Advanced features and Main
+           menu. Dan, 2026-10-09: "combine updates, Advanced Features and Main Menu into one, called Toggle
+           Features".
+
+           **Three SECTIONS, each under its own heading with its own sentence, and never one list.** ADR-036
+           kept Main menu off the Advanced features page because the two boxes look alike and mean different
+           things: an Advanced box STOPS the feature at the door that does the thing (the announcer's
+           constructor, the DHT bootstrap, the arm sweep, the two timestamp routes — `/pending 451`; Dan,
+           2026-09-10: "default off. menus hidden."), and a Main menu box only takes a tab off the menu
+           (Dan, 2026-09-16: "If an item is disabled in the advanced settings, it should not show in the main
+           menu"). That difference is now carried by the section's heading and lead instead of by the page.
+           The MECHANISMS stay two: fusing them would hide the `collaborate` TAB when ceremonies are switched
+           off, taking co-signing and Simple Sign with it — the collision `test/jsdom/advanced.test.mjs`
+           exists to catch.
+
+           Checkboxes rather than the Colours radio list, because these are independent switches and not one
+           choice of seven — the distinction ADR-021 drew. **Settings has no Main menu box**: the switch that
+           would undo a hidden Settings lives inside Settings. -->
+      <section id="settingsFeaturesPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Toggle Features" role="region" aria-labelledby="settingsFeaturesPageTitle" hidden>
         <div class="pagebody">
           <p class="pagekicker">Settings</p>
-          <h2 id="settingsUpdatesPageTitle" tabindex="-1">Updates</h2>
+          <h2 id="settingsFeaturesPageTitle" tabindex="-1">Toggle Features</h2>
+          <p class="pagelead">What Nib does on its own, which of its networked features are on, and which tabs the
+            menu shows. Each section says what switching something off does.</p>
+
+          <h3 id="featuresUpdatesTitle" class="pagesection">Updates</h3>
           <p class="pagelead">Nib tells you when a newer release exists and downloads it when you ask. It never installs anything itself.</p>
           <div class="setrow">
             <label class="check"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
@@ -916,21 +936,8 @@
             <p id="downloadDirWhere" class="setstatus"></p>
             <p id="downloadDirError" class="cererror" role="alert" hidden></p>
           </div>
-        </div>
-      </section>
-      <!-- Advanced features (`/pending 451`). Dan, 2026-09-10: "default off. menus hidden."
 
-           **Off means the function STOPS, not that its button is hidden.** Each of these is checked
-           at the door that does the thing — the announcer's constructor, the DHT bootstrap, the arm
-           sweep, the two timestamp routes — and the hiding is the second half, never the whole
-           of it. This repo has shipped the hidden-button-only shape twice (`/pending 378`, `3`).
-
-           Checkboxes rather than the Colours radio list, because these are four independent
-           switches and not one choice of seven — the distinction ADR-021 drew. -->
-      <section id="settingsAdvancedPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Advanced features" role="region" aria-labelledby="settingsAdvancedPageTitle" hidden>
-        <div class="pagebody">
-          <p class="pagekicker">Settings</p>
-          <h2 id="settingsAdvancedPageTitle" tabindex="-1">Advanced features</h2>
+          <h3 id="featuresAdvancedTitle" class="pagesection">Advanced features</h3>
           <p class="pagelead">Nib is a PDF editor first. These four reach the network or the local link, and
             each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
           <div class="setrow">
@@ -954,28 +961,11 @@
               document itself never leaves this computer.</p>
           </div>
           <p id="advError" class="cererror" hidden></p>
-        </div>
-      </section>
-      <!-- Which main-menu tabs show (ADR-036). Dan, 2026-09-16: "It should be enabled/disabled in
-           the advanced settings menu. If an item is disabled in the advanced settings, it should
-           not show in the main menu."
 
-           **Its own page, deliberately NOT six more boxes on Advanced features above.** That
-           page's contract is "switching one off STOPS it", enforced at the door that does the
-           thing; this one changes nothing but what the menu offers. Putting a cosmetic switch on a
-           page that says otherwise makes the page lie — and fusing the two mechanisms would hide
-           the `collaborate` TAB when ceremonies are switched off, taking co-signing and Simple
-           Sign with it, which is the collision `test/jsdom/advanced.test.mjs` exists to catch.
-
-           **Settings has no box.** The switch that would undo a hidden Settings lives inside
-           Settings. -->
-      <section id="settingsMenuPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Main menu" role="region" aria-labelledby="settingsMenuPageTitle" hidden>
-        <div class="pagebody">
-          <p class="pagekicker">Settings</p>
-          <h2 id="settingsMenuPageTitle" tabindex="-1">Main menu</h2>
+          <h3 id="featuresMenuTitle" class="pagesection">Main menu</h3>
           <p class="pagelead">Which tabs show across the top. Hiding one only removes it from the menu — nothing
             about the document changes, and its keyboard shortcuts still work. Settings cannot be hidden.</p>
-          <div class="setrow setgroup" role="group" aria-labelledby="settingsMenuPageTitle">
+          <div class="setrow setgroup" role="group" aria-labelledby="featuresMenuTitle">
             <label class="check"><input class="modeChk" data-mode="file" type="checkbox" checked /> File</label>
             <label class="check"><input class="modeChk" data-mode="markup" type="checkbox" checked /> Mark Up</label>
             <label class="check"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
@@ -1165,7 +1155,7 @@
           <div class="setrow pageoff" data-advoff="ceremony" hidden>
             <p class="sethelp">Signing ceremonies are switched off on this computer, so none can be started or joined
               from here.</p>
-            <button type="button" data-gosettings="Advanced features">Open Advanced features…</button>
+            <button type="button" data-gosettings="Toggle Features">Open Toggle Features…</button>
           </div>
           <div class="setrow" data-adv="ceremony">
             <h3 class="rowtitle">Start one</h3>
@@ -1214,7 +1204,7 @@
               invitations named. To find each other when you are not on the same network, Nib can use the
               public BitTorrent DHT: that reveals this computer’s public internet address to strangers
               there, and may publish one small encrypted record of where you can be reached — never the
-              document, and never who you are. <b>Reach peers over the internet</b>, under Advanced features,
+              document, and never who you are. <b>Reach peers over the internet</b>, under Toggle Features in Settings,
               switches that off.</p>
           </div>
         </div>

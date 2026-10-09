@@ -39,8 +39,9 @@ const h = await boot({ routes: {
 const { document: doc } = h;
 const CODE = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
-// In the menu's own order: how Nib looks and reads, what it does on its own, your identity and its backup, About.
-const NINE = ['Appearance', 'Colours', 'Main menu', 'Read Aloud', 'Updates', 'Advanced features', 'Identity & Keys', 'Vault', 'About'];
+// In the menu's own order: how Nib looks and reads, what it does and offers, your identity and its backup, About.
+// Seven since ADR-109: Updates, Advanced features and Main menu are the three sections of Toggle Features.
+const ENTRIES = ['Appearance', 'Colours', 'Read Aloud', 'Toggle Features', 'Identity & Keys', 'Vault', 'About'];
 const settingsPane = () => doc.querySelector('.tbtab[data-tab="settings"]');
 // The Settings pane's own: Signing has entries too (ADR-105), in its own pane.
 const entries = () => [...settingsPane().querySelectorAll('.sbhead[data-entry]')];
@@ -52,9 +53,9 @@ const tabs = () => [...doc.getElementById('tabstrip').children].map((t) => ({
 const marked = () => [...doc.querySelectorAll('#commands .tbgroup.open')].map((g) => g.dataset.label);
 const openDialogs = () => [...doc.querySelectorAll('body > div[id$="Modal"]')].filter((m) => !m.hidden).map((m) => m.id);
 
-test('Settings is nine entries and no settings: each group holds one button, and each names a page that exists', () => {
+test('Settings is seven entries and no settings: each group holds one button, and each names a page that exists', () => {
   const groups = [...settingsPane().querySelectorAll('.tbgroup')];
-  assert.deepEqual(groups.map((g) => g.dataset.label), NINE, 'the Settings pane is not the nine entries in their order');
+  assert.deepEqual(groups.map((g) => g.dataset.label), ENTRIES, 'the Settings pane is not the seven entries in their order');
   for (const g of groups) {
     assert.ok(g.hasAttribute('data-entry'), `${g.dataset.label} is not marked as an entry, so the accordion makes it a card that expands`);
     const controls = [...g.querySelectorAll('button, input, select, textarea, label, p')];
@@ -91,7 +92,7 @@ test('every control that was a Settings card is on a page, once, under the id it
   assert.equal(doc.querySelectorAll('.apppage input[name="cardhue"]').length, 7, 'the seven Colours choices are not on a page');
   assert.ok(doc.querySelector('.apppage [data-forward="themeToggle"]'), 'the theme switch is not on a page');
   assert.equal(doc.querySelector('.apppage input[name="cardhue"]').closest('[role="radiogroup"]')?.getAttribute('aria-labelledby'), 'settingsColoursPageTitle');
-  assert.equal(doc.querySelector('.apppage .modeChk').closest('[role="group"]')?.getAttribute('aria-labelledby'), 'settingsMenuPageTitle');
+  assert.equal(doc.querySelector('.apppage .modeChk').closest('[role="group"]')?.getAttribute('aria-labelledby'), 'featuresMenuTitle');
   assert.equal(doc.getElementById('downloadDirError').getAttribute('role'), 'alert', 'the folder refusal lost its role');
 });
 
@@ -102,12 +103,12 @@ test('entering Settings opens nothing: no page, no tab, no dialog, no card', () 
   assert.equal(doc.getElementById('tabrow').hidden, true, 'entering Settings showed the tab row');
   assert.deepEqual(openDialogs(), []);
   assert.deepEqual(marked(), [], 'a card is marked open while Settings is showing');
-  assert.deepEqual(entries().map((e) => e.textContent.trim()), NINE, 'the sidebar does not show the nine entries');
+  assert.deepEqual(entries().map((e) => e.textContent.trim()), ENTRIES, 'the sidebar does not show the seven entries');
   for (const e of entries()) assert.equal(e.hasAttribute('aria-expanded'), false, `${e.textContent.trim()} says it expands`);
 });
 
 test('an entry opens its page in the main area; the pages share ONE tab, which names the page showing; a second click makes no second tab', () => {
-  assert.equal(entries().length, 9, 'setup: the sidebar does not show nine entries');
+  assert.equal(entries().length, 7, 'setup: the sidebar does not show seven entries');
   for (const e of entries()) {
     const name = e.textContent.trim();
     const id = e.nextElementSibling.querySelector('button').dataset.apppage;
@@ -158,10 +159,10 @@ test('the page tab brings its page forward, and its × closes the page — in fr
 // ── One tab: a page that is opened takes the place of the page that was open (ADR-107) ──────
 //
 // The page being replaced is LEFT, by the same door as any page that stops being on screen, and
-// left once. The Updates page is the one with something to lose: a folder typed in its box saves
+// left once. Toggle Features is the one with something to lose (its Updates section): a folder typed in its box saves
 // on `change`, which a click on another entry does not fire in this harness (and a keyboard
 // shortcut does not fire in a browser), so `appPageLeave` saves it as the page goes.
-test('a page replaced by another is left, once: the folder typed on Updates is saved, and not saved again', async () => {
+test('a page replaced by another is left, once: the folder typed on Toggle Features is saved, and not saved again', async () => {
   const entry = (n) => entries().find((e) => e.textContent.trim() === n);
   const folders = () => posted.filter((b) => 'downloadDir' in b).map((b) => b.downloadDir);
   const box = doc.getElementById('downloadDirInput');
@@ -169,22 +170,22 @@ test('a page replaced by another is left, once: the folder typed on Updates is s
   posted.length = 0;
 
   // Replaced while it is in front.
-  entry('Updates').click();
+  entry('Toggle Features').click();
   box.value = '/h/typed-in-front';
   entry('Vault').click();
   await h.settle();
-  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsVaultPage'], ['settingsVaultPage']], 'Vault did not take the tab Updates had');
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsVaultPage'], ['settingsVaultPage']], 'Vault did not take the tab Toggle Features had');
   assert.deepEqual(folders(), ['/h/typed-in-front'],
-    'the Updates page was replaced by another and the folder typed on it was dropped, or saved more than once');
+    'the Toggle Features page was replaced by another and the folder typed on it was dropped, or saved more than once');
 
   // Replaced while it is open BEHIND what the main area shows: it was left when it went behind,
   // and is not left a second time. Text put in the box after that is how a second leave would show.
-  entry('Updates').click();
+  entry('Toggle Features').click();
   box.value = '/h/typed-then-left';
   doc.querySelector('.modetab[data-tab="markup"]').click();
   await h.settle();
   assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.selected]), folders().slice(1)],
-    [[], [['settingsUpdatesPage', 'false']], ['/h/typed-then-left']], 'setup: leaving the menu did not leave the page with its folder saved');
+    [[], [['settingsFeaturesPage', 'false']], ['/h/typed-then-left']], 'setup: leaving the menu did not leave the page with its folder saved');
   box.value = '/h/a-second-leave-would-send-this';
   doc.querySelector('.modetab[data-tab="settings"]').click();
   assert.deepEqual(pagesShown(), [], 'setup: entering Settings brought the page forward by itself');
@@ -202,12 +203,12 @@ test('a page replaced by another is left, once: the folder typed on Updates is s
 
 test('leaving the Settings menu leaves the page, which stays open in the page tab', () => {
   doc.querySelector('.modetab[data-tab="settings"]').click();
-  entries().find((e) => e.textContent.trim() === 'Advanced features').click();
-  assert.deepEqual(pagesShown(), ['settingsAdvancedPage']);
+  entries().find((e) => e.textContent.trim() === 'Toggle Features').click();
+  assert.deepEqual(pagesShown(), ['settingsFeaturesPage']);
   // A box on the page re-settles the sidebar (applyAdvanced) — that is not a mode change.
   doc.querySelector('.modetab[data-tab="markup"]').click();
   assert.deepEqual(pagesShown(), [], 'the page is still in front in Mark Up, whose tools act on the document');
-  assert.deepEqual(tabs().map((t) => [t.name, t.selected]), [['Advanced features', 'false']], 'the page was closed, not left');
+  assert.deepEqual(tabs().map((t) => [t.name, t.selected]), [['Toggle Features', 'false']], 'the page was closed, not left');
   tabs()[0].el.querySelector('.tabclose').click();
 });
 
@@ -483,7 +484,7 @@ test('a feature that is switched off: its entry goes, its page says so and offer
   assert.match(tsRow().querySelector('.signstep-hint').textContent, /Switched off/);
   // The off row's button goes to the switch.
   page.querySelector('[data-advoff="ceremony"] button').click();
-  assert.deepEqual([pagesShown(), doc.body.dataset.tab], [['settingsAdvancedPage'], 'settings']);
+  assert.deepEqual([pagesShown(), doc.body.dataset.tab], [['settingsFeaturesPage'], 'settings']);
   for (const id of ['advCeremonyChk', 'advTimestampChk']) { doc.getElementById(id).checked = true; }
   doc.getElementById('advCeremonyChk').onchange();
   await h.settle();
@@ -513,10 +514,10 @@ test('hiding the Signing menu closes its page: no tab is left naming a mode the 
   enterSigning();
   signingEntries()[0].click();
   doc.querySelector('.modetab[data-tab="settings"]').click();
-  entries().find((e) => e.textContent.trim() === 'Main menu').click();
-  assert.deepEqual(tabs().map((t) => t.page), ['settingsMenuPage'], 'the Main menu page did not take the Signing page\'s tab');
+  entries().find((e) => e.textContent.trim() === 'Toggle Features').click();
+  assert.deepEqual(tabs().map((t) => t.page), ['settingsFeaturesPage'], 'the Toggle Features page did not take the Signing page\'s tab');
   await hideSigning(true);
-  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsMenuPage'], ['settingsMenuPage']], 'the page the box is on did not stay in front');
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsFeaturesPage'], ['settingsFeaturesPage']], 'the page the box is on did not stay in front');
   await hideSigning(false);
   closeEveryPage();
 });

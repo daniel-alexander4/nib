@@ -14,6 +14,7 @@ Every other decision in both stands: a page is never a `view`; `syncMainArea` an
 the ways out; focus on the heading; leaving the menu leaves the page; a hidden menu's page closes;
 Close all closes documents; Escape does nothing to a page.
 **Applies:** every app page, of any menu, and any added later.
+**Superseded in part by [ADR-109](109-toggle-features-is-one-page-of-three-sections.md)** (the Settings order: seven entries, with Updates, Advanced features and Main menu as the sections of Toggle Features).
 
 ## Decision
 
