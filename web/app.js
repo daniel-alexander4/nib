@@ -1790,7 +1790,10 @@ async function armRecv() {
     // LAN path, and nothing reaches the internet.
     body: JSON.stringify({
       fingerprint: opt.value, bind, mode: recvMode,
-      invitation: (els.srvInvite && els.srvInvite.value.trim()) || undefined,
+      // **Only while ceremonies are on (ADR-113).** The field is hidden with the switch, and a
+      // hidden field keeps what was typed in it: text pasted before the switch went off would
+      // otherwise ride along on an arm the user believes is the plain, nothing-leaves-the-LAN one.
+      invitation: (advanced.ceremony && els.srvInvite && els.srvInvite.value.trim()) || undefined,
     }),
   });
   els.srvArmGo.disabled = false;

@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { boot } from './boot.mjs';
 
 let saved = null;
+let armed = null;
 let refuse = null;
 
 const h = await boot({
@@ -31,6 +32,7 @@ const h = await boot({
       state: 'ready', version: 'test',
       autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false,
     },
+    '/api/session/arm': (opts) => { armed = JSON.parse((opts && opts.body) || '{}'); return { address: '127.0.0.1:1', state: 'armed' }; },
     '/api/settings': (opts) => {
       saved = JSON.parse((opts && opts.body) || '{}');
       if (refuse) return new Response(JSON.stringify({ error: refuse }), { status: 409, headers: { 'Content-Type': 'application/json' } });
@@ -105,4 +107,37 @@ test('a refusal puts the box back, rather than showing a state the machine is no
   assert.match(err.textContent, /not finished/,
     `the error reads ${JSON.stringify(err.textContent)} and does not say what is running`);
   refuse = null;
+});
+
+// ── The invitation field in Send & Receive goes with the ceremonies switch (ADR-113) ─────────
+// An invitation is a ceremony's. With ceremonies off the field and the paragraph that discloses
+// what an invitation does are not offered — and what was typed into the field before the switch
+// went off is not SENT, which is the half hiding alone does not give: a hidden input keeps its text.
+test('the invitation field and its disclosure follow the ceremonies switch, and a hidden invitation is not sent', async () => {
+  const set = async (on) => { box('advCeremonyChk').checked = on; box('advCeremonyChk').onchange(); await settle(); };
+  const arm = async () => {
+    armed = null;
+    const sel = doc.getElementById('srvPeer');
+    if (!sel.options.length) { const o = doc.createElement('option'); o.value = 'ab'.repeat(32); o.dataset.label = 'peer'; o.textContent = 'peer'; sel.appendChild(o); }
+    sel.selectedIndex = 0;
+    doc.getElementById('srvArmGo').disabled = false;
+    doc.getElementById('srvArmGo').click();
+    await settle();
+    assert.ok(armed, 'setup: pressing Arm sent no request, so nothing below is about what it carries');
+    return armed;
+  };
+  await set(true);
+  assert.deepEqual([shown('#srvInviteRow'), shown('#srvInviteNote')], [true, true], 'with ceremonies on the invitation field or its disclosure is not offered');
+  doc.getElementById('srvInvite').value = 'nib-invite-v1:typed-while-on';
+  assert.equal((await arm()).invitation, 'nib-invite-v1:typed-while-on', 'setup: with ceremonies on the invitation typed is not what is sent');
+
+  await set(false);
+  assert.deepEqual([shown('#srvInviteRow'), shown('#srvInviteNote')], [false, false],
+    'with ceremonies off Send & Receive still offers a ceremony invitation, or still discloses what one does');
+  assert.equal(doc.getElementById('srvInvite').value, 'nib-invite-v1:typed-while-on', 'stimulus: the hidden field no longer holds the text, so the next line proves nothing');
+  assert.equal('invitation' in (await arm()), false,
+    'an invitation typed before ceremonies were switched off was sent from a field the user can no longer see');
+  // Ordinary co-signing is untouched: the arm itself still went.
+  assert.equal(armed.fingerprint, 'ab'.repeat(32));
+  doc.getElementById('srvInvite').value = '';
 });
