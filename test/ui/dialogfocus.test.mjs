@@ -21,14 +21,13 @@ const { page } = h;
 after(() => shutdown(h));
 
 test('closing a dialog opened from a menu leaves focus somewhere real', async () => {
-  // Open About the way a user does. Settings is a MODE with sidebar cards since v1.126.0 — the
-  // ⚙ dropdown is gone — so the opener is a card item, and the card is what has to be expanded
-  // first. The property under test is unchanged: focus must not be restored to an opener that is
-  // no longer on screen.
+  // Open About the way a user does. Settings is a MODE since v1.126.0 — the ⚙ dropdown is gone —
+  // and since ADR-104 its About entry opens the dialog itself, where it used to expand a card
+  // holding the one button that did. The property under test is unchanged: focus must not be
+  // restored to an opener that is no longer on screen.
   await h.mode('settings');
-  await h.card('About');
-  await page.waitForSelector('#aboutBtn', { state: 'visible' });
-  await page.click('#aboutBtn');
+  await h.showSidebar();
+  await page.click('#commands .tbtab[data-tab="settings"] .sbhead.groupcard:text-is("About")');
   await page.waitForSelector('#aboutModal:not([hidden])');
 
   const opened = await page.evaluate(() => {

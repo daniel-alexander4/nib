@@ -738,3 +738,10 @@ home today.
   format's, made at Save from what was captured at the press); never a per-format button or a dropdown in a card. One
   document closes with its tab's ×; Close all is the strip's SIBLING in `#tabrow`. PDF/A is in Save a Copy; the
   certificate is Secure's.
+- **[ADR-104 — a menu entry that holds settings or a workflow opens a page with its own tab](104-a-settings-entry-opens-a-page.md)**
+  — supersedes ADR-025's "its items as sidebar cards" and ADR-036's "a Main menu card" only. An entry
+  (`.tbgroup[data-entry]`, one button) opens a `.apppage` in the main area with a tab in `#tabstrip`; it does not expand
+  and it is not a popup. A page is NEVER a `view`: `openAppPages` / `activeAppPage` sit beside `views`, and Close all,
+  `several` and `anyDoc` count documents only. `syncMainArea` is the one writer of what the main area shows (viewer,
+  sheet or page); `docShowing()` is the one answer to "is a document on screen", so its controls are inert under a page.
+  A page is registered in markup alone (`data-apppage`). About still opens its dialog.

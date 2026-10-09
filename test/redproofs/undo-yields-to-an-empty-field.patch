@@ -1,9 +1,9 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -10707,7 +10707,7 @@
- window.addEventListener('keydown', (e) => {
+@@ -15211,7 +15211,7 @@
    if (!(e.ctrlKey || e.metaKey)) return;
    if (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y') return;
+   if (activeAppPage) return; // undo is the document's, and the document is not what is on screen
 -  if (ownsUndo(e.target) || document.querySelector('div[id$="Modal"]:not([hidden])')) return;
 +  if (isTypingTarget(e.target) || document.querySelector('div[id$="Modal"]:not([hidden])')) return;
    e.preventDefault();

@@ -27,10 +27,8 @@ after(() => shutdown(h));
 const GROUPED = /(?:\b[0-9a-f]{4}\b[ \t]+){8,}/i;
 
 test('the identity panel shows a name, and hex only after you open the disclosure', async () => {
-  // The button lives in Settings, which is a MODE with sidebar cards since v1.126.0 rather than
-  // a ⚙ dropdown — so the card is expanded first. Same shape as Save a Copy in stamplace.
-  await h.mode('settings');
-  await h.card('Identity & Keys');
+  // The button is on Settings' Identity & Keys page (ADR-104); the dialog opens over the page.
+  await h.settingsPage('Identity & Keys');
   await page.click('#managePeersBtn');
   await page.waitForFunction(() => !document.getElementById('peersModal').hidden);
 

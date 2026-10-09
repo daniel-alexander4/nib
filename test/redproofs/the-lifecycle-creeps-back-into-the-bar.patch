@@ -9,10 +9,10 @@
              </div><div class="tbgroup" data-label="Save" data-fold="0">
  <button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
        <!-- Save, Print, Reload, Quit — in that order (Dan, 2026-10-08). Quit shares Reload's group as it shared
-@@ -774,7 +776,6 @@
-            same act — and syncTabs toggles it and the row. -->
+@@ -726,7 +728,6 @@
+            also shows for a page open with no document. -->
        <div id="tabrow" hidden>
-       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+       <div id="tabstrip" role="tablist" aria-label="Open documents and pages" hidden></div>
 -      <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
        </div>
        <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two

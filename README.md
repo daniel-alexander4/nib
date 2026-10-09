@@ -587,7 +587,7 @@ matching kept copy first among the copies to compare against.
 
 **Sign with your own certificate.** By default Finalize uses Nib's self-signed
 identity (integrity, not third-party trust). If you have a CA-issued credential,
-import it under **Settings → Identity & peers → Signing certificate** (a PKCS#12
+import it under **Settings → Identity & Keys → Identity & peers… → Signing certificate** (a PKCS#12
 `.p12`/`.pfx` file + its passphrase); then Finalize offers a **Sign as** choice
 and signs with that certificate and its chain, so a verifier who trusts the
 issuing CA sees a trusted signature. The certificate is used only for solo
@@ -637,10 +637,15 @@ document (it is that copy, or begins with it), ○ when none does — with how m
 to them — and a dash when the document carries no signature, which includes right after Finalize,
 while the open document is still the unsigned one.
 
-**Settings** is its own tab. Identity & peers, authorized keys, vault backup/restore, the
-update preference, the theme toggle, About — and **Colours**, which sets the sidebar's card
-colours: leave it on *All colours* for the six-accent rotation, or pick one hue and the cards
-become that colour in six steps.
+**Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
+the sidebar: **Identity & Keys** (your identity and pinned peers, and the keys that unlock your
+vault), **Vault** (back up and restore), **Updates**, **Advanced features**, **Main menu**,
+**Appearance** (the theme), **Read Aloud** and **Colours**; **About** opens the About window. A page
+opens where the document is shown and gets a tab of its own beside the document tabs, marked
+*Settings*. Click a document's tab to go back to the document — it is exactly where you left it —
+and the × on a page's tab to close the page. A setting is saved as you change it, so there is
+nothing to save or cancel. **Colours** sets the sidebar's card colours: leave it on *All colours*
+for the six-accent rotation, or pick one hue and the cards become that colour in six steps.
 
 **Main menu** is where you cut the menu down to what you use. Untick a tab and it goes from the
 top of the window — nothing about your documents changes, and the keyboard shortcuts still work,
@@ -1022,7 +1027,8 @@ documents is anywhere from a few hundred KB to well over a gigabyte, since Nib
 accepts documents up to 200 MB each.
 
 The **×** on a tab closes that document and moves to the next tab; with two or
-more open, **Close all** at the end of the tabs closes every one. Either way, if
+more open, **Close all** at the end of the tabs closes every one — every document, that
+is: a Settings page open in a tab of its own is not a document and stays. Either way, if
 anything has been edited since a document was opened, Nib asks first — and it asks
 about edits *since the last save*, because that is what it can actually tell:
 saving deliberately leaves the undo history intact, so a save does not silence the
@@ -1328,7 +1334,7 @@ one-time setup where you either **use an SSH key you already have** or have Nib
 **create one for you** (at a path you can change — works the same on Linux,
 macOS, and Windows, no key needed up front). That key is what unlocks your
 vault, so keep it safe and back it up. You can authorize or create more keys
-later from **Settings → Manage authorized keys…**.
+later from **Settings → Identity & Keys → Manage authorized keys…**.
 
 ### Install on Debian / Ubuntu
 ```sh
@@ -1406,7 +1412,7 @@ documents never leave your computer. It is not the only call Nib can make —
 timestamping, opening by URL and co-signing all use the network when you ask
 them to — and every one of them is listed under
 [What leaves your computer](#what-leaves-your-computer). Turn the
-startup check off from **Settings → Check for updates on startup** (saved in
+startup check off from **Settings → Updates → Check for updates on startup** (saved in
 your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
 the version pill still checks either way). Nib only notifies and downloads — it never installs or replaces
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
@@ -1610,6 +1616,6 @@ Their required copyright and license notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
 `build/gen-notices.sh`.
 
-**Settings → About Nib…** shows these in-app — a plain-English account of what a Nib
+**Settings → About** shows these in-app — a plain-English account of what a Nib
 signature does and doesn't prove, plus the licence and third-party notices read
 straight from the shipped files.

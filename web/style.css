@@ -468,14 +468,53 @@ input[type="search"] { width: 100%; }
    text on a lighter ground again. Same rule that keeps the active tab's label --text: colour as the
    indicator, text as the message. The focus ring is spelled out because the stylesheet has no
    global a:focus-visible (the only other anchor rule is #outline a). */
-/* Settings → Updates → Download folder (ADR-102). A card is a wrapping flex COLUMN, so one child
-   wider than the card widens the whole column and everything in it runs off the card's edge:
-   measured at the default 200px sidebar, the text box's own 260px did exactly that, and cut the
-   line that says which folder is in use — the one thing the field is there to show. So nothing in
-   this card is wider than the card, the box fills it, and a path breaks wherever it has to. */
-.tbgroup[data-label="Updates"] > * { max-width: 100%; }
-#downloadDirInput { display: block; width: 100%; min-width: 0; margin-top: 4px; }
-#downloadDirWhere, #downloadDirError { overflow-wrap: anywhere; }
+/* ── App pages (ADR-104) ──────────────────────────────────────────────────────
+   A menu entry that holds settings opens one of these in the main area, in place of the viewer
+   (it is a `.sheet`, so it takes the space the document had), with a tab of its own in the strip.
+
+   A reading column, centred, never wider than the window. The page says what it is in a heading
+   and a sentence; each setting is a block of its own — the control, then what it does, then the
+   line that reports on it — so a setting and its explanation cannot be read as two things.
+
+   **Every word is `--text`.** The muted tokens are under AA for small text in the light theme
+   (measured on the tab label, below: `--subtext0` 4.06:1 and `--subtext1` 3.25:1 on `--mantle`),
+   and an explanation is the part of a settings page a person actually reads. Size and weight
+   carry the hierarchy instead. */
+.apppage { background: var(--base); }
+/* While a page is in front, the bar's document groups are inert (app.js, `reflectDocShowing`) and
+   look it — the dimming every disabled button already has. */
+#toolbar .tbgroup[inert] { opacity: 0.5; }
+.pagebody {
+  width: 100%; max-width: 680px; margin: 0 auto; padding: 28px 24px 48px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.pagekicker { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase; }
+.pagebody h2 { margin: -8px 0 0; font-size: 22px; font-weight: 600; }
+.pagebody h2:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 4px; }
+.pagelead { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }
+.setrow {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0;
+  background: var(--mantle); border: 1px solid var(--surface0); border-radius: 10px; padding: 14px 16px;
+}
+.setrow label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.setrow label.check input { margin: 0; flex: none; }
+.setrow label.field { font-size: 14px; font-weight: 600; }
+.setrow input[type="text"], .setrow select {
+  background: var(--crust); color: var(--text); border: 1px solid var(--surface1);
+  border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; max-width: 440px; min-width: 0;
+}
+.sethelp, .setstatus { margin: 0; font-size: 13px; line-height: 1.45; }
+/* Settings → Updates → Download folder (ADR-102). The line that says which folder is in use is
+   the one thing the field is there to show, and a path has no spaces to break at: as a sidebar
+   card the 260px box ran off a 200px column and cut that line. A path breaks wherever it has to. */
+.setstatus, .pagebody .cererror { overflow-wrap: anywhere; }
+.setstatus:empty { display: none; }
+.pagebody .cererror { margin: 0; font-size: 13px; }
+/* A group of boxes, or a choice of one: a plain column, the labels at the weight of a list. */
+.setrow.setgroup { gap: 10px; }
+.setrow.setgroup label.check { font-weight: 400; }
+@media (max-width: 639px) { .pagebody { padding: 18px 16px 32px; } }
+
 .libhint a { color: var(--text); text-decoration: underline; }
 .libhint a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
 /* The setup sheet's "which document" line (/pending 413). Larger than .libhint because it is the
@@ -901,6 +940,15 @@ body > div[id$="Modal"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A page's tab (ADR-104). It is a tab like a document's and is not a document, and the difference
+   is a WORD — the menu the page belongs to, in front of its name — never colour alone. In front,
+   it is continuous with the page below it (`--base`, where a document's is `--crust`). `--text`
+   on the word for the reason measured on the label above. */
+#tabstrip .tabkind {
+  flex: none; padding: 1px 6px; border-radius: 999px; background: var(--surface0);
+  color: var(--text); font-size: 10.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+}
+#tabstrip .pagetab.active { background: var(--base); border-top-color: var(--mauve); }
 /* The per-tab close. --text, not a muted token, for the reason measured on the label
    above: both muted tokens are under AA in the light theme. It is a hit target as much
    as a glyph, so it carries its own padding and radius rather than relying on the ×. */
@@ -1703,6 +1751,9 @@ body.presenting .presentbar { display: flex; }
 #toolbar .tbtab > .tbgroup > .menucap { display: none; }
 #toolbar .tbfixed > .tbgroup > .menucap { display: none; }
 #toolbar .tbmore .tbgroup > .menucap { display: block; }
+/* An entry group holds one button, and the button says the group's name (ADR-104): a caption
+   over each would list all nine of Settings twice. */
+#toolbar .tbmore .tbgroup[data-entry] > .menucap { display: none; }
 
 /* ── The menubar, which is the whole of the horizontal-overflow defect ─────────
    Measured: #menubar had a hard minimum content width of 611px — brand 26 +
@@ -1820,6 +1871,9 @@ body.presenting .presentbar { display: flex; }
 }
 .sbhead::after { content: "▸"; float: right; opacity: .5; font-size: 10px; }
 .sbhead[aria-expanded="true"]::after, .sbhead.active::after { content: "▾"; }
+/* An entry opens a page and expands nothing (ADR-104), so it does not wear the mark that says
+   "this opens downward". */
+.sbhead[data-entry]::after { content: "→"; font-size: 11px; }
 
 /* A group is a card body: hidden until its header is expanded. */
 #commands .tbtab > .tbgroup { display: none; padding: 6px 8px 10px; }

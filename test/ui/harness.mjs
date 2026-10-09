@@ -213,6 +213,33 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       }, label);
     },
 
+    // settingsPage(label) opens one Settings page by its entry in the sidebar and returns the
+    // page's id (ADR-104). **Not `card()`**: a Settings entry opens a page in the main area and
+    // expands nothing, so it has no `aria-expanded` for `group()` to wait on — `card('Colours')`
+    // would click the entry and then wait thirty seconds for a state the entry does not have.
+    async settingsPage(label) {
+      await this.mode('settings');
+      await this.showSidebar();
+      const onFunctions = await page.evaluate(() => document.getElementById('sbFunctions')?.classList.contains('active'));
+      if (!onFunctions) await page.click('.sbtab[data-sbtab="functions"]');
+      const entry = `#commands .tbtab[data-tab="settings"] .sbhead.groupcard:text-is("${label}")`;
+      const id = await page.$eval(entry, (e) => e.nextElementSibling.querySelector('button').dataset.apppage);
+      await page.click(entry);
+      await page.waitForSelector(`#${id}:not([hidden])`);
+      return id;
+    },
+
+    // closeAppPage(id) presses the × on the page's tab and waits for the tab to go.
+    async closeAppPage(id) {
+      await page.click(`#tabstrip .pagetab[data-apppage="${id}"] .tabclose`);
+      await page.waitForSelector(`#tabstrip .pagetab[data-apppage="${id}"]`, { state: 'detached' });
+    },
+
+    // closeAppPages closes every page that is open — what a file that opened any leaves behind.
+    async closeAppPages() {
+      for (const id of await page.$$eval('#tabstrip .pagetab', (ts) => ts.map((t) => t.dataset.apppage))) await this.closeAppPage(id);
+    },
+
     async mode(tab) {
       await page.click(`[data-tab="${tab}"]`);
       await page.waitForFunction((t) => document.body.dataset.tab === t, tab);
@@ -416,7 +443,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // document since ADR-103 took Close out of File. The strip is above the page in every mode,
     // so there is no mode or card to reach first.
     async closeDocument() {
-      await page.click('#tabstrip .tab.active .tabclose');
+      await page.click('#tabstrip .tab.active:not(.pagetab) .tabclose');
       await page.waitForTimeout(400); // the confirm + the round-trip + the teardown
     },
 

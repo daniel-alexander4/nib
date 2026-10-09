@@ -563,103 +563,51 @@
       <button data-forward="returnedBtn">Check a signed document that came back…</button>
             </div>
     </div><div class="tbtab" data-tab="settings">
-      <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Its items are the same
-           ones the ⚙ menu held; they are cards here for the same reason every other palette is,
-           and the gear is gone rather than duplicated — two routes to one surface is the drift
-           ADR-009 exists to stop. Nothing here acts on the open document, which is why none of
-           it is in DOC_REQUIRED and each id is a named exemption in doccontrols. -->
-      <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1">
-<button id="managePeersBtn">Identity &amp; peers…</button>
-      <button id="manageKeysBtn">Manage authorized keys…</button>
-            </div>
-      <div class="tbgroup" data-label="Vault" data-fold="2">
-<button id="backupBtn">Back up vault</button>
-      <label class="menuitem">Restore vault…
-        <input id="restoreInput" type="file" accept=".nib" hidden /></label>
-            </div>
-      <div class="tbgroup" data-label="Updates" data-fold="3">
-<label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
-      <!-- Where an update is downloaded to (ADR-102). Empty follows the browser Nib's window is
-           running in; the line under the box is the folder that will actually be used and where
-           that came from, both from the server. A folder that is not there is refused with a
-           sentence shown here, never stored. -->
-      <label class="menuitem">Download folder
-        <input id="downloadDirInput" type="text" placeholder="Same as your browser" aria-describedby="downloadDirWhere" /></label>
-      <p id="downloadDirWhere" class="libhint"></p>
-      <p id="downloadDirError" class="cererror" role="alert" hidden></p>
-            </div>
-      <!-- Advanced features (`/pending 451`). Dan, 2026-09-10: "default off. menus hidden."
+      <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Nothing here acts on the
+           open document, which is why none of it is in DOC_REQUIRED and the one id in the pane
+           is a named exemption in doccontrols.
 
-           **Off means the function STOPS, not that its button is hidden.** Each of these is checked
-           at the door that does the thing — the announcer's constructor, the DHT bootstrap, the arm
-           sweep, the two timestamp routes — and the hiding below is the second half, never the whole
-           of it. This repo has shipped the hidden-button-only shape twice (`/pending 378`, `3`).
+           **Each entry opens a PAGE with its own tab; none expands in the menu and none is a
+           popup (ADR-104).** Dan, 2026-10-08: "in the Settings menu, I would like each button to
+           popup a nice page instead of expanding in the menu", then "I prefer new tabs/pages over
+           popups". The nine were accordion cards like every other mode's, and a card is a 200px
+           column: Updates had a text field, a status line and a refusal in it, and Advanced
+           features and Main menu each a paragraph. So a group here is an ENTRY (`data-entry`)
+           holding ONE button, and the button names its page (`data-apppage`); the page is a
+           `.apppage` section in `#viewerCol` further down this file and holds the controls, with
+           the ids and handlers they always had. The sidebar header app.js builds for the group is
+           the entry while the sidebar is open, and the button below is the entry in ⋯ More when
+           it is shut — both open the same page. Nothing moves between the menu and a page at run
+           time, so nothing can be left half-moved.
 
-           Checkboxes rather than the Colours radio list, because these are four independent
-           switches and not one choice of seven — the distinction ADR-021 drew. -->
-      <div class="tbgroup" data-label="Advanced features" data-fold="7">
-<p class="libhint">Nib is a PDF editor first. These four reach the network or the local link, and
-  each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
-<label class="menuitem"><input id="advCeremonyChk" type="checkbox" /> Signing ceremonies</label>
-      <label class="menuitem"><input id="advDiscoveryChk" type="checkbox" /> Find peers on this network</label>
-      <label class="menuitem"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
-      <label class="menuitem"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
-      <p id="advError" class="cererror" hidden></p>
+           About has no page: its entry opens the About dialog, as the one button in its card did.
+           That dialog swaps three views inside itself (the account, the licence, the notices) and
+           is the fixture the dialog-focus tier and two red proofs are recorded against. -->
+      <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1" data-entry>
+<button class="pageentry" data-apppage="settingsIdentityPage">Identity &amp; Keys…</button>
             </div>
-      <!-- Which main-menu tabs show (ADR-036). Dan, 2026-09-16: "It should be enabled/disabled in
-           the advanced settings menu. If an item is disabled in the advanced settings, it should
-           not show in the main menu."
-
-           **Its own card, deliberately NOT four more boxes inside Advanced features above.** That
-           card's contract is "switching one off STOPS it", enforced at the door that does the
-           thing; this one changes nothing but what the menu offers. Putting a cosmetic switch in a
-           card that says otherwise makes the card lie — and fusing the two mechanisms would hide
-           the `collaborate` TAB when ceremonies are switched off, taking co-signing and Simple
-           Sign with it, which is the collision `test/jsdom/advanced.test.mjs` exists to catch.
-
-           **Settings has no box.** The switch that would undo a hidden Settings lives inside
-           Settings. -->
-      <div class="tbgroup" data-label="Main menu" data-fold="7">
-<p class="libhint">Which tabs show across the top. Hiding one only removes it from the menu — nothing
-  about the document changes, and its keyboard shortcuts still work. Settings cannot be hidden.</p>
-<label class="menuitem"><input class="modeChk" data-mode="file" type="checkbox" checked /> File</label>
-      <label class="menuitem"><input class="modeChk" data-mode="markup" type="checkbox" checked /> Mark Up</label>
-      <label class="menuitem"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
-      <label class="menuitem"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
-      <label class="menuitem"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>
-      <label class="menuitem"><input class="modeChk" data-mode="collaborate" type="checkbox" checked /> Signing</label>
-      <p id="modeError" class="cererror" hidden></p>
+      <div class="tbgroup" data-label="Vault" data-fold="2" data-entry>
+<button class="pageentry" data-apppage="settingsVaultPage">Vault…</button>
             </div>
-      <div class="tbgroup" data-label="Appearance" data-fold="4">
-<!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. In the
-     dropdown this was `.foldedonly` — shown only where the cluster had folded away — and here it
-     is always shown, because a Settings surface that omits the theme is a surface people will
-     look at and not find it on. -->
-<button data-forward="themeToggle">Switch theme</button>
+      <div class="tbgroup" data-label="Updates" data-fold="3" data-entry>
+<button class="pageentry" data-apppage="settingsUpdatesPage">Updates…</button>
             </div>
-      <!-- Read aloud's voice and speed (`/pending 482`). The voice list is the browser's, filled by
-           app.js when the speech engine reports it; a stored voice this machine lacks is shown as such
-           and read-aloud falls back to the default voice rather than going quiet. -->
-      <div class="tbgroup" data-label="Read Aloud" data-fold="4">
-<label class="menuitem">Voice <select id="readAloudVoiceSel"><option value="">Browser default</option></select></label>
-      <label class="menuitem">Speed <select id="readAloudRateSel">
-        <option value="0.75">Slower</option><option value="1">Normal</option><option value="1.25">Faster</option><option value="1.5">Fastest</option>
-      </select></label>
+      <div class="tbgroup" data-label="Advanced features" data-fold="7" data-entry>
+<button class="pageentry" data-apppage="settingsAdvancedPage">Advanced features…</button>
             </div>
-      <div class="tbgroup" data-label="Colours" data-fold="6">
-<!-- The sidebar's card colours. `all` is the six-accent rotation ADR-019 measured; the six
-     single hues are that same hue at stepped tints, darkest step equal to the measured one.
-     A radio list rather than the toggle pattern: seven options is a choice, not a switch —
-     which is the distinction ADR-021 drew when it removed the four-flavour picker. -->
-<label class="menuitem"><input type="radio" name="cardhue" value="all" /> All colours</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="blue" /> Blue</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="mauve" /> Mauve</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="green" /> Green</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="peach" /> Peach</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="red" /> Red</label>
-      <label class="menuitem"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
+      <div class="tbgroup" data-label="Main menu" data-fold="7" data-entry>
+<button class="pageentry" data-apppage="settingsMenuPage">Main menu…</button>
             </div>
-      <div class="tbgroup" data-label="About" data-fold="5">
+      <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
+<button class="pageentry" data-apppage="settingsAppearancePage">Appearance…</button>
+            </div>
+      <div class="tbgroup" data-label="Read Aloud" data-fold="4" data-entry>
+<button class="pageentry" data-apppage="settingsReadAloudPage">Read Aloud…</button>
+            </div>
+      <div class="tbgroup" data-label="Colours" data-fold="6" data-entry>
+<button class="pageentry" data-apppage="settingsColoursPage">Colours…</button>
+            </div>
+      <div class="tbgroup" data-label="About" data-fold="5" data-entry>
 <button id="aboutBtn">About Nib…</button>
             </div>
     </div>      </div>      <div id="thumbs" class="panel active">
@@ -771,9 +719,13 @@
       <!-- The strip and Close all share a ROW, and Close all is the strip's SIBLING, never its child
            (ADR-103): the strip is a tablist whose every child is a tab, and syncTabs addresses them
            by position. Close all appears at two documents — with one open, the tab's own × is the
-           same act — and syncTabs toggles it and the row. -->
+           same act — and syncTabs toggles it and the row.
+
+           A tab is a document's or an app page's (ADR-104). The page tabs come after the documents'
+           and are marked `.pagetab`; Close all and the count are about documents only, and the row
+           also shows for a page open with no document. -->
       <div id="tabrow" hidden>
-      <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+      <div id="tabstrip" role="tablist" aria-label="Open documents and pages" hidden></div>
       <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
       </div>
       <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two
@@ -886,6 +838,204 @@
           </form>
         </div>
       </div>
+      <!-- The app pages (ADR-104). A page stands in the main area in place of the viewer, as the two
+           sheets above do, and has a TAB of its own in the strip beside the document tabs. It is not
+           a document: it is never in `views`, and nothing that counts documents sees it. app.js
+           keeps the pages that are open (`openAppPages`) and the one that is showing
+           (`activeAppPage`); `syncMainArea` is the one writer of which of the viewer, a sheet and a
+           page is on screen.
+
+           **To add a page**: a `<section class="sheet apppage">` here with an id, `data-group` (the
+           word on its tab), `data-menu` (the menu it belongs to — leaving that mode leaves the
+           page), `data-title`, and a heading with `tabindex="-1"` that `aria-labelledby` names;
+           and anywhere, a button with `data-apppage="<that id>"`. Nothing else: the tab, the focus and
+           the close are the mechanism's.
+
+           A setting here is saved as it is changed, so a page has no Save and no Cancel. The ways
+           out are the tabs. -->
+      <section id="settingsIdentityPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Identity &amp; Keys" role="region" aria-labelledby="settingsIdentityPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsIdentityPageTitle" tabindex="-1">Identity &amp; Keys</h2>
+          <p class="pagelead">Who you are when you sign, and which keys can open your vault. Each of the two opens its own window.</p>
+          <div class="setrow">
+            <button id="managePeersBtn">Identity &amp; peers…</button>
+            <p class="sethelp">Your six-word name, which you read out to the person you are co-signing with; the people
+              whose names you have pinned; and your signing certificate.</p>
+          </div>
+          <div class="setrow">
+            <button id="manageKeysBtn">Manage authorized keys…</button>
+            <p class="sethelp">The SSH keys that can unlock your vault. Add one to use Nib from a second machine;
+              remove one to revoke its access.</p>
+          </div>
+        </div>
+      </section>
+      <section id="settingsVaultPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Vault" role="region" aria-labelledby="settingsVaultPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsVaultPageTitle" tabindex="-1">Vault</h2>
+          <p class="pagelead">The vault is where Nib keeps your signing identity and these settings, sealed to your SSH key.</p>
+          <div class="setrow">
+            <button id="backupBtn">Back up vault</button>
+            <p class="sethelp">Saves a copy of your vault as a file named vault.nib.</p>
+          </div>
+          <!-- A real button in front of the hidden file input. It was a <label> around the input, which
+               a mouse can click and the keyboard cannot reach (WCAG 2.1.1). -->
+          <div class="setrow">
+            <button id="restoreBtn">Restore vault…</button>
+            <input id="restoreInput" type="file" accept=".nib" hidden />
+            <p class="sethelp">Replaces your current vault with a backup you choose. It will only open if this
+              machine’s SSH key is enrolled in it.</p>
+          </div>
+        </div>
+      </section>
+      <section id="settingsUpdatesPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Updates" role="region" aria-labelledby="settingsUpdatesPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsUpdatesPageTitle" tabindex="-1">Updates</h2>
+          <p class="pagelead">Nib tells you when a newer release exists and downloads it when you ask. It never installs anything itself.</p>
+          <div class="setrow">
+            <label class="check"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+            <p class="sethelp">Clicking the version number at the top of the window checks at any time.</p>
+          </div>
+          <!-- Where an update is downloaded to (ADR-102). Empty follows the browser Nib's window is
+               running in; the line under the box is the folder that will actually be used and where
+               that came from, both from the server. A folder that is not there is refused with a
+               sentence shown here, never stored. The box saves on `change`; a page that is left
+               with a folder typed and not yet saved saves it on the way out (app.js,
+               `flushDownloadDir`). -->
+          <div class="setrow">
+            <label class="field" for="downloadDirInput">Download folder</label>
+            <input id="downloadDirInput" type="text" placeholder="Same as your browser" aria-describedby="downloadDirWhere" />
+            <p class="sethelp">Leave it empty to use the download folder set in your browser.</p>
+            <p id="downloadDirWhere" class="setstatus"></p>
+            <p id="downloadDirError" class="cererror" role="alert" hidden></p>
+          </div>
+        </div>
+      </section>
+      <!-- Advanced features (`/pending 451`). Dan, 2026-09-10: "default off. menus hidden."
+
+           **Off means the function STOPS, not that its button is hidden.** Each of these is checked
+           at the door that does the thing — the announcer's constructor, the DHT bootstrap, the arm
+           sweep, the two timestamp routes — and the hiding is the second half, never the whole
+           of it. This repo has shipped the hidden-button-only shape twice (`/pending 378`, `3`).
+
+           Checkboxes rather than the Colours radio list, because these are four independent
+           switches and not one choice of seven — the distinction ADR-021 drew. -->
+      <section id="settingsAdvancedPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Advanced features" role="region" aria-labelledby="settingsAdvancedPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsAdvancedPageTitle" tabindex="-1">Advanced features</h2>
+          <p class="pagelead">Nib is a PDF editor first. These four reach the network or the local link, and
+            each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
+          <div class="setrow">
+            <label class="check"><input id="advCeremonyChk" type="checkbox" /> Signing ceremonies</label>
+            <p class="sethelp">A signing that several people take part in, each on their own computer. Off stops Nib
+              listening for your turn. It cannot be switched off while a ceremony is still running.</p>
+          </div>
+          <div class="setrow">
+            <label class="check"><input id="advDiscoveryChk" type="checkbox" /> Find peers on this network</label>
+            <p class="sethelp">Announces Nib on your local network so the person you are signing with can find it.
+              Off closes the announcing socket.</p>
+          </div>
+          <div class="setrow">
+            <label class="check"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
+            <p class="sethelp">Finds a peer who is not on your network, through the public DHT. Off means nothing
+              contacts the DHT.</p>
+          </div>
+          <div class="setrow">
+            <label class="check"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
+            <p class="sethelp">Proves when a document existed. It contacts the OpenTimestamps calendar servers; the
+              document itself never leaves this computer.</p>
+          </div>
+          <p id="advError" class="cererror" hidden></p>
+        </div>
+      </section>
+      <!-- Which main-menu tabs show (ADR-036). Dan, 2026-09-16: "It should be enabled/disabled in
+           the advanced settings menu. If an item is disabled in the advanced settings, it should
+           not show in the main menu."
+
+           **Its own page, deliberately NOT six more boxes on Advanced features above.** That
+           page's contract is "switching one off STOPS it", enforced at the door that does the
+           thing; this one changes nothing but what the menu offers. Putting a cosmetic switch on a
+           page that says otherwise makes the page lie — and fusing the two mechanisms would hide
+           the `collaborate` TAB when ceremonies are switched off, taking co-signing and Simple
+           Sign with it, which is the collision `test/jsdom/advanced.test.mjs` exists to catch.
+
+           **Settings has no box.** The switch that would undo a hidden Settings lives inside
+           Settings. -->
+      <section id="settingsMenuPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Main menu" role="region" aria-labelledby="settingsMenuPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsMenuPageTitle" tabindex="-1">Main menu</h2>
+          <p class="pagelead">Which tabs show across the top. Hiding one only removes it from the menu — nothing
+            about the document changes, and its keyboard shortcuts still work. Settings cannot be hidden.</p>
+          <div class="setrow setgroup" role="group" aria-labelledby="settingsMenuPageTitle">
+            <label class="check"><input class="modeChk" data-mode="file" type="checkbox" checked /> File</label>
+            <label class="check"><input class="modeChk" data-mode="markup" type="checkbox" checked /> Mark Up</label>
+            <label class="check"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
+            <label class="check"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
+            <label class="check"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>
+            <label class="check"><input class="modeChk" data-mode="collaborate" type="checkbox" checked /> Signing</label>
+          </div>
+          <p id="modeError" class="cererror" hidden></p>
+        </div>
+      </section>
+      <section id="settingsAppearancePage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Appearance" role="region" aria-labelledby="settingsAppearancePageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsAppearancePageTitle" tabindex="-1">Appearance</h2>
+          <p class="pagelead">Nib has a light theme and a dark one.</p>
+          <!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. It is
+               always offered here, because a Settings surface that omits the theme is a surface
+               people will look at and not find it on. -->
+          <div class="setrow">
+            <button data-forward="themeToggle">Switch theme</button>
+            <p class="sethelp">The same switch as the sun and moon at the top of the window.</p>
+          </div>
+        </div>
+      </section>
+      <!-- Read aloud's voice and speed (`/pending 482`). The voice list is the browser's, filled by
+           app.js when the speech engine reports it; a stored voice this machine lacks is shown as such
+           and read-aloud falls back to the default voice rather than going quiet. -->
+      <section id="settingsReadAloudPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Read Aloud" role="region" aria-labelledby="settingsReadAloudPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsReadAloudPageTitle" tabindex="-1">Read Aloud</h2>
+          <p class="pagelead">The voice and the speed Nib uses when it reads a document aloud.</p>
+          <div class="setrow">
+            <label class="field" for="readAloudVoiceSel">Voice</label>
+            <select id="readAloudVoiceSel"><option value="">Browser default</option></select>
+            <p class="sethelp">The voices are the ones your browser offers on this computer.</p>
+          </div>
+          <div class="setrow">
+            <label class="field" for="readAloudRateSel">Speed</label>
+            <select id="readAloudRateSel">
+              <option value="0.75">Slower</option><option value="1">Normal</option><option value="1.25">Faster</option><option value="1.5">Fastest</option>
+            </select>
+          </div>
+        </div>
+      </section>
+      <section id="settingsColoursPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Colours" role="region" aria-labelledby="settingsColoursPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsColoursPageTitle" tabindex="-1">Colours</h2>
+          <p class="pagelead">The colours of the entries in the sidebar: all six in turn, or one colour in six steps.</p>
+          <!-- The sidebar's card colours. `all` is the six-accent rotation ADR-019 measured; the six
+               single hues are that same hue at stepped tints, darkest step equal to the measured one.
+               A radio list rather than the toggle pattern: seven options is a choice, not a switch —
+               which is the distinction ADR-021 drew when it removed the four-flavour picker. -->
+          <div class="setrow setgroup" role="radiogroup" aria-labelledby="settingsColoursPageTitle">
+            <label class="check"><input type="radio" name="cardhue" value="all" /> All colours</label>
+            <label class="check"><input type="radio" name="cardhue" value="blue" /> Blue</label>
+            <label class="check"><input type="radio" name="cardhue" value="mauve" /> Mauve</label>
+            <label class="check"><input type="radio" name="cardhue" value="green" /> Green</label>
+            <label class="check"><input type="radio" name="cardhue" value="peach" /> Peach</label>
+            <label class="check"><input type="radio" name="cardhue" value="red" /> Red</label>
+            <label class="check"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
+          </div>
+        </div>
+      </section>
       <div id="viewerWrap">
         <!-- Presentation chrome (v1.129.6). Present only while `body.presenting`, and inside the
              viewer rather than the toolbar because the toolbar is exactly what presentation hides.

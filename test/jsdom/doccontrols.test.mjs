@@ -125,10 +125,12 @@ const EXEMPT = new Set([
   // unreachable from the one state a user most wants it in — a Nib with nothing open that they
   // want to stop — and its own modal already names whatever would be lost, document or ceremony.
   'quitBtn',
-  // The Settings pane (v1.126.0). None of it acts on the open document — they are the machine's
-  // identity, its vault, its update preference and its About box — so requiring a document would
-  // make Settings unreachable on a fresh install, which is exactly when it is needed.
-  'managePeersBtn', 'manageKeysBtn', 'backupBtn', 'aboutBtn',
+  // The Settings pane (v1.126.0). None of it acts on the open document, so requiring a document
+  // would make Settings unreachable on a fresh install, which is exactly when it is needed. Since
+  // ADR-104 the pane holds the nine entries and nothing else: `aboutBtn` is the one entry with an
+  // id, and `managePeersBtn`, `manageKeysBtn` and `backupBtn` are on Settings pages, in the
+  // main area, which this scan of the toolbar does not read and DOC_REQUIRED never reached.
+  'aboutBtn',
   // These act on something OTHER than the open document — your signing certificate, and a
   // file the user picks in the dialog.
   'exportCertBtn', 'timestampVerifyBtn',

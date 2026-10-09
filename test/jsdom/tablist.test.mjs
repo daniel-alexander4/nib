@@ -132,7 +132,12 @@ test('arrows do not ACTIVATE, only move focus', () => {
 // rule is read below, so making it a real card again fails here instead of silently dropping
 // it from the set.
 const CSS = fs.readFileSync(path.join(REPO, 'web', 'style.css'), 'utf8');
-const cards = () => [...doc.querySelectorAll('#sidebar .sbhead')].filter((c) => c.dataset.panel !== 'commands');
+//
+// **A Settings entry is not a card (ADR-104).** It opens a page and expands nothing, so it has no
+// open state to toggle; `apppages.test.mjs` reads it, and it is told apart here by the mark the
+// accordion gives it.
+const entries = () => [...doc.querySelectorAll('#sidebar .sbhead[data-entry]')];
+const cards = () => [...doc.querySelectorAll('#sidebar .sbhead')].filter((c) => c.dataset.panel !== 'commands' && !entries().includes(c));
 const isOpen = (c) => (c.dataset.panel
   ? !!doc.getElementById(c.dataset.panel)?.classList.contains('active')
   : c.getAttribute('aria-expanded') === 'true');

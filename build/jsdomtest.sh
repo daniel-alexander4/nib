@@ -161,7 +161,9 @@ echo "$Nib_out"
 #
 # 100 since ADR-095 (wrappedmatch.test.mjs): a search match that wraps a line, found by both readings — its own file
 # because it drives scanTextMatches end to end, which no other file does, over a pdf.js page it makes.
-Nib_expect_files=101
+# 102 since ADR-104 (apppages.test.mjs): the app-page registry — nine entries and no setting in the menu, one tab a
+# page, and the source guards that the registry and `#viewerWrap.hidden` have the writers they say they have.
+Nib_expect_files=102
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"
