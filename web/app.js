@@ -15393,6 +15393,17 @@ function goCard(tab, label) {
   if (head && !head.hasAttribute('data-entry')) leaveAppPage();
   if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
 }
+// goFeature goes to ONE card of the Toggle Features page (ADR-111): the page through `goCard`, then
+// the card opened, brought into view and given focus on its summary — a row that says "switched off,
+// turn it on" lands on the switch, not on the top of a page whose card for it is shut.
+function goFeature(cardId) {
+  goCard('settings', 'Toggle Features');
+  const card = $(cardId);
+  if (!card) return;
+  card.open = true;
+  card.scrollIntoView?.({ block: 'start' });
+  card.querySelector('summary')?.focus();
+}
 // **A panel is a tool for the document, so going to one shows the document (ADR-105).** The rows are on a page now;
 // `setMode` leaves that page when the panel is another mode's, and not when it is Signing's own (Flags), where the
 // panel would open in the menu behind a page still covering the document it is for.
@@ -15465,12 +15476,12 @@ function renderSignSteps() {
     label.textContent = step.label;
     label.title = [step.hint, why || (state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null)]
       .filter(Boolean).join(' — ');
-    label.onclick = off ? () => goCard('settings', 'Toggle Features') : step.go;
+    label.onclick = off ? () => goFeature('featuresAdvancedCard') : step.go;
     if (off) row.dataset.off = step.feature;
 
     // The hint in words, under the name. It was the label's tooltip alone, which a keyboard does not show and a
     // touch screen never does; the page has the room. The tooltip stays, for the pointer.
-    const hintText = off ? 'Switched off on this computer. Turn it on under Settings, Toggle Features.' : step.hint;
+    const hintText = off ? 'Switched off on this computer. Turn it on under Settings, Toggle Features, Advanced features.' : step.hint;
     const hint = hintText ? document.createElement('span') : null;
     if (hint) { hint.className = 'signstep-hint'; hint.textContent = hintText; }
 
@@ -18674,7 +18685,7 @@ document.getElementById('cerPageAcceptBtn')?.addEventListener('click', () => {
 });
 // A page's way to a SETTINGS page: through `goCard`, so the mode changes with it and the Settings
 // page is not left standing under the Signing menu.
-for (const b of all('[data-gosettings]')) b.onclick = () => goCard('settings', b.dataset.gosettings);
+for (const b of all('[data-gosettings]')) b.onclick = () => (b.dataset.gofeature ? goFeature(b.dataset.gofeature) : goCard('settings', b.dataset.gosettings));
 document.getElementById('cerConveneCancel')?.addEventListener('click', () => showCeremonyForm(null));
 document.getElementById('cerAcceptCancel')?.addEventListener('click', () => showCeremonyForm(null));
 document.getElementById('ceremonyConveneForm')?.addEventListener('submit', (ev) => {

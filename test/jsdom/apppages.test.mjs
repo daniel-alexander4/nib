@@ -201,6 +201,32 @@ test('a page replaced by another is left, once: the folder typed on Toggle Featu
   tabs()[0].el.querySelector('.tabclose').click();
 });
 
+// ── Toggle Features: three collapsible cards, in an order (ADR-111) ─────────────────────────
+// The MARKUP's own state, read before anything has opened a card: jsdom does not lay a shut
+// <details> out, so what is on screen is tier 3's; what is open at first and what order things
+// are in is here.
+test('Toggle Features is three cards in order — Main menu open, the others shut — and each card holds its own switches in order', () => {
+  const page = doc.getElementById('settingsFeaturesPage');
+  const cards = [...page.querySelectorAll('details.setcard')];
+  assert.deepEqual(cards.map((c) => [c.id, c.querySelector('summary h3').textContent, c.hasAttribute('open')]),
+    [['featuresMenuCard', 'Main menu', true], ['featuresAdvancedCard', 'Advanced features', false], ['featuresUpdatesCard', 'Updates', false]],
+    'the cards are not Main menu, Advanced features, Updates in that order, with only the first open');
+  for (const c of cards) {
+    assert.equal(c.firstElementChild.tagName, 'SUMMARY', `${c.id} does not start with its summary, so it has no name to press`);
+    assert.ok(c.querySelector('summary .setcardsub')?.textContent.trim(), `${c.id}'s header does not say what is in it while it is shut`);
+    assert.ok(c.querySelector('.setcardbody > .pagelead'), `${c.id} lost its own sentence about what off means (ADR-109 §2)`);
+  }
+  const inCard = (id) => [...doc.getElementById(id).querySelectorAll('input')].map((i) => i.id || i.dataset.mode);
+  assert.deepEqual(inCard('featuresMenuCard'), ['edit', 'accessibility', 'secure', 'collaborate'], 'the Main menu boxes are not in the menu\'s own order');
+  assert.deepEqual([...doc.querySelectorAll('.modetab')].map((t) => t.dataset.tab).filter((t) => !['file', 'markup', 'settings'].includes(t)),
+    inCard('featuresMenuCard'), 'the boxes are in a different order from the tabs they hide');
+  assert.deepEqual(inCard('featuresAdvancedCard'), ['advDiscoveryChk', 'advRendezvousChk', 'advCeremonyChk', 'advTimestampChk'],
+    'the advanced switches are not nearest reach first, with ceremonies after the two that find a peer');
+  assert.deepEqual(inCard('featuresUpdatesCard'), ['autoUpdateChk', 'downloadDirInput']);
+  // Nothing on the page is outside a card but its name and lead.
+  assert.deepEqual([...page.querySelectorAll('input')].filter((i) => !i.closest('details.setcard')).length, 0, 'a switch is outside every card');
+});
+
 test('leaving the Settings menu leaves the page, which stays open in the page tab', () => {
   doc.querySelector('.modetab[data-tab="settings"]').click();
   entries().find((e) => e.textContent.trim() === 'Toggle Features').click();
@@ -485,6 +511,10 @@ test('a feature that is switched off: its entry goes, its page says so and offer
   // The off row's button goes to the switch.
   page.querySelector('[data-advoff="ceremony"] button').click();
   assert.deepEqual([pagesShown(), doc.body.dataset.tab], [['settingsFeaturesPage'], 'settings']);
+  // …and to the CARD the switch is in, opened, with focus on it (ADR-111): that card is shut at first.
+  assert.equal(doc.getElementById('featuresAdvancedCard').open, true, 'the off row went to Toggle Features and left the card holding the switch shut');
+  assert.equal(doc.activeElement, doc.querySelector('#featuresAdvancedCard > summary'), 'focus is not on the card the off row went to');
+  doc.getElementById('featuresAdvancedCard').open = false;
   for (const id of ['advCeremonyChk', 'advTimestampChk']) { doc.getElementById(id).checked = true; }
   doc.getElementById('advCeremonyChk').onchange();
   await h.settle();

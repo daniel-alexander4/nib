@@ -357,6 +357,9 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     assert.deepEqual(off, { convene: false, accept: false, said: true }, 'with ceremonies off the page offers the flows, or does not say they are off');
     await page.click('#signingCeremonyPage [data-advoff="ceremony"] button');
     await page.waitForSelector('#settingsFeaturesPage:not([hidden])');
+    // To the card the switch is in, open and in the window (ADR-111).
+    assert.equal(await page.isVisible('#advCeremonyChk'), true, 'the off row went to Toggle Features and the ceremony switch is not on screen');
+    assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('#featuresAdvancedCard > summary')), true, 'focus is not on the Advanced features card');
     assert.deepEqual((await look()).pageTabs, ['settingsFeaturesPage'], 'the switch\'s page did not take the ceremony page\'s tab');
   } finally {
     await setCeremonies(was);

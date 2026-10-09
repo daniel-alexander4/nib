@@ -493,9 +493,25 @@ input[type="search"] { width: 100%; }
 .pagebody h2 { margin: -8px 0 0; font-size: 22px; font-weight: 600; }
 .pagebody h2:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 4px; }
 .pagelead { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }
-/* A page with more than one subject (Toggle Features, ADR-109) heads each with one of these: the
-   rule and the space above are what say "a different kind of switch starts here". */
-.pagebody h3.pagesection { margin: 14px 0 -6px; padding-top: 18px; width: 100%; border-top: 1px solid var(--surface0); font-size: 16px; font-weight: 600; }
+/* A page with more than one subject (Toggle Features, ADR-109, ADR-111) puts each in a collapsible
+   card: a native <details>, whose summary is the card's name and one line saying what is in it. */
+.setcard { width: 100%; min-width: 0; border: 1px solid var(--surface1); border-radius: 12px; background: var(--base); }
+.setcard > summary {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px;
+  padding: 14px 16px 14px 40px; position: relative; cursor: pointer; list-style: none; border-radius: 12px;
+}
+.setcard > summary::-webkit-details-marker { display: none; }
+.setcard > summary::before {
+  content: ""; position: absolute; left: 17px; top: 20px; width: 7px; height: 7px;
+  border-right: 2px solid var(--text); border-bottom: 2px solid var(--text); transform: rotate(-45deg);
+}
+.setcard[open] > summary::before { transform: rotate(45deg); top: 18px; }
+.setcard > summary:hover { background: var(--mantle); }
+.setcard > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.setcard > summary h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.setcardsub { font-size: 13px; overflow-wrap: anywhere; }
+.setcardbody { display: flex; flex-direction: column; gap: 14px; padding: 4px 16px 16px; min-width: 0; }
+@media (prefers-reduced-motion: no-preference) { .setcard > summary::before { transition: transform .12s; } }
 .setrow {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0;
   background: var(--mantle); border: 1px solid var(--surface0); border-radius: 10px; padding: 14px 16px;
