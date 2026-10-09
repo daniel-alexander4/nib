@@ -6,6 +6,7 @@
 disabled in the advanced settings, it should not show in the main menu."* `ADVANCED_SURFACES` and
 `applyAdvanced` in `web/app.js`; `test/jsdom/advanced.test.mjs`; `hideableModes` in
 `internal/server/settings.go`.
+**Superseded in part by [ADR-110](110-file-and-mark-up-are-always-in-the-menu.md)** (*"any main-menu tab"*: File and Mark Up are always present, as Settings is).
 **Superseded in part by [ADR-109](109-toggle-features-is-one-page-of-three-sections.md)** (*"its own card"*: Main menu is a section of the Toggle Features page, under its own heading and lead; the separate switch stands).
 **Superseded in part by [ADR-104](104-a-settings-entry-opens-a-page.md)** (*"a **Main menu** card in Settings"*: it is a page, opened by the Main menu entry).
 **Applies:** every mode added from now on, and anything that hides a piece of the UI.

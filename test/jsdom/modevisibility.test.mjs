@@ -38,7 +38,7 @@ const jump = (m) => doc.querySelector(`[data-modejump="${m}"]`);
 const box = (m) => doc.querySelector(`.modeChk[data-mode="${m}"]`);
 const shown = (el) => !!el && !el.hidden;
 
-test('every mode shows by default, and Settings has no box at all', () => {
+test('every mode shows by default, and Settings, File and Mark Up have no box at all', () => {
   for (const m of ['file', 'markup', 'edit', 'accessibility', 'secure', 'collaborate', 'settings']) {
     assert.ok(shown(tab(m)), `${m} is hidden on a vault that has never been asked — every mode shows by default`);
     assert.ok(shown(jump(m)), `${m} is missing from the width-swap dropdown, so below 719px it is unreachable`);
@@ -48,7 +48,9 @@ test('every mode shows by default, and Settings has no box at all', () => {
   assert.equal(box('settings'), null,
     'Settings has a visibility box — unticking it would hide the mode that holds the switch, and the '
     + 'only way back would be editing the vault');
-  for (const m of ['file', 'markup', 'edit', 'accessibility', 'secure', 'collaborate']) {
+  // File and Mark Up are always present (ADR-110).
+  for (const m of ['file', 'markup']) assert.equal(box(m), null, `${m} has a visibility box — it is always present`);
+  for (const m of ['edit', 'accessibility', 'secure', 'collaborate']) {
     assert.ok(box(m), `${m} has no box in Toggle Features' Main menu section, so it cannot be switched off at all`);
     assert.equal(box(m).checked, true, `${m}'s box is unticked while its tab is showing`);
   }
@@ -76,21 +78,21 @@ test('unticking a mode hides it in BOTH lists, and sends the whole set', async (
 });
 
 test('the mode showing is never one that was just hidden', async () => {
-  doc.querySelector('.modetab[data-tab="markup"]').click();
+  doc.querySelector('.modetab[data-tab="edit"]').click();
   await settle();
-  assert.equal(doc.body.dataset.tab, 'markup', 'setup: the click did not change mode');
+  assert.equal(doc.body.dataset.tab, 'edit', 'setup: the click did not change mode');
 
-  box('markup').checked = false;
-  box('markup').onchange();
+  box('edit').checked = false;
+  box('edit').onchange();
   await settle();
 
-  assert.notEqual(doc.body.dataset.tab, 'markup',
+  assert.notEqual(doc.body.dataset.tab, 'edit',
     'the app is still showing the mode that was just hidden — the pane is on screen with no tab '
     + 'above it, which is the same silent shape a missing SIDEBAR_FOR entry produces');
   assert.ok(shown(tab(doc.body.dataset.tab)), 'the app landed on a mode that is itself hidden');
 
-  box('markup').checked = true;
-  box('markup').onchange();
+  box('edit').checked = true;
+  box('edit').onchange();
   await settle();
 });
 
