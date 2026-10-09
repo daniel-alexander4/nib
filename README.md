@@ -85,7 +85,7 @@ print-only forms with no fields, the **Text** tool lets you type anywhere on the
 page.
 
 ### Smart field detection
-Press **Detect** and Nib drops fillable widgets where they belong. On a form made
+Press **Detect fields** (on the **Mark Up** tab) and Nib drops fillable widgets where they belong. On a form made
 by a program it reads the page's own ruled lines and text — so a table cell with
 its label printed inside it becomes a field under the label, exactly as wide as
 the cell — and on a scan it reads the picture of the page:
@@ -105,16 +105,16 @@ the cell — and on a scan it reads the picture of the page:
 
 It's a smart proposal, not magic — move, resize, retype, or ignore anything it
 suggests. Measured on real forms that carry their own fields as the answer key,
-it finds about nine in ten; it does least well where a form marks its blanks
-with shading and no lines.
+it finds nearly all of them and places about ninety-nine in a hundred well; it does
+least well where a form marks its blanks with shading alone.
 
 ### Turn a flat scan into a fillable form
-Run **Detect** on a flat or scanned form, then **File → Save as → Save as fillable
+Run **Detect fields** on a flat or scanned form, then **File → Save a Copy → Save as fillable
 form…** to emit a real interactive **AcroForm PDF**: every detected text box and
 checkbox becomes a live, fillable field (with proper appearance streams, so it
 works in Adobe and any browser), dropped right onto the original page — the scan
-itself is untouched. Need a **dropdown** or a **radio-button group**? The Edit-tab
-**Dropdown** and **Radio** tools let you draw one and type its choices; they're
+itself is untouched. Need a **dropdown** or a **radio-button group**? The **Dropdown** and **Radio** tools
+in **Mark Up → Annotate & Draw** let you draw one and type its choices; they're
 authored as a real combobox / radio group. A radio group lays its buttons out to
 match the box you draw — a wide box runs them across, a tall box stacks them down.
 A quick step lets
@@ -126,7 +126,7 @@ run **OCR** first. The opposite of flattening: instead of baking your answers in
 you publish a blank form for others to fill.
 
 ### Mail-merge a form from a spreadsheet
-Got a fillable form and a spreadsheet of records? **File → Fill from spreadsheet…**
+Got a fillable form and a spreadsheet of records? **Mark Up → Fill Forms from Data → Fill from spreadsheet…**
 picks a CSV and fills the form once per row, handing you a **ZIP with one PDF per
 row**. The CSV's first row is the form's field names (export them with *File →
 Export & Print → Form data…*, choosing CSV, to see the exact names); checkbox fields take
@@ -137,7 +137,7 @@ fields; on a flat scan, run *Save as fillable form…* first.)
 ### Exchange form data as XFDF
 Trading form data with Acrobat or Foxit? Nib reads and writes **XFDF**, the XML
 form-data interchange format both speak. **File → Export & Print → Form data…**, with
-XFDF chosen as the format in the Save dialog, saves the open form's values; **File → Import form data (XFDF)…** fills the form
+XFDF chosen as the format in the Save dialog, saves the open form's values; **Mark Up → Fill Forms from Data → Import form data (XFDF)…** fills the form
 from an `.xfdf` file and saves the result. On the command line it's
 `nib export-xfdf IN -o OUT.xfdf` and `nib fill IN --data DATA.xfdf -o OUT`.
 Hierarchical (dotted) field names are preserved as nested fields; like every Nib
@@ -183,7 +183,7 @@ the claim would break the signature, so it is left as it was.
 paragraphs and list items from how they look — larger text as headings, drawn bullets and numbers as
 list items. Nothing is written while you review: each proposed element is outlined on its page, and
 you can change its type, ignore it, or move it earlier or later in the reading order, all from the
-keyboard. **Commit** writes the structure and records that it was inferred, so the accessibility report
+keyboard. **Commit structure** writes it and records that it was inferred, so the accessibility report
 says so; **Undo** takes it back. It refuses a document that is already tagged (it will not write a
 second structure over the first), a signed document (tagging would break the signature), and a page
 whose text is drawn in a way it cannot mark without describing something else. Text on the page that
@@ -222,10 +222,10 @@ reason** rather than turned into a file that falsely claims conformance.
 
 For those harder documents, Nib can use **[Ghostscript](https://www.ghostscript.com/)**
 if it's installed on your system — it re-embeds fonts and converts colour, the
-general conversion pure Go can't do. It's strictly optional: when Ghostscript is
-present the dialog offers a *"Convert with Ghostscript"* button (and the CLI a
-`--gs` flag); when it isn't, the built-in converter is used and the feature simply
-isn't offered. Ghostscript is detected at runtime and never bundled, so Nib stays a
+general conversion pure Go can't do. It's strictly optional: when the built-in
+converter refuses a document and Ghostscript is installed, the dialog offers a
+*"Convert with Ghostscript"* button (the CLI has a `--gs` flag); when Ghostscript isn't
+found, Nib says so, and that it would have handled the document. Ghostscript is detected at runtime and never bundled, so Nib stays a
 single pure-Go binary. (Note: that path runs Ghostscript over your PDF; it executes
 under Ghostscript's sandbox, but it is processing the document, so only enable it
 for files you'd open anyway.)
@@ -253,8 +253,8 @@ screen. A photo carrying an EXIF orientation opens **upright**; the four mirrore
 orientations are not corrected, and open as an unrotated image.
 
 An opened image is **not saved back over itself**. The file on disk is a PNG and the
-document is a PDF built from it, so **Save** offers **Save As** rather than replacing
-your original.
+document is a PDF built from it, so **Save** downloads a PDF copy to your browser's download folder rather than
+replacing your original; use **File → Save a Copy** to choose its name and place.
 
 ### Open an office or Markdown document
 **File → Open & convert to PDF…** opens a Markdown, Word, Excel, PowerPoint, or
@@ -310,8 +310,8 @@ Quick-stamps for the things you reach for most — **today's date**, **"Approved
 and a **checkmark**. Drop one on, drag to place, resize to fit.
 
 ### Signing flags — sign, date, initial, name, title, company
-Filling a form with the same fields on every page? Run **Detect** to find the
-blanks, then in the sidebar's **Place Signing Flags** card pick **Sign**,
+Filling a form with the same fields on every page? Run **Mark Up → Detect fields** to find the
+blanks, then switch to the **Signing** tab and in the sidebar's **Place Signing Flags** panel pick **Sign**,
 **Date**, **Initial**, **Name**, **Title**, or **Company** and click a blank to
 flag it — the flag snaps to that line (or click anywhere to place one freehand).
 Then click each flag to fill it and Nib **jumps to the next** one: a date flag
@@ -337,10 +337,10 @@ even if they filled a flag from the Library or left one blank. Send the file
 as-is: printing it or re-exporting it through another app strips the flags.
 
 **Skip email entirely — send it Nib-to-Nib.** Instead of mailing the file,
-**Signing → Simple Sign → Send a document to a peer…** hands it straight to a pinned peer over
+**Signing → Send & Receive → Send a document to a peer…** hands it straight to a pinned peer over
 the same encrypted, no-cloud channel co-signing uses (both of you online; they
 pick **Receive a document…** first). Received files save into `~/nib` — a flagged
-document waiting for you under `to-sign/`, a finished signature under `signed/` —
+document waiting for you under `to-sign/`, a finished signature under `signed/`, anything else under `incoming/` —
 so the round trip is: you send the flagged file, they fill and **Mark complete &
 sign**, they send it back, and the signed copy lands in your `~/nib/signed/`. Each
 hop needs both peers online; nothing is stored on a server in between.
@@ -452,14 +452,14 @@ bit slower, worth it when accuracy matters. The OCR'd document also gets its
 voice. It's undoable, too.
 
 ### Real redaction
-Draw redaction boxes and press **Apply**. Nib re-renders those pages flat so the
+On the **Secure** tab, click **Redact**, draw your boxes and press **Apply redactions**. Nib re-renders those pages flat so the
 content underneath is **actually gone** — not just hidden behind a black
 rectangle. (Verified: a redacted page exposes no hidden text or form field.)
 
 Don't want to hunt for every occurrence by hand? **Redact text…** finds them for
-you: type a word or phrase, and/or tick a built-in pattern — **SSN, email, phone,
-card number** — and Nib marks every match in the document as a redaction box.
-Review the boxes (remove any you don't want), then press **Apply** to flatten
+you: type a word or phrase, and/or tick a built-in pattern — **SSN, email, US phone
+number, card number** — and Nib marks every match in the document as a redaction box.
+Review the boxes (remove any you don't want), then press **Apply redactions** to flatten
 them for real. Each box is drawn from the page's own letter positions, so it
 covers the match and stops there instead of spilling onto the words either side;
 where Nib can't read those positions it falls back to a deliberately wider box
@@ -477,7 +477,7 @@ line. A match that runs over a **page** break, or over more than three lines,
 is not found — search for its parts.
 
 ### Compare two versions
-Wondering what changed between draft v3 and v4 of a contract? **File → Compare…**
+Wondering what changed between draft v3 and v4 of a contract? **Page Functions → Compare…**
 lets you pick a second PDF and compare it against the open document three ways,
 switchable from the toolbar at the top of the dialog:
 
@@ -574,7 +574,7 @@ identity kept in your vault and bakes in a visible watermark — a preset like
 **DRAFT**, **CONFIDENTIAL**, **FINALIZED**, **COPY**, or **VOID** (or your own
 text), with adjustable opacity, colour, size, and angle and a live preview —
 optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
-— that's the point. Export your public certificate so others can verify it's you.
+— that's the point. **Secure → Signing certificate** saves your public certificate so others can verify it's you.
 A certification can only be a document's first signature, so Finalize (and `nib sign`)
 refuses a document that is already signed rather than break the signature it carries.
 
@@ -584,7 +584,7 @@ document ever comes back changed and the file itself can no longer show what you
 copy is saved **unencrypted**, outside Nib's vault — anyone who can read your files, and your backups, can read it. If
 it cannot be saved, Finalize does not sign, and says why. A kept copy proves what you had when you signed, not what you
 sent.
-Your copies are listed under **Sign & Timestamp → Copies kept when you signed…**, where each can be removed — permanently,
+Your copies are listed under **Secure → Sign & Timestamp → Copies kept when you signed…**, where each can be removed — permanently,
 and not from any backup. When a signed document comes back, **Check a signed document that came back…** offers the
 matching kept copy first among the copies to compare against.
 
@@ -706,8 +706,8 @@ which is why Escape is unpredictable in them.
 choose another under **Settings → Read Aloud**, where you can also set the speed. The list shows the
 voices your browser has on this machine; if a saved voice is not there, Nib reads in the default voice
 rather than going quiet. It stops when you turn the page, switch document, or press it again. **It is not a screen reader and
-does not claim to be** — a screen reader needs a tag tree, which Nib does not yet write (that is a
-known gap). This is a different thing, useful for proof-reading or for taking a document in by ear.
+does not claim to be** — it reads the page's own text layer, not the document's tags. This is a
+different thing, useful for proof-reading or for taking a document in by ear.
 On a scanned page there is no text to read and Nib says so, pointing you at OCR rather than falling
 silent.
 
@@ -715,8 +715,8 @@ silent.
 for all of them, the ones that do not fit move into **⋯ More**, where each is shown with its name.
 From the left: the sidebar toggle, the document's name, find, the page you are on with
 previous/next, undo/redo — and, only while a drawing or placing tool is armed, that tool's name
-with a button to put it down. On the right: the layouts above, the zoom controls, reload, print,
-save and quit.
+with a button to put it down. On the right: the layouts above, the zoom controls, then save, print,
+reload and quit.
 
 The zoom controls are out, the current zoom as a percentage (click it for **Actual size**, 100%),
 in, **Fit width** and **Fit page**. Fit
@@ -724,10 +724,11 @@ width and Fit page both measure the *whole* document and lock a single scale, so
 are not all the same size does not resize under you as you scroll past the boundary.
 
 **Where the file commands live** — the toolbar keeps what you reach for while reading:
-the document's name with a dot showing whether it needs saving, find, and — at the right
-edge — the View controls, reload and Save. Opening, saving a copy, exporting and printing
-are once-per-document acts, so they are cards in the **File** tab's sidebar —
-*Open a Document*, *Save a Copy*, *Export & Print*. A document is closed with the **×** on
+the document's name with a dot showing whether it needs saving, find, the page position,
+undo and redo, and — at the right edge — the View and zoom controls, Save, Print, Reload and
+Quit. Opening, saving a copy and exporting are once-per-document acts, so they are cards in
+the **File** tab's sidebar — *Open a Document*, *Save a Copy*, *Export & Print* (Print is in
+both places). A document is closed with the **×** on
 its tab. **Ctrl+O** opens,
 **Ctrl+S** saves and **Ctrl+F** opens find without going near either.
 
@@ -826,10 +827,10 @@ Nothing is checked until you open the sheet; opening a document never runs it.
 
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
-cryptographically-signed reason — that they accept the other's identity. Nib pins
-that identity by its **key fingerprint**, which you compare once over a channel you
-both trust (read it aloud on a call, or paste it across a secure chat) under
-**Identity & peers**; every fingerprint has a **Copy** button for that comparison.
+cryptographically-signed reason — that they accept the other's identity. Nib names
+each identity with **six words** derived from its signing key. Read yours aloud once over a
+channel you both trust — a call, or in the room — and pin theirs under **Identity & peers**.
+The full key fingerprint is there too, under *Fingerprint (advanced)*, for pinning by hand.
 
 There are two ways to exchange the document:
 
@@ -837,8 +838,8 @@ There are two ways to exchange the document:
   Signal); they co-sign and send it back. Nothing but the file moves, and the result
   verifies on its own, with no server in between.
 - **Live, over an encrypted channel** — co-sign in real time without passing a file.
-  One person **arms to receive** (Signing → Simple Sign → *Receive a live co-signature…*), the other
-  **dials in** (Signing → Simple Sign → *Co-sign live with a peer…*). The connection is mutually
+  One person **arms to receive** (Signing → Send & Receive → *Receive a live co-signature…*), the other
+  **dials in** (Signing → Send & Receive → *Co-sign live with a peer…*). The connection is mutually
   authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
   at the handshake, before any document bytes are exchanged. The receiver reviews the
   exact document and accepts or declines — nothing is signed without that consent —
@@ -850,8 +851,10 @@ There are two ways to exchange the document:
 infrastructure of its own — that would mean a server, and Nib has none. (It can *borrow*
 someone else's: the peer-finding work uses the public BitTorrent DHT as a meeting point,
 which is described under [What leaves your computer](#what-leaves-your-computer). Nothing
-in it is run by us.) Today the dialing peer reaches the receiver's armed listener directly,
-so the receiver makes their chosen `host:port` reachable one of two ways:
+in it is run by us.) Leave the address blank and Nib picks a port and
+looks for the other person itself — on the local network, and over the internet — once those are
+switched on under **Settings → Advanced features**. A typed `host:port` is the fallback, and then
+the receiver makes it reachable one of two ways:
 
 - **Port-forward** the chosen port on their router to their machine, or
 - **Share a private network** you both already trust — a VPN such as **Tailscale**
@@ -947,7 +950,7 @@ ceremony's record is listed in the attachments panel for what it is, so it is no
 embedded file. And your copy of a proceeding that is still travelling is **named in progress**,
 never as the finished document.
 
-**Four ways a ceremony ends**, and Nib distinguishes them because they call for different
+**Six ways a ceremony ends**, and Nib distinguishes them because they call for different
 actions:
 
 - **Completed** — everyone obliged has signed and the finished document has been delivered.
@@ -960,6 +963,10 @@ actions:
 - **Abandoned** — nothing was ever heard. This one is a conclusion your own machine draws,
   not something anybody attests, because the party who would attest is the one that stopped
   answering.
+- **Stopped** — the convener ended it before everyone had signed (*Stop this ceremony*).
+  The convener attests to that, as for a decline, and signatures already given still stand.
+- **Left** — you stopped taking part on this machine (*Leave this ceremony*). It is not a
+  decline, and it is your own machine's record rather than anything anybody signed.
 
 **What it will not do, and these are limits rather than missing features:**
 
@@ -979,8 +986,8 @@ a ceremony is live: the record, and the document as they last held it. That fold
 lets Nib pick up where it left off after a restart. **The invitation's secret is never
 written there** — it lives in your vault, sealed to your SSH key.
 
-When a ceremony ends and its delivery round has finished, the folder is **moved, not
-deleted**, to `~/nib/ended/`. That matters more than it sounds: on every machine but the
+When a ceremony ends and its delivery round has finished — or three days after its deadline,
+whichever comes first — the folder is **moved, not deleted**, to `~/nib/ended/`. That matters more than it sounds: on every machine but the
 convener's, that folder holds the only copy of *your own* signature on a proceeding that was
 declined or abandoned, and nothing has carried it anywhere else. Nib also leaves a small
 note beside it saying how the ceremony ended and when your machine decided so. Nothing ever
@@ -990,7 +997,7 @@ removes what was moved — that is your file, and deleting it is your decision.
 its signatures are intact, that they all commit to the same proceeding, and which of the
 roster's obliged parties have signed. It does **not** record how the ceremony ended, and it
 cannot: nothing may be written into a PDF after its last signature without breaking that
-signature, and two of the four end states are conclusions nobody can sign. So when
+signature, and three of the six end states are conclusions nobody can sign. So when
 `nib verify` tells you a ceremony was declined, it is reading your own machine's records and
 it says so, under a heading of its own. **Run the same file on a machine that was not part
 of the proceeding and that line is simply absent** — which is the honest answer, and the
@@ -1014,7 +1021,7 @@ pdf.js allows, so a document with a little junk before its header still opens.
 
 ### Several documents at once
 Opening a document **adds** it — the one you had stays open. A strip of tabs
-appears above the page as soon as there are two, and clicking one switches to it.
+appears above the page as soon as a document is open, and clicking one switches to it.
 Each document keeps its own scroll position, page, zoom, form fills and typed
 overlay values while you are on another, because Nib hides the document you leave
 rather than tearing it down and rebuilding it later.
@@ -1032,10 +1039,9 @@ accepts documents up to 200 MB each.
 The **×** on a tab closes that document and moves to the next tab; with two or
 more open, **Close all** at the end of the tabs closes every one — every document, that
 is: a Settings page open in a tab of its own is not a document and stays. Either way, if
-anything has been edited since a document was opened, Nib asks first — and it asks
-about edits *since the last save*, because that is what it can actually tell:
-saving deliberately leaves the undo history intact, so a save does not silence the
-question. Closing the last document returns the viewer to "Open a PDF to begin."
+a document has changes you have not saved, Nib asks first. Saving it answers the
+question; a copy *downloaded* from a document with no file behind it does not, because
+Nib cannot tell that the download landed. Closing the last document returns the viewer to "Open a PDF to begin."
 with Nib still running, ready for the next file.
 
 Opening a PDF from your file manager reaches the Nib you already have running and
@@ -1049,7 +1055,7 @@ clicking. And a folder Nib can't read says so — "you don't have permission to
 read that folder", "that's a file, not a folder" — instead of looking empty.
 
 ### Pages & export
-**Combine PDFs…** (File tab) assembles several documents into one: add the files,
+**Combine PDFs…** (Page Functions tab) assembles several documents into one: add the files,
 arrange them with ↑ ↓, and they merge top-to-bottom into a new document — then
 reorder individual pages across them by dragging thumbnails. It works even with
 nothing open, and the result is a new, unsigned document (Save As to keep it).
@@ -1059,14 +1065,15 @@ Ctrl+Shift+Z) step back and forth through document operations — rotate, delete
 crop, split, page numbers, outline and metadata edits — for the open document.
 The same Ctrl+Z also undoes overlays you place — a stamp, border, shape, note,
 cover-edit, or sign/date/initial flag — and dragging or resizing one, so one
-keystroke walks back your most recent change whichever kind it was. History
-clears when you open another file or run a content-destroying step (redaction or
-flatten can't be undone). While you're drawing pdf.js annotations (text boxes,
+keystroke walks back your most recent change whichever kind it was. Each open
+document keeps its own history, up to 30 steps; it goes when you close the document or
+run a content-destroying step (redaction or flatten can't be undone), and Nib may drop
+the history of a document you are not looking at to save memory. While you're drawing pdf.js annotations (text boxes,
 highlights, ink) those keep pdf.js's own Ctrl+Z; typing in a field uses your
 browser's normal undo.
 
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
-sidebar's **Arrange Pages** card to move it where you want. Rotate every page at
+sidebar's **Pages** tab to move it where you want. Rotate every page at
 once with **Rotate all ↺ / ↻** in **Rotate All Pages** on the **Page Functions** tab, or
 hover a thumbnail to rotate (either direction) or delete a single page.
 **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
@@ -1101,7 +1108,7 @@ untouched; the trimmed-off content is hidden behind the smaller page, not
 destroyed — links, comments and form fields stay too — so use **Flatten** or **Redact** to remove
 it for good. Got a scanned 2-up
 or 4-up sheet? **Split page…**
-(on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
+(on the **Page Functions** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows, preview where the cuts land, and
 optionally resize each piece to a full page. Not a clean grid? **Split by box**
 lets you split a page by hand — drag a rectangle around each region you want, then
@@ -1145,7 +1152,7 @@ original, or as a flattened or editable copy. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
 browser's print dialog.
 
-**Reduce file size** (File → Save as) shrinks a PDF two ways and shows the
+**Reduce file size** (File → Save a Copy) shrinks a PDF two ways and shows the
 before→after size before you save. **Optimize** is lossless — it strips redundant
 data and keeps selectable text, but mostly helps bloated files (little effect on
 scans). **Compress** re-renders pages as JPEG images at a chosen quality: big
@@ -1156,8 +1163,8 @@ lost — best for scanned/image-heavy PDFs.
 document's text layer to a plain-text file, and **Pictures in the document (ZIP)** bundles
 the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
 re-encoded as PNG/TIFF. Text extraction reads the existing text layer, so a
-scanned (image-only) page has nothing to give and contributes nothing (there's no
-OCR), and complex multi-column layouts may not preserve reading order.
+scanned (image-only) page has nothing to give until you run **OCR** on it (Mark Up
+tab), and complex multi-column layouts may not preserve reading order.
 
 **This page's table → spreadsheet** (File → Export & Print → *This page's table…*)
 clusters the current page's text into rows and columns and saves it as an Excel
@@ -1170,7 +1177,7 @@ your machine (no office-suite dependency — Nib writes the minimal file format
 itself).
 
 ### Find in the document
-Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Step
+Click the magnifier in the toolbar (or press **Ctrl/Cmd+F**) and type to highlight every match. Step
 through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
 readout next to the box shows which match you're on out of the total (`3/12`).
 
@@ -1249,12 +1256,12 @@ background, and Nib has no telemetry, analytics or crash reporting of any kind.
 |---|---|---|
 | At startup, unless turned off | A version query | GitHub |
 | You click the version pill to update | The download of the new build | GitHub |
-| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) — in the app, unless turned off | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
-| **You verify a timestamp** — in the app, unless turned off | The transaction/block lookup for the proof | up to three public block explorers |
+| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) — in the app, only once Timestamping is turned on under *Settings → Advanced features* | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
+| **You verify a timestamp** — in the app, only once Timestamping is turned on under *Settings → Advanced features* | The transaction/block lookup for the proof | up to three public block explorers |
 | **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
 | **You open a document by URL** | The request for that document | the host you named |
 | **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
-| **You arm a ceremony with an invitation**, unless turned off | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
+| **You arm a ceremony with an invitation** — only once *Reach peers over the internet* is turned on under *Settings → Advanced features* | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
 | **You run `nib rendezvous`** | Queries that reveal this machine's public IP — and with `--self-test`, one small encrypted record too | strangers on the BitTorrent DHT |
 | Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 
@@ -1405,7 +1412,7 @@ status: **yellow** — status unknown (no check has run yet, or the startup chec
 is turned off); **green** — you're on the latest release; **red** — a newer
 release exists. At startup Nib asks GitHub for its latest release version and
 colors the pill accordingly. Clicking the pill checks right now — even with the
-startup check off — and, when a newer release exists, offers to download the
+startup check off — and, when a newer release exists, downloads the
 build matching your OS and architecture (a `.deb` for a package install,
 otherwise the raw binary).
 
@@ -1478,7 +1485,8 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib booklet IN -o OUT` | Impose for **saddle-stitch** printing: pad to a whole sheet of four, reorder into sheet order, two pages a side. Print double-sided **flipping on the short edge**, then fold and staple through the fold (`--border` for outlines). |
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
-| `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
+| `nib office IN -o OUT` | Convert a document (`.md`, `.docx`, `.xlsx`, `.odt`, …) to PDF. Markdown is converted by Nib itself; office formats need LibreOffice. `--lang en` declares the document's language. |
+| `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (add `--gs` to convert through Ghostscript instead) (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
 | `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **105 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
 | `nib tag tree IN [--json]` | Print the document's existing structure tree in reading order: each element's id, type, page, missing alt text or header scope, and text. `--json` is the shape the app reads. |
 | `nib tag propose IN [--json]` | Print the headings, paragraphs and list items Nib would propose. Writes nothing. |
@@ -1592,7 +1600,7 @@ platform.
 
 ```
 cmd/nib          entry point — run a headless command, or bind loopback and open the window
-internal/cli     headless subcommands (timestamp, verify, optimize, merge, sanitize, sign)
+internal/cli     headless subcommands (everything under Command line)
 internal/server  HTTP API + embedded UI, loopback-only guard
 internal/vault   encrypted store (AES-256-GCM, sealed to your SSH key)
 internal/pdfops  pdfcpu stamping / flattening / redaction
