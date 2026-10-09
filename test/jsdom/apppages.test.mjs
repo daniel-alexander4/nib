@@ -31,7 +31,8 @@ const h = await boot({ routes: { '/api/settings': (o) => { posted.push(JSON.pars
 const { document: doc } = h;
 const CODE = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
-const NINE = ['Identity & Keys', 'Vault', 'Updates', 'Advanced features', 'Main menu', 'Appearance', 'Read Aloud', 'Colours', 'About'];
+// In the menu's own order: how Nib looks and reads, what it does on its own, your identity and its backup, About.
+const NINE = ['Appearance', 'Colours', 'Main menu', 'Read Aloud', 'Updates', 'Advanced features', 'Identity & Keys', 'Vault', 'About'];
 const settingsPane = () => doc.querySelector('.tbtab[data-tab="settings"]');
 // The Settings pane's own: Signing has entries too (ADR-105), in its own pane.
 const entries = () => [...settingsPane().querySelectorAll('.sbhead[data-entry]')];

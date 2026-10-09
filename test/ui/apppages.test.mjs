@@ -26,9 +26,9 @@ after(() => shutdown(h));
 // The eight entries that open a page, in the order the menu shows them. About is the ninth and
 // opens the About dialog.
 const PAGES = [
-  ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['Updates', 'settingsUpdatesPage'],
-  ['Advanced features', 'settingsAdvancedPage'], ['Main menu', 'settingsMenuPage'], ['Appearance', 'settingsAppearancePage'],
-  ['Read Aloud', 'settingsReadAloudPage'], ['Colours', 'settingsColoursPage'],
+  ['Appearance', 'settingsAppearancePage'], ['Colours', 'settingsColoursPage'], ['Main menu', 'settingsMenuPage'],
+  ['Read Aloud', 'settingsReadAloudPage'], ['Updates', 'settingsUpdatesPage'], ['Advanced features', 'settingsAdvancedPage'],
+  ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'],
 ];
 const NINE = [...PAGES.map((p) => p[0]), 'About'];
 const ENTRY = '#commands .tbtab[data-tab="settings"] .sbhead.groupcard';
