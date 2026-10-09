@@ -35,6 +35,8 @@ const h = await boot({
       })
       : { present: false }),
     '/api/peers': { self: 'f'.repeat(64), peers: [] },
+    // The Open dialog's listing: a library card pressed with no document open opens it (ADR-106).
+    '/api/listdir': { path: '/home/someone/nib', parent: '/home/someone', dirs: [], files: [] },
     // Closing the LAST document is a close-all: `closeView` hands off to `requestClose`, which
     // posts here. Reached since ADR-037, because the strip now survives down to one document and
     // the focus-fallback case moved to closing that one.
@@ -79,10 +81,14 @@ test('a library card is a keyboard control: focusable, named, and Enter does wha
   assert.equal(card.getAttribute('role'), 'button', 'the card has no role, so a reader announces an image and a name, not a control');
   assert.equal(card.getAttribute('aria-label'), 'Place My signature', 'the card is not named for what pressing it does');
 
-  // With no document open, activating a card says so — which is the observable that the ACTION ran.
+  // With no document open, activating a card says so and opens the Open dialog (ADR-106) — which is the
+  // observable that the ACTION ran.
+  assert.equal(doc.getElementById('openModal').hidden, true, 'setup: the Open dialog is already up');
   card.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   await settle();
   assert.match(toastText(), /Open a PDF first/, 'Enter on a focused card did nothing — the click handler has no keyboard twin');
+  assert.equal(doc.getElementById('openModal').hidden, false, 'the card said to open a PDF and did not open the Open dialog');
+  doc.getElementById('openCancel').click();
 });
 
 async function openDoc(name) {

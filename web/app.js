@@ -1263,7 +1263,16 @@ async function unpinPeer(fingerprint, label) {
   else toast(await errText(res, 'could not unpin peer'));
 }
 
-els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers(); loadExtSigner(); };
+// openPeers opens Identity & peers — the DIALOG, from wherever it is asked for. `then` runs when it closes:
+// a dialog that needs a pinned peer and found none opens this over itself and re-reads who is pinned afterwards.
+function openPeers(then = null) {
+  afterPeers = then;
+  els.peersModal.hidden = false;
+  loadPeers();
+  loadExtSigner();
+}
+let afterPeers = null;
+els.managePeersBtn.onclick = () => openPeers();
 
 // loadExtSigner shows the imported signing certificate (if any) and toggles the
 // Remove button. The status line reads the public cert — no passphrase needed.
@@ -1309,7 +1318,32 @@ els.extP12Remove.onclick = async () => {
   loadExtSigner();
   toast('Imported certificate removed');
 };
-els.peersClose.onclick = () => { els.peersModal.hidden = true; };
+els.peersClose.onclick = () => {
+  els.peersModal.hidden = true;
+  const then = afterPeers;
+  afterPeers = null;
+  if (then) then();
+};
+
+// Nobody pinned (ADR-106). Each dialog that needs a pinned peer says so when there is none, and its hint carries
+// the way to fix it: Identity & peers opens over the dialog, and when it closes the dialog reads the peers again
+// through its own opener — so its Go enables if someone is now pinned. Who to pin stays the user's choice.
+// It is the dialog and not the Settings page: a page in front switches the document's commands off (ADR-104).
+for (const d of [
+  { modal: 'cosignModal', hint: 'cosignNoPeers', pick: 'cosignPeer', again: () => openCosign() },
+  { modal: 'sessionInitModal', hint: 'sinNoPeers', pick: 'sinPeer', again: () => openSessionInit() },
+  { modal: 'sessionSendModal', hint: 'ssnNoPeers', pick: 'ssnPeer', again: () => openSessionSend() },
+  { modal: 'sessionRecvModal', hint: 'srvNoPeers', pick: 'srvPeer', again: () => openSessionRecv(recvMode) },
+]) {
+  const btn = els[d.hint] && els[d.hint].querySelector('.pinpeers');
+  if (!btn) continue;
+  btn.onclick = () => openPeers(async () => {
+    if ($(d.modal).hidden) return; // closed underneath in the meantime: nothing to bring up to date
+    await d.again();
+    // The button that opened Identity & peers is gone with its hint once someone is pinned: focus goes to the list.
+    if (els[d.hint].hidden) els[d.pick].focus();
+  });
+}
 els.peerPinBtn.onclick = pinPeer;
 els.peerSelfCopy.onclick = () => copyFp(selfFingerprint);
 
@@ -3832,6 +3866,7 @@ async function setDocumentFromServer(meta, target = view) {
 // would otherwise append into the grid this function just cleared.
 function closeDocument() {
   closeReturnedSheet(false); // its document is going — see activateView
+  dropOCRWorker(); // and so is the recogniser kept for its next read (ADR-106)
   // Close is CLOSE ALL, and it is that way because the server says so: handleClose calls
   // setDoc(nil), which empties the whole registry and clears every open document's undo
   // rings. An arrival can already leave two documents open, so a client that dropped only
@@ -3953,6 +3988,7 @@ function editedViews() { return views.filter((v) => v.pdfDocument && hasUnsavedW
 // Deliberately NOT closeDocument: that one returns the whole app to the launch state,
 // which is right when the last document goes and wrong when six others are still open.
 function tearDownView(v) {
+  dropOCRWorker(); // a document closed: the recogniser kept for its next read is let go (ADR-106)
   const doc = v.pdfDocument;
   v.pdfDocument = null;
   v.docGen++; // an in-flight thumbnail or outline build bails rather than painting into a removed grid
@@ -7268,12 +7304,26 @@ async function reflowOpen() {
   // D11, told before the user types: the server refuses a signed document whatever this does.
   if (isSigned()) return toast(reflowCauseSentence('signed'));
   const page = owner.viewer.currentPageNumber;
-  const res = await apiFetch('/api/paragraphs?page=' + page, { docId: owner.docMeta && owner.docMeta.id });
-  if (!res.ok) return toast(await errText(res, 'could not read the page'));
-  const paras = (await res.json()).paragraphs || [];
+  // The page's paragraphs, or null when the server refused (it has been said).
+  const read = async () => {
+    const res = await apiFetch('/api/paragraphs?page=' + page, { docId: owner.docMeta && owner.docMeta.id });
+    if (!res.ok) { toast(await errText(res, 'could not read the page')); return null; }
+    return (await res.json()).paragraphs || [];
+  };
+  let paras = await read();
+  if (!paras) return;
   // The user may have switched tabs while the page was read: a dialog opened over another tab would list this one's
   // paragraphs and its Reflow would then do nothing (ADR-001 refuses the write; nothing would say why).
   if (owner !== view) return;
+  if (!paras.length) {
+    // A scanned page is read first, through the one door, and its paragraphs are then asked for again (ADR-106).
+    const need = await ensureText(owner, [page]);
+    if (!need.go) return; // the door has said why
+    if (need.outcome === 'read') {
+      paras = await read();
+      if (!paras || owner !== view) return;
+    }
+  }
   reflowParas = paras;
   if (!reflowParas.length) return toast('There is no text on this page to reflow');
   els.reflowPick.replaceChildren(...reflowParas.map((p) => {
@@ -7604,7 +7654,7 @@ async function placeStamp(bitmapUrl) {
   // the same generation number, so the check passed and the stamp was registered on the
   // active document while its element was appended into this one's page div.
   const owner = view;
-  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  if (!owner.pdfDocument) { openFirst(); return; }
   const n = owner.viewer.currentPageNumber;
   const pv = owner.viewer.getPageView(n - 1);
   if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
@@ -8390,8 +8440,60 @@ function ocrDoneSentence(replaced, left, total, words) {
   return left ? `Added a searchable text layer. ${ocrLayeredSentence(left, total)}` : `Added a searchable text layer (${words} words)`;
 }
 
-async function runOCR() {
-  if (!view.pdfDocument || !confirmSignatureLoss()) return;
+// ocrRun is the read in progress, if there is one: `stop()` ends it where it stands — nothing is sent.
+let ocrRun = null;
+function cancelRead() { if (ocrRun) ocrRun.stop(); }
+
+// The recogniser is kept between reads, for one language, and let go when a document closes or after
+// OCR_WORKER_IDLE_MS with nothing to read (ADR-106). Since a command reads a scan by itself, reads come one page
+// at a time, and each used to make its own recogniser and load its language again.
+//
+// **What it buys is small and is said here so nobody tunes it expecting more**: measured on two real scans, making
+// the recogniser is 0.6-1.0 s of a one-page read that takes 7-20 s — the recognition itself is 2-13 s and the
+// render, the stamp and the reload are the rest. Keeping it takes that second off every read after the first.
+const OCR_WORKER_IDLE_MS = 120000;
+let ocrKept = null; // { worker, lang, timer }
+async function ocrWorkerFor(lang, base) {
+  if (ocrKept && ocrKept.lang === lang) {
+    const w = ocrKept.worker;
+    clearTimeout(ocrKept.timer);
+    ocrKept = null; // out on loan: a read that fails or is stopped does not hand it back
+    return w;
+  }
+  dropOCRWorker(); // another language's
+  return window.Tesseract.createWorker(lang, 1, {
+    workerPath: base + 'worker.min.js',
+    corePath: base + 'tesseract-core-simd.wasm.js',
+    langPath: base,
+    gzip: true, // <lang>.traineddata.gz
+  });
+}
+function dropWorker(w) { Promise.resolve().then(() => w.terminate()).catch(() => { /* already gone */ }); }
+function keepOCRWorker(worker, lang) {
+  dropOCRWorker();
+  const timer = setTimeout(dropOCRWorker, OCR_WORKER_IDLE_MS);
+  // Under Node (the jsdom tier) a pending timer holds the process open; a browser's timer is a number.
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  ocrKept = { worker, lang, timer };
+}
+function dropOCRWorker() {
+  if (!ocrKept) return;
+  clearTimeout(ocrKept.timer);
+  const w = ocrKept.worker;
+  ocrKept = null;
+  dropWorker(w);
+}
+
+// runOCR reads pages and stamps what it read as an invisible text layer, and ANSWERS what happened —
+// `read` (with how many pages and words), `nothing-to-read`, `refused`, `cancelled` or `failed`.
+//
+// The OCR button calls it with nothing, and for the button nothing has changed: the whole document less
+// the pages that have a layer, its two questions, its own label for progress and its own toast.
+// A COMMAND that needs text calls it through `ensureText` with `cmd` (ADR-106): the view it captured,
+// exactly the pages to read, and where progress goes. For a command it asks nothing, replaces nothing
+// (ADR-101: replacing is asked for, never implied) and says nothing — the door has asked, and the door speaks.
+async function runOCR(cmd = null) {
+  if (!cmd && (!view.pdfDocument || !confirmSignatureLoss())) return { outcome: 'refused' };
   // CAPTURED before the first await (D7). OCR is the longest operation in the app —
   // loading the engine, then a recognition pass per page — so the window in which the
   // open document can change is measured in tens of seconds. The text layer is stamped
@@ -8401,11 +8503,22 @@ async function runOCR() {
   // the page loop below still read the active viewer — so words read from one
   // document were stamped, correctly pinned, onto it, while the OTHER document's
   // view was replaced by the result.
-  const owner = view;
+  const owner = cmd ? cmd.owner : view;
   const doc = owner.docMeta;
   const btn = els.ocrBtn, label = btn.textContent;
+  const say = cmd ? () => {} : toast;
+  const progress = cmd ? cmd.progress : (t) => { btn.textContent = t; };
   btn.disabled = true;
-  let worker;
+  // One read at a time, and one that can be stopped: `stopped` loses every race below the moment `stop()` is
+  // called, so a recognition that is seconds from returning does not hold the cancel up.
+  const run = { cancelled: false };
+  const stopped = new Promise((_, reject) => { run.stop = () => { run.cancelled = true; reject(new Error('cancelled')); }; });
+  stopped.catch(() => {});
+  const live = (p) => Promise.race([p, stopped]);
+  // A command's read also stops when its document is no longer the one in front: the command would not run.
+  const ended = () => run.cancelled || !!(cmd && !cmd.still());
+  ocrRun = run;
+  let worker, making = null, idle = true, kept = '';
   try {
     const n = owner.pdfDocument.numPages;
     // A page that already has a text layer is not read again: a second OCR ADDED a second layer, every word
@@ -8413,7 +8526,8 @@ async function runOCR() {
     // what saves the recognition pass, which is the slow part — and the engine's load, when there is nothing to read.
     let has = new Set(), layered = 0, again = false;
     try {
-      const lr = await apiFetch('/api/ocr/pages', { docId: doc && doc.id });
+      // A command's pages were chosen by the door from this same answer: nothing more to ask, and nothing to offer.
+      const lr = cmd ? { ok: false } : await apiFetch('/api/ocr/pages', { docId: doc && doc.id });
       if (lr.ok) {
         const told = await lr.json();
         has = new Set(told.layered || []);
@@ -8425,9 +8539,9 @@ async function runOCR() {
         }
       }
     } catch { /* not known: every page is read, and the server still decides */ }
-    if (has.size >= n) { toast(ocrLayeredSentence(n, n)); return; }
-    btn.textContent = 'Loading OCR…';
-    await loadTesseract();
+    if (has.size >= n) { say(ocrLayeredSentence(n, n)); return { outcome: 'nothing-to-read', pages: 0, words: 0 }; }
+    progress('Loading OCR…');
+    await live(loadTesseract());
     // Absolute URLs (resolved against the page): tesseract.js runs its worker from
     // a blob: URL, and relative paths don't resolve against our origin from that
     // context — they must be full URLs or the worker's fetches fail ("Failed to
@@ -8436,25 +8550,30 @@ async function runOCR() {
     // Single language for best accuracy; the picker defaults to English so the
     // common case is unchanged. Each <lang>.traineddata.gz is vendored alongside.
     const lang = (els.ocrLang && els.ocrLang.value) || 'eng';
+    kept = lang;
     // Render DPI is a per-run choice: Fast (200, the default) or Best (300, the
     // tesseract-recommended optimum — slower but more accurate, esp. small text).
     const dpi = Number(els.ocrQuality && els.ocrQuality.value) || 200;
     const ocrScale = dpi / 72; // canvas px per PDF point at the chosen DPI
-    worker = await window.Tesseract.createWorker(lang, 1, {
-      workerPath: base + 'worker.min.js',
-      corePath: base + 'tesseract-core-simd.wasm.js',
-      langPath: base,
-      gzip: true, // <lang>.traineddata.gz
-    });
+    // The recogniser is kept between reads — see `ocrWorkerFor`.
+    making = ocrWorkerFor(lang, base);
+    worker = await live(making);
     // Tell tesseract the true DPI instead of letting it estimate from the bitmap
     // (a wrong guess skews its layout/word-spacing heuristics); matches ocrScale.
-    await worker.setParameters({ user_defined_dpi: String(dpi) });
+    await live(worker.setParameters({ user_defined_dpi: String(dpi) }));
     const words = [];
-    for (let p = 1; p <= n; p++) {
+    const todo = cmd ? cmd.pages : Array.from({ length: n }, (_, i) => i + 1);
+    const blank = []; // the pages read to no words
+    let read = 0;
+    for (const p of todo) {
       if (has.has(p)) { layered++; continue; }
-      btn.textContent = `OCR ${p}/${n}…`;
-      const { blob, h } = await renderPageBlob(owner.pdfDocument, p, ocrScale, null, 'image/png');
-      const { data } = await worker.recognize(blob);
+      if (ended()) return { outcome: 'cancelled' };
+      progress(`OCR ${p}/${n}…`);
+      const { blob, h } = await live(renderPageBlob(owner.pdfDocument, p, ocrScale, null, 'image/png'));
+      idle = false; // from here until it answers the recogniser is at work, and one stopped at work is not kept
+      const { data } = await live(worker.recognize(blob));
+      idle = true;
+      read++;
       // tesseract's own layout hierarchy, which it has already worked out and which this loop
       // used to throw away. The flattened `data.words` entries carry back-pointers to the
       // block, paragraph and line each word came from, so the tagger gets the structure for the
@@ -8472,6 +8591,7 @@ async function runOCR() {
         if (!idx.has(o)) idx.set(o, idx.size + 1);
         return idx.get(o);
       };
+      const before = words.length;
       for (const word of data.words || []) {
         const t = (word.text || '').trim();
         if (!t) continue;
@@ -8484,11 +8604,14 @@ async function runOCR() {
           block: ord(word.block), para: ord(word.paragraph), line: ord(word.line),
         });
       }
+      if (words.length === before) blank.push(p);
     }
-    if (!words.length) { toast(layered ? ocrLayeredSentence(layered, n) : 'No text found to add'); return; }
-    btn.textContent = 'Saving…';
+    if (!words.length) { say(layered ? ocrLayeredSentence(layered, n) : 'No text found to add'); return { outcome: 'nothing-to-read', pages: read, words: 0, blank }; }
+    // The last point at which nothing has been done: past it the words are on the document.
+    if (ended()) return { outcome: 'cancelled' };
+    progress('Saving…');
     const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(again ? { lang, words, replace: true } : { lang, words }), docId: doc && doc.id });
-    if (!res.ok) { toast('Could not add the text layer'); return; }
+    if (!res.ok) { say('Could not add the text layer'); return { outcome: 'failed', why: 'Could not add the text layer' }; }
     // What the SERVER did, which is what happened: it may know of a layer this window did not ask about, and it
     // decides for itself which pages' layers are Nib's own to replace.
     let facts = {};
@@ -8498,16 +8621,140 @@ async function runOCR() {
     // Why the server would not replace a page it was asked to: the one cause worth a sentence of its own is a
     // layer whose tags no longer match its words (edited since) — the page keeps the layer it has.
     const tagged = Object.values(facts.causes || {}).filter((c) => c === 'structure').length;
-    toast(ocrDoneSentence((facts.replaced || []).length, left, n, words.length)
+    say(ocrDoneSentence((facts.replaced || []).length, left, n, words.length)
       + (tagged ? `. ${tagged === 1 ? '1 page was' : `${tagged} pages were`} not read again: the tags on ${tagged === 1 ? 'its' : 'their'} text layer have been changed since it was added` : ''));
+    return { outcome: 'read', pages: read, words: words.length, blank };
   } catch (e) {
-    toast(e.message || 'OCR failed');
+    if (run.cancelled) return { outcome: 'cancelled' };
+    say(e.message || 'OCR failed');
+    return { outcome: 'failed', why: e.message || 'OCR failed' };
   } finally {
-    if (worker) { try { await worker.terminate(); } catch { /* already gone */ } }
+    // Kept for the next read when it is fit to be: it finished what it was given. One stopped mid-page is let go,
+    // and so is one that was still being made when the read was stopped (it is let go when it arrives).
+    if (worker && idle) keepOCRWorker(worker, kept);
+    else if (worker) dropWorker(worker);
+    else if (making) making.then(dropWorker, () => {});
+    if (ocrRun === run) ocrRun = null;
     btn.disabled = false; btn.textContent = label;
   }
 }
-if (els.ocrBtn) els.ocrBtn.onclick = runOCR;
+if (els.ocrBtn) els.ocrBtn.onclick = () => runOCR();
+
+// ── A command that needs text reads the scan itself — ADR-106 ────────────────────────────────────
+// Read aloud, the table export, Reflow, the redaction search and the text export each used to stop on a
+// scanned page and tell the user to run OCR first. The app can do that step, so it does: `ensureText` is
+// the ONE door (ADR-009) every such command goes through, and it holds every rule about the read.
+//
+//  - WHICH pages. Only a page the server calls unread — it sets no text and is not blank — and that has no
+//    text layer (`GET /api/ocr/pages`, one read of the file for every page). A page with text, a blank
+//    page and a layered page are never read; a layer is never replaced (ADR-094, ADR-101). Text drawn as
+//    outlines sets no glyph either and is read like a scan: declared, not distinguished.
+//  - A read that found NO words is remembered for that page until the document next changes, so the
+//    command answers plainly and the next press does not spend the same seconds finding nothing again.
+//  - A SIGNED document is asked about first, in the words every edit of one is asked in; a document
+//    LOCKED for signing is refused, because a read is an edit (the OCR button is not among the tools the
+//    lock disables — /pending 830 — so the door checks for itself).
+//  - The COMMAND'S DOCUMENT. `owner` is the view captured at the press. The read is of that view and
+//    stops if it is no longer the one in front; the command is told to carry on only if it still is.
+//  - It SPEAKS, once: what it is reading while it reads, and why not when it does not. A command that is
+//    told not to go on adds no sentence of its own.
+//
+// It answers `{ go, outcome, unread }`. `go` is whether the command should run now. `outcome` is `ready`
+// (nothing needed reading), `read`, `nothing-to-read`, `refused`, `cancelled`, `failed` or `gone`.
+// `unread` is the pages asked for that are still scans nobody has read — what a search must not call searched.
+// `unknown` is set when the server could not say which pages are scans.
+const readNothing = new WeakMap(); // view → { gen, pages } — the pages read to no words, as of that load
+
+function textlessPages(owner) {
+  let m = readNothing.get(owner);
+  if (!m || m.gen !== owner.docGen) { m = { gen: owner.docGen, pages: new Set() }; readNothing.set(owner, m); }
+  return m.pages;
+}
+
+// pagesPhrase names pages for a sentence: "page 3", "pages 2, 3 and 5", and no more than eight of them.
+function pagesPhrase(pages) {
+  if (pages.length === 1) return 'page ' + pages[0];
+  if (pages.length > 8) return 'pages ' + pages.slice(0, 8).join(', ') + ` and ${pages.length - 8} more`;
+  return 'pages ' + pages.slice(0, -1).join(', ') + ' and ' + pages[pages.length - 1];
+}
+
+async function ensureText(owner, pages = null, opts = {}) {
+  const inFront = () => owner === view && docShowing();
+  const status = opts.status || readingNote;
+  const one = !!pages && pages.length === 1;
+  const stop = (outcome, unread, why) => { if (why) toast(why); return { go: false, outcome, unread }; };
+  if (!inFront()) return stop('gone', []);
+  let told = null;
+  try {
+    const res = await apiFetch('/api/ocr/pages', { docId: owner.docMeta && owner.docMeta.id });
+    if (res.ok) told = await res.json();
+  } catch { /* not known — below */ }
+  if (!inFront()) return stop('gone', []);
+  // The server could not say. The command runs on the text there is, and is told the answer is not known.
+  if (!told) return { go: true, outcome: 'ready', unread: [], unknown: true };
+  const layered = new Set(told.layered || []);
+  const scans = (told.unread || []).filter((p) => !layered.has(p) && (!pages || pages.includes(p)));
+  const empty = textlessPages(owner);
+  const todo = scans.filter((p) => !empty.has(p));
+  if (!todo.length) return { go: true, outcome: 'ready', unread: [] };
+  const which = one ? 'This page is a scan' : (todo.length === 1 ? 'Page ' + todo[0] + ' is a scan' : pagesPhrase(todo).replace(/^p/, 'P') + ' are scans');
+  if (owner.signLocked) {
+    return stop('refused', todo, `${which} and cannot be read here: this document is locked for signing, and reading a scan changes it.`);
+  }
+  if (ocrRun) return stop('refused', todo, 'Nib is already reading a scan — try again when it has finished.');
+  if (!confirmSignatureLoss()) {
+    return stop('refused', todo, `${which} and ${one || todo.length === 1 ? 'was' : 'were'} not read, so the signature stands.`);
+  }
+  status(one ? 'Reading this page first…' : (todo.length === 1 ? 'Reading 1 scanned page first…' : `Reading ${todo.length} scanned pages first…`));
+  let got;
+  try {
+    got = await runOCR({ owner, pages: todo, progress: () => {}, still: inFront });
+  } finally {
+    status('');
+  }
+  if (got.outcome === 'cancelled') {
+    return stop(inFront() ? 'cancelled' : 'gone', todo, inFront() ? 'Stopped reading — nothing was done.'
+      : 'The document is no longer in front, so reading stopped — nothing was done.');
+  }
+  if (got.outcome === 'failed') return stop('failed', todo, `${which} and could not be read: ${got.why}.`);
+  // After the read, not before it: a read that added words reloaded the document, and what is remembered is
+  // remembered against the document as it now is.
+  for (const p of got.blank || []) textlessPages(owner).add(p);
+  if (got.outcome === 'nothing-to-read') return inFront() ? { go: true, outcome: 'nothing-to-read', unread: [] } : stop('gone', []);
+  // Read, and the words are on the document. The command still runs only on the document it was pressed for.
+  if (!inFront()) return stop('gone', [], `${one || todo.length === 1 ? 'The page was' : 'The pages were'} read, but the document is no longer in front — nothing else was done.`);
+  return { go: true, outcome: 'read', unread: [] };
+}
+
+// readingNote is where a read says it is under way when the command has no status line of its own: one line
+// that stays up for as long as the read does, with the one thing the user can do about it. Announced politely
+// and once — it is set when the read starts and cleared when it ends, never per page.
+function readingNote(text) {
+  if (!readingEl) {
+    readingEl = document.createElement('div');
+    readingEl.id = 'readingNote';
+    readingEl.hidden = true;
+    const words = document.createElement('span');
+    words.setAttribute('role', 'status');
+    words.setAttribute('aria-live', 'polite');
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.id = 'readingStop';
+    cancel.textContent = 'Stop';
+    cancel.onclick = cancelRead;
+    readingEl.append(words, cancel);
+    document.body.appendChild(readingEl);
+  }
+  readingEl.firstChild.textContent = text;
+  readingEl.hidden = !text;
+}
+let readingEl = null;
+// Escape stops a read that has no dialog in front of it; with one, Escape is the dialog's (it clicks its Cancel).
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || !ocrRun || !readingEl || readingEl.hidden || topModal()) return;
+  e.preventDefault();
+  cancelRead();
+});
 
 // renderFilledPages rasterises the saved (form-filled, stamped) document so the
 // raster reflects every edit. Used for flatten and image export. mime/quality
@@ -8753,8 +9000,17 @@ els.saveFillableBtn.onclick = async () => {
   // against document B. A switch during the naming pass opens nothing.
   const owner = view;
   if (!owner.pdfDocument) return;
-  const fields = collectAuthorFields();
-  if (!fields.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  let fields = collectAuthorFields();
+  if (!fields.length) {
+    // No fields yet: Detect fields runs on the page in view as this command's first step (ADR-106), and says
+    // what it found in its own words. Not on a document locked for signing, where Detect is switched off.
+    if (owner.signLocked) { toast('There are no fields to save, and this document is locked for signing'); return; }
+    const found = await detectFields();
+    if (owner !== view) return;
+    fields = collectAuthorFields();
+    // Nothing found, or it could not look: Detect has said which. Fields are placed by hand from here.
+    if (found <= 0 || !fields.length) return;
+  }
   // Pre-name each field from the form's own text (see suggestFieldName); each
   // page's text layer is fetched once. Conservative, so anything unclear — and
   // every field on an image-only scan — stays field_N.
@@ -8893,11 +9149,22 @@ els.exportPagesBtn.onclick = () => {
 els.exportTextBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
-  if (!view.pdfDocument) return toast('Open a PDF first');
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  // Scanned pages are read first, through the one door (ADR-106): this used to save an empty file for a scan
+  // and say nothing about why. A read the user stopped, or a document no longer in front, exports nothing; a
+  // read that was refused or failed still exports the text there is, and the door has named the pages left out.
+  const need = await ensureText(owner);
+  if (need.outcome === 'cancelled' || need.outcome === 'gone') return;
   // Best-effort dump of the document's text layer via pdf.js (see documentText:
-  // content-stream order, hasEOL newlines; scanned pages have no text layer and
-  // contribute nothing). Compare uses the same helper so the two stay in step.
-  const out = await documentText(view.pdfDocument);
+  // content-stream order, hasEOL newlines; a page with no text contributes
+  // nothing). Compare uses the same helper so the two stay in step.
+  const out = await documentText(owner.pdfDocument);
+  if (owner !== view) return;
+  if (!out.trim()) {
+    if (need.go) toast('This document has no text to export');
+    return;
+  }
   openSaveAs(new Blob([out], { type: 'text/plain' }), exportName + '.txt', 'Export text (.txt)');
 };
 
@@ -8965,9 +9232,14 @@ els.exportTableBtn.onclick = async () => {
   const owner = view;
   if (!owner.pdfDocument) return toast('Open a PDF first');
   const pageNum = owner.viewer.currentPageNumber;
-  const page = await owner.pdfDocument.getPage(pageNum);
-  const grid = await extractTable(page);
-  if (!grid.length) return toast('No text on this page to extract (a scanned page? run OCR first)');
+  let grid = await extractTable(await owner.pdfDocument.getPage(pageNum));
+  if (!grid.length) {
+    // A scanned page is read first, through the one door, and the table is then taken from what was read (ADR-106).
+    const need = await ensureText(owner, [pageNum]);
+    if (!need.go) return; // the door has said why
+    if (need.outcome === 'read') grid = await extractTable(await owner.pdfDocument.getPage(pageNum));
+    if (!grid.length) return toast('No text on this page to extract');
+  }
   const one = (format, label) => ({
     label, name: exportName + '-p' + pageNum + '-table.' + format, ext: '.' + format,
     make: async () => {
@@ -9293,17 +9565,31 @@ function timestampVerifyMessage(r) {
 }
 
 // Autofill: set matching form-field values from the saved profile.
+//
+// With no profile yet the editor opens, and saving it runs the fill the press asked for (ADR-106), by running
+// this handler again for the same document: `autofillSecondPass` marks that pass, on which an empty profile is
+// simply said and the editor is not opened again.
+let autofillAfterSave = null; // the view an Autofill press is waiting on the profile editor for
+let autofillSecondPass = false;
 els.autofillBtn.onclick = async () => {
   // Captured at entry (/pending 498). Two awaits sit before the first write, and the writes went to
   // whichever document was active by then — filling a form the user had not asked to fill, with a
   // toast telling them to review it. A switch in either window stops the fill before anything is
   // written: the click was about a document that is no longer on screen.
   const owner = view;
+  const afterProfile = autofillSecondPass;
+  autofillSecondPass = false;
   if (!owner.pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/profile');
   const profile = res.ok ? await res.json() : {};
   if (owner !== view) return;
-  if (!Object.keys(profile).length) return toast('No profile yet — edit it first');
+  if (!Object.keys(profile).length) {
+    if (afterProfile) return toast('The profile is empty — nothing was filled');
+    toast('No profile yet — add your details and Save, and this form is filled');
+    await openProfileEditor();
+    autofillAfterSave = owner; // after the open, which clears it: this opening is the one that fills
+    return;
+  }
   const objs = await owner.pdfDocument.getFieldObjects();
   if (owner !== view) return;
   if (!objs) return toast('This PDF has no form fields');
@@ -9331,13 +9617,16 @@ els.autofillBtn.onclick = async () => {
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
 };
 
-// Autofill profile editor (one "name = value" per line).
-els.editProfileBtn.onclick = async () => {
+// Autofill profile editor (one "name = value" per line). Every opening starts with no fill waiting on it; the
+// Autofill press that opened it says so afterwards.
+async function openProfileEditor() {
+  autofillAfterSave = null;
   const res = await apiFetch('/api/profile');
   const profile = res.ok ? await res.json() : {};
   els.profileText.value = Object.entries(profile).map(([k, v]) => `${k} = ${v}`).join('\n');
   els.profileModal.hidden = false;
-};
+}
+els.editProfileBtn.onclick = openProfileEditor;
 els.profileCancel.onclick = () => { els.profileModal.hidden = true; };
 els.profileSave.onclick = async () => {
   const profile = {};
@@ -9353,6 +9642,14 @@ els.profileSave.onclick = async () => {
   els.profileModal.hidden = true;
   if (res.ok) profileCache = null; // a text flag re-reads the fresh values
   toast(res.ok ? 'Profile saved' : 'could not save profile');
+  // The Autofill press this editor was opened for, if it was: the fill runs now, on the document that press was
+  // about and only while it is still the one in front (ADR-001, ADR-106).
+  const waiting = autofillAfterSave;
+  autofillAfterSave = null;
+  if (res.ok && waiting && waiting === view && docShowing()) {
+    autofillSecondPass = true; // read, and cleared, before the handler's first await
+    await els.autofillBtn.onclick();
+  }
 };
 
 // --- redaction (M9) ----------------------------------------------------------
@@ -10059,7 +10356,9 @@ function openRedactText() {
   els.redactTextModal.hidden = false;
 }
 els.redactTextBtn.onclick = openRedactText;
-els.rtCancel.onclick = () => { els.redactTextModal.hidden = true; };
+// Cancel also stops a read of scanned pages the search started (ADR-106): nothing is read on, nothing is searched.
+let rtReading = false;
+els.rtCancel.onclick = () => { els.redactTextModal.hidden = true; if (rtReading) cancelRead(); };
 els.rtFind.onclick = async () => {
   const patterns = [];
   const term = els.rtTerm.value.trim();
@@ -10076,10 +10375,26 @@ els.rtFind.onclick = async () => {
   // tool cannot afford: the real matches stay unmarked and the apply reports success. A switch
   // closes this dialog, so the search result has no one to report to and is dropped.
   const owner = view;
+  // Scanned pages are read first, through the one door, and the search then runs once over everything (ADR-106).
+  // **A search that passed over a scan it did not read is a leak**, so every way the read can not happen ends in
+  // the same place: the pages that were NOT searched are named, in this dialog and in the result.
+  let need;
+  rtReading = true;
+  els.rtFind.disabled = true; // one search at a time: a second press during the read would search without it
+  try {
+    need = await ensureText(owner, null, { status: (t) => { els.rtStatus.textContent = t; } });
+  } finally {
+    rtReading = false;
+    els.rtFind.disabled = false;
+  }
+  // Stopped from this dialog's Cancel, or the document went from in front: nothing was searched and nothing says it was.
+  if (need.outcome === 'cancelled' || need.outcome === 'gone' || owner !== view) return;
+  const unsearched = unsearchedNote(need);
+  els.rtStatus.textContent = 'Searching…';
   const marks = await scanTextMatches(patterns, owner);
   if (owner !== view) return;
   if (!marks.length) {
-    els.rtStatus.textContent = 'No matches found in the text layer (a scan? run OCR first).' + wrapNote(marks.skipped);
+    els.rtStatus.textContent = 'No matches found.' + unsearched + wrapNote(marks.skipped);
     return;
   }
   const pages = new Set(marks.map((m) => m.page));
@@ -10089,8 +10404,17 @@ els.rtFind.onclick = async () => {
   // Said, because the two kinds of box are not equally tight: an estimated one over-covers on purpose.
   const est = marks.length - (marks.exact || 0);
   const how = est ? ' ' + est + ' placed by estimate (wider on purpose).' : '';
-  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.` + how + wrapNote(marks.skipped));
+  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.` + how + unsearched + wrapNote(marks.skipped));
 };
+
+// unsearchedNote names the scanned pages a search did not read and so did not search (ADR-106): the door was
+// refused, or the read failed. Said with every result, found or not — an unread scan's words are not in either.
+function unsearchedNote(need) {
+  if (need.unknown) return ' Nib could not tell whether any page is an unread scan — a scan’s words are not found until it is read.';
+  const pages = need.unread || [];
+  if (!pages.length) return '';
+  return ` NOT searched: ${pagesPhrase(pages)} — ${pages.length === 1 ? 'a scan that was' : 'scans that were'} not read. Check ${pages.length === 1 ? 'it' : 'them'} by eye.`;
+}
 
 // wrapNote names the pages a search did not fully look across the line ends of (ADR-100): a table with so many
 // columns that joining the end of each to the start of each on the next line is past the search's budget. A match
@@ -13405,18 +13729,22 @@ async function bakedForm(owner = view) {
 }
 
 let detectSeq = 0;
-els.detectBtn.onclick = async () => {
+// detectFields proposes fillable fields on the CURRENT page and answers how many it added: 0 when the page
+// showed none, and -1 when it did not run (no document, the page not on screen, or a later press or a switch
+// overtook it). The Detect button calls it and ignores the answer; Save as fillable form… runs it as its own
+// first step when there are no fields yet (ADR-106) and reads the answer.
+async function detectFields() {
   // Captured at entry: a page render and a getTextContent sit between here and the
   // makeField calls at the end, and each of those builds a field for THIS document.
   const owner = view;
-  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  if (!owner.pdfDocument) { toast('Open a PDF first'); return -1; }
   // Numbered (/pending 506's info list): two presses overlapping both cleared first and both added
   // after their awaits, so every detected field appeared twice, stacked. Only the latest press adds.
   const seq = ++detectSeq;
   clearDetected();
   const n = owner.viewer.currentPageNumber;
   const pv = owner.viewer.getPageView(n - 1);
-  if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return; }
+  if (!pv?.div || !pv.viewport) { toast('Scroll the page into view, then try again'); return -1; }
 
   // Render the page to an offscreen canvas at a consistent resolution, so
   // detection doesn't depend on the current zoom (faint thin rules need it).
@@ -13454,7 +13782,7 @@ els.detectBtn.onclick = async () => {
     });
   } catch { /* image-only PDF: no text layer, skip word matching */ }
   // A newer press owns the fields now, or the document is no longer the one on screen.
-  if (seq !== detectSeq || owner !== view) return;
+  if (seq !== detectSeq || owner !== view) return -1;
   const ynItems = findYesNo(textItems);
 
   const inCell = (x, y) => cells.some((c) => x >= c.x0 - 2 && x <= c.x1 + 2 && y >= c.y0 - 2 && y <= c.y1 + 2);
@@ -13522,7 +13850,7 @@ els.detectBtn.onclick = async () => {
   // against it. A page the server cannot map — and a scan maps to nothing — keeps the proposals as the picture gave
   // them, and the message says which it was.
   const map = await pageMap(owner, n);
-  if (seq !== detectSeq || owner !== view) return;
+  if (seq !== detectSeq || owner !== view) return -1;
   const refined = map ? refineFields(cands, map) : { fields: cands, dropped: 0 };
   // Where the page draws its own lines and text, the fields are read from those (ADR-089), and the picture adds
   // only what the lines do not show.
@@ -13534,7 +13862,9 @@ els.detectBtn.onclick = async () => {
   const how = !map ? ' (placed from the page image alone: this page could not be read for its text and lines)'
     : drawn.length ? ' (' + drawn.length + ' read from the lines the page draws)' : '';
   toast(added ? `Added ${added} fillable field(s) — fill, then Save${how}` : 'Nothing detected on this page');
-};
+  return added;
+}
+els.detectBtn.onclick = () => { detectFields(); };
 
 // CHECKBOX_MAX_PT is the largest square, in points, that Detect fields proposes as a checkbox and not a text box.
 // 20pt is 28 CSS pixels at the zoom the old pixel test was tuned at.
@@ -14043,7 +14373,7 @@ function reflectReadAloudSettings() {
   }
 }
 
-const READ_ALOUD_TITLE = 'Read this page aloud — needs a text layer, so OCR a scan first';
+const READ_ALOUD_TITLE = 'Read this page aloud — a scanned page is read (OCR) first';
 function reflectReadAloud() {
   if (!els.readAloudBtn) return;
   els.readAloudBtn.setAttribute('aria-pressed', String(readingAloud));
@@ -14078,24 +14408,38 @@ async function startReadAloud() {
     return;
   }
   const owner = view;
-  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  if (!owner.pdfDocument) { openFirst(); return; }
   const seq = ++readAloudSeq;
   const n = owner.viewer ? owner.viewer.currentPageNumber : 1;
-  let text = '';
-  try {
-    const tc = await (await owner.pdfDocument.getPage(n)).getTextContent();
-    for (const it of tc.items) { text += it.str; if (it.hasEOL) text += ' '; }
-  } catch { /* image-only page: no text layer, handled below */ }
+  // Read from `owner.pdfDocument` each time it is called: a scan that is read first comes back as a new one.
+  const pageText = async () => {
+    let t = '';
+    try {
+      const tc = await (await owner.pdfDocument.getPage(n)).getTextContent();
+      for (const it of tc.items) { t += it.str; if (it.hasEOL) t += ' '; }
+    } catch { /* image-only page: no text layer, handled below */ }
+    return t.replace(/\s+/g, ' ').trim();
+  };
+  let text = await pageText();
   // Stopped, restarted, or switched away during the read — see readAloudSeq. A switch does not pass
   // through stopReadAloud here (nothing is reading yet), so the document is checked too.
   if (seq !== readAloudSeq || owner !== view) return;
-  text = text.replace(/\s+/g, ' ').trim();
   if (!text) {
-    // **The honest sentence, and it names the remedy.** A scanned page has no text layer, so there
-    // is nothing to read — and silence would be indistinguishable from a broken feature. `/pending
-    // 408` is explicit that this must not be dressed up as accessibility it does not deliver.
-    toast('This page has no text to read — it looks like a scan. Run OCR on it first.');
-    return;
+    // A scanned page is read (OCR) first, through the one door, and then read aloud (ADR-106). While that
+    // runs the button is the way to stop it — see its handler below.
+    readAloudWaiting = true;
+    let need;
+    try { need = await ensureText(owner, [n]); } finally { readAloudWaiting = false; }
+    if (!need.go) return; // the door has said why
+    if (need.outcome === 'read') {
+      text = await pageText();
+      // The reload this page's read caused is not the user turning the page: it does not stop the start.
+      readAloudSeq++;
+    } else if (seq !== readAloudSeq) return;
+    if (owner !== view) return;
+    // **The honest sentence.** Nothing to read, and silence would be indistinguishable from a broken
+    // feature (`/pending 408`: this must not be dressed up as accessibility it does not deliver).
+    if (!text) { toast('This page has no text to read.'); return; }
   }
   readingAloud = true;
   reflectReadAloud();
@@ -14112,7 +14456,17 @@ async function startReadAloud() {
   sp.speak(u);
 }
 
-els.readAloudBtn.onclick = () => (readingAloud ? stopReadAloud() : startReadAloud());
+// While a scanned page is being read for it, pressing the button again stops that read — the same
+// "press again to stop" it has while speaking — rather than starting a second one.
+let readAloudWaiting = false;
+els.readAloudBtn.onclick = () => (readingAloud ? stopReadAloud() : readAloudWaiting ? cancelRead() : startReadAloud());
+
+// openFirst is what a command reachable with no document open does (ADR-106): it says what is missing and
+// opens the Open dialog, so the next thing the user sees is the way to supply it.
+function openFirst() {
+  toast('Open a PDF first');
+  openOpenDialog();
+}
 
 // ── Full screen, and why it is separate from Presentation ────────────────────
 //

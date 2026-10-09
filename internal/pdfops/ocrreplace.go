@@ -55,17 +55,25 @@ const (
 // hiddenTextOn is whether a page sets invisible text, as the page map reads it (`MapText.Hidden`): the one rule for
 // "this page has a text layer" (ADR-094), asked before a layer is added and after one is taken out.
 func hiddenTextOn(ctx *model.Context, pg pdfread.Page) (bool, error) {
+	hidden, _, err := textOn(ctx, pg)
+	return hidden, err
+}
+
+// textOn is the one read behind both answers about a page's text: hidden is "it carries invisible text" (a text
+// layer), and unread is "it sets no glyph at all and yet paints something" — a scan nothing has read, or text drawn
+// as outlines, which this reader cannot tell from one. A page that paints nothing is blank and is neither.
+func textOn(ctx *model.Context, pg pdfread.Page) (hidden, unread bool, err error) {
 	pr, err := readPageShapes(ctx, pg)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	sp := newDisplaySpace(pg)
 	for _, r := range pr.runs {
 		if t, ok := mapText(sp, r); ok && t.Hidden {
-			return true, nil
+			return true, false, nil
 		}
 	}
-	return false, nil
+	return false, pr.noText && len(pr.marks)+len(pr.shapes) > 0, nil
 }
 
 // ocrFaceName is the face of a font Nib stamps an OCR layer in, from its /BaseFont with any subset tag taken off.
@@ -284,7 +292,7 @@ func isOwnWordForm(ctx *model.Context, res types.Dict, name string, budget *form
 }
 
 // layerRemoval takes Nib's own text layer out of the pages of one context, with whatever structure describes it.
-// The same code answers "can this page's layer be replaced" (`TextLayers`, on a context that is thrown away) and
+// The same code answers "can this page's layer be replaced" (`TextPages`, on a context that is thrown away) and
 // does the replacing (`removeOwnTextLayers`), so what the window is told and what the route does cannot differ.
 type layerRemoval struct {
 	ctx    *model.Context
@@ -612,27 +620,41 @@ func (rm *layerRemoval) finish() error {
 	return nil
 }
 
-// TextLayers is whose text layer each page of pdf carries; a page with none is not in it. It is `PagesWithTextLayer`
-// with the second question answered — can this page's layer be replaced — by taking the layer out of a copy and
-// seeing what is left, which is the answer the replacing itself will reach.
-func TextLayers(pdf []byte) (map[int]TextLayerKind, error) {
+// TextPages is whose text layer each page of pdf carries — a page with none is not in layers — and which pages
+// nothing has read. layers is `PagesWithTextLayer` with the second question answered — can this page's layer be
+// replaced — by taking the layer out of a copy and seeing what is left, which is the answer the replacing itself
+// will reach. (It was `TextLayers` until ADR-106 added the second answer.)
+//
+// unread is, from the same read of the document, the pages that set no text and are not blank (`textOn`), in page
+// order — the pages a command that needs text has read for it (ADR-106). The page map's `NoText` is the same
+// reader's answer for one page; this is every page for one parse of the file, where asking the map page by page
+// parses it once a page. A page that will not read is in neither.
+func TextPages(pdf []byte) (layers map[int]TextLayerKind, unread []int, err error) {
 	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := map[int]TextLayerKind{}
+	layers = map[int]TextLayerKind{}
+	unread = []int{}
 	rm := newLayerRemoval(ctx)
 	for _, pg := range pdfread.Pages(ctx) {
-		if has, herr := hiddenTextOn(ctx, pg); herr != nil || !has {
+		has, bare, herr := textOn(ctx, pg)
+		if herr != nil {
+			continue
+		}
+		if bare {
+			unread = append(unread, pg.Nr)
+		}
+		if !has {
 			continue
 		}
 		kind, rerr := rm.removeFrom(pg)
 		if rerr != nil {
 			kind = LayerStructure
 		}
-		out[pg.Nr] = kind
+		layers[pg.Nr] = kind
 	}
-	return out, nil
+	return layers, unread, nil
 }
 
 // removeOwnTextLayers takes Nib's own text layer off the named pages. removed is the pages it came off; left is the

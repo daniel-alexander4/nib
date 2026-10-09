@@ -77,7 +77,9 @@ function makePage(n, renders, text = '') {
   return {
     pageNumber: n,
     getViewport({ scale = 1 } = {}) {
-      return { width: 612 * scale, height: 792 * scale, scale, rotation: 0 };
+      // The two point conversions are the identity: an unrotated page at scale 1, which is all a stub page is —
+      // there because the redaction search maps a match's corners through them (ADR-106's tests).
+      return { width: 612 * scale, height: 792 * scale, scale, rotation: 0, convertToPdfPoint: (x, y) => [x, y], convertToViewportPoint: (x, y) => [x, y] };
     },
     render() {
       return renders
@@ -86,7 +88,8 @@ function makePage(n, renders, text = '') {
     },
     // `transform` and `height` are there because the table export reads a run's POSITION
     // (ADR-103's tests); one run at a fixed place is all a one-string page can honestly claim.
-    getTextContent: async () => ({ items: text ? [{ str: text, hasEOL: true, transform: [12, 0, 0, 12, 72, 700], height: 12 }] : [] }),
+    // `width` because the redaction search boxes a match from its run's extent (ADR-106's tests).
+    getTextContent: async () => ({ items: text ? [{ str: text, hasEOL: true, transform: [12, 0, 0, 12, 72, 700], height: 12, width: 6 * text.length }] : [] }),
     getAnnotations: async () => [],
   };
 }

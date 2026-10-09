@@ -40,6 +40,40 @@ func hiddenWordsOn(t *testing.T, s *Server, page int) []string {
 	return out
 }
 
+// TestTheWindowIsToldWhichPagesNothingHasRead — ADR-106. A command that needs a page's text asks here which pages to
+// read for it: the ones that set no text and are not blank, and none once a page has been read.
+func TestTheWindowIsToldWhichPagesNothingHasRead(t *testing.T) {
+	const helv = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+	typed, err := testpdf.Text("typed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err := pdfops.Combine([][]byte{typed, testpdf.WithContent("72 72 400 300 re f", helv), testpdf.WithContent("", helv)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openTestServer(t, pdf)
+	unread := func() []int {
+		pr := httptest.NewRecorder()
+		s.handleOCRPages(pr, httptest.NewRequest(http.MethodGet, "/api/ocr/pages", nil))
+		var told struct{ Unread []int }
+		if err := json.NewDecoder(pr.Body).Decode(&told); err != nil || pr.Code != http.StatusOK || told.Unread == nil {
+			t.Fatalf("GET /api/ocr/pages = %d, unread %v (%v)", pr.Code, told.Unread, err)
+		}
+		return told.Unread
+	}
+	if got := unread(); !reflect.DeepEqual(got, []int{2}) {
+		t.Errorf("unread = %v, want [2]: page 1 has text and page 3 is blank", got)
+	}
+	word := pdfops.Word{Page: 2, Text: "Invoice", Rect: [4]float64{100, 400, 180, 412}, Block: 1, Para: 1, Line: 1}
+	if rec := ocrRequest(s, map[string]any{"lang": "eng", "words": []pdfops.Word{word}}); rec.Code != http.StatusOK {
+		t.Fatalf("the OCR = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := unread(); len(got) != 0 {
+		t.Errorf("unread = %v after page 2 was read, want none", got)
+	}
+}
+
 // TestATextLayerIsReplacedOnlyWhenAskedAndOnlyWhereItIsNibsOwn — ADR-101. A second OCR still leaves a layered page
 // alone (ADR-094); the same words sent with `replace` take Nib's own layer off that page and stamp them in its
 // place — once each — in one undo step; and a page whose invisible text Nib did not stamp is left as it is and

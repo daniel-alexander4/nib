@@ -1396,6 +1396,24 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 }
 #toast.show { opacity: 1; }
 
+/* "Reading this page first…" (ADR-106): up for as long as a command's read of a scan is, with its Stop.
+ * Above the toast's place rather than in it — a toast hides itself after 2.5 s and takes no click. */
+#readingNote {
+  position: fixed;
+  z-index: 300;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface1);
+  color: var(--text);
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  padding: 8px 10px 8px 16px;
+}
+
 /* Fillable-form field-naming modal (Save as fillable form…) */
 .fieldname-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 .fieldname-row { display: flex; align-items: center; gap: 10px; }
