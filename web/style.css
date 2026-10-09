@@ -470,7 +470,8 @@ input[type="search"] { width: 100%; }
    global a:focus-visible (the only other anchor rule is #outline a). */
 /* ── App pages (ADR-104) ──────────────────────────────────────────────────────
    A menu entry that holds settings opens one of these in the main area, in place of the viewer
-   (it is a `.sheet`, so it takes the space the document had), with a tab of its own in the strip.
+   (it is a `.sheet`, so it takes the space the document had), named in the one page tab in the
+   strip (ADR-107).
 
    A reading column, centred, never wider than the window. The page says what it is in a heading
    and a sentence; each setting is a block of its own — the control, then what it does, then the
@@ -967,7 +968,7 @@ body > div[id$="Modal"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A page's tab (ADR-104). It is a tab like a document's and is not a document, and the difference
+/* The page tab (ADR-104; one for all the pages, ADR-107). It is a tab like a document's and is not a document, and the difference
    is a WORD — the menu the page belongs to, in front of its name — never colour alone. In front,
    it is continuous with the page below it (`--base`, where a document's is `--crust`). `--text`
    on the word for the reason measured on the label above. */

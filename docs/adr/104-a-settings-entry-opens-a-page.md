@@ -10,6 +10,7 @@ folder is in use and a refusal; *Advanced features* and *Main menu* each held a 
 of boxes. `web/index.html` (the Settings pane; the `.apppage` sections in `#viewerCol`); the *App
 pages* block, `syncTabs`, `setCardOpen`, `syncSidebarForMode` and `flushDownloadDir` in `web/app.js`;
 `.apppage` / `.pagebody` / `.setrow` and `.pagetab` in `web/style.css`.
+**Superseded in part by [ADR-107](107-the-pages-share-one-tab.md)** (the title's and §2's *"a tab of its own"* and §2's *"Several pages can be open"*: the pages share ONE tab, and opening another page replaces what it shows. Every other decision here stands.)
 **Supersedes:** three phrases and nothing else —
 - ADR-025's *"with its items as sidebar cards"* and *"each id is a named exemption"*: the items are
   entries that open pages, and one id (`aboutBtn`) is left in the pane. Settings being a mode, the

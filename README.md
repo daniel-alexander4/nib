@@ -651,7 +651,7 @@ while the open document is still the unsigned one.
 
 **Which things in a menu open a page, and which unfold.** Something you set up or are led through
 — every Settings entry, the Simple Sign checklist, the explanation of a signing ceremony — opens a
-page with its own tab. A tool that acts on the open document stays in the sidebar and unfolds
+page, in the one tab the pages share. A tool that acts on the open document stays in the sidebar and unfolds
 there, beside the document it works on: in *Signing* that is **Place Signing Flags** and
 **Send & Receive**. Entering *Signing* still lands on the flag tools and opens no tab.
 
@@ -659,10 +659,12 @@ there, beside the document it works on: in *Signing* that is **Place Signing Fla
 the sidebar: **Identity & Keys** (your identity and pinned peers, and the keys that unlock your
 vault), **Vault** (back up and restore), **Updates**, **Advanced features**, **Main menu**,
 **Appearance** (the theme), **Read Aloud** and **Colours**; **About** opens the About window. A page
-opens where the document is shown and gets a tab of its own beside the document tabs, marked
-*Settings*. Click a document's tab to go back to the document — it is exactly where you left it —
-and the × on a page's tab to close the page. A setting is saved as you change it, so there is
-nothing to save or cancel. **Colours** sets the sidebar's card colours: leave it on *All colours*
+opens where the document is shown, in a tab beside the document tabs marked *Settings* (or
+*Signing*) and named for the page. **There is one such tab**: open another page and it takes the
+first one's place in that tab, rather than adding a tab for every entry you click. Click a
+document's tab to go back to the document — it is exactly where you left it — and the × on the
+page tab to close the page. A setting is saved as you change it, so there is
+nothing to save or cancel — a download folder you had typed is saved as its page is replaced. **Colours** sets the sidebar's card colours: leave it on *All colours*
 for the six-accent rotation, or pick one hue and the cards become that colour in six steps.
 
 **Main menu** is where you cut the menu down to what you use. Untick a tab and it goes from the
@@ -1059,7 +1061,7 @@ accepts documents up to 200 MB each.
 
 The **×** on a tab closes that document and moves to the next tab; with two or
 more open, **Close all** at the end of the tabs closes every one — every document, that
-is: a Settings page open in a tab of its own is not a document and stays. Either way, if
+is: a Settings or Signing page open in the page tab is not a document and stays. Either way, if
 a document has changes you have not saved, Nib asks first. Saving it answers the
 question; a copy *downloaded* from a document with no file behind it does not, because
 Nib cannot tell that the download landed. Closing the last document returns the viewer to "Open a PDF to begin."

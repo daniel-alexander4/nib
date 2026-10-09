@@ -532,7 +532,8 @@
 
            `Identity & peers…` was in BOTH role sets and appears once — a duplicate that only
            looked like two commands because you could never see both at the same time. -->
-      <!-- **Simple Sign opens a PAGE with its own tab (ADR-105, on ADR-104's mechanism).** Dan,
+      <!-- **Simple Sign opens a PAGE, in the one page tab (ADR-105, on ADR-104's mechanism; the
+           pages share a tab since ADR-107).** Dan,
            2026-10-08: "The Signing menu should be the same, they should open in their own tab with
            nicely formatted and informational pages rather than expanding in the menu" — and then
            the test for which: "Only the pages that requires configuration or runs a wizard should
@@ -568,8 +569,8 @@
            open document, which is why none of it is in DOC_REQUIRED and the one id in the pane
            is a named exemption in doccontrols.
 
-           **Each entry opens a PAGE with its own tab; none expands in the menu and none is a
-           popup (ADR-104).** Dan, 2026-10-08: "in the Settings menu, I would like each button to
+           **Each entry opens a PAGE; none expands in the menu and none is a popup (ADR-104).
+           The pages share ONE tab, and an entry replaces what it shows (ADR-107).** Dan, 2026-10-08: "in the Settings menu, I would like each button to
            popup a nice page instead of expanding in the menu", then "I prefer new tabs/pages over
            popups". The nine were accordion cards like every other mode's, and a card is a 200px
            column: Updates had a text field, a status line and a refusal in it, and Advanced
@@ -722,9 +723,10 @@
            by position. Close all appears at two documents — with one open, the tab's own × is the
            same act — and syncTabs toggles it and the row.
 
-           A tab is a document's or an app page's (ADR-104). The page tabs come after the documents'
-           and are marked `.pagetab`; Close all and the count are about documents only, and the row
-           also shows for a page open with no document. -->
+           A tab is a document's or the app pages' (ADR-104). There is ONE page tab (ADR-107): it
+           comes after the documents', is marked `.pagetab`, and names whichever page is open.
+           Close all and the count are about documents only, and the row also shows for a page
+           open with no document. -->
       <div id="tabrow" hidden>
       <div id="tabstrip" role="tablist" aria-label="Open documents and pages" hidden></div>
       <button id="closeAllBtn" type="button" title="Close every open document and return to the empty state" hidden>Close all</button>
@@ -840,9 +842,10 @@
         </div>
       </div>
       <!-- The app pages (ADR-104). A page stands in the main area in place of the viewer, as the two
-           sheets above do, and has a TAB of its own in the strip beside the document tabs. It is not
+           sheets above do, and is named in the page TAB in the strip beside the document tabs —
+           one tab for all of them, which a page takes from the page that had it (ADR-107). It is not
            a document: it is never in `views`, and nothing that counts documents sees it. app.js
-           keeps the pages that are open (`openAppPages`) and the one that is showing
+           keeps the page that is open (`openAppPages`, one at most) and whether it is showing
            (`activeAppPage`); `syncMainArea` is the one writer of which of the viewer, a sheet and a
            page is on screen.
 

@@ -761,3 +761,9 @@ home today.
   Never automatic: anything destructive, replacing a layer, a signed document without asking, a sign-locked one at
   all, anything that is the user's choice (the app takes them to it). A read stops when its view is no longer in
   front; a search that did not read a scan NAMES the pages it did not search. The OCR button is unchanged.
+- **[ADR-107 — the pages share one tab, and opening another replaces what it shows](107-the-pages-share-one-tab.md)**
+  — supersedes ADR-104's "a tab of its own" / "several pages can be open" and ADR-105's "with its own tab" only. At
+  most ONE app page is open, in one `.pagetab` after the documents' — Settings and Signing pages take turns in it.
+  `openAppPage` replaces what `openAppPages` holds (it never holds two; nothing pushes to it) and the tab is rebuilt
+  where it was, named for the page showing. The replaced page is left ONCE by the usual door (`showAppPage` →
+  `appPageLeave`) if it was in front, and not again if it was behind a document — `openAppPage` adds no leave call.

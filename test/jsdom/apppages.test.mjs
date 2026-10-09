@@ -1,12 +1,16 @@
-// A menu entry opens a PAGE with its own tab; it does not expand in the menu and it is not a popup
+// A menu entry opens a PAGE in the main area; it does not expand in the menu and it is not a popup
 // (ADR-104). Dan, 2026-10-08: "in the Settings menu, I would like each button to popup a nice page
 // instead of expanding in the menu", then "I prefer new tabs/pages over popups".
 //
+// **The pages share ONE tab (ADR-107).** Dan, the same day: "instead of each button getting it's
+// own tab, let's use a single tab and when I click on a new button it replaces the content".
+//
 // ── What this tier can say ────────────────────────────────────────────────────
-// Which entry opens which page, that a page gets one tab and a second click does not make a
-// second, that the row shows for a page with no document open, that nothing in the menu is marked
-// open, and — read from the source — that the registry has the writers it says it has and that
-// `#viewerWrap.hidden` has one.
+// Which entry opens which page, that there is one page tab however many entries are clicked and
+// that it names the page showing, that the page it replaced was left (its typed folder saved) and
+// left once, that the row shows for a page with no document open, that nothing in the menu is
+// marked open, and — read from the source — that the registry has the writers it says it has and
+// that `#viewerWrap.hidden` has one.
 //
 // ── What it cannot, and who covers it ─────────────────────────────────────────
 // A real document beside a page: the document count, Close all at two documents, the document
@@ -21,7 +25,9 @@ import path from 'node:path';
 import { boot, REPO } from './boot.mjs';
 
 // `/api/settings` answers ok: the Signing tests below switch an Advanced feature and hide a mode.
-const h = await boot({ routes: { '/api/settings': () => ({ status: 'ok' }) } });
+// What was sent is kept: a page that is replaced must save the folder typed on it.
+const posted = [];
+const h = await boot({ routes: { '/api/settings': (o) => { posted.push(JSON.parse(o.body || '{}')); return { status: 'ok' }; } } });
 const { document: doc } = h;
 const CODE = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
@@ -92,9 +98,9 @@ test('entering Settings opens nothing: no page, no tab, no dialog, no card', () 
   for (const e of entries()) assert.equal(e.hasAttribute('aria-expanded'), false, `${e.textContent.trim()} says it expands`);
 });
 
-test('an entry opens its page in the main area with one tab; a second click brings it forward and makes no second tab', () => {
+test('an entry opens its page in the main area; the pages share ONE tab, which names the page showing; a second click makes no second tab', () => {
   const eight = entries().filter((e) => e.textContent.trim() !== 'About');
-  for (const [i, e] of eight.entries()) {
+  for (const e of eight) {
     const name = e.textContent.trim();
     const id = e.nextElementSibling.querySelector('button').dataset.apppage;
     e.click();
@@ -105,43 +111,88 @@ test('an entry opens its page in the main area with one tab; a second click brin
     assert.deepEqual(marked(), [], `${name} expanded in the menu as well`);
     assert.deepEqual(openDialogs(), [], `${name} opened a dialog`);
     const t = tabs();
-    assert.equal(t.length, i + 1, `after opening ${name} the strip holds ${t.length} tabs — with no document open every tab is a page's`);
-    const mine = t.filter((x) => x.page === id);
-    assert.equal(mine.length, 1);
-    assert.deepEqual([mine[0].name, mine[0].kind, mine[0].selected, mine[0].label], [name, 'Settings', 'true', `${name}, Settings page`]);
-    assert.equal(t.filter((x) => x.selected === 'true').length, 1, 'more than one tab says it is the one in front');
-  }
-  // Every page is open now. Each entry again: it comes forward, and the strip does not grow.
-  for (const e of eight) {
-    const id = e.nextElementSibling.querySelector('button').dataset.apppage;
+    assert.deepEqual(t.map((x) => x.page), [id],
+      `after opening ${name} the strip holds ${t.map((x) => x.page).join(', ')} — the pages share one tab, and it is ${name}'s now`);
+    assert.deepEqual([t[0].name, t[0].kind, t[0].selected, t[0].label], [name, 'Settings', 'true', `${name}, Settings page`]);
+    assert.equal(t[0].el.getAttribute('aria-controls'), id, 'the tab names another page as the one it shows');
+    assert.equal(t[0].el.querySelector('.tabclose').getAttribute('aria-label'), `Close the ${name} page`);
+    // The entry again: the page is the one open, so it stays and nothing is added.
     e.click();
-    assert.deepEqual(pagesShown(), [id]);
-    assert.equal(tabs().length, 8, `a second click on ${e.textContent.trim()} opened a second copy`);
+    assert.deepEqual([pagesShown(), tabs().map((x) => x.page)], [[id], [id]], `a second click on ${name} opened a second copy`);
   }
   assert.equal(doc.getElementById('closeAllBtn').hidden, true, 'Close all is offered for pages — it closes documents, and none is open');
   assert.equal(doc.getElementById('viewerWrap').classList.contains('has-doc'), false, 'a page made the app think a document is open');
 });
 
-test('a page tab brings its page forward, and its × closes that page and no other', () => {
-  const byName = (n) => tabs().find((t) => t.name === n);
-  byName('Vault').el.click();
-  assert.deepEqual(pagesShown(), ['settingsVaultPage'], 'clicking a page tab did not show its page');
-  // The × of a page that is NOT in front: what is showing stays.
-  byName('Colours').el.querySelector('.tabclose').click();
-  assert.deepEqual(pagesShown(), ['settingsVaultPage'], 'closing another page changed what is showing');
-  assert.equal(tabs().length, 7);
-  assert.equal(byName('Colours'), undefined, 'the closed page still has a tab');
-  // The × of the page in front: the document's place comes back (here, the empty state).
-  byName('Vault').el.querySelector('.tabclose').click();
+test('the page tab brings its page forward, and its × closes the page — in front or not', () => {
+  const entry = (n) => entries().find((e) => e.textContent.trim() === n);
+  // The × of the page in front (Colours, the last one opened above): the document's place comes
+  // back (here, the empty state) and the row goes with its only tab.
+  tabs()[0].el.querySelector('.tabclose').click();
   assert.deepEqual(pagesShown(), []);
   assert.equal(doc.getElementById('viewerWrap').hidden, false, 'closing the page in front did not bring the document area back');
-  assert.equal(tabs().filter((t) => t.selected === 'true').length, 0, 'a page that is not showing has the selected tab');
-  // Close the rest; the row goes with the last one.
-  for (const t of tabs()) t.el.querySelector('.tabclose').click();
   assert.equal(doc.getElementById('tabrow').hidden, true, 'the tab row is still up with nothing in it');
+  // Left, the page keeps the tab, which no longer says it is in front; the tab brings it back.
+  entry('Vault').click();
+  doc.querySelector('.modetab[data-tab="markup"]').click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.selected])], [[], [['settingsVaultPage', 'false']]], 'a page that is not showing has the selected tab, or lost its tab');
+  tabs()[0].el.click();
+  assert.deepEqual(pagesShown(), ['settingsVaultPage'], 'clicking the page tab did not show its page');
+  // The × of the page while it is NOT in front: it closes, and what is showing stays.
+  doc.querySelector('.modetab[data-tab="file"]').click();
+  tabs()[0].el.querySelector('.tabclose').click();
+  assert.deepEqual([pagesShown(), tabs().length], [[], 0], 'the × did not close a page that was behind');
+  assert.equal(doc.getElementById('viewerWrap').hidden, false);
+  assert.equal(doc.getElementById('tabrow').hidden, true);
+  doc.querySelector('.modetab[data-tab="settings"]').click();
 });
 
-test('leaving the Settings menu leaves the page, which stays open in its tab', () => {
+// ── One tab: a page that is opened takes the place of the page that was open (ADR-107) ──────
+//
+// The page being replaced is LEFT, by the same door as any page that stops being on screen, and
+// left once. The Updates page is the one with something to lose: a folder typed in its box saves
+// on `change`, which a click on another entry does not fire in this harness (and a keyboard
+// shortcut does not fire in a browser), so `appPageLeave` saves it as the page goes.
+test('a page replaced by another is left, once: the folder typed on Updates is saved, and not saved again', async () => {
+  const entry = (n) => entries().find((e) => e.textContent.trim() === n);
+  const folders = () => posted.filter((b) => 'downloadDir' in b).map((b) => b.downloadDir);
+  const box = doc.getElementById('downloadDirInput');
+  await h.settle();
+  posted.length = 0;
+
+  // Replaced while it is in front.
+  entry('Updates').click();
+  box.value = '/h/typed-in-front';
+  entry('Vault').click();
+  await h.settle();
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsVaultPage'], ['settingsVaultPage']], 'Vault did not take the tab Updates had');
+  assert.deepEqual(folders(), ['/h/typed-in-front'],
+    'the Updates page was replaced by another and the folder typed on it was dropped, or saved more than once');
+
+  // Replaced while it is open BEHIND what the main area shows: it was left when it went behind,
+  // and is not left a second time. Text put in the box after that is how a second leave would show.
+  entry('Updates').click();
+  box.value = '/h/typed-then-left';
+  doc.querySelector('.modetab[data-tab="markup"]').click();
+  await h.settle();
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.selected]), folders().slice(1)],
+    [[], [['settingsUpdatesPage', 'false']], ['/h/typed-then-left']], 'setup: leaving the menu did not leave the page with its folder saved');
+  box.value = '/h/a-second-leave-would-send-this';
+  doc.querySelector('.modetab[data-tab="settings"]').click();
+  assert.deepEqual(pagesShown(), [], 'setup: entering Settings brought the page forward by itself');
+  entry('Read Aloud').click();
+  await h.settle();
+  // And the new page comes FORWARD: it does not take the tab and stay behind, as the old one was.
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.selected, t.label])],
+    [['settingsReadAloudPage'], [['settingsReadAloudPage', 'true', 'Read Aloud, Settings page']]],
+    'a page opened while another was open behind did not replace it and come forward');
+  assert.equal(doc.activeElement, doc.querySelector('#settingsReadAloudPage h2'), 'the page that took the tab did not get focus on its heading');
+  assert.deepEqual(folders().slice(2), [], 'a page that had already been left was left again when it was replaced');
+  box.value = '';
+  tabs()[0].el.querySelector('.tabclose').click();
+});
+
+test('leaving the Settings menu leaves the page, which stays open in the page tab', () => {
   doc.querySelector('.modetab[data-tab="settings"]').click();
   entries().find((e) => e.textContent.trim() === 'Advanced features').click();
   assert.deepEqual(pagesShown(), ['settingsAdvancedPage']);
@@ -237,9 +288,9 @@ test('entering Signing lands on Flags and opens no page and no tab; the two that
   assert.equal(doc.getElementById('flags').classList.contains('active'), false, 'the flag panel did not close on its header');
 });
 
-test('a Signing entry opens its page with one tab that says Signing; a second click makes no second; nothing expands for it', () => {
+test('a Signing entry opens its page in the one page tab, which says Signing; a second click makes no second; nothing expands for it', () => {
   enterSigning();
-  for (const [i, e] of signingEntries().entries()) {
+  for (const e of signingEntries()) {
     const id = e.nextElementSibling.querySelector('button').dataset.apppage;
     const title = doc.getElementById(id).dataset.title;
     e.click();
@@ -247,17 +298,36 @@ test('a Signing entry opens its page with one tab that says Signing; a second cl
     assert.equal(doc.activeElement, doc.getElementById(id).querySelector('h2'), `opening ${title} did not put focus on its heading`);
     assert.deepEqual(marked(), [], `${title} expanded in the menu as well`);
     assert.ok(doc.getElementById('flags').classList.contains('active'), `opening ${title} closed the flag tools beside it`);
-    const mine = tabs().filter((x) => x.page === id);
-    assert.equal(tabs().length, i + 1);
-    assert.deepEqual([mine.length, mine[0].name, mine[0].kind, mine[0].selected, mine[0].label], [1, title, 'Signing', 'true', `${title}, Signing page`]);
+    const t = tabs();
+    assert.deepEqual(t.map((x) => x.page), [id], `${title} did not take the one page tab`);
+    assert.deepEqual([t[0].name, t[0].kind, t[0].selected, t[0].label], [title, 'Signing', 'true', `${title}, Signing page`]);
     e.click();
-    assert.equal(tabs().length, i + 1, `a second click on ${title} opened a second copy`);
+    assert.deepEqual(tabs().map((x) => x.page), [id], `a second click on ${title} opened a second copy`);
   }
-  // Re-entering the mode with its pages open opens nothing more and brings none forward.
+  // Re-entering the mode with its page open opens nothing more and does not bring it forward.
   doc.querySelector('.modetab[data-tab="file"]').click();
   assert.deepEqual(pagesShown(), [], 'leaving Signing did not leave its page');
   doc.querySelector('.modetab[data-tab="collaborate"]').click();
-  assert.deepEqual([pagesShown(), tabs().length], [[], 2], 'entering Signing opened or raised a page');
+  assert.deepEqual([pagesShown(), tabs().map((x) => x.page)], [[], ['signingCeremonyPage']], 'entering Signing opened or raised a page');
+});
+
+test('the one tab is shared across menus: a Signing page takes a Settings page\'s place, and a Settings page takes it back', () => {
+  closeEveryPage();
+  doc.querySelector('.modetab[data-tab="settings"]').click();
+  entries().find((e) => e.textContent.trim() === 'Appearance').click();
+  assert.deepEqual(tabs().map((t) => [t.page, t.kind]), [['settingsAppearancePage', 'Settings']]);
+  doc.querySelector('.modetab[data-tab="collaborate"]').click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.selected])], [[], [['settingsAppearancePage', 'false']]], 'setup: leaving Settings did not leave its page in the tab');
+  signingEntries()[0].click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.kind, t.selected, t.label])],
+    [['signingStepsPage'], [['signingStepsPage', 'Signing', 'true', 'Simple Sign, Signing page']]],
+    'a Signing page did not take the tab a Settings page held — there are two page tabs, or the old one');
+  doc.querySelector('.modetab[data-tab="settings"]').click();
+  entries().find((e) => e.textContent.trim() === 'Appearance').click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => [t.page, t.kind, t.selected, t.label])],
+    [['settingsAppearancePage'], [['settingsAppearancePage', 'Settings', 'true', 'Appearance, Settings page']]],
+    'a Settings page did not take the tab back from a Signing page');
+  closeEveryPage();
 });
 
 test('the checklist on its page: a phase heading before each group, the hint in words, and a tick made by hand', () => {
@@ -293,8 +363,8 @@ test('a step that leads to a tool for the document leaves the page; one that lea
   go('Verify a signature or timestamp'); // Signing's own card
   assert.deepEqual([pagesShown(), marked()], [[], ['Send & Receive']], 'the step did not open Send & Receive beside the document');
   tabs().find((t) => t.page === 'signingStepsPage').el.click();
-  go('Enroll your key'); // a Settings entry: its page takes the checklist's place
-  assert.deepEqual([pagesShown(), doc.body.dataset.tab], [['settingsIdentityPage'], 'settings']);
+  go('Enroll your key'); // a Settings entry: its page takes the checklist's place, in the tab as on screen
+  assert.deepEqual([pagesShown(), doc.body.dataset.tab, tabs().map((t) => t.page)], [['settingsIdentityPage'], 'settings', ['settingsIdentityPage']]);
   closeEveryPage();
 });
 
@@ -350,22 +420,32 @@ test('a feature that is switched off: its entry goes, its page says so and offer
   closeEveryPage();
 });
 
-test('hiding the Signing menu closes its pages: no tab is left naming a mode the window no longer has', async () => {
+// **The box is on a Settings page, and opening that page now takes the Signing page's tab** — so
+// through the window, a Signing page is never open when Signing is hidden from this box (the
+// second half below). The rule is still needed where the menu is hidden with the page open: the
+// server's answer to a setting changed elsewhere reaches `applyModeVisibility` the same way. Here
+// that is the box's handler run with the Signing page open, which is the same call.
+test('hiding the Signing menu closes its page: no tab is left naming a mode the window no longer has', async () => {
+  const box = doc.querySelector('.modeChk[data-mode="collaborate"]');
+  const hideSigning = async (hide) => { box.checked = !hide; box.onchange(); await h.settle(); };
   enterSigning();
-  for (const e of signingEntries()) e.click();
+  signingEntries()[0].click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['signingStepsPage'], ['signingStepsPage']]);
+  await hideSigning(true);
+  assert.equal(doc.querySelector('.modetab[data-tab="collaborate"]').hidden, true, 'stimulus: Signing was not hidden');
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [[], []], 'a Signing page kept its tab after Signing was hidden');
+  assert.equal(doc.getElementById('tabrow').hidden, true);
+  await hideSigning(false);
+
+  // From the page the box is on: that page has the tab, and hiding Signing leaves it alone.
+  enterSigning();
+  signingEntries()[0].click();
   doc.querySelector('.modetab[data-tab="settings"]').click();
   entries().find((e) => e.textContent.trim() === 'Main menu').click();
-  assert.deepEqual(tabs().map((t) => t.page).sort(), ['settingsMenuPage', 'signingCeremonyPage', 'signingStepsPage']);
-  const box = doc.querySelector('.modeChk[data-mode="collaborate"]');
-  box.checked = false;
-  box.onchange();
-  await h.settle();
-  assert.equal(doc.querySelector('.modetab[data-tab="collaborate"]').hidden, true, 'stimulus: Signing was not hidden');
-  assert.deepEqual(tabs().map((t) => t.page), ['settingsMenuPage'], 'a Signing page kept its tab after Signing was hidden');
-  assert.deepEqual(pagesShown(), ['settingsMenuPage'], 'the page the box is on did not stay in front');
-  box.checked = true;
-  box.onchange();
-  await h.settle();
+  assert.deepEqual(tabs().map((t) => t.page), ['settingsMenuPage'], 'the Main menu page did not take the Signing page\'s tab');
+  await hideSigning(true);
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsMenuPage'], ['settingsMenuPage']], 'the page the box is on did not stay in front');
+  await hideSigning(false);
   closeEveryPage();
 });
 
@@ -386,11 +466,16 @@ function writersOf(re) {
   return [...new Set(found)].sort();
 }
 
-test('the page registry is written by its own functions and by nothing else', () => {
+test('the page registry is written by its own functions and by nothing else, and nothing adds a second page to it', () => {
   assert.deepEqual(writersOf(/(?<![.\w$]|let\s)activeAppPage\s*=(?!=)/), ['leaveAppPage', 'showAppPage'].sort(),
     'something else decides which page is in front');
   assert.deepEqual(writersOf(/(?<![.\w$])openAppPages\s*\.\s*(push|splice|pop|shift|unshift|sort|reverse|length\s*=(?!=))/),
     ['closeAppPage', 'openAppPage'].sort(), 'something else opens or closes a page');
+  // One tab (ADR-107): nothing ADDS to the registry. The one site that puts a page in it replaces
+  // whatever it held, so a second page tab cannot be made by any path through the code.
+  assert.deepEqual(writersOf(/(?<![.\w$])openAppPages\s*\.\s*(push|unshift)\b/), [], 'a page is added to the registry beside the one it holds — that is a second page tab');
+  assert.match(CODE, /if \(!openAppPages\.includes\(p\)\) openAppPages\.splice\(0, openAppPages\.length, p\);/,
+    'openAppPage no longer replaces the open page with the one asked for');
 });
 
 test('what stands in the main area is written at one site', () => {
