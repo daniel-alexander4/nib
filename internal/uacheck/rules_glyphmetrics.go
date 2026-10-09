@@ -885,7 +885,12 @@ func (d *Document) cidMapOf(font types.Dict) (fontcode.CIDChain, string) {
 		case c.name == "Identity-H" || c.name == "Identity-V":
 			part = fontcode.IdentityCIDs()
 		default:
-			return nil, fmt.Sprintf("the font's CMap %q is not one nib carries", c.name)
+			// A predefined CMap nib carries a table for (ADR-117). Held for the process, so the document is charged
+			// what asking it costs and nothing for reading it.
+			var ok bool
+			if _, part, ok = fontcode.Predefined(c.name); !ok {
+				return nil, fmt.Sprintf("the font's CMap %q is not one nib carries", c.name)
+			}
 		}
 		out = append(out, part)
 	}

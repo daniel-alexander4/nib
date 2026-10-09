@@ -57,14 +57,16 @@ var identityMapping = cidMapping{lo: 0, hi: 0xFFFF, cid: 0}
 func IdentityCIDs() *CIDMap { return &CIDMap{cids: []cidMapping{identityMapping}} }
 
 // ParseCIDMap reads an embedded CMap program's cid and notdef lists, with veraPDF's count and type rules. An
-// in-stream `/Identity-H usecmap` (or -V) appends the identity mapping after the CMap's own. Any other predefined name
-// loads a CMap nib does not carry, and the codespace reader (`ParseCodespace`'s `UsesCMaps`) is where a caller refuses
-// it; a name that is not predefined loads nothing in veraPDF either.
+// in-stream `/Identity-H usecmap` (or -V) appends the identity mapping after the CMap's own, and one naming a
+// predefined CMap nib carries appends that CMap's mappings (`predefined`). A predefined name nib does NOT carry is
+// for the codespace reader's caller to refuse (`ParseCodespace`'s `UsesCMaps`); a name that is not predefined loads
+// nothing in veraPDF either.
 func ParseCIDMap(src []byte) *CIDMap {
 	t := newCMapTokens(src)
 	m := &CIDMap{}
 	var own []cidMapping // this CMap's cid mappings, in file order; they precede every used one, last first
 	var used []cidMapping
+	merged := map[string]bool{}
 	ok := t.lists(func(key string) bool {
 		var e cidMapping
 		switch key {
@@ -96,6 +98,15 @@ func ParseCIDMap(src []byte) *CIDMap {
 	}, func(name string) {
 		if name == "Identity-H" || name == "Identity-V" {
 			used = append(used, identityMapping)
+			return
+		}
+		// A predefined CMap nib carries (ADR-117): its cid mappings after this CMap's own, its notdef mappings where
+		// the operator stands. **Once per name**: a second copy of either list sits behind the first and can answer
+		// nothing the first has not, and a program repeating the operator would otherwise copy the table each time.
+		if pre := predefined(name); pre != nil && !merged[name] {
+			merged[name] = true
+			used = append(used, pre.cids.cids...)
+			m.notdefs = append(m.notdefs, pre.cids.notdefs...)
 		}
 	})
 	if !ok {

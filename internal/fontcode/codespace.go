@@ -348,7 +348,10 @@ next:
 		}
 		c.groups = append(c.groups, g)
 	}
-	c.tailOwn, o.tailOwn = false, false
+	c.tailOwn = false
+	if o.tailOwn { // written only when it changes: a carried CMap is shared between documents and never written
+		o.tailOwn = false
+	}
 	c.count += o.count
 	c.Invalid = c.Invalid || o.Invalid
 	c.Overspent = c.Overspent || o.Overspent
@@ -363,7 +366,9 @@ next:
 // of its own, which no answer can see (a later range that could reorder against an earlier group's overlaps it and
 // is dropped). That is the only field of the original a clone touches.
 func (c *Codespace) Clone() *Codespace {
-	c.tailOwn = false
+	if c.tailOwn { // written only when it changes, as in Merge
+		c.tailOwn = false
+	}
 	o := *c
 	o.groups = append([]*csNode(nil), c.groups...)
 	o.UsesCMaps = append([]string(nil), c.UsesCMaps...)
@@ -390,6 +395,11 @@ func ParseCodespace(src []byte) *Codespace {
 		// range, the program's own ranges are dropped (`CMapParser.java:102-105, 170-181`).
 		if name == "Identity-H" || name == "Identity-V" {
 			c.Merge(Identity())
+			return
+		}
+		// A predefined CMap nib carries is merged the same way (ADR-117); a name it does not carry is the caller's.
+		if pre := predefined(name); pre != nil {
+			c.Merge(pre.cs)
 			return
 		}
 		c.UsesCMaps = append(c.UsesCMaps, name)

@@ -528,34 +528,20 @@ var knownCannotCheck = map[string]string{
 	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.4.1 t2":     "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
 	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.8 t1":       "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
 	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.4.2 t2":     "a subset-named CIDFont's /CIDSet judged against an OpenType program with a \"CFF \" table, which nib does not read inside the wrapper",
-	// P07.S01's CMap documents draw a Type 0 font with no /ToUnicode, and 7.21.7 is per GLYPH since P07.S02: where
-	// veraPDF's answer needs data nib does not carry — a predefined CMap's codespace, or Adobe's UCS2 CMaps — both
-	// halves refuse, naming which. (The CIDFontType2 document closed at P07.S02: Adobe-Identity has no UCS2 CMap,
-	// so its glyphs are null and it fails, as veraPDF does.)
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t1":     "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t2":     "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"Type 0 font over an unknown CMap / 7.21.7 t1":            "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
-	"Type 0 font over an unknown CMap / 7.21.7 t2":            "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
-	"embedded CMap, /WMode agreeing / 7.21.7 t1":              "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
-	"embedded CMap, /WMode agreeing / 7.21.7 t2":              "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
-	"embedded CMap, /WMode 1 in the program only / 7.21.7 t1": "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
-	"embedded CMap, /WMode 1 in the program only / 7.21.7 t2": "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
-	"embedded CMap referencing GB-EUC-H / 7.21.7 t1":          "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"embedded CMap referencing GB-EUC-H / 7.21.7 t2":          "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"embedded CMap referencing an embedded CMap / 7.21.7 t1":  "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
-	"embedded CMap referencing an embedded CMap / 7.21.7 t2":  "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	// P07.S01's CMap documents draw a Type 0 font with no /ToUnicode, and 7.21.7 is per GLYPH since P07.S02. The ones
+	// that needed a predefined CMap's codespace or Adobe's UCS2 CMaps closed at ADR-117, which carries them; a CMap
+	// that is neither embedded nor predefined still refuses.
+	"Type 0 font over an unknown CMap / 7.21.7 t1": "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
+	"Type 0 font over an unknown CMap / 7.21.7 t2": "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
 	// P07.S02: veraPDF discards a /ToUnicode its parser throws on and falls back to the encoding; nib refuses rather
 	// than claim to know which CMaps its PostScript interpreter throws on.
 	"glyphs: a malformed ToUnicode / 7.21.7 t1": "a /ToUnicode with an entry of the wrong kind, which veraPDF discards whole",
 	"glyphs: a malformed ToUnicode / 7.21.7 t2": "a /ToUnicode with an entry of the wrong kind, which veraPDF discards whole",
-	// An embedded Encoding CMap NAMED Identity-H falls back through the DESCENDANT's collection — Japan1 here — and
-	// nib does not carry Adobe-Japan1-UCS2 (veraPDF passes).
-	"glyphs: an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Japan1) / 7.21.7 t1": "the fallback is Adobe-Japan1-UCS2, which nib does not carry",
-	"glyphs: an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Japan1) / 7.21.7 t2": "the fallback is Adobe-Japan1-UCS2, which nib does not carry",
 	// A ToUnicode program that `usecmap`s a UCS2 CMap: veraPDF merges that CMap's entries at the operator, and nib
-	// does not carry it (veraPDF passes).
-	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t1": "the ToUnicode uses Adobe-Japan1-UCS2, which nib does not carry",
-	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t2": "the ToUnicode uses Adobe-Japan1-UCS2, which nib does not carry",
+	// does not merge the one it carries there — its version is not veraPDF's, and a merged entry's text is what such
+	// a /ToUnicode answers with (veraPDF passes).
+	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t1": "the ToUnicode uses Adobe-Japan1-UCS2, which nib carries in another version than veraPDF's and does not merge",
+	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t2": "the ToUnicode uses Adobe-Japan1-UCS2, which nib carries in another version than veraPDF's and does not merge",
 	// Text drawn only in a font that does not resolve: veraPDF has no font and so no subject; a font pdfcpu DROPPED
 	// would be one veraPDF sees. nib cannot tell the two apart, so every font clause refuses.
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.1 t1": "an unresolved font: absent, or dropped by pdfcpu",
@@ -587,12 +573,6 @@ var knownCannotCheck = map[string]string{
 	"Type 0 font over an unknown CMap / 7.21.4.1 t2":                                                  "the font's CMap is neither embedded nor a predefined name",
 	"Type 0 font over an unknown CMap / 7.21.5 t1":                                                    "the font's CMap is neither embedded nor a predefined name",
 	"Type 0 font over an unknown CMap / 7.21.8 t1":                                                    "the font's CMap is neither embedded nor a predefined name",
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.4.1 t2":                                           "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.5 t1":                                             "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.8 t1":                                             "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"embedded CMap referencing GB-EUC-H / 7.21.4.1 t2":                                                "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"embedded CMap referencing GB-EUC-H / 7.21.5 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"embedded CMap referencing GB-EUC-H / 7.21.8 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
 	"metrics: CMap: a real CID / 7.21.4.1 t2":                                                         "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"metrics: CMap: a real CID / 7.21.5 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"metrics: CMap: a real CID / 7.21.8 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
