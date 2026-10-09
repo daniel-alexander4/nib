@@ -100,7 +100,10 @@ test('a foldable group is never left empty, and never holds a dropdown', () => {
   // request). It is a legitimate member: the group holds one `data-forward` twin and no `.menu`,
   // so the dropdown check this exemption skips has nothing to skip. Recorded here because the
   // assertion below is what makes such an addition deliberate rather than silent.
-  assert.deepEqual(exemptCount.sort(), ['Print', 'Reload', 'Save'],
+  //
+  // **Reload became "Reload & Quit" on 2026-10-08**, when the bar's last icons were put in the order Save, Print,
+  // Reload, Quit: Quit moved from Save's group to Reload's. Still three groups, and still no `.menu` in any.
+  assert.deepEqual(exemptCount.sort(), ['Print', 'Reload & Quit', 'Save'],
     `the fixed bar's rank-0 groups are now ${JSON.stringify(exemptCount)} — the exemption skips the dropdown check for these, so a change to the set is a change to what this guard does not look at`);
 });
 
@@ -328,10 +331,13 @@ test('the toolbar carries a print icon next to reload, forwarding to the File pa
   assert.ok(icon.getAttribute('aria-label'), 'an icon-only button with no aria-label is unreadable to a screen reader');
 
   const labels = [...doc.querySelectorAll('#toolbar .tbgroup')].map((g) => g.dataset.label);
-  const r = labels.indexOf('Reload');
-  const p = labels.indexOf('Print');
-  assert.ok(r >= 0, 'the Reload group is gone');
-  assert.equal(p, r + 1, `the Print group is at ${p} and Reload at ${r}; it was asked to sit next to reload (groups: ${labels.join(', ')})`);
+  // The bar's last icons run Save, Print, Reload, Quit — the order Dan asked for on 2026-10-08. (Print was first
+  // asked to sit next to Reload, 2026-09-16; it still does, on the other side.) Read as the order of the four
+  // BUTTONS in the document, which holds wherever a fold has put their groups.
+  const four = [...doc.querySelectorAll('#saveBtn, [data-forward="printBtn"], #reloadBtn, #quitBtn')]
+    .filter((b) => b.closest('.tbfixed')).map((b) => b.id || b.dataset.forward);
+  assert.deepEqual(four, ['saveBtn', 'printBtn', 'reloadBtn', 'quitBtn'], `the bar's last icons run ${four.join(', ')}`);
+  assert.ok(labels.includes('Reload & Quit'), 'the Reload & Quit group is gone');
 
   // The twin must resolve: a data-forward naming an id that does not exist is a button that
   // throws on click, which is worse than one that is missing.

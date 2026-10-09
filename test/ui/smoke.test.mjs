@@ -82,3 +82,27 @@ test('Mark Up lists Recognize Text (OCR) first, and lands on it', async () => {
   assert.deepEqual(got.open, ['Recognize Text (OCR)'], 'entering Mark Up did not open its first card');
   await h.mode('file');
 });
+
+// A signature is dark ink on a transparent picture. Its card's ground is dark in the dark theme, where the picture
+// could not be seen (Dan, 2026-10-08): the picture itself sits on white paper in both themes. Read from a card built
+// here, so the test does not depend on what the vault's library happens to hold.
+test('a library picture sits on white paper in the dark theme and the light one', async () => {
+  const grounds = await page.evaluate(() => {
+    const card = document.createElement('div');
+    card.className = 'libimg';
+    card.appendChild(document.createElement('img'));
+    document.getElementById('imageGrid').appendChild(card);
+    const root = document.documentElement, was = root.dataset.appearance;
+    const out = {};
+    for (const theme of ['dark', 'light']) {
+      root.dataset.appearance = theme;
+      out[theme] = { img: getComputedStyle(card.firstChild).backgroundColor, card: getComputedStyle(card).backgroundColor };
+    }
+    if (was === undefined) delete root.dataset.appearance; else root.dataset.appearance = was;
+    card.remove();
+    return out;
+  });
+  assert.equal(grounds.dark.img, 'rgb(255, 255, 255)', `in the dark theme the picture's ground is ${grounds.dark.img}`);
+  assert.equal(grounds.light.img, 'rgb(255, 255, 255)', `in the light theme the picture's ground is ${grounds.light.img}`);
+  assert.notEqual(grounds.dark.card, grounds.light.card, 'setup: the card reads the same in both themes, so this compared nothing');
+});

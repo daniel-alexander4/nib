@@ -183,10 +183,11 @@
       <button id="zoomInBtn" class="tbicon" title="Zoom in (Ctrl++)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8 11h6M11 8v6"/></svg><span class="tblabel">Zoom in</span></button>
       <button id="fitBtn" class="tbicon" title="Fit width (Ctrl+0)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M20 4v16M8 12h8M10.5 9.5 8 12l2.5 2.5M13.5 9.5 16 12l-2.5 2.5"/></svg><span class="tblabel">Fit width</span></button>
       <button id="fitPageBtn" class="tbicon" title="Fit page — the tallest page fits the window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16M4 20h16M12 8v8M9.5 10.5 12 8l2.5 2.5M9.5 13.5 12 16l2.5-2.5"/></svg><span class="tblabel">Fit page</span></button>
-            </div><div class="tbgroup" data-label="Reload" data-fold="0">
-      <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span class="tblabel">Reload from disk</span>
-      </button>
+            </div><div class="tbgroup" data-label="Save" data-fold="0">
+<button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
+      <!-- Save, Print, Reload, Quit — in that order (Dan, 2026-10-08). Quit shares Reload's group as it shared
+           Save's: a fourth group costs 13px, and at 414px the bar has none to spare (measured — it dropped whole
+           beneath the sidebar toggle). -->
             </div><div class="tbgroup" data-label="Print" data-fold="0">
       <!-- A data-forward twin of the File pane's Print…, so there is one handler and one id.
            setDocControls disables [data-forward="printBtn"] alongside printBtn itself, so this
@@ -194,8 +195,10 @@
       <button class="tbicon" data-forward="printBtn" title="Print (opens your browser's print dialog)" aria-label="Print" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg><span class="tblabel">Print</span>
       </button>
-            </div><div class="tbgroup" data-label="Save" data-fold="0">
-<button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
+            </div><div class="tbgroup" data-label="Reload &amp; Quit" data-fold="0">
+      <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span class="tblabel">Reload from disk</span>
+      </button>
       <button id="quitBtn" class="tbicon" title="Quit Nib — ends this process, and says what it will end first"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg><span class="tblabel">Quit</span></button>
             </div>    </div>
     <span class="tbsep"></span>

@@ -494,7 +494,9 @@ input[type="search"] { width: 100%; }
   padding: 4px;
   cursor: pointer;
 }
-.libimg img { width: 100%; height: 56px; object-fit: contain; display: block; }
+/* A signature is dark ink on nothing. On the card's own ground it showed in the light theme and vanished in the dark
+   one, so the picture sits on paper in both — the white the signature pad draws on (#sigCanvas). */
+.libimg img { width: 100%; height: 56px; object-fit: contain; display: block; background: #fff; border-radius: 4px; }
 .libimg .name { font-size: 10px; color: var(--subtext0); text-align: center; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .libimg .del {
