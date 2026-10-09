@@ -239,7 +239,7 @@ test('Cancel tells the server, and does not merely hide the popup', async () => 
     + 'nothing on screen and no way to stop it');
 });
 
-// ── Settings → Updates → Download folder ─────────────────────────────────────
+// ── Settings → Toggle Features → Updates → Download folder ─────────────────────────────────────
 
 const box = () => doc.getElementById('downloadDirInput');
 const line = () => doc.getElementById('downloadDirWhere').textContent;
@@ -252,7 +252,7 @@ async function type(v) {
 }
 
 test('Settings shows the folder in use and where it came from, in plain words', async () => {
-  assert.equal(box().closest('.apppage')?.id, 'settingsUpdatesPage', 'the Download folder field is not on the Updates page (ADR-104)');
+  assert.equal(box().closest('.apppage')?.id, 'settingsFeaturesPage', 'the Download folder field is not on the Toggle Features page (ADR-109)');
   assert.equal(box().value, '', 'with nothing set in Nib the box is not empty');
   assert.equal(line(), `Updates download to ${FOLDER} — Chrome’s download folder.`);
   for (const jargon of [/XDG/i, /profile/i, /preferences/i, /default_directory/]) {

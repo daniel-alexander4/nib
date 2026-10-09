@@ -656,8 +656,8 @@ there, beside the document it works on: in *Signing* that is **Place Signing Fla
 **Send & Receive**. Entering *Signing* still lands on the flag tools and opens no tab.
 
 **Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
-the sidebar: **Appearance** (the theme), **Colours**, **Main menu**, **Read Aloud**, **Updates**,
-**Advanced features**, **Identity & Keys** (your identity and pinned peers, and the keys that unlock
+the sidebar: **Appearance** (the theme), **Colours**, **Read Aloud**, **Toggle Features** (updates, the
+advanced features and which tabs the menu shows — three sections of one page), **Identity & Keys** (your identity and pinned peers, and the keys that unlock
 your vault), **Vault** (back up and restore) and **About** (the version, what a signature proves, and
 the licence and third-party notices, each shown on the page when you press its button). A page
 opens where the document is shown, in a tab beside the document tabs marked *Settings* (or
@@ -668,11 +668,11 @@ page tab to close the page. A setting is saved as you change it, so there is
 nothing to save or cancel — a download folder you had typed is saved as its page is replaced. **Colours** sets the sidebar's card colours: leave it on *All colours*
 for the six-accent rotation, or pick one hue and the cards become that colour in six steps.
 
-**Main menu** is where you cut the menu down to what you use. Untick a tab and it goes from the
+**Main menu**, the last section of *Toggle Features*, is where you cut the menu down to what you use. Untick a tab and it goes from the
 top of the window — nothing about your documents changes, and the keyboard shortcuts still work,
 so hiding **File** does not stop **Ctrl+S** saving. Settings has no box: it is where the switch
-lives, so hiding it would leave you no way back. This is a separate thing from *Advanced
-features* above it, and the difference matters — unticking a tab here only takes it out of the
+lives, so hiding it would leave you no way back. This is a separate thing from the *Advanced
+features* section above it, and the difference matters — unticking a tab here only takes it out of the
 menu, while switching a feature off there stops the feature itself.
 
 **The version pill** (top right) always shows the version you are running. It is yellow
@@ -683,7 +683,7 @@ exists — hover it to see which, and click to download.
 Nib is a PDF editor first. Four of its features reach the network or the local link — **signing
 ceremonies**, **finding peers on this network**, **reaching peers over the internet**, and
 **timestamping** — and every one of them is **off on a new installation**. Turn on what you want
-under *Settings → Advanced features*.
+under *Settings → Toggle Features → Advanced features*.
 
 **Off means the function stops, not that its button is hidden.** Switching discovery off closes the
 announcing socket; switching the rendezvous off means nothing contacts the DHT; switching ceremonies
@@ -872,7 +872,7 @@ someone else's: the peer-finding work uses the public BitTorrent DHT as a meetin
 which is described under [What leaves your computer](#what-leaves-your-computer). Nothing
 in it is run by us.) Leave the address blank and Nib picks a port and
 looks for the other person itself — on the local network, and over the internet — once those are
-switched on under **Settings → Advanced features**. A typed `host:port` is the fallback, and then
+switched on under **Settings → Toggle Features → Advanced features**. A typed `host:port` is the fallback, and then
 the receiver makes it reachable one of two ways:
 
 - **Port-forward** the chosen port on their router to their machine, or
@@ -893,7 +893,7 @@ in roster order until everyone has signed.
 **Where it lives.** *Signing → Start or join a ceremony* opens a page that explains a ceremony — what it
 will and will not do, what the finished document shows, what leaves your computer — and starts the
 two ways in, *Convene a ceremony…* and *Accept an invitation…*. (Both the entry and the panel are
-there only while **Signing ceremonies** is switched on under Settings → Advanced features; with it
+there only while **Signing ceremonies** is switched on under Settings → Toggle Features → Advanced features; with it
 off, a page left open says so and offers the switch.) The running ceremony lives in the sidebar,
 under *Signing → Signing Ceremonies*. The panel lists every ceremony on this machine with
 its roster, your position in it, and a *"what happens next"* control that asks Nib whose turn it is
@@ -1280,12 +1280,12 @@ background, and Nib has no telemetry, analytics or crash reporting of any kind.
 |---|---|---|
 | At startup, unless turned off | A version query | GitHub |
 | You click the version pill to update | The download of the new build | GitHub |
-| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) — in the app, only once Timestamping is turned on under *Settings → Advanced features* | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
-| **You verify a timestamp** — in the app, only once Timestamping is turned on under *Settings → Advanced features* | The transaction/block lookup for the proof | up to three public block explorers |
+| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) — in the app, only once Timestamping is turned on under *Settings → Toggle Features* | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
+| **You verify a timestamp** — in the app, only once Timestamping is turned on under *Settings → Toggle Features* | The transaction/block lookup for the proof | up to three public block explorers |
 | **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
 | **You open a document by URL** | The request for that document | the host you named |
 | **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
-| **You arm a ceremony with an invitation** — only once *Reach peers over the internet* is turned on under *Settings → Advanced features* | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
+| **You arm a ceremony with an invitation** — only once *Reach peers over the internet* is turned on under *Settings → Toggle Features* | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
 | **You run `nib rendezvous`** | Queries that reveal this machine's public IP — and with `--self-test`, one small encrypted record too | strangers on the BitTorrent DHT |
 | Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 
@@ -1446,7 +1446,7 @@ documents never leave your computer. It is not the only call Nib can make —
 timestamping, opening by URL and co-signing all use the network when you ask
 them to — and every one of them is listed under
 [What leaves your computer](#what-leaves-your-computer). Turn the
-startup check off from **Settings → Updates → Check for updates on startup** (saved in
+startup check off from **Settings → Toggle Features → Check for updates on startup** (saved in
 your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
 the version pill still checks either way). Nib only notifies and downloads — it never installs or replaces
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
@@ -1457,7 +1457,7 @@ When a newer release exists, clicking the pill downloads it. Nib does not ask wh
 folder**. The folder is **your browser's own download folder** — the one set in the browser Nib's
 window is running in (Chrome, Chromium, Edge, Brave or Firefox), or your system's Downloads folder
 when that browser has none set or Nib does not know the browser. To use a different folder, type it
-in **Settings → Updates → Download folder**; the line under the box always shows the folder that
+in **Settings → Toggle Features → Download folder**; the line under the box always shows the folder that
 will be used and where it came from. If a file of that name is already in the folder, Nib says so
 and downloads nothing.
 

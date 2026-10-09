@@ -49,7 +49,7 @@ test('every mode shows by default, and Settings has no box at all', () => {
     'Settings has a visibility box — unticking it would hide the mode that holds the switch, and the '
     + 'only way back would be editing the vault');
   for (const m of ['file', 'markup', 'edit', 'accessibility', 'secure', 'collaborate']) {
-    assert.ok(box(m), `${m} has no box in the Main menu card, so it cannot be switched off at all`);
+    assert.ok(box(m), `${m} has no box in Toggle Features' Main menu section, so it cannot be switched off at all`);
     assert.equal(box(m).checked, true, `${m}'s box is unticked while its tab is showing`);
   }
 });

@@ -3101,7 +3101,7 @@ function syncTabs() {
 // `data-apppage="<id>"`. A page that must do something as it is left names it in `appPageLeave`.
 
 // appPageLeave: page id → what to do as that page stops being the one on screen.
-const appPageLeave = { settingsUpdatesPage: () => flushDownloadDir() };
+const appPageLeave = { settingsFeaturesPage: () => flushDownloadDir() };
 
 // appPageShow: page id → what to do as that page comes to the front (ADR-105). The mirror of the
 // map above and called from the same door (`showAppPage`), after the page is on screen. A page whose
@@ -11789,7 +11789,7 @@ async function saveSettings(body) {
 }
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
 
-// ── Settings → Updates → Download folder (ADR-102) ───────────────────────────
+// ── Settings → Toggle Features → Updates → Download folder (ADR-102) ───────────────────────────
 //
 // applyDownloadPlace shows what the server resolved: the folder an update will be written to and
 // where that folder came from. The page words the source and decides nothing — the four names are
@@ -11848,7 +11848,7 @@ function saveDownloadDir() {
 }
 els.downloadDirInput.onchange = saveDownloadDir;
 
-// flushDownloadDir is what the Updates page does as it is left (ADR-104). **A folder that was typed
+// flushDownloadDir is what the Toggle Features page does as it is left (ADR-104; Updates is a section of it, ADR-109). **A folder that was typed
 // is never dropped without a word.** The box saves on `change`, which leaving by mouse or by Tab
 // causes; a page put away by something else — a document arriving, a mode change from the
 // keyboard — fires none, so the page saves what is in the box as it goes. A folder the server
@@ -11858,7 +11858,7 @@ async function flushDownloadDir() {
   const typed = els.downloadDirInput.value.trim();
   if (!downloadDirSaving && (typed === downloadDirSaved || typed === downloadDirRefused)) return;
   if (await saveDownloadDir()) return;
-  if (activeAppPage === $('settingsUpdatesPage')) return; // she is back on the page, and the line says it
+  if (activeAppPage === $('settingsFeaturesPage')) return; // she is back on the page, and the line says it
   toast(`Download folder not changed. ${els.downloadDirError.textContent}`);
   els.downloadDirInput.value = downloadDirSaved;
   downloadDirRefused = null;
@@ -15462,12 +15462,12 @@ function renderSignSteps() {
     label.textContent = step.label;
     label.title = [step.hint, why || (state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null)]
       .filter(Boolean).join(' — ');
-    label.onclick = off ? () => goCard('settings', 'Advanced features') : step.go;
+    label.onclick = off ? () => goCard('settings', 'Toggle Features') : step.go;
     if (off) row.dataset.off = step.feature;
 
     // The hint in words, under the name. It was the label's tooltip alone, which a keyboard does not show and a
     // touch screen never does; the page has the room. The tooltip stays, for the pointer.
-    const hintText = off ? 'Switched off on this computer. Turn it on under Settings, Advanced features.' : step.hint;
+    const hintText = off ? 'Switched off on this computer. Turn it on under Settings, Toggle Features.' : step.hint;
     const hint = hintText ? document.createElement('span') : null;
     if (hint) { hint.className = 'signstep-hint'; hint.textContent = hintText; }
 

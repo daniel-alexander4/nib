@@ -98,7 +98,7 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and a ceremony is
   # one of them. A fresh instance therefore refuses convene and accept with 403 until its user
   # turns them on — which is exactly what this does, standing for a user who went to
-  # Settings → Advanced features. Without it every scenario below fails on the switch and reports
+  # Settings → Toggle Features → Advanced features. Without it every scenario below fails on the switch and reports
   # it as a ceremony defect.
   curl -s -o /dev/null -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/settings" \
     -H 'content-type: application/json' -H "X-CSRF-Token: $csrf" -H "Origin: $base" \

@@ -161,7 +161,7 @@ echo "$Nib_out"
 #
 # 100 since ADR-095 (wrappedmatch.test.mjs): a search match that wraps a line, found by both readings — its own file
 # because it drives scanTextMatches end to end, which no other file does, over a pdf.js page it makes.
-# 102 since ADR-104 (apppages.test.mjs): the app-page registry — nine entries and no setting in the menu, one tab a
+# 102 since ADR-104 (apppages.test.mjs): the app-page registry — the Settings entries (seven since ADR-109) and no setting in the menu, one tab a
 # page, and the source guards that the registry and `#viewerWrap.hidden` have the writers they say they have.
 # 103 since ADR-106 (autoprereq.test.mjs): a command that runs its own prerequisite — the one door every text command
 # reads a scan through, with the recogniser stubbed, and each thing the door must never do.

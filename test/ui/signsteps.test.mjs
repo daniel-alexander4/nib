@@ -311,12 +311,12 @@ test('beside a real document: the ticks are live, a flag armed from the menu sho
 // turned on through its own box, on its own page, and put back.
 test('the ceremony page: its entry comes and goes with the feature, it starts the two flows, and it says when the feature is off', async () => {
   const setCeremonies = async (on) => {
-    await h.settingsPage('Advanced features');
+    await h.settingsPage('Toggle Features');
     if (await page.isChecked('#advCeremonyChk') !== on) await page.click('#advCeremonyChk');
     await page.waitForFunction((want) => document.getElementById('ceremony').hidden === !want, on);
   };
   const entryShown = () => page.$$eval(SIGNING, (es) => es.filter((e) => e.getClientRects().length).map((e) => e.textContent.trim()).includes('Start or join a ceremony'));
-  const was = await (async () => { await h.settingsPage('Advanced features'); return page.isChecked('#advCeremonyChk'); })();
+  const was = await (async () => { await h.settingsPage('Toggle Features'); return page.isChecked('#advCeremonyChk'); })();
   try {
     await setCeremonies(false);
     await h.mode('collaborate');
@@ -341,7 +341,7 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     assert.deepEqual([s.pages, s.sheet, s.pageTabs.includes('signingCeremonyPage')], [[], true, true], 'Convene did not raise the setup sheet in the page\'s place, or closed the page');
     await page.click('#cerSheetClose');
     // Switched off with the page OPEN: the page says so and offers the switch, not the flows.
-    // **Through the box itself, not by opening its page** — the Advanced features page would take
+    // **Through the box itself, not by opening its page** — the Toggle Features page would take
     // the ceremony page's tab (ADR-107: the pages share one), and the page under test would be
     // closed before it had anything to say. The box is on a hidden page, so it is pressed from the
     // script; its handler is the one a click runs.
@@ -356,8 +356,8 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     });
     assert.deepEqual(off, { convene: false, accept: false, said: true }, 'with ceremonies off the page offers the flows, or does not say they are off');
     await page.click('#signingCeremonyPage [data-advoff="ceremony"] button');
-    await page.waitForSelector('#settingsAdvancedPage:not([hidden])');
-    assert.deepEqual((await look()).pageTabs, ['settingsAdvancedPage'], 'the switch\'s page did not take the ceremony page\'s tab');
+    await page.waitForSelector('#settingsFeaturesPage:not([hidden])');
+    assert.deepEqual((await look()).pageTabs, ['settingsFeaturesPage'], 'the switch\'s page did not take the ceremony page\'s tab');
   } finally {
     await setCeremonies(was);
     await h.closeAppPages();
@@ -365,7 +365,7 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
 });
 
 test('at 414 and 375 pixels wide neither Signing page runs past the window', async () => {
-  await h.settingsPage('Advanced features');
+  await h.settingsPage('Toggle Features');
   const was = await page.isChecked('#advCeremonyChk');
   if (!was) await page.click('#advCeremonyChk');
   await page.waitForFunction(() => !document.getElementById('ceremony').hidden);
@@ -400,7 +400,7 @@ test('at 414 and 375 pixels wide neither Signing page runs past the window', asy
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.waitForFunction(() => !document.getElementById('sidebar').classList.contains('collapsed'));
     await h.closeAppPages();
-    await h.settingsPage('Advanced features');
+    await h.settingsPage('Toggle Features');
     if (await page.isChecked('#advCeremonyChk') !== was) await page.click('#advCeremonyChk');
     await page.waitForFunction((want) => document.getElementById('ceremony').hidden === !want, was);
     await h.closeAppPages();
@@ -411,7 +411,7 @@ test('at 414 and 375 pixels wide neither Signing page runs past the window', asy
 // tier — this does nothing.
 test('pictures of the Signing pages in both themes, when asked for', { skip: !process.env.NIB_UI_SHOTS }, async () => {
   const start = await page.evaluate(() => document.documentElement.dataset.appearance);
-  await h.settingsPage('Advanced features');
+  await h.settingsPage('Toggle Features');
   const was = await page.isChecked('#advCeremonyChk');
   if (!was) await page.click('#advCeremonyChk');
   await page.waitForFunction(() => !document.getElementById('ceremony').hidden);
@@ -427,7 +427,7 @@ test('pictures of the Signing pages in both themes, when asked for', { skip: !pr
     }
   } finally {
     await page.evaluate((t) => { document.documentElement.dataset.appearance = t; }, start);
-    await h.settingsPage('Advanced features');
+    await h.settingsPage('Toggle Features');
     if (await page.isChecked('#advCeremonyChk') !== was) await page.click('#advCeremonyChk');
     await page.waitForFunction((want) => document.getElementById('ceremony').hidden === !want, was);
     await h.closeAppPages();

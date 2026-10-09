@@ -773,3 +773,9 @@ home today.
   opening tag to `#aboutDocs`' — keep both ids in that order. The licence and the notices open IN PLACE under their
   buttons (`aria-expanded`), fetched only when asked for and written as text; no swapped view, no Back. The
   dialog-focus tier's fixture is the profile editor.
+- **[ADR-109 — Toggle Features is one page of three sections](109-toggle-features-is-one-page-of-three-sections.md)**
+  — supersedes ADR-036's "its own card/page" for Main menu, ADR-104's nine entries and ADR-107's Settings order only.
+  Updates, Advanced features and Main menu are three SECTIONS of `#settingsFeaturesPage`, each with its own heading
+  and lead — never one list of boxes, because an Advanced box stops a feature and a Main menu box only hides a tab.
+  `applyAdvanced` and `applyModeVisibility` stay two mechanisms. Settings is seven entries. Everything that points
+  at a switch says *Toggle Features* (`goCard` finds an entry by its text).
