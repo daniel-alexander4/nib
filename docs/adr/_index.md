@@ -745,3 +745,11 @@ home today.
   `several` and `anyDoc` count documents only. `syncMainArea` is the one writer of what the main area shows (viewer,
   sheet or page); `docShowing()` is the one answer to "is a document on screen", so its controls are inert under a page.
   A page is registered in markup alone (`data-apppage`). About still opens its dialog.
+- **[ADR-106 — a command runs the prerequisite the app can perform](106-a-command-runs-the-prerequisite-the-app-can-perform.md)**
+  — extends ADR-009, ADR-001, ADR-094 and ADR-101. A command that needs a step the app can do does it first, visibly,
+  through ONE door per prerequisite, and continues: `ensureText(owner, pages)` reads exactly the pages the server calls
+  `unread` (`GET /api/ocr/pages`: no text set, not blank, no layer) for Read aloud, the table export, Reflow, the
+  redaction search and the text export; `detectFields()` for Save as fillable form…; `openFirst()`; `openPeers(then)`.
+  Never automatic: anything destructive, replacing a layer, a signed document without asking, a sign-locked one at
+  all, anything that is the user's choice (the app takes them to it). A read stops when its view is no longer in
+  front; a search that did not read a scan NAMES the pages it did not search. The OCR button is unchanged.

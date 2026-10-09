@@ -211,14 +211,14 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 // recognition pass on a page the OCR route would leave alone. One read of the document for all of them: asking the
 // page map page by page re-reads the whole file each time (measured on a 14-page, 10.7 MB OCR'd scan: 1.2 s a page
 // against 2.3 s for every page here). The rule is the one handleOCR applies (`pdfops.PagesWithTextLayer`'s), asked
-// through `pdfops.TextLayers`, which also says which of those pages carry Nib's own layer and can be read again.
+// through `pdfops.TextPages`, which also says which of those pages carry Nib's own layer and can be read again.
 func (s *Server) handleOCRPages(w http.ResponseWriter, r *http.Request) {
 	doc, ok := s.resolveDoc(w, r)
 	if !ok {
 		return
 	}
 	data := s.docBytes(doc)
-	kinds, err := pdfops.TextLayers(data)
+	kinds, unread, err := pdfops.TextPages(data)
 	if err != nil {
 		// The document was well-formed enough to open and cannot be read for this (ADR-072). The window carries on
 		// as though no page had a layer, and the OCR route decides.
@@ -237,5 +237,7 @@ func (s *Server) handleOCRPages(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Ints(pages)
 	sort.Ints(own)
-	writeJSON(w, map[string]any{"layered": pages, "own": own})
+	// `unread` is the pages that set no text and are not blank — a scan nothing has read. A command that needs a
+	// page's text reads exactly those first (ADR-106), and asks here because it is one read for every page.
+	writeJSON(w, map[string]any{"layered": pages, "own": own, "unread": unread})
 }

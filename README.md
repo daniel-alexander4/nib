@@ -109,8 +109,10 @@ it finds nearly all of them and places about ninety-nine in a hundred well; it d
 least well where a form marks its blanks with shading alone.
 
 ### Turn a flat scan into a fillable form
-Run **Detect fields** on a flat or scanned form, then **File → Save a Copy → Save as fillable
-form…** to emit a real interactive **AcroForm PDF**: every detected text box and
+On a flat or scanned form, **File → Save a Copy → Save as fillable form…** emits a real
+interactive **AcroForm PDF**. If the page has no fields yet, it runs **Detect fields** on the
+page in view as its first step (you can also run Detect fields yourself, page by page, and
+adjust what it finds first): every detected text box and
 checkbox becomes a live, fillable field (with proper appearance streams, so it
 works in Adobe and any browser), dropped right onto the original page — the scan
 itself is untouched. Need a **dropdown** or a **radio-button group**? The **Dropdown** and **Radio** tools
@@ -464,7 +466,11 @@ them for real. Each box is drawn from the page's own letter positions, so it
 covers the match and stops there instead of spilling onto the words either side;
 where Nib can't read those positions it falls back to a deliberately wider box
 and tells you how many. It reads the text layer, so it works on any text-based
-PDF — and on a scan once you've run **OCR**: each invisible word is set to the
+PDF — and on a scan, whose pages it **reads (OCR) first, by itself**, before it
+searches: you do not have to remember to. If those pages cannot be read — the
+document is signed and you say no, it is locked for signing, or the read fails —
+the result **names the pages that were not searched**, so a scan is never passed
+over in silence. Each invisible word is set to the
 width and height of the scanned word it stands for, so a box drawn from it covers
 the word (in Nib, and in any other program that reads the layer). A scan OCR'd by
 a Nib before 1.189.2 has narrower invisible words; there Nib carries each box out
@@ -708,7 +714,8 @@ voices your browser has on this machine; if a saved voice is not there, Nib read
 rather than going quiet. It stops when you turn the page, switch document, or press it again. **It is not a screen reader and
 does not claim to be** — it reads the page's own text layer, not the document's tags. This is a
 different thing, useful for proof-reading or for taking a document in by ear.
-On a scanned page there is no text to read and Nib says so, pointing you at OCR rather than falling
+A scanned page has no text to read, so Nib reads it (OCR) first — that one page — and then reads it
+aloud; press the button again to stop. A page with nothing on it to read says so rather than falling
 silent.
 
 **The toolbar is icons.** Hover over one for its name and shortcut; when the window is too narrow
@@ -1162,9 +1169,9 @@ lost — best for scanned/image-heavy PDFs.
 **Pull the contents out** (File → Export & Print): **Document text (.txt)** dumps the
 document's text layer to a plain-text file, and **Pictures in the document (ZIP)** bundles
 the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
-re-encoded as PNG/TIFF. Text extraction reads the existing text layer, so a
-scanned (image-only) page has nothing to give until you run **OCR** on it (Mark Up
-tab), and complex multi-column layouts may not preserve reading order.
+re-encoded as PNG/TIFF. Text extraction reads the text layer; scanned
+(image-only) pages are read (OCR) first, which adds a text layer to them, and
+complex multi-column layouts may not preserve reading order.
 
 **This page's table → spreadsheet** (File → Export & Print → *This page's table…*)
 clusters the current page's text into rows and columns and saves it as an Excel
@@ -1172,7 +1179,7 @@ clusters the current page's text into rows and columns and saves it as an Excel
 **Format** line chooses which. It's a **best-effort** extraction of
 grid-style tables — merged cells, multi-line cells, and irregular layouts may come
 out wrong, so **review the result**. Like the text export it reads the text layer
-(OCR a scanned page first), and like everything else the spreadsheet is built on
+(a scanned page is read first, that one page), and like everything else the spreadsheet is built on
 your machine (no office-suite dependency — Nib writes the minimal file format
 itself).
 

@@ -25,6 +25,9 @@ const h = await boot({
       name: 'readaloud.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
+    // Which pages are scans nobody has read (ADR-106): none here. The scan that IS read first, then
+    // read aloud, is autoprereq.test.mjs's.
+    '/api/ocr/pages': { layered: [], own: [], unread: [] },
   },
 });
 const { document: doc, window: win, settle } = h;
@@ -113,16 +116,18 @@ test('turning the page stops reading', async () => {
   assert.ok(cancels >= 1, 'the flag cleared but the queue was never cancelled, so it keeps talking');
 });
 
-test('a page with no text layer says so, and names OCR', async () => {
+test('a page with no text says so — and no longer blames a scan it is not', async () => {
   await openDocument({ numPages: 1, outline: null, text: '' });
   spoken.length = 0;
   btn().click();
   await settle();
   assert.equal(spoken.length, 0,
-    'a scanned page with no text layer queued an utterance — of what?');
+    'a page with no text queued an utterance — of what?');
   assert.equal(btn().getAttribute('aria-pressed'), 'false',
     'the button reports that it is reading a page with nothing to read');
-  assert.match(toastText(), /scan|OCR/i,
-    `a page with no text said ${JSON.stringify(toastText())}. Silence is indistinguishable from a `
-    + 'broken feature, and the remedy — OCR it first — is the one thing the user can act on');
+  // A scan is read first and then read aloud (ADR-106, autoprereq.test.mjs). This page is not one — the
+  // server lists no unread page — so there is nothing to do but say so. Silence is indistinguishable from a
+  // broken feature.
+  assert.equal(toastText(), 'This page has no text to read.',
+    `a page with no text said ${JSON.stringify(toastText())}`);
 });

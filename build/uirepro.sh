@@ -293,7 +293,9 @@ fi
 # bounding rectangles and a scroll offset, and every one of them is 0 at tier 2.
 # 47 since ADR-104 (apppages.test.mjs): a Settings entry opens a page with its own tab — a real document beside a page
 # (its count, its scroll and zoom on return, its controls going inert), where focus lands, and a 375px window.
-expect_files=47
+# 48 since ADR-106 (autoprereq.test.mjs): a scanned page really read by the shipped recogniser in a real browser, and
+# the command that asked for it then working — the one thing the stubbed tier below cannot show.
+expect_files=48
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

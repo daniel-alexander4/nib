@@ -23,6 +23,47 @@ import (
 // it does: content that is not Nib's layer taken out; structure left naming content that has gone; an old layer
 // still under the new one; and (at the route, internal/server/ocr_test.go) a signed document touched.
 
+// TestTheUnreadPagesAreTheOnesThatSetNoTextAndAreNotBlank — ADR-106. A command that needs text reads the pages
+// `TextPages` calls unread and no others: a picture with no text is one; a page with text, a page with a text layer
+// and a page that paints nothing are not — and a page that paints only lines IS, which is the declared cost of not
+// telling a scan from text drawn as outlines.
+func TestTheUnreadPagesAreTheOnesThatSetNoTextAndAreNotBlank(t *testing.T) {
+	const helv = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+	text, err := testpdf.Text("typed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err := Combine([][]byte{
+		text,                          // 1: text
+		scannedPages(t, 1),            // 2: a picture
+		testpdf.WithContent("", helv), // 3: blank
+		testpdf.WithContent("BT /F1 12 Tf 3 Tr 72 700 Td (layer) Tj ET", helv),             // 4: another program's layer
+		testpdf.WithContent("72 72 400 1 re f", helv),                                      // 5: a rule and nothing else
+		testpdf.WithContent("72 72 400 1 re f BT /F1 12 Tf 72 700 Td (words) Tj ET", helv), // 6: a rule AND text
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers, unread, err := TextPages(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(unread, []int{2, 5}) {
+		t.Errorf("unread = %v, want [2 5]: the picture and the page of lines, and not the text, the blank or the layered page", unread)
+	}
+	if len(layers) != 1 || layers[4] != LayerOther {
+		t.Errorf("layers = %v, want page 4 alone, as another program's", layers)
+	}
+	// And once the picture is read it is no longer unread.
+	read, err := StampTextLayer(pdf, []Word{{Page: 2, Text: "word", Rect: [4]float64{100, 400, 160, 412}}}, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, unread, err = TextPages(read); err != nil || !reflect.DeepEqual(unread, []int{5}) {
+		t.Errorf("after page 2 is read, unread = %v (%v), want [5]", unread, err)
+	}
+}
+
 // scannedPages is n pages that are each a picture — what an OCR'd document is.
 func scannedPages(t *testing.T, n int) []byte {
 	t.Helper()
@@ -167,7 +208,7 @@ func TestReplacingATaggedLayerLeavesOneRunPerWordAndNoStructurePointingNowhere(t
 	if err != nil || !tagged {
 		t.Fatalf("the first layer: tagged %v, %v", tagged, err)
 	}
-	if kinds, kerr := TextLayers(first); kerr != nil || kinds[1] != LayerOwn {
+	if kinds, _, kerr := TextPages(first); kerr != nil || kinds[1] != LayerOwn {
 		t.Fatalf("Nib's own tagged layer reads as %q (%v), want %q", kinds[1], kerr, LayerOwn)
 	}
 	again := []Word{
@@ -335,7 +376,7 @@ func TestOnlyNibsOwnLayerIsEverTakenOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kinds, kerr := TextLayers(stamped); kerr != nil || kinds[1] != LayerOwn {
+	if kinds, _, kerr := TextPages(stamped); kerr != nil || kinds[1] != LayerOwn {
 		t.Fatalf("the untampered stamp reads as %q (%v), want %q — the three rows built on it would show nothing", kinds[1], kerr, LayerOwn)
 	}
 	paints := tampered(t, stamped, true, func(b []byte) []byte { return append(b, " 0 0 5 5 re f"...) })
@@ -354,7 +395,7 @@ func TestOnlyNibsOwnLayerIsEverTakenOut(t *testing.T) {
 		"an artifact that is not a stamp's marker":       otherMarker,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if kinds, err := TextLayers(pdf); err != nil || kinds[1] != LayerOther {
+			if kinds, _, err := TextPages(pdf); err != nil || kinds[1] != LayerOther {
 				t.Errorf("the page reads as %q (%v), want %q", kinds[1], err, LayerOther)
 			}
 			was := hiddenWords(hiddenOn(t, pdf, 1))
@@ -386,7 +427,7 @@ func TestAShortStampIsBroughtUpToDateByReplacingIt(t *testing.T) {
 			t.Fatalf("the fixture's word %q is not a short stamp, so this test would show nothing", r.Text)
 		}
 	}
-	if kinds, err := TextLayers(old); err != nil || kinds[1] != LayerOwn {
+	if kinds, _, err := TextPages(old); err != nil || kinds[1] != LayerOwn {
 		t.Fatalf("a layer Nib stamped before ADR-092 reads as %q (%v), want %q", kinds[1], err, LayerOwn)
 	}
 	out, _, replaced, _, err := ReplaceOCRLayer(old, words, "eng")
@@ -487,7 +528,7 @@ func TestALayerWhoseStructureCannotBeTakenOutWithItIsLeftAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kinds, kerr := TextLayers(twice); kerr != nil || kinds[1] != LayerStructure {
+	if kinds, _, kerr := TextPages(twice); kerr != nil || kinds[1] != LayerStructure {
 		t.Errorf("the page reads as %q (%v), want %q", kinds[1], kerr, LayerStructure)
 	}
 	out, _, replaced, left, err := ReplaceOCRLayer(twice, ocrWords(), "eng")
