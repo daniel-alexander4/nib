@@ -9,6 +9,7 @@ section of `#settingsFeaturesPage`.
 **Supersedes:** ADR-036's *"any main-menu tab can be switched off"* and its *"Settings is the one exemption"* —
 there are three. Everything else in it stands.
 **Applies:** the main-menu visibility switch.
+**Superseded in part by [ADR-112](112-page-functions-is-always-in-the-menu.md)** (the count: Page Functions is always present too).
 
 ## Decision
 

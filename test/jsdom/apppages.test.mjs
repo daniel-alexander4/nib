@@ -84,7 +84,7 @@ test('every control that was a Settings card is on a page, once, under the id it
     assert.equal(doc.querySelectorAll(`[id="${id}"]`).length, 1, `#${id} is not in the document exactly once`);
     assert.ok(doc.getElementById(id).closest('.apppage'), `#${id} is not on a page`);
   }
-  assert.equal(doc.querySelectorAll('.apppage .modeChk').length, 4, 'the four Main menu boxes are not on a page');
+  assert.equal(doc.querySelectorAll('.apppage .modeChk').length, 3, 'the three Main menu boxes are not on a page');
   // No document is open in this harness, and the boxes share `data-mode` with the annotation tools' buttons.
   assert.equal(doc.querySelectorAll('.modeChk:disabled').length, 0,
     'a Main menu box is disabled with no document open — it was taken for an annotation tool, and the menu cannot be cut until a file is opened');
@@ -217,8 +217,8 @@ test('Toggle Features is three cards in order — Main menu open, the others shu
     assert.ok(c.querySelector('.setcardbody > .pagelead'), `${c.id} lost its own sentence about what off means (ADR-109 §2)`);
   }
   const inCard = (id) => [...doc.getElementById(id).querySelectorAll('input')].map((i) => i.id || i.dataset.mode);
-  assert.deepEqual(inCard('featuresMenuCard'), ['edit', 'accessibility', 'secure', 'collaborate'], 'the Main menu boxes are not in the menu\'s own order');
-  assert.deepEqual([...doc.querySelectorAll('.modetab')].map((t) => t.dataset.tab).filter((t) => !['file', 'markup', 'settings'].includes(t)),
+  assert.deepEqual(inCard('featuresMenuCard'), ['accessibility', 'secure', 'collaborate'], 'the Main menu boxes are not in the menu\'s own order');
+  assert.deepEqual([...doc.querySelectorAll('.modetab')].map((t) => t.dataset.tab).filter((t) => !['file', 'markup', 'edit', 'settings'].includes(t)),
     inCard('featuresMenuCard'), 'the boxes are in a different order from the tabs they hide');
   assert.deepEqual(inCard('featuresAdvancedCard'), ['advDiscoveryChk', 'advRendezvousChk', 'advCeremonyChk', 'advTimestampChk'],
     'the advanced switches are not nearest reach first, with ceremonies after the two that find a peer');

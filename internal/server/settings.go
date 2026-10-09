@@ -74,17 +74,18 @@ const (
 // the stylesheet, the Go whitelist and the picker together. A mode added to the markup and not to
 // this list is refused by the route with no symptom anywhere else.
 var hideableModes = map[string]bool{
-	"edit": true, "accessibility": true, "secure": true, "collaborate": true,
+	"accessibility": true, "secure": true, "collaborate": true,
 }
 
 // alwaysShownModes are the tabs nothing may hide (ADR-110): `settings` for the reason above, and
-// `file` and `markup` because Dan said so, 2026-10-09 — "File and Mark Up should always be present
-// and not subject to toggling". Together with `hideableModes` it is every tab in the markup, which
+// `file`, `markup` and `edit` (Page Functions) because Dan said so, 2026-10-09 — "File and Mark Up should
+// always be present and not subject to toggling", then "page functions should also always be
+// available to user" (ADR-112). Together with `hideableModes` it is every tab in the markup, which
 // `TestEveryHideableModeIsARealTab` holds.
-var alwaysShownModes = map[string]bool{"file": true, "markup": true, "settings": true}
+var alwaysShownModes = map[string]bool{"file": true, "markup": true, "edit": true, "settings": true}
 
 // shownHiddenModes is what a stored set means to THIS build: the ids it may still hide. A vault
-// written before ADR-110 can hold `file` or `markup`; they are dropped on the way out, so those
+// written before ADR-110 can hold `file`, `markup` or `edit`; they are dropped on the way out, so those
 // tabs come back without anyone editing the vault, and the stored list is rewritten the next time
 // the user changes a box.
 func shownHiddenModes(stored []string) []string {
@@ -227,7 +228,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// Refused rather than filtered, for the reason `viewLayout` above is: a request naming a
 		// mode this build does not have is a client and a server that disagree about the menu, and
 		// silently dropping the unknown id stores a set the user did not choose while answering
-		// "ok". `settings`, `file` and `markup` are refused by the same branch — none is in `hideableModes`.
+		// "ok". `settings`, `file`, `markup` and `edit` are refused by the same branch — none is in `hideableModes`.
 		seen := map[string]bool{}
 		out := make([]string, 0, len(*req.HiddenModes))
 		for _, m := range *req.HiddenModes {
