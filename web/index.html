@@ -585,11 +585,19 @@
            About has no page: its entry opens the About dialog, as the one button in its card did.
            That dialog swaps three views inside itself (the account, the licence, the notices) and
            is the fixture the dialog-focus tier and two red proofs are recorded against. -->
-      <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1" data-entry>
-<button class="pageentry" data-apppage="settingsIdentityPage">Identity &amp; Keys…</button>
+      <!-- The order is by what an entry is for (Dan, 2026-10-08: "some semblance of an intuitive order"): how Nib
+           looks and reads, then what it does on its own, then your identity and its backup, and About last. -->
+      <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
+<button class="pageentry" data-apppage="settingsAppearancePage">Appearance…</button>
             </div>
-      <div class="tbgroup" data-label="Vault" data-fold="2" data-entry>
-<button class="pageentry" data-apppage="settingsVaultPage">Vault…</button>
+      <div class="tbgroup" data-label="Colours" data-fold="6" data-entry>
+<button class="pageentry" data-apppage="settingsColoursPage">Colours…</button>
+            </div>
+      <div class="tbgroup" data-label="Main menu" data-fold="7" data-entry>
+<button class="pageentry" data-apppage="settingsMenuPage">Main menu…</button>
+            </div>
+      <div class="tbgroup" data-label="Read Aloud" data-fold="4" data-entry>
+<button class="pageentry" data-apppage="settingsReadAloudPage">Read Aloud…</button>
             </div>
       <div class="tbgroup" data-label="Updates" data-fold="3" data-entry>
 <button class="pageentry" data-apppage="settingsUpdatesPage">Updates…</button>
@@ -597,17 +605,11 @@
       <div class="tbgroup" data-label="Advanced features" data-fold="7" data-entry>
 <button class="pageentry" data-apppage="settingsAdvancedPage">Advanced features…</button>
             </div>
-      <div class="tbgroup" data-label="Main menu" data-fold="7" data-entry>
-<button class="pageentry" data-apppage="settingsMenuPage">Main menu…</button>
+      <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1" data-entry>
+<button class="pageentry" data-apppage="settingsIdentityPage">Identity &amp; Keys…</button>
             </div>
-      <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
-<button class="pageentry" data-apppage="settingsAppearancePage">Appearance…</button>
-            </div>
-      <div class="tbgroup" data-label="Read Aloud" data-fold="4" data-entry>
-<button class="pageentry" data-apppage="settingsReadAloudPage">Read Aloud…</button>
-            </div>
-      <div class="tbgroup" data-label="Colours" data-fold="6" data-entry>
-<button class="pageentry" data-apppage="settingsColoursPage">Colours…</button>
+      <div class="tbgroup" data-label="Vault" data-fold="2" data-entry>
+<button class="pageentry" data-apppage="settingsVaultPage">Vault…</button>
             </div>
       <div class="tbgroup" data-label="About" data-fold="5" data-entry>
 <button id="aboutBtn">About Nib…</button>
