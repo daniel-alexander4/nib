@@ -231,6 +231,10 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       const id = await page.$eval(entry, (e) => e.nextElementSibling.querySelector('button').dataset.apppage);
       await page.click(entry);
       await page.waitForSelector(`#${id}:not([hidden])`);
+      // A page's collapsible cards are all opened (Toggle Features, ADR-111), so a caller reaches the
+      // control it came for. What is open and shut at first is `apppages.test.mjs`'s own test, which
+      // sets the cards back itself.
+      await page.$$eval(`#${id} details.setcard`, (ds) => { for (const d of ds) d.open = true; });
       return id;
     },
 

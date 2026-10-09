@@ -783,3 +783,8 @@ home today.
   — supersedes ADR-036's "any main-menu tab" and "Settings is the one exemption" only. File, Mark Up and Settings
   cannot be hidden: no box, the route answers 400, and a vault that already names one is read through
   `shownHiddenModes` and through the window's "hideable only if it has a box" — both halves, no migration.
+- **[ADR-111 — Toggle Features is three collapsible cards, in an order](111-toggle-features-is-three-collapsible-cards-in-an-order.md)**
+  — supersedes ADR-109 §2's `h3.pagesection` and its order only. Main menu (open at first), Advanced features,
+  Updates — each a native `<details class="setcard">` whose summary says what it holds; inside, the tabs in menu
+  order and the networked features nearest reach first. Each card keeps its own sentence about what off means.
+  A link to a switch opens its card (`goFeature`).

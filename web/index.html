@@ -915,64 +915,84 @@
         <div class="pagebody">
           <p class="pagekicker">Settings</p>
           <h2 id="settingsFeaturesPageTitle" tabindex="-1">Toggle Features</h2>
-          <p class="pagelead">What Nib does on its own, which of its networked features are on, and which tabs the
-            menu shows. Each section says what switching something off does.</p>
+          <p class="pagelead">Which tabs the menu shows, which of Nib's networked features are on, and how it
+            keeps itself up to date. Open a card to change it; each says what switching something off does.</p>
 
-          <h3 id="featuresUpdatesTitle" class="pagesection">Updates</h3>
-          <p class="pagelead">Nib tells you when a newer release exists and downloads it when you ask. It never installs anything itself.</p>
-          <div class="setrow">
-            <label class="check"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
-            <p class="sethelp">Clicking the version number at the top of the window checks at any time.</p>
-          </div>
-          <!-- Where an update is downloaded to (ADR-102). Empty follows the browser Nib's window is
-               running in; the line under the box is the folder that will actually be used and where
-               that came from, both from the server. A folder that is not there is refused with a
-               sentence shown here, never stored. The box saves on `change`; a page that is left
-               with a folder typed and not yet saved saves it on the way out (app.js,
-               `flushDownloadDir`). -->
-          <div class="setrow">
-            <label class="field" for="downloadDirInput">Download folder</label>
-            <input id="downloadDirInput" type="text" placeholder="Same as your browser" aria-describedby="downloadDirWhere" />
-            <p class="sethelp">Leave it empty to use the download folder set in your browser.</p>
-            <p id="downloadDirWhere" class="setstatus"></p>
-            <p id="downloadDirError" class="cererror" role="alert" hidden></p>
-          </div>
+          <!-- Three collapsible cards, in an order (ADR-111; Dan, 2026-10-09: "order the toggleable items in an
+               intuitive manner. If necessary group items in collapsible cards"): what you SEE (the menu's
+               tabs), then what RUNS (the networked features), then upkeep (updates). Native <details>, as the
+               `.advanced` disclosures are — it is keyboard-operable and announced with no script. Main menu
+               is open at first and the other two shut; whatever the user opens stays open for the session,
+               because a page is hidden and never rebuilt (ADR-104).
 
-          <h3 id="featuresAdvancedTitle" class="pagesection">Advanced features</h3>
-          <p class="pagelead">Nib is a PDF editor first. These four reach the network or the local link, and
-            each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
-          <div class="setrow">
-            <label class="check"><input id="advCeremonyChk" type="checkbox" /> Signing ceremonies</label>
-            <p class="sethelp">A signing that several people take part in, each on their own computer. Off stops Nib
-              listening for your turn. It cannot be switched off while a ceremony is still running.</p>
-          </div>
-          <div class="setrow">
-            <label class="check"><input id="advDiscoveryChk" type="checkbox" /> Find peers on this network</label>
-            <p class="sethelp">Announces Nib on your local network so the person you are signing with can find it.
-              Off closes the announcing socket.</p>
-          </div>
-          <div class="setrow">
-            <label class="check"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
-            <p class="sethelp">Finds a peer who is not on your network, through the public DHT. Off means nothing
-              contacts the DHT.</p>
-          </div>
-          <div class="setrow">
-            <label class="check"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
-            <p class="sethelp">Proves when a document existed. It contacts the OpenTimestamps calendar servers; the
-              document itself never leaves this computer.</p>
-          </div>
-          <p id="advError" class="cererror" hidden></p>
-
-          <h3 id="featuresMenuTitle" class="pagesection">Main menu</h3>
-          <p class="pagelead">Which tabs show across the top. Hiding one only removes it from the menu — nothing
-            about the document changes, and its keyboard shortcuts still work. File, Mark Up and Settings are always there.</p>
-          <div class="setrow setgroup" role="group" aria-labelledby="featuresMenuTitle">
-            <label class="check"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
-            <label class="check"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
-            <label class="check"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>
-            <label class="check"><input class="modeChk" data-mode="collaborate" type="checkbox" checked /> Signing</label>
-          </div>
-          <p id="modeError" class="cererror" hidden></p>
+               Inside a card the order is the card's own: the tabs left to right as the menu shows them;
+               the networked features from the nearest reach to the furthest, with ceremonies after the two
+               they use to find a peer. Each card keeps its OWN sentence about what off means (ADR-109 §2). -->
+          <details id="featuresMenuCard" class="setcard" open>
+            <summary><h3 id="featuresMenuTitle">Main menu</h3><span class="setcardsub">Which tabs show across the top</span></summary>
+            <div class="setcardbody">
+              <p class="pagelead">Hiding a tab only removes it from the menu — nothing
+                about the document changes, and its keyboard shortcuts still work. File, Mark Up and Settings are always there.</p>
+              <div class="setrow setgroup" role="group" aria-labelledby="featuresMenuTitle">
+                <label class="check"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
+                <label class="check"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
+                <label class="check"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>
+                <label class="check"><input class="modeChk" data-mode="collaborate" type="checkbox" checked /> Signing</label>
+              </div>
+              <p id="modeError" class="cererror" hidden></p>
+            </div>
+          </details>
+          <details id="featuresAdvancedCard" class="setcard">
+            <summary><h3 id="featuresAdvancedTitle">Advanced features</h3><span class="setcardsub">Signing with other people, and timestamping — off until you ask</span></summary>
+            <div class="setcardbody">
+              <p class="pagelead">Nib is a PDF editor first. These four reach the network or the local link, and
+                each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
+              <div class="setrow">
+                <label class="check"><input id="advDiscoveryChk" type="checkbox" /> Find peers on this network</label>
+                <p class="sethelp">Announces Nib on your local network so the person you are signing with can find it.
+                  Off closes the announcing socket.</p>
+              </div>
+              <div class="setrow">
+                <label class="check"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
+                <p class="sethelp">Finds a peer who is not on your network, through the public DHT. Off means nothing
+                  contacts the DHT.</p>
+              </div>
+              <div class="setrow">
+                <label class="check"><input id="advCeremonyChk" type="checkbox" /> Signing ceremonies</label>
+                <p class="sethelp">A signing that several people take part in, each on their own computer. Off stops Nib
+                  listening for your turn. It cannot be switched off while a ceremony is still running.</p>
+              </div>
+              <div class="setrow">
+                <label class="check"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
+                <p class="sethelp">Proves when a document existed. It contacts the OpenTimestamps calendar servers; the
+                  document itself never leaves this computer.</p>
+              </div>
+              <p id="advError" class="cererror" hidden></p>
+            </div>
+          </details>
+          <details id="featuresUpdatesCard" class="setcard">
+            <summary><h3 id="featuresUpdatesTitle">Updates</h3><span class="setcardsub">Checking for a newer release, and where it downloads to</span></summary>
+            <div class="setcardbody">
+              <p class="pagelead">Nib tells you when a newer release exists and downloads it when you ask. It never installs anything itself.</p>
+              <div class="setrow">
+                <label class="check"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+                <p class="sethelp">Clicking the version number at the top of the window checks at any time.</p>
+              </div>
+              <!-- Where an update is downloaded to (ADR-102). Empty follows the browser Nib's window is
+                   running in; the line under the box is the folder that will actually be used and where
+                   that came from, both from the server. A folder that is not there is refused with a
+                   sentence shown here, never stored. The box saves on `change`; a page that is left
+                   with a folder typed and not yet saved saves it on the way out (app.js,
+                   `flushDownloadDir`). -->
+              <div class="setrow">
+                <label class="field" for="downloadDirInput">Download folder</label>
+                <input id="downloadDirInput" type="text" placeholder="Same as your browser" aria-describedby="downloadDirWhere" />
+                <p class="sethelp">Leave it empty to use the download folder set in your browser.</p>
+                <p id="downloadDirWhere" class="setstatus"></p>
+                <p id="downloadDirError" class="cererror" role="alert" hidden></p>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
       <section id="settingsAppearancePage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Appearance" role="region" aria-labelledby="settingsAppearancePageTitle" hidden>
@@ -1154,7 +1174,7 @@
           <div class="setrow pageoff" data-advoff="ceremony" hidden>
             <p class="sethelp">Signing ceremonies are switched off on this computer, so none can be started or joined
               from here.</p>
-            <button type="button" data-gosettings="Toggle Features">Open Toggle Features…</button>
+            <button type="button" data-gosettings="Toggle Features" data-gofeature="featuresAdvancedCard">Open Toggle Features…</button>
           </div>
           <div class="setrow" data-adv="ceremony">
             <h3 class="rowtitle">Start one</h3>

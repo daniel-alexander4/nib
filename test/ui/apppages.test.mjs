@@ -468,6 +468,47 @@ test('a button on a page opens its dialog over the page, and the dialog gives fo
   await h.closeAppPage(id);
 });
 
+// Toggle Features' cards (ADR-111). The harness opens every card for the other tests; this one
+// puts them as a new window has them and reads what is on screen.
+test('a shut card shows its name and nothing in it; its header opens it, by mouse and by keyboard', async () => {
+  const id = await h.settingsPage('Toggle Features');
+  await page.evaluate(() => { for (const d of document.querySelectorAll('#settingsFeaturesPage details.setcard')) d.open = d.id === 'featuresMenuCard'; });
+  const seen = () => page.evaluate(() => {
+    // `checkVisibility`, not a rectangle: a shut <details> keeps its content laid out under
+    // `content-visibility: hidden`, so every control in it still answers a rectangle while nothing is drawn.
+    const vis = (e) => !!e && e.checkVisibility();
+    return Object.fromEntries(['featuresMenuCard', 'featuresAdvancedCard', 'featuresUpdatesCard'].map((c) => {
+      const d = document.getElementById(c);
+      return [c, { name: vis(d.querySelector('summary h3')), said: vis(d.querySelector('.setcardsub')), inputs: [...d.querySelectorAll('input')].filter(vis).length }];
+    }));
+  });
+  assert.deepEqual(await seen(), {
+    featuresMenuCard: { name: true, said: true, inputs: 4 },
+    featuresAdvancedCard: { name: true, said: true, inputs: 0 },
+    featuresUpdatesCard: { name: true, said: true, inputs: 0 },
+  }, 'a new window does not show Main menu open and the other two as their headers alone');
+  if (process.env.NIB_UI_SHOTS) await page.screenshot({ path: join(process.env.NIB_UI_SHOTS, 'page-features-as-opened.png') });
+  // Nothing in a shut card takes focus: Tab from its header goes to the next card's header.
+  await page.focus('#featuresAdvancedCard > summary');
+  await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(() => document.activeElement.closest('details')?.id), 'featuresUpdatesCard', 'Tab from a shut card\'s header went into the card');
+  await page.click('#featuresAdvancedCard > summary');
+  assert.equal((await seen()).featuresAdvancedCard.inputs, 4, 'clicking the header did not open the card');
+  assert.equal((await seen()).featuresMenuCard.inputs, 4, 'opening one card shut another');
+  await page.focus('#featuresUpdatesCard > summary');
+  await page.keyboard.press('Enter');
+  assert.equal((await seen()).featuresUpdatesCard.inputs, 2, 'Enter on the header did not open the card');
+  await page.keyboard.press('Enter');
+  assert.equal((await seen()).featuresUpdatesCard.inputs, 0, 'Enter on the header did not shut the card again');
+  // A box in a card works as it did on its own page.
+  const was = await page.isChecked('.modeChk[data-mode="secure"]');
+  await page.click('.modeChk[data-mode="secure"]');
+  await page.waitForFunction((w) => document.querySelector('.modetab[data-tab="secure"]').hidden === w, was);
+  await page.click('.modeChk[data-mode="secure"]');
+  await page.waitForFunction((w) => document.querySelector('.modetab[data-tab="secure"]').hidden === !w, was);
+  await h.closeAppPage(id);
+});
+
 test('with the sidebar shut the seven entries are in ⋯ More, and each opens its page', async () => {
   await h.mode('settings');
   await page.click('#toggleSidebarBtn');

@@ -656,8 +656,8 @@ there, beside the document it works on: in *Signing* that is **Place Signing Fla
 **Send & Receive**. Entering *Signing* still lands on the flag tools and opens no tab.
 
 **Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
-the sidebar: **Appearance** (the theme), **Colours**, **Read Aloud**, **Toggle Features** (updates, the
-advanced features and which tabs the menu shows — three sections of one page), **Identity & Keys** (your identity and pinned peers, and the keys that unlock
+the sidebar: **Appearance** (the theme), **Colours**, **Read Aloud**, **Toggle Features** (which tabs the menu shows, the
+advanced features, and updates — three cards on one page that open and shut), **Identity & Keys** (your identity and pinned peers, and the keys that unlock
 your vault), **Vault** (back up and restore) and **About** (the version, what a signature proves, and
 the licence and third-party notices, each shown on the page when you press its button). A page
 opens where the document is shown, in a tab beside the document tabs marked *Settings* (or
@@ -668,11 +668,11 @@ page tab to close the page. A setting is saved as you change it, so there is
 nothing to save or cancel — a download folder you had typed is saved as its page is replaced. **Colours** sets the sidebar's card colours: leave it on *All colours*
 for the six-accent rotation, or pick one hue and the cards become that colour in six steps.
 
-**Main menu**, the last section of *Toggle Features*, is where you cut the menu down to what you use. Untick a tab and it goes from the
+**Main menu**, the first card of *Toggle Features*, is where you cut the menu down to what you use. Untick a tab and it goes from the
 top of the window — nothing about your documents changes, and the keyboard shortcuts still work,
 so hiding **Secure** does not stop its shortcuts. **File**, **Mark Up** and **Settings** have no box and are
 always there — Settings because it is where the switch lives, so hiding it would leave you no way back. This is a separate thing from the *Advanced
-features* section above it, and the difference matters — unticking a tab here only takes it out of the
+features* card below it, and the difference matters — unticking a tab here only takes it out of the
 menu, while switching a feature off there stops the feature itself.
 
 **The version pill** (top right) always shows the version you are running. It is yellow
