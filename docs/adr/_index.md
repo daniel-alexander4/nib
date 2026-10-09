@@ -791,3 +791,6 @@ home today.
 - **[ADR-112 — Page Functions is always in the menu](112-page-functions-is-always-in-the-menu.md)**
   — supersedes ADR-110's count only. Four tabs cannot be hidden: File, Mark Up, Page Functions (`edit`), Settings.
   Same mechanism: no box, 400, and a stored list filtered on both sides.
+- **[ADR-113 — the invitation field goes with the ceremonies switch, and a hidden invitation is not sent](113-the-invitation-field-goes-with-the-ceremonies-switch.md)**
+  — Send & Receive's *Ceremony invitation* field and its disclosure are `data-adv="ceremony"`; `armRecv` sends an
+  invitation only while `advanced.ceremony`, because a hidden input keeps its text.
