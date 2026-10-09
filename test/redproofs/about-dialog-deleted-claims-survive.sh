@@ -7,6 +7,9 @@
 # no longer existed.
 #
 # docs/red-proofs.md records this shape as instances two, three and four; this was the fifth.
+#
+# The copy has been on the About PAGE since ADR-108 (it was a dialog); `#aboutMain` and the
+# guard are the same, and the patch was re-recorded against the page. The name is kept.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/p2p/ -run TestAboutCopyContainsTrustClaims -count=1"
-EXPECT="could not locate the About dialog"
+EXPECT="could not locate the About page"

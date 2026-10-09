@@ -271,9 +271,10 @@ func TestAboutScanIgnoresCommentsScriptsAndMarkup(t *testing.T) {
 	}
 }
 
-// aboutMainRE isolates the About dialog's own copy: from its opening div to the
-// licence pane that follows it.
-var aboutMainRE = regexp.MustCompile(`(?s)<div id="aboutMain">(.*?)<pre id="aboutDocText"`)
+// aboutMainRE isolates the About page's own copy: from its opening div to the
+// block holding the licence and the notices, which follows it. (It was the About
+// dialog until ADR-108; the block and its words moved to the page unchanged.)
+var aboutMainRE = regexp.MustCompile(`(?s)<div id="aboutMain">(.*?)<div id="aboutDocs"`)
 
 var (
 	htmlCommentRE = regexp.MustCompile(`(?s)<!--.*?-->`)
@@ -281,13 +282,13 @@ var (
 	htmlTagRE     = regexp.MustCompile(`<[^>]*>`)
 )
 
-// Drift-guard: the in-app About dialog must make the same honest-trust claims as
+// Drift-guard: the in-app About page must make the same honest-trust claims as
 // the appended readme. trustClaims is the single source.
 //
-// **It reads the About dialog's TEXT, not the file's bytes, and that is the whole
+// **It reads the About page's TEXT, not the file's bytes, and that is the whole
 // point of the rewrite.** The previous form was strings.Contains over the whole of
 // web/index.html, which is satisfied by an HTML comment, by a string inside a
-// <script>, by a title= attribute, or by a leftover after #aboutModal is deleted
+// <script>, by a title= attribute, or by a leftover after the About copy is deleted
 // outright. Measured: with #aboutMain deleted entirely and the six claims left in
 // one HTML comment, the old form returned true for ALL SIX. docs/red-proofs.md's
 // vacuous-green table records that shape as instances two, three and four; this was
@@ -301,7 +302,7 @@ func TestAboutCopyContainsTrustClaims(t *testing.T) {
 	}
 	m := aboutMainRE.FindSubmatch(html)
 	if m == nil {
-		t.Fatal("could not locate the About dialog's #aboutMain block in web/index.html — " +
+		t.Fatal("could not locate the About page's #aboutMain block in web/index.html — " +
 			"this scan would otherwise read the whole file and pass on a comment, so it " +
 			"fails rather than reporting a drift check it did not perform")
 	}
@@ -317,13 +318,13 @@ func TestAboutCopyContainsTrustClaims(t *testing.T) {
 			"over nothing", len(trustClaims))
 	}
 	if len(text) < 400 {
-		t.Fatalf("the About dialog's visible text is %d chars — too short to be the real copy, "+
+		t.Fatalf("the About page's visible text is %d chars — too short to be the real copy, "+
 			"so a green here would mean the extraction broke, not that the claims are present",
 			len(text))
 	}
 	for _, c := range trustClaims {
 		if !strings.Contains(text, c) {
-			t.Errorf("the About dialog's visible text is missing trust claim %q — readme and "+
+			t.Errorf("the About page's visible text is missing trust claim %q — readme and "+
 				"About have drifted", c)
 		}
 	}

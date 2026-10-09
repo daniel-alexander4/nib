@@ -27,7 +27,15 @@ import { boot, REPO } from './boot.mjs';
 // `/api/settings` answers ok: the Signing tests below switch an Advanced feature and hide a mode.
 // What was sent is kept: a page that is replaced must save the folder typed on it.
 const posted = [];
-const h = await boot({ routes: { '/api/settings': (o) => { posted.push(JSON.parse(o.body || '{}')); return { status: 'ok' }; } } });
+// The two documents the About page shows (ADR-108) are answered as TEXT, and the licence's holds
+// markup: it must arrive on the page as the characters it is. The notices can be made to fail.
+const LICENCE = 'GNU AFFERO <b>GENERAL</b> PUBLIC LICENSE\n<img src=x onerror="window.pwned=1">\n';
+let noticesStatus = 200;
+const h = await boot({ routes: {
+  '/api/settings': (o) => { posted.push(JSON.parse(o.body || '{}')); return { status: 'ok' }; },
+  '/legal/LICENSE': () => new Response(LICENCE, { status: 200 }),
+  '/legal/THIRD-PARTY-NOTICES.md': () => new Response('# Third-party notices\n', { status: noticesStatus }),
+} });
 const { document: doc } = h;
 const CODE = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
@@ -44,7 +52,7 @@ const tabs = () => [...doc.getElementById('tabstrip').children].map((t) => ({
 const marked = () => [...doc.querySelectorAll('#commands .tbgroup.open')].map((g) => g.dataset.label);
 const openDialogs = () => [...doc.querySelectorAll('body > div[id$="Modal"]')].filter((m) => !m.hidden).map((m) => m.id);
 
-test('Settings is nine entries and no settings: each group holds one button, and eight name a page that exists', () => {
+test('Settings is nine entries and no settings: each group holds one button, and each names a page that exists', () => {
   const groups = [...settingsPane().querySelectorAll('.tbgroup')];
   assert.deepEqual(groups.map((g) => g.dataset.label), NINE, 'the Settings pane is not the nine entries in their order');
   for (const g of groups) {
@@ -52,7 +60,6 @@ test('Settings is nine entries and no settings: each group holds one button, and
     const controls = [...g.querySelectorAll('button, input, select, textarea, label, p')];
     assert.deepEqual(controls.map((c) => c.tagName), ['BUTTON'],
       `${g.dataset.label} holds ${controls.map((c) => c.tagName).join(', ')} in the menu — an entry is one button, and its settings are on its page`);
-    if (g.dataset.label === 'About') { assert.equal(controls[0].id, 'aboutBtn'); continue; }
     const page = doc.getElementById(controls[0].dataset.apppage || '');
     assert.ok(page && page.classList.contains('apppage') && page.parentElement.id === 'viewerCol',
       `${g.dataset.label} names "${controls[0].dataset.apppage}", which is not an app page in the main area`);
@@ -100,8 +107,8 @@ test('entering Settings opens nothing: no page, no tab, no dialog, no card', () 
 });
 
 test('an entry opens its page in the main area; the pages share ONE tab, which names the page showing; a second click makes no second tab', () => {
-  const eight = entries().filter((e) => e.textContent.trim() !== 'About');
-  for (const e of eight) {
+  assert.equal(entries().length, 9, 'setup: the sidebar does not show nine entries');
+  for (const e of entries()) {
     const name = e.textContent.trim();
     const id = e.nextElementSibling.querySelector('button').dataset.apppage;
     e.click();
@@ -204,12 +211,76 @@ test('leaving the Settings menu leaves the page, which stays open in the page ta
   tabs()[0].el.querySelector('.tabclose').click();
 });
 
-test('About opens the About dialog, and no page', () => {
+// ── About is a page like the other eight (ADR-108) ───────────────────────────────────────────
+//
+// Dan, 2026-10-08: "About should use the same tab as the rest of the settings pages". It was a
+// dialog — the one entry ADR-104 left alone.
+test('About opens the About page in the one shared tab, in place of the page that was there; there is no About dialog', async () => {
+  const entry = (n) => entries().find((e) => e.textContent.trim() === n);
   doc.querySelector('.modetab[data-tab="settings"]').click();
-  entries().find((e) => e.textContent.trim() === 'About').click();
-  assert.deepEqual(openDialogs(), ['aboutModal']);
-  assert.deepEqual(pagesShown(), []);
-  doc.getElementById('aboutClose').click();
+  entry('Vault').click();
+  entry('About').click();
+  assert.deepEqual(pagesShown(), ['settingsAboutPage'], 'About did not put its page, and only its page, in the main area');
+  assert.deepEqual(openDialogs(), [], 'About opened a dialog');
+  assert.deepEqual(tabs().map((t) => [t.page, t.kind, t.name, t.selected, t.label]),
+    [['settingsAboutPage', 'Settings', 'About', 'true', 'About, Settings page']], 'About did not take the tab Vault had, or the tab does not read "Settings About"');
+  assert.equal(doc.activeElement, doc.getElementById('settingsAboutPageTitle'), 'opening About did not put focus on its heading');
+  assert.equal(doc.getElementById('aboutModal'), null, 'the About dialog is still in the document');
+  for (const id of ['aboutClose', 'aboutBackBtn', 'aboutTitle', 'aboutDocText', 'aboutBtn']) assert.equal(doc.getElementById(id), null, `#${id} belonged to the dialog and is still here`);
+  // What the dialog said is on the page, and the version the server reported is in it.
+  await h.settle();
+  const main = doc.getElementById('aboutMain');
+  assert.ok(main && main.closest('#settingsAboutPage'), 'the account of what a signature proves is not on the About page');
+  assert.equal(doc.getElementById('aboutVersion').textContent, 'test', 'the About page does not show the running version');
+  assert.deepEqual([...main.querySelectorAll('h3')].map((x) => x.textContent),
+    ['What a Nib signature proves', "What it doesn't prove", 'Co-signing with other people', 'Working with several documents']);
+  // Left for another menu, the entry brings it forward again and adds nothing.
+  doc.querySelector('.modetab[data-tab="markup"]').click();
+  doc.querySelector('.modetab[data-tab="settings"]').click();
+  assert.deepEqual(pagesShown(), [], 'setup: the page came forward by itself');
+  entry('About').click();
+  assert.deepEqual([pagesShown(), tabs().map((t) => t.page)], [['settingsAboutPage'], ['settingsAboutPage']], 'a second click on About did not bring its one page forward');
+});
+
+test('the licence and the notices open in place when asked for, as text, and are put away again; nothing is fetched before', async () => {
+  const legal = () => h.calls.filter((c) => c.url.includes('/legal/')).map((c) => c.url.replace(/^.*\/legal\//, ''));
+  const lic = doc.getElementById('aboutLicenseBtn'); const licText = doc.getElementById('aboutLicenseText');
+  const not = doc.getElementById('aboutNoticesBtn'); const notText = doc.getElementById('aboutNoticesText');
+  assert.ok(lic.closest('#settingsAboutPage') && not.closest('#settingsAboutPage'), 'the two document buttons are not on the About page');
+  assert.deepEqual(legal(), [], 'a licence document was fetched before anybody asked for it');
+  assert.deepEqual([licText.hidden, notText.hidden, lic.getAttribute('aria-expanded'), not.getAttribute('aria-expanded'), licText.textContent, notText.textContent],
+    [true, true, 'false', 'false', '', ''], 'a document is showing, or said to be, before its button is pressed');
+  assert.deepEqual([lic.getAttribute('aria-controls'), not.getAttribute('aria-controls')], ['aboutLicenseText', 'aboutNoticesText']);
+
+  lic.focus();
+  lic.click();
+  assert.deepEqual([licText.hidden, lic.getAttribute('aria-expanded'), notText.hidden], [false, 'true', true], 'the Licence button did not show the licence, and only the licence');
+  await h.settle();
+  assert.deepEqual(legal(), ['LICENSE'], 'the Licence button did not fetch the licence, once');
+  assert.equal(licText.textContent, LICENCE, 'the licence on the page is not the text that was served');
+  assert.equal(licText.children.length, 0, 'the licence was parsed as markup — a served file put elements on the page');
+  assert.equal(h.document.defaultView.pwned, undefined);
+  assert.equal(doc.activeElement, lic, 'showing the licence moved focus off its button');
+  assert.deepEqual(pagesShown(), ['settingsAboutPage'], 'showing the licence left the page');
+  assert.deepEqual(openDialogs(), []);
+
+  // The notices beside it; a refusal from the server is said in words, in place.
+  noticesStatus = 404;
+  not.click();
+  await h.settle();
+  assert.deepEqual([notText.hidden, not.getAttribute('aria-expanded'), notText.textContent, licText.hidden], [false, 'true', 'Could not load document.', false]);
+  // Put away: hidden, said so, and emptied; asked for again, fetched again.
+  not.click();
+  assert.deepEqual([notText.hidden, not.getAttribute('aria-expanded'), notText.textContent], [true, 'false', ''], 'the notices were not put away by their button');
+  noticesStatus = 200;
+  not.click();
+  await h.settle();
+  assert.equal(notText.textContent, '# Third-party notices\n');
+  assert.deepEqual(legal(), ['LICENSE', 'THIRD-PARTY-NOTICES.md', 'THIRD-PARTY-NOTICES.md']);
+  not.click();
+  lic.click();
+  assert.deepEqual([licText.hidden, lic.getAttribute('aria-expanded'), licText.textContent], [true, 'false', '']);
+  tabs()[0].el.querySelector('.tabclose').click();
 });
 
 // ── The Signing menu (ADR-105) ────────────────────────────────────────────────

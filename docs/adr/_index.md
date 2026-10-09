@@ -744,7 +744,7 @@ home today.
   and it is not a popup. A page is NEVER a `view`: `openAppPages` / `activeAppPage` sit beside `views`, and Close all,
   `several` and `anyDoc` count documents only. `syncMainArea` is the one writer of what the main area shows (viewer,
   sheet or page); `docShowing()` is the one answer to "is a document on screen", so its controls are inert under a page.
-  A page is registered in markup alone (`data-apppage`). About still opens its dialog.
+  A page is registered in markup alone (`data-apppage`). About still opens its dialog (a page since ADR-108).
 - **[ADR-105 — configuration and wizards open pages; actions on the open document stay in the menu](105-configuration-and-wizards-open-pages-actions-on-the-document-stay-in-the-menu.md)**
   — extends ADR-104; supersedes nothing. The test for ANY menu entry: something you set up or are led through opens a
   page with its own tab; a tool or button that acts on the open document stays in the menu and expands there. In
@@ -767,3 +767,9 @@ home today.
   `openAppPage` replaces what `openAppPages` holds (it never holds two; nothing pushes to it) and the tab is rebuilt
   where it was, named for the page showing. The replaced page is left ONCE by the usual door (`showAppPage` →
   `appPageLeave`) if it was in front, and not again if it was behind a document — `openAppPage` adds no leave call.
+- **[ADR-108 — About is a page like the other eight, and its two documents open in place](108-about-is-a-page-like-the-other-eight.md)**
+  — supersedes ADR-104 §9's "About opens the About dialog" only. `#settingsAboutPage` is registered in markup like
+  every page; `#aboutModal` is gone. `#aboutMain` is still what `TestAboutCopyContainsTrustClaims` reads, from its
+  opening tag to `#aboutDocs`' — keep both ids in that order. The licence and the notices open IN PLACE under their
+  buttons (`aria-expanded`), fetched only when asked for and written as text; no swapped view, no Back. The
+  dialog-focus tier's fixture is the profile editor.

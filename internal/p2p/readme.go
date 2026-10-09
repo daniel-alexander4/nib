@@ -11,7 +11,7 @@ import (
 )
 
 // trustClaims are the load-bearing honest-trust statements the co-signing readme
-// must make. They are also expected verbatim in the in-app About dialog: this
+// must make. They are also expected verbatim on the in-app About page: this
 // slice is the single source that keeps the two explanations from drifting, and
 // a drift-guard test asserts every claim appears both in the rendered readme
 // body and in the embedded About copy. Edit the wording here and in both
@@ -22,7 +22,7 @@ var trustClaims = []string{
 	"vouched for by a certificate authority", // self-generated identity, no CA
 	"qualified electronic signature",         // explicitly not QES
 	// The two N-party claims (P07.S08). Before them every entry above was a
-	// SINGLE-signature claim, which the About dialog satisfied incidentally while
+	// SINGLE-signature claim, which the About copy satisfied incidentally while
 	// containing no co-signing copy at all — so "the About dialog says the same
 	// thing and the guard is green" was dischargeable by an About that never
 	// mentioned co-signing. These are the entries that make the guard bite on

@@ -748,22 +748,23 @@ body > div[id$="Modal"] {
 .combinerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--surface0); }
 .combinectrls { display: flex; gap: 4px; flex: none; }
 
-/* About dialog. The card sizes to whichever view is showing: the explainer is a
-   narrow readable column; the licence/notices view is wider. The card is capped
-   at the viewport so neither can overflow. */
-.aboutcard { max-width: 92vw; }
-#aboutMain { display: flex; flex-direction: column; gap: 10px; max-width: 480px; }
-.aboutcard h4 { margin: 0; font-size: 13px; color: var(--subtext1); }
-.aboutcard p { margin: 0; }
-.aboutcard ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
-.aboutver { font-size: 12px; color: var(--subtext0); }
+/* The About page (ADR-108) — the dialog's words in the page's blocks. `#aboutMain` is the
+   account itself, in the page's own column and rhythm; everything in it is `--text`, as on every
+   page. The two documents open in place under their buttons. */
+#aboutMain { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+#aboutMain p { margin: 0; }
+#aboutMain .setrow p, #aboutMain .setrow ul, .aboutver { font-size: 13px; line-height: 1.45; }
+#aboutMain .setrow ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.aboutver a { color: var(--text); text-decoration: underline; }
+.aboutver a:focus-visible, .aboutdoc:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+#aboutDocs button[aria-expanded="true"] { box-shadow: inset 0 -2px 0 var(--blue); }
 .aboutdoc {
   /* The licence texts are hard-wrapped at ~72 columns; show them as authored
      (no re-wrap) in a box wide enough to fit that, scrolling for the rest. */
   margin: 0; width: 80ch; max-width: 100%; max-height: 60vh; overflow: auto;
   background: var(--crust); border: 1px solid var(--surface0); border-radius: 6px;
   padding: 12px; font-family: ui-monospace, monospace; font-size: 12px;
-  white-space: pre; color: var(--subtext1);
+  white-space: pre; color: var(--text);
 }
 
 /* authorized-keys manager */

@@ -23,14 +23,14 @@ const h = await launch();
 const { page } = h;
 after(() => shutdown(h));
 
-// The eight entries that open a page, in the order the menu shows them. About is the ninth and
-// opens the About dialog.
+// The nine entries, in the order the menu shows them. Each opens a page — About too, since
+// ADR-108; it opened a dialog until then.
 const PAGES = [
   ['Appearance', 'settingsAppearancePage'], ['Colours', 'settingsColoursPage'], ['Main menu', 'settingsMenuPage'],
   ['Read Aloud', 'settingsReadAloudPage'], ['Updates', 'settingsUpdatesPage'], ['Advanced features', 'settingsAdvancedPage'],
-  ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'],
+  ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['About', 'settingsAboutPage'],
 ];
-const NINE = [...PAGES.map((p) => p[0]), 'About'];
+const NINE = PAGES.map((p) => p[0]);
 const ENTRY = '#commands .tbtab[data-tab="settings"] .sbhead.groupcard';
 const MORE = '#toolbar .tbtab[data-tab="settings"] .tbmore';
 
@@ -104,14 +104,81 @@ test('each entry opens its page, named in the page tab, with no document open; a
   }
 });
 
-test('About opens the About dialog and no page', async () => {
-  await h.mode('settings');
-  await page.click(`${ENTRY}:text-is("About")`);
-  await page.waitForSelector('#aboutModal:not([hidden])');
-  const s = await state();
-  assert.deepEqual([s.pages, s.pageTabs, s.dialogs], [[], [], ['aboutModal']]);
-  await page.click('#aboutClose');
-  await page.waitForSelector('#aboutModal', { state: 'hidden' });
+// ── About is a page like the other eight (ADR-108) ───────────────────────────────────────────
+// Dan, 2026-10-08: "About should use the same tab as the rest of the settings pages".
+test('About is a page in the shared tab: it takes another page\'s place, shows the version, and there is no About dialog', async () => {
+  await h.settingsPage('Vault');
+  assert.equal(await h.settingsPage('About'), 'settingsAboutPage');
+  let s = await state();
+  assert.deepEqual([s.pages, s.pageTabs, s.selected, s.dialogs], [['settingsAboutPage'], ['settingsAboutPage'], ['settingsAboutPage'], []],
+    'About did not take the one page tab from Vault, or it opened a dialog');
+  assert.ok(s.focus.tag === 'H2' && s.focus.text === 'About', `opening About put focus on ${s.focus.tag}#${s.focus.id} "${s.focus.text}"`);
+  const tab = await page.$eval('#tabstrip .pagetab', (t) => t.innerText.replace(/\s+/g, ' ').trim());
+  assert.match(tab, /^SETTINGS About\b/, `the tab reads "${tab}"`);
+  assert.equal(await page.$('#aboutModal'), null, 'the About dialog is still in the document');
+  // The version the real server reports, on the page and on screen.
+  const want = (await (await page.evaluate(() => window.nibFetch('/api/status').then((r) => r.json())))).version;
+  const ver = await page.$eval('#aboutVersion', (e) => ({ text: e.textContent, shown: e.getClientRects().length > 0 }));
+  assert.ok(want && ver.text === want && ver.shown, `the About page shows version "${ver.text}", and the server is "${want}"`);
+  const seen = await page.$eval('#aboutMain', (m) => m.innerText);
+  for (const claim of ['signed by whoever holds your signing key', 'two or more people', 'not a qualified electronic signature']) {
+    assert.ok(seen.replace(/\s+/g, ' ').includes(claim), `the About page does not show "${claim}"`);
+  }
+  // Escape does nothing to a page (ADR-104 §6).
+  await page.keyboard.press('Escape');
+  s = await state();
+  assert.deepEqual(s.pages, ['settingsAboutPage'], 'Escape closed the About page — it is not a dialog');
+  await h.closeAppPage('settingsAboutPage');
+});
+
+// The About page keeps a document open across leaving and coming back, and the window is shared
+// by every test in this file: a test that opened one puts it away, by the button, as a user would.
+const aboutDocsAway = () => page.$$eval('#aboutDocs button[aria-expanded="true"]', (bs) => bs.forEach((b) => b.click()));
+
+test('the licence and the notices open in place and are put away again, by mouse and by keyboard, with focus left on the button', async () => {
+  await h.settingsPage('About');
+  const doc = (id) => page.$eval(`#${id}`, (e) => ({ shown: e.getClientRects().length > 0, chars: e.textContent.length, head: e.textContent.slice(0, 400),
+    kids: e.children.length, scrolls: e.scrollHeight > e.clientHeight, box: e.getBoundingClientRect().height, win: window.innerHeight }));
+  const fetched = [];
+  const seen = (r) => { if (r.url().includes('/legal/')) fetched.push(r.url().replace(/^.*\/legal\//, '')); };
+  page.on('request', seen);
+  try {
+    await aboutDocsAway();
+    assert.deepEqual([(await doc('aboutLicenseText')).shown, (await doc('aboutNoticesText')).chars], [false, 0], 'a document is on the page before it is asked for');
+    // Mouse: the licence.
+    await page.click('#aboutLicenseBtn');
+    await page.waitForFunction(() => document.getElementById('aboutLicenseText').textContent.length > 1000);
+    let d = await doc('aboutLicenseText');
+    assert.ok(d.shown && /GNU AFFERO GENERAL PUBLIC LICENSE/.test(d.head) && d.kids === 0, `the licence is not showing as text: ${d.head.slice(0, 60)}`);
+    assert.ok(d.scrolls && d.box <= 0.6 * d.win + 2, `the licence box is ${d.box}px tall in a ${d.win}px window and ${d.scrolls ? 'scrolls' : 'does not scroll'} — it should be a box that scrolls, not the whole text laid out`);
+    assert.equal(await page.$eval('#aboutLicenseBtn', (b) => b.getAttribute('aria-expanded')), 'true');
+    assert.equal((await state()).focus.id, 'aboutLicenseBtn', 'showing the licence moved focus off its button');
+    await page.click('#aboutLicenseBtn');
+    assert.deepEqual([(await doc('aboutLicenseText')).shown, await page.$eval('#aboutLicenseBtn', (b) => b.getAttribute('aria-expanded'))], [false, 'false'], 'the Licence button did not put the licence away');
+    // Keyboard: Tab from the licence button reaches the notices button; Enter shows them; Tab
+    // goes INTO the box, which the arrow keys then scroll; Shift+Tab and Enter put them away.
+    assert.deepEqual(fetched, ['LICENSE'], 'the notices were fetched before anybody asked for them');
+    await page.focus('#aboutLicenseBtn');
+    await page.keyboard.press('Tab');
+    assert.equal((await state()).focus.id, 'aboutNoticesBtn', 'Tab from the Licence button did not reach the Third-party notices button');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.getElementById('aboutNoticesText').textContent.length > 10000);
+    d = await doc('aboutNoticesText');
+    assert.ok(d.shown && d.kids === 0 && d.scrolls, 'the notices are not showing as text in a box that scrolls');
+    assert.equal((await state()).focus.id, 'aboutNoticesBtn', 'Enter moved focus off the notices button');
+    await page.keyboard.press('Tab');
+    assert.equal((await state()).focus.id, 'aboutNoticesText', 'Tab from the button did not reach the notices — a keyboard user cannot scroll them');
+    await page.keyboard.press('PageDown');
+    await page.waitForFunction(() => document.getElementById('aboutNoticesText').scrollTop > 0);
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Enter');
+    assert.deepEqual([(await doc('aboutNoticesText')).shown, (await state()).focus.id], [false, 'aboutNoticesBtn'], 'Enter on the button did not put the notices away with focus left on it');
+    assert.deepEqual((await state()).pages, ['settingsAboutPage']);
+  } finally {
+    page.off('request', seen);
+    await aboutDocsAway();
+    await h.closeAppPages();
+  }
 });
 
 const DOC_A = writeFixture('apppage-a.pdf', { pages: 6, label: 'page doc A' });
@@ -413,7 +480,7 @@ test('with the sidebar shut the nine entries are in ⋯ More, and each opens its
         captions: [...d.querySelectorAll('.menucap')].filter(vis).length,
         other: [...d.querySelectorAll('input, select, p, label')].filter(vis).length };
     }, MORE);
-    assert.deepEqual(listed.buttons, NINE.map((n) => (n === 'About' ? 'About Nib…' : n + '…')), '⋯ More does not hold the nine entries in their order');
+    assert.deepEqual(listed.buttons, NINE.map((n) => n + '…'), '⋯ More does not hold the nine entries in their order');
     assert.equal(listed.captions, 0, 'each entry is listed twice — a caption and a button of the same name');
     assert.equal(listed.other, 0, 'a setting is still drawn inside the menu');
     await page.keyboard.press('Escape');
@@ -455,6 +522,15 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
           // The longest thing any page shows is the folder line, and a path has no spaces to break at.
           await page.waitForFunction(() => document.getElementById('downloadDirWhere').textContent.length > 0, null, { timeout: 15000 });
         }
+        if (id === 'settingsAboutPage') {
+          // About with BOTH documents showing: lines of 72 columns and more, set not to wrap.
+          for (const [btn, text] of [['#aboutLicenseBtn', 'aboutLicenseText'], ['#aboutNoticesBtn', 'aboutNoticesText']]) {
+            if (await page.$eval(btn, (b) => b.getAttribute('aria-expanded')) !== 'true') await page.click(btn);
+            await page.waitForFunction((t) => document.getElementById(t).textContent.length > 1000, text);
+          }
+          const boxes = await page.$$eval('#settingsAboutPage .aboutdoc', (ps) => ps.map((e) => e.scrollWidth > e.clientWidth));
+          assert.deepEqual(boxes, [true, true], `setup: at ${width}px a licence document fits its box, so this is not the wide case`);
+        }
         const m = await page.evaluate((i) => {
           const p = document.getElementById(i); const c = p.getBoundingClientRect();
           const past = [...p.querySelectorAll('*')].filter((e) => {
@@ -468,9 +544,10 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         assert.ok(m.sideways <= 0, `at ${width}px ${label}'s page scrolls sideways by ${m.sideways}px`);
         assert.ok(m.windowSideways <= 0, `at ${width}px the window scrolls sideways by ${m.windowSideways}px with ${label}'s page up`);
         assert.deepEqual(m.past, [], `at ${width}px these run past the edge of ${label}'s page: ${m.past.join(', ')}`);
+        if (id === 'settingsAboutPage') await aboutDocsAway();
       }
-      // Eight entries, one tab — the last page's; the strip does not push the window sideways.
-      assert.equal((await state()).pageTabs.length, 1, `at ${width}px eight entries left more than the one page tab`);
+      // Nine entries, one tab — the last page's; the strip does not push the window sideways.
+      assert.equal((await state()).pageTabs.length, 1, `at ${width}px nine entries left more than the one page tab`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px the page tab pushes the window sideways`);
       await h.closeAppPages();
     }
@@ -479,6 +556,7 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
     // raced the crossing would shut the sidebar it was meant to open.
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.waitForFunction(() => !document.getElementById('sidebar').classList.contains('collapsed'));
+    await aboutDocsAway();
     await h.closeAppPages();
     // Leave the shared server as it was found.
     await h.settingsPage('Updates');
@@ -497,10 +575,17 @@ test('pictures of the pages in both themes, when asked for', { skip: !process.en
   try {
     for (const theme of [start, start === 'light' ? 'dark' : 'light']) {
       await page.evaluate((t) => { document.documentElement.dataset.appearance = t; }, theme);
-      for (const [label, file] of [['Updates', 'updates'], ['Advanced features', 'advanced'], ['Identity & Keys', 'identity'], ['Colours', 'colours']]) {
+      for (const [label, file] of [['Updates', 'updates'], ['Advanced features', 'advanced'], ['Identity & Keys', 'identity'], ['Colours', 'colours'], ['About', 'about']]) {
         await h.settingsPage(label);
         await page.screenshot({ path: join(dir, `page-${file}-${theme}.png`) });
       }
+      // About with the notices showing, scrolled to them.
+      await aboutDocsAway();
+      await page.click('#aboutNoticesBtn');
+      await page.waitForFunction(() => document.getElementById('aboutNoticesText').textContent.length > 1000);
+      await page.$eval('#aboutNoticesBtn', (b) => b.scrollIntoView());
+      await page.screenshot({ path: join(dir, `page-about-notices-${theme}.png`) });
+      await page.click('#aboutNoticesBtn');
       await h.closeAppPages();
     }
   } finally {
