@@ -53,8 +53,16 @@ func TestEveryHideableModeIsARealTab(t *testing.T) {
 				"would carry a switch for a mode that does not exist", m)
 		}
 	}
+	for m := range alwaysShownModes {
+		if !tabs[m] {
+			t.Errorf("alwaysShownModes names %q, and no tab is called that", m)
+		}
+		if hideableModes[m] {
+			t.Errorf("%q is both always shown and hideable — the route would store a choice the status never hands back", m)
+		}
+	}
 	for m := range tabs {
-		if m == "settings" {
+		if alwaysShownModes[m] {
 			continue
 		}
 		if !hideableModes[m] {
@@ -111,6 +119,13 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 		t.Errorf("hiding Settings answered %d, want 400 — the switch that would undo it is inside the "+
 			"mode it hides", code)
 	}
+	// File and Mark Up are always present (ADR-110): refused like Settings, alone or beside a mode
+	// that may be hidden.
+	for _, m := range []string{"file", "markup"} {
+		if code := post(map[string]any{"hiddenModes": []string{"secure", m}}); code != http.StatusBadRequest {
+			t.Errorf("hiding %s answered %d, want 400 — it is always present", m, code)
+		}
+	}
 	if got := strings.Join(hidden(), ","); got != "collaborate,secure" {
 		t.Errorf("a refused request still moved the stored set to %q — the handler wrote before it "+
 			"finished validating", got)
@@ -141,5 +156,18 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 	if got := hidden(); len(got) != 1 || got[0] != "edit" {
 		t.Errorf("changing the theme moved the hidden set to %v — a partial update clobbered a "+
 			"sibling field", got)
+	}
+}
+
+// A vault written before ADR-110 can hold `file` or `markup`. This build must not hide them: the
+// stored ids are dropped where the status is read, so the tabs are back with no one editing the vault.
+func TestAStoredFileOrMarkUpIsNeverHandedBackAsHidden(t *testing.T) {
+	got := shownHiddenModes([]string{"file", "secure", "markup", "settings", "nosuchmode", "edit"})
+	if strings.Join(got, ",") != "secure,edit" {
+		t.Errorf("a stored set naming file, markup and settings is read as %v, want [secure edit] — a vault "+
+			"from an earlier build would keep File or Mark Up out of the menu with no box to bring it back", got)
+	}
+	if got := shownHiddenModes(nil); got != nil {
+		t.Errorf("nothing stored is read as %v, want nil: `hiddenModes` is omitted when empty", got)
 	}
 }

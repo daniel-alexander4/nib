@@ -909,7 +909,8 @@
 
            Checkboxes rather than the Colours radio list, because these are independent switches and not one
            choice of seven — the distinction ADR-021 drew. **Settings has no Main menu box**: the switch that
-           would undo a hidden Settings lives inside Settings. -->
+           would undo a hidden Settings lives inside Settings. **Nor have File and Mark Up** (ADR-110; Dan,
+           2026-10-09: "File and Mark Up should always be present and not subject to toggling"). -->
       <section id="settingsFeaturesPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Toggle Features" role="region" aria-labelledby="settingsFeaturesPageTitle" hidden>
         <div class="pagebody">
           <p class="pagekicker">Settings</p>
@@ -964,10 +965,8 @@
 
           <h3 id="featuresMenuTitle" class="pagesection">Main menu</h3>
           <p class="pagelead">Which tabs show across the top. Hiding one only removes it from the menu — nothing
-            about the document changes, and its keyboard shortcuts still work. Settings cannot be hidden.</p>
+            about the document changes, and its keyboard shortcuts still work. File, Mark Up and Settings are always there.</p>
           <div class="setrow setgroup" role="group" aria-labelledby="featuresMenuTitle">
-            <label class="check"><input class="modeChk" data-mode="file" type="checkbox" checked /> File</label>
-            <label class="check"><input class="modeChk" data-mode="markup" type="checkbox" checked /> Mark Up</label>
             <label class="check"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
             <label class="check"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
             <label class="check"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>

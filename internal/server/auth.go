@@ -300,7 +300,7 @@ func (s *Server) currentStatus() statusResponse {
 				Timestamp:  set.Advanced.Timestamp,
 			}
 		}
-		st.HiddenModes = set.HiddenModes
+		st.HiddenModes = shownHiddenModes(set.HiddenModes)
 		place := downloadDir(set)
 		st.DownloadDir, st.DownloadDirFrom, st.DownloadDirBrowser = place.Dir, place.From, place.Browser
 		st.DownloadDirSet = set.DownloadDir

@@ -779,3 +779,7 @@ home today.
   and lead — never one list of boxes, because an Advanced box stops a feature and a Main menu box only hides a tab.
   `applyAdvanced` and `applyModeVisibility` stay two mechanisms. Settings is seven entries. Everything that points
   at a switch says *Toggle Features* (`goCard` finds an entry by its text).
+- **[ADR-110 — File and Mark Up are always in the menu](110-file-and-mark-up-are-always-in-the-menu.md)**
+  — supersedes ADR-036's "any main-menu tab" and "Settings is the one exemption" only. File, Mark Up and Settings
+  cannot be hidden: no box, the route answers 400, and a vault that already names one is read through
+  `shownHiddenModes` and through the window's "hideable only if it has a box" — both halves, no migration.

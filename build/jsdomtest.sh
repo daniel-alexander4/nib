@@ -165,7 +165,9 @@ echo "$Nib_out"
 # page, and the source guards that the registry and `#viewerWrap.hidden` have the writers they say they have.
 # 103 since ADR-106 (autoprereq.test.mjs): a command that runs its own prerequisite — the one door every text command
 # reads a scan through, with the recogniser stubbed, and each thing the door must never do.
-Nib_expect_files=103
+# 104 since ADR-110 (alwaysshown.test.mjs): a vault that already hides File or Mark Up — its own boot, because only
+# the status a window boots on can carry that list.
+Nib_expect_files=104
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

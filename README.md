@@ -670,8 +670,8 @@ for the six-accent rotation, or pick one hue and the cards become that colour in
 
 **Main menu**, the last section of *Toggle Features*, is where you cut the menu down to what you use. Untick a tab and it goes from the
 top of the window — nothing about your documents changes, and the keyboard shortcuts still work,
-so hiding **File** does not stop **Ctrl+S** saving. Settings has no box: it is where the switch
-lives, so hiding it would leave you no way back. This is a separate thing from the *Advanced
+so hiding **Secure** does not stop its shortcuts. **File**, **Mark Up** and **Settings** have no box and are
+always there — Settings because it is where the switch lives, so hiding it would leave you no way back. This is a separate thing from the *Advanced
 features* section above it, and the difference matters — unticking a tab here only takes it out of the
 menu, while switching a feature off there stops the feature itself.
 
