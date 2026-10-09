@@ -294,7 +294,7 @@ const openAppPages = [];
 let activeAppPage = null;
 
 // The annotation tools' buttons (Text, Highlight, Draw and their twins). **Buttons, by tag**: the
-// attribute is shared — the compare tabs carry it (`.cmmode`), and so do the four Main menu boxes
+// attribute is shared — the compare tabs carry it (`.cmmode`), and so do the three Main menu boxes
 // (`.modeChk`, a mode of the MENU). Read as a bare `[data-mode]`, five sweeps took those boxes
 // for tools: they were disabled whenever no document was open, so the menu could not be cut
 // until a file was, and a click on one called `setTool('file')`. Found when the boxes moved to a
@@ -11984,7 +11984,7 @@ for (const el of [els.advCeremonyChk, els.advDiscoveryChk, els.advRendezvousChk,
 let hiddenModes = [];
 
 // firstVisibleMode is where the app lands when the mode it was about to show is hidden. Settings
-// can never be hidden (nor File and Mark Up, ADR-110), so the fallback chain always terminates.
+// can never be hidden (nor File, Mark Up and Page Functions, ADR-110, ADR-112), so the fallback chain always terminates.
 function firstVisibleMode() {
   // `all` is querySelectorAll, so it answers a NodeList: iterable, but with no `find`. Spread
   // first rather than reaching for an Array method that is not there.
@@ -11998,7 +11998,7 @@ function firstVisibleMode() {
 // visible in a menu that no longer has a pane. `modes.test.mjs` compares list MEMBERSHIP and cannot
 // see this: both lists still hold every id.
 function applyModeVisibility(list, fromServer = true) {
-  // **A mode is hideable only if it has a box** (ADR-110): Settings, File and Mark Up have none, so
+  // **A mode is hideable only if it has a box** (ADR-110, ADR-112): Settings, File, Mark Up and Page Functions have none, so
   // they are dropped here rather than refused. The server already refuses and filters them; a vault
   // written by another build that holds one must not be able to take the tab away with no box to
   // bring it back. Read from the DOM, like the mode set itself.

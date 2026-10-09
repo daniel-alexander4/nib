@@ -483,7 +483,7 @@ test('a shut card shows its name and nothing in it; its header opens it, by mous
     }));
   });
   assert.deepEqual(await seen(), {
-    featuresMenuCard: { name: true, said: true, inputs: 4 },
+    featuresMenuCard: { name: true, said: true, inputs: 3 },
     featuresAdvancedCard: { name: true, said: true, inputs: 0 },
     featuresUpdatesCard: { name: true, said: true, inputs: 0 },
   }, 'a new window does not show Main menu open and the other two as their headers alone');
@@ -494,7 +494,7 @@ test('a shut card shows its name and nothing in it; its header opens it, by mous
   assert.equal(await page.evaluate(() => document.activeElement.closest('details')?.id), 'featuresUpdatesCard', 'Tab from a shut card\'s header went into the card');
   await page.click('#featuresAdvancedCard > summary');
   assert.equal((await seen()).featuresAdvancedCard.inputs, 4, 'clicking the header did not open the card');
-  assert.equal((await seen()).featuresMenuCard.inputs, 4, 'opening one card shut another');
+  assert.equal((await seen()).featuresMenuCard.inputs, 3, 'opening one card shut another');
   await page.focus('#featuresUpdatesCard > summary');
   await page.keyboard.press('Enter');
   assert.equal((await seen()).featuresUpdatesCard.inputs, 2, 'Enter on the header did not open the card');

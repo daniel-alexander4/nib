@@ -788,3 +788,6 @@ home today.
   Updates — each a native `<details class="setcard">` whose summary says what it holds; inside, the tabs in menu
   order and the networked features nearest reach first. Each card keeps its own sentence about what off means.
   A link to a switch opens its card (`goFeature`).
+- **[ADR-112 — Page Functions is always in the menu](112-page-functions-is-always-in-the-menu.md)**
+  — supersedes ADR-110's count only. Four tabs cannot be hidden: File, Mark Up, Page Functions (`edit`), Settings.
+  Same mechanism: no box, 400, and a stored list filtered on both sides.

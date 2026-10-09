@@ -119,9 +119,9 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 		t.Errorf("hiding Settings answered %d, want 400 — the switch that would undo it is inside the "+
 			"mode it hides", code)
 	}
-	// File and Mark Up are always present (ADR-110): refused like Settings, alone or beside a mode
+	// File, Mark Up and Page Functions are always present (ADR-110, ADR-112): refused like Settings, alone or beside a mode
 	// that may be hidden.
-	for _, m := range []string{"file", "markup"} {
+	for _, m := range []string{"file", "markup", "edit"} {
 		if code := post(map[string]any{"hiddenModes": []string{"secure", m}}); code != http.StatusBadRequest {
 			t.Errorf("hiding %s answered %d, want 400 — it is always present", m, code)
 		}
@@ -141,10 +141,10 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 	}
 
 	// A duplicate is not an error; it is one choice said twice.
-	if code := post(map[string]any{"hiddenModes": []string{"edit", "edit"}}); code != http.StatusOK {
+	if code := post(map[string]any{"hiddenModes": []string{"accessibility", "accessibility"}}); code != http.StatusOK {
 		t.Fatalf("a duplicated id answered %d, want 200", code)
 	}
-	if got := hidden(); len(got) != 1 || got[0] != "edit" {
+	if got := hidden(); len(got) != 1 || got[0] != "accessibility" {
 		t.Errorf("a duplicated id stored %v, want exactly one entry", got)
 	}
 
@@ -153,7 +153,7 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 	if code := post(map[string]any{"appearance": "light"}); code != http.StatusOK {
 		t.Fatalf("changing the theme answered %d, want 200", code)
 	}
-	if got := hidden(); len(got) != 1 || got[0] != "edit" {
+	if got := hidden(); len(got) != 1 || got[0] != "accessibility" {
 		t.Errorf("changing the theme moved the hidden set to %v — a partial update clobbered a "+
 			"sibling field", got)
 	}
@@ -162,9 +162,9 @@ func TestHiddenModesRoundTripsAndRefusesWhatIsNotAMode(t *testing.T) {
 // A vault written before ADR-110 can hold `file` or `markup`. This build must not hide them: the
 // stored ids are dropped where the status is read, so the tabs are back with no one editing the vault.
 func TestAStoredFileOrMarkUpIsNeverHandedBackAsHidden(t *testing.T) {
-	got := shownHiddenModes([]string{"file", "secure", "markup", "settings", "nosuchmode", "edit"})
-	if strings.Join(got, ",") != "secure,edit" {
-		t.Errorf("a stored set naming file, markup and settings is read as %v, want [secure edit] — a vault "+
+	got := shownHiddenModes([]string{"file", "secure", "markup", "settings", "nosuchmode", "edit", "accessibility"})
+	if strings.Join(got, ",") != "secure,accessibility" {
+		t.Errorf("a stored set naming file, markup and settings is read as %v, want [secure accessibility] — a vault "+
 			"from an earlier build would keep File or Mark Up out of the menu with no box to bring it back", got)
 	}
 	if got := shownHiddenModes(nil); got != nil {
