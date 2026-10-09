@@ -889,7 +889,7 @@ lease with a guarantor, a deed with witnesses, a resolution with a board — Nib
 a **ceremony**: one named proceeding, one roster, one document, passed from party to party
 in roster order until everyone has signed.
 
-**Where it lives.** *Signing → About Ceremonies* opens a page that explains a ceremony — what it
+**Where it lives.** *Signing → Start or join a ceremony* opens a page that explains a ceremony — what it
 will and will not do, what the finished document shows, what leaves your computer — and starts the
 two ways in, *Convene a ceremony…* and *Accept an invitation…*. (Both the entry and the panel are
 there only while **Signing ceremonies** is switched on under Settings → Advanced features; with it

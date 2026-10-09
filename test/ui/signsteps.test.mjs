@@ -315,7 +315,7 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     if (await page.isChecked('#advCeremonyChk') !== on) await page.click('#advCeremonyChk');
     await page.waitForFunction((want) => document.getElementById('ceremony').hidden === !want, on);
   };
-  const entryShown = () => page.$$eval(SIGNING, (es) => es.filter((e) => e.getClientRects().length).map((e) => e.textContent.trim()).includes('About Ceremonies'));
+  const entryShown = () => page.$$eval(SIGNING, (es) => es.filter((e) => e.getClientRects().length).map((e) => e.textContent.trim()).includes('Start or join a ceremony'));
   const was = await (async () => { await h.settingsPage('Advanced features'); return page.isChecked('#advCeremonyChk'); })();
   try {
     await setCeremonies(false);
@@ -324,10 +324,10 @@ test('the ceremony page: its entry comes and goes with the feature, it starts th
     await setCeremonies(true);
     await h.mode('collaborate');
     assert.equal(await entryShown(), true, 'the ceremony entry did not appear when ceremonies were switched on');
-    assert.equal(await h.appPage('collaborate', 'About Ceremonies'), 'signingCeremonyPage');
+    assert.equal(await h.appPage('collaborate', 'Start or join a ceremony'), 'signingCeremonyPage');
     let s = await look();
     assert.deepEqual([s.pages, s.focus, s.expanded], [['signingCeremonyPage'], 'signingCeremonyPageTitle', []]);
-    assert.equal(await page.$eval('#tabstrip .pagetab[data-apppage="signingCeremonyPage"]', (t) => t.getAttribute('aria-label')), 'Signing Ceremonies, Signing page');
+    assert.equal(await page.$eval('#tabstrip .pagetab[data-apppage="signingCeremonyPage"]', (t) => t.getAttribute('aria-label')), 'Start or join a ceremony, Signing page');
     // Accept: the invitation box is in the menu's ceremony panel; the page stays beside it.
     await page.click('#cerPageAcceptBtn');
     await page.waitForSelector('#ceremonyAcceptForm:not([hidden])');
@@ -376,7 +376,7 @@ test('at 414 and 375 pixels wide neither Signing page runs past the window', asy
     for (const width of [414, 375]) {
       await page.setViewportSize({ width, height: 800 });
       await page.waitForFunction(() => document.getElementById('sidebar').classList.contains('collapsed'));
-      for (const [label, id] of [['Simple Sign', 'signingStepsPage'], ['About Ceremonies', 'signingCeremonyPage']]) {
+      for (const [label, id] of [['Simple Sign', 'signingStepsPage'], ['Start or join a ceremony', 'signingCeremonyPage']]) {
         // With the sidebar shut the entry is in ⋯ More, and that is the way in.
         await page.click(`${MORE} .menutop`);
         await page.click(`${MORE} .dropdown button:text-is("${label}…")`);
@@ -419,7 +419,7 @@ test('pictures of the Signing pages in both themes, when asked for', { skip: !pr
   try {
     for (const theme of ['dark', 'light']) {
       await page.evaluate((t) => { document.documentElement.dataset.appearance = t; }, theme);
-      for (const [label, file] of [['Simple Sign', 'simple-sign'], ['About Ceremonies', 'ceremonies']]) {
+      for (const [label, file] of [['Simple Sign', 'simple-sign'], ['Start or join a ceremony', 'ceremonies']]) {
         await h.appPage('collaborate', label);
         await page.screenshot({ path: join(process.env.NIB_UI_SHOTS, `signing-${file}-${theme}.png`), fullPage: false });
       }

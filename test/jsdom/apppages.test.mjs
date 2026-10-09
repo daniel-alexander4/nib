@@ -230,8 +230,8 @@ const closeEveryPage = () => { for (const t of tabs()) if (t.page) t.el.querySel
 const SEND = ['sessionSendBtn', 'sessionRecvDocBtn', 'sessionInitBtn', 'sessionRecvBtn', 'cosignBtn'];
 
 test('Signing: the guided path and the ceremony are entries with a page each; the actions on the document are not', () => {
-  assert.deepEqual([...signingPane().querySelectorAll('.tbgroup')].map((g) => g.dataset.label), ['Simple Sign', 'Send & Receive', 'About Ceremonies']);
-  for (const [label, id, title] of [['Simple Sign', 'signingStepsPage', 'Simple Sign'], ['About Ceremonies', 'signingCeremonyPage', 'Signing Ceremonies']]) {
+  assert.deepEqual([...signingPane().querySelectorAll('.tbgroup')].map((g) => g.dataset.label), ['Simple Sign', 'Send & Receive', 'Start or join a ceremony']);
+  for (const [label, id, title] of [['Simple Sign', 'signingStepsPage', 'Simple Sign'], ['Start or join a ceremony', 'signingCeremonyPage', 'Start or join a ceremony']]) {
     const g = signingPane().querySelector(`.tbgroup[data-label="${label}"]`);
     assert.ok(g.hasAttribute('data-entry'), `${label} is not an entry, so it expands in the menu`);
     const controls = [...g.querySelectorAll('button, input, select, textarea, label, p, div')].filter((c) => !c.classList.contains('menucap'));
@@ -268,7 +268,7 @@ test('entering Signing lands on Flags and opens no page and no tab; the two that
   assert.deepEqual(pagesShown(), [], 'entering Signing put a page up');
   assert.equal(doc.getElementById('tabrow').hidden, true, 'entering Signing opened a tab');
   assert.ok(doc.getElementById('flags').classList.contains('active'), 'Signing did not land on the flag tools');
-  assert.deepEqual(signingEntries().map((e) => e.textContent.trim()), ['Simple Sign', 'About Ceremonies']);
+  assert.deepEqual(signingEntries().map((e) => e.textContent.trim()), ['Simple Sign', 'Start or join a ceremony']);
   for (const e of signingEntries()) assert.equal(e.hasAttribute('aria-expanded'), false, `${e.textContent.trim()} says it expands`);
   // Send & Receive expands and closes, in the menu, as a card does.
   const send = headOf('Send & Receive');
@@ -371,7 +371,7 @@ test('a step that leads to a tool for the document leaves the page; one that lea
 
 test('the ceremony page starts the two flows through the panel\'s own buttons', async () => {
   enterSigning();
-  const entry = signingEntries().find((e) => e.textContent.trim() === 'About Ceremonies');
+  const entry = signingEntries().find((e) => e.textContent.trim() === 'Start or join a ceremony');
   entry.click();
   assert.deepEqual(pagesShown(), ['signingCeremonyPage']);
   doc.getElementById('cerPageAcceptBtn').click();
@@ -391,13 +391,13 @@ test('the ceremony page starts the two flows through the panel\'s own buttons', 
 
 test('a feature that is switched off: its entry goes, its page says so and offers the switch, and its step says so', async () => {
   enterSigning();
-  signingEntries().find((e) => e.textContent.trim() === 'About Ceremonies').click();
+  signingEntries().find((e) => e.textContent.trim() === 'Start or join a ceremony').click();
   const page = doc.getElementById('signingCeremonyPage');
   const rows = () => ({
     live: [...page.querySelectorAll('[data-adv="ceremony"]')].map((r) => r.hidden),
     off: page.querySelector('[data-advoff="ceremony"]').hidden,
-    entry: signingPane().querySelector('.tbgroup[data-label="About Ceremonies"]').hidden,
-    head: headOf('About Ceremonies').hidden,
+    entry: signingPane().querySelector('.tbgroup[data-label="Start or join a ceremony"]').hidden,
+    head: headOf('Start or join a ceremony').hidden,
   });
   assert.deepEqual(rows(), { live: [false, false], off: true, entry: false, head: false }, 'setup: ceremonies are on in this harness');
   const tsRow = () => [...doc.querySelectorAll('#signSteps .signstep')].find((r) => r.querySelector('.signstep-label').textContent === 'Timestamp (OpenTimestamps)');
