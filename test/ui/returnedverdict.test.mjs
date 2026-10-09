@@ -128,14 +128,13 @@ test('Finalize with "Keep a copy" keeps one and says so; the tick is off at the 
 // that copy and removes it after the confirm.
 // P04.S03's row reads that same match: the Simple Sign checklist, asked through the one door.
 const keptRowState = async () => {
-  await h.mode('collaborate');
-  await h.card('Simple Sign');
+  await h.appPage('collaborate', 'Simple Sign'); // the checklist is a page (ADR-105); coming forward is the ask
   const want = 'A copy kept when you signed';
-  await page.waitForFunction((l) => [...document.getElementById('signSteps').children]
+  await page.waitForFunction((l) => [...document.querySelectorAll('#signSteps .signstep')]
     .some((r) => r.querySelector('.signstep-label').textContent === l && r.querySelector('.signstep-mark').title
       && !/not checked this document yet/.test(r.querySelector('.signstep-mark').title)), want, { timeout: 15000 });
   return page.evaluate((l) => {
-    const r = [...document.getElementById('signSteps').children].find((x) => x.querySelector('.signstep-label').textContent === l);
+    const r = [...document.querySelectorAll('#signSteps .signstep')].find((x) => x.querySelector('.signstep-label').textContent === l);
     return { state: r.dataset.state, by: r.dataset.by, title: r.querySelector('.signstep-mark').title };
   }, want);
 };
@@ -190,5 +189,6 @@ test('a document kept when signed and returned changed is matched to its kept co
   // The copy is gone; coming back to the checklist re-asks, and the row reads ○ — never the ✓ it showed before.
   const after = await keptRowState();
   assert.equal(after.state, 'todo', `the row still reads ${after.state} after its kept copy was removed (${after.title})`);
+  await h.closeAppPages(); // the checklist's page is in front of the document
   await h.closeDocument();
 });

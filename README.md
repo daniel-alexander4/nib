@@ -634,17 +634,26 @@ cards and the other panels.
 **Colour swatches always offer black and white**, alongside the five most recent — the plain
 two are the ones a recent-list can never keep.
 
-**The Simple Sign checklist** — the *Signing* tab's first card lists the steps of signing a
-document in order, each one a link to the tool that does it, marked **required** or *optional*
-and ticked when Nib can see it is done. Steps Nib can't observe — whether you ran a
+**The Simple Sign checklist** — *Signing → Simple Sign* opens a page of its own, with a tab beside
+the document tabs, that lists the steps of signing a document in order under four headings (once
+before your first signing, prepare the document, marks on the page, seal it and keep it). Each step
+is a link to the tool that does it — following one shows the document again, and the page stays
+open in its tab — marked **required** or *optional*, with a line saying what it is for, and ticked
+when Nib can see it is done. Steps Nib can't observe — whether you ran a
 hidden-content scan, where you saved an `.ots` — show a dash rather than a tick it can't back.
 You can also tick any step off yourself — a hand tick is shown as your claim rather than as
 something Nib saw. It's a checklist, not a wizard: nothing is enforced, but two of the steps
 (applying a redaction, and signing) are one-way doors, and the order says so. One step, *A copy
-kept when you signed*, is asked of Nib when the card opens: ✓ when a copy you kept matches the open
+kept when you signed*, is asked of Nib when the page comes forward: ✓ when a copy you kept matches the open
 document (it is that copy, or begins with it), ○ when none does — with how many are kept and a link
 to them — and a dash when the document carries no signature, which includes right after Finalize,
 while the open document is still the unsigned one.
+
+**Which things in a menu open a page, and which unfold.** Something you set up or are led through
+— every Settings entry, the Simple Sign checklist, the explanation of a signing ceremony — opens a
+page with its own tab. A tool that acts on the open document stays in the sidebar and unfolds
+there, beside the document it works on: in *Signing* that is **Place Signing Flags** and
+**Send & Receive**. Entering *Signing* still lands on the flag tools and opens no tab.
 
 **Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
 the sidebar: **Identity & Keys** (your identity and pinned peers, and the keys that unlock your
@@ -878,7 +887,12 @@ lease with a guarantor, a deed with witnesses, a resolution with a board — Nib
 a **ceremony**: one named proceeding, one roster, one document, passed from party to party
 in roster order until everyone has signed.
 
-**Where it lives.** *Signing → Signing Ceremonies*. The panel lists every ceremony on this machine with
+**Where it lives.** *Signing → About Ceremonies* opens a page that explains a ceremony — what it
+will and will not do, what the finished document shows, what leaves your computer — and starts the
+two ways in, *Convene a ceremony…* and *Accept an invitation…*. (Both the entry and the panel are
+there only while **Signing ceremonies** is switched on under Settings → Advanced features; with it
+off, a page left open says so and offers the switch.) The running ceremony lives in the sidebar,
+under *Signing → Signing Ceremonies*. The panel lists every ceremony on this machine with
 its roster, your position in it, and a *"what happens next"* control that asks Nib whose turn it is
 — the same question the software itself refuses out-of-order contributions with, rather than a
 second answer computed for the screen.

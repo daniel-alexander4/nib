@@ -153,11 +153,13 @@ test('the list shows each copy kept when you signed and removes one only after a
 // ── P04.S03: the Simple Sign checklist's row, from the server's one match door ──────────────────────────────────────
 //
 // Each state is driven by the PROBE's answer alone — the document, its id and its signature status stay the same — so a
-// row that rendered any state without reading the answer would fail the other two. Re-asked by re-opening the card,
-// which is the one trigger that always asks.
+// row that rendered any state without reading the answer would fail the other two. Re-asked by bringing the Simple Sign
+// PAGE forward again (ADR-105: the checklist is a page, and its coming forward is the one trigger that always asks).
 const ROW = 'A copy kept when you signed';
 const simpleSignHead = () => [...doc.querySelectorAll('#commands .sbhead.groupcard')].find((x) => x.textContent.trim() === 'Simple Sign');
-const keptRow = () => [...$('signSteps').children].find((r) => r.querySelector('.signstep-label').textContent === ROW);
+const stepsPage = () => $('signingStepsPage');
+const stepsTab = () => doc.querySelector('#tabstrip [data-apppage="signingStepsPage"]');
+const keptRow = () => [...$('signSteps').querySelectorAll('.signstep')].find((r) => r.querySelector('.signstep-label').textContent === ROW);
 const answer = (status, cause) => () => new Response(null, { status, headers: cause ? { 'X-Nib-Kept-Copy-Cause': cause } : {} });
 async function reopen() {
   setNextDocument({ numPages: 1 });
@@ -169,11 +171,26 @@ async function reopen() {
 async function reopenCard() {
   doc.querySelector('.modetab[data-tab="collaborate"]').click(); // the mode that shows the checklist
   await settle();
-  const head = simpleSignHead();
-  if (head.getAttribute('aria-expanded') === 'true') head.click(); // a click on the open card closes it
-  head.click();
+  // An entry clicked while its page is already in front does nothing, so the page is closed first: the click
+  // below is then always the page coming forward.
+  if (!stepsPage().hidden) stepsTab().querySelector('.tabclose').click();
+  simpleSignHead().click();
   await settle();
   await settle();
+}
+
+// The page coming forward from its TAB — the forced ask, with the page left open rather than closed first.
+async function pageForward() {
+  if (stepsPage().hidden) stepsTab().click();
+  await settle();
+  await settle();
+}
+// Back to the document. A page in front is, for Finalize and for Undo, no document (ADR-104 §5), so anything that
+// acts on the document is done from here — which is also why none of it can ask the row while it is on screen.
+async function toDocument() {
+  doc.querySelector('.modetab[data-tab="secure"]').click();
+  await settle();
+  assert.equal(stepsPage().hidden, true, 'stimulus: the page is still in front of the document');
 }
 
 test('the kept-copy row is asked only on demand, with HEAD, pinned to the open document', async () => {
@@ -181,7 +198,7 @@ test('the kept-copy row is asked only on demand, with HEAD, pinned to the open d
   const opened = opens;
   await reopen(); // a load, with the card closed: nothing may be asked
   assert.ok(opens > opened, 'stimulus: the document was not loaded again');
-  assert.equal(probes.length, before, 'the probe ran with the Simple Sign card closed — it is on demand only (D10)');
+  assert.equal(probes.length, before, 'the probe ran with the Simple Sign page not showing — it is on demand only (D10)');
   probeAnswer = answer(422, 'no-signature');
   await reopenCard();
   assert.ok(probes.length > before, 'stimulus: opening the Simple Sign card did not ask the server');
@@ -250,22 +267,26 @@ test('a failed probe reads —, never the last answer it gave', async () => {
   assert.match(keptRow().querySelector('.signstep-mark').title, /could not be read/);
 });
 
-test('a Finalize that kept a copy, and a removal, ask again', async () => {
+test('after a Finalize that kept a copy the page asks afresh when it comes back; a removal with the page in front asks at once', async () => {
   probeAnswer = answer(422, 'no-signature');
   await reopenCard();
   finalizeAnswer = new Response(new Uint8Array([37, 80, 68, 70]), { status: 200,
     headers: { 'Content-Type': 'application/pdf', 'X-Nib-Kept': 'kept_lease_20261003-090000-0011aabb.pdf' } });
+  await toDocument();
   await openModal();
-  let n = probes.length; // after the modal opened, so only the Finalize's answer can move it
+  let n = probes.length; // after the modal opened, so only what follows can move it
   $('fzKeep').checked = true;
   $('fzGo').click();
   await settle();
   await settle();
-  assert.ok(probes.length > n, 'a Finalize that kept a copy did not re-ask the row');
-  // The open view is still the unsigned document, so the row stays — (ADR-073), never a tick from the response.
-  assert.equal(keptRow().dataset.state, 'untracked', 'the row ticked from the Finalize response rather than the probe');
   $('saveAsCancel').click();
   await settle();
+  // The row is not on screen, so the Finalize asks nothing and ticks nothing; the page asks as it comes forward.
+  assert.notEqual(keptRow().dataset.state, 'done', 'the row ticked from the Finalize response');
+  await pageForward();
+  assert.ok(probes.length > n, 'the page came back after a kept Finalize without asking afresh');
+  // The open view is still the unsigned document, so the row stays — (ADR-073), never a tick from the response.
+  assert.equal(keptRow().dataset.state, 'untracked', 'the row ticked from the Finalize response rather than the probe');
   n = probes.length;
   keptNow = { kept: [{ name: 'kept_deed_20261002-090000-0011aabb.pdf', document: 'deed', keptAt: '2026-10-02 09:00:00', size: 2048 }], totalBytes: 2048 };
   removeAnswer = true;
@@ -281,12 +302,16 @@ test('a Finalize that kept a copy, and a removal, ask again', async () => {
 
 test('a load asks again only when the document\'s signatures changed, and a late answer about the old ones is dropped', async () => {
   probeAnswer = answer(200);
-  await reopenCard(); // the card stays open from here
+  await reopenCard();
   assert.equal(keptRow().dataset.state, 'done', 'setup');
   let n = probes.length;
-  await reopen(); // same id, same signatures: the held answer stands
+  await reopen(); // same id, same signatures, loaded with the page still in front: the held answer stands
   assert.equal(probes.length, n, 'a load that changed nothing about the document asked again');
   assert.equal(keptRow().dataset.state, 'done');
+  // The load showed the document (a document the user opens is what she asked to see), so the page comes forward
+  // again before each load below — and that is itself an ask, counted from after it.
+  await pageForward();
+  n = probes.length;
 
   // The answer about the OLD state is held open; the signatures change underneath it (ADR-001).
   let release;
@@ -297,6 +322,7 @@ test('a load asks again only when the document\'s signatures changed, and a late
   assert.notEqual(keptRow().dataset.state, 'done', 'the ✓ about the document as it WAS stood while its signatures changed');
   probeAnswer = answer(422, 'none-kept');
   openSig = { state: 'untampered', signers: [{ coverageEnd: 100, name: 'Me' }, { coverageEnd: 200, name: 'Me' }] };
+  await pageForward();
   await reopen();
   assert.equal(keptRow().dataset.state, 'todo', 'setup: the second answer did not land');
   release(); // the first answer arrives last
@@ -324,9 +350,11 @@ test('a check that answers late is not applied over a newer one for the same doc
 test('a load in another mode asks nothing — the checklist is not on screen', async () => {
   probeAnswer = answer(200);
   await reopenCard();
-  assert.equal(simpleSignHead().getAttribute('aria-expanded'), 'true', 'setup: the card is not open');
-  doc.querySelector('.modetab[data-tab="secure"]').click(); // the real door; it leaves the card open
+  assert.equal(stepsPage().hidden, false, 'setup: the page is not in front');
+  doc.querySelector('.modetab[data-tab="secure"]').click(); // the real door; it leaves the page, open in its tab
   await settle();
+  assert.equal(stepsPage().hidden, true, 'stimulus: leaving the Signing menu did not leave the page');
+  assert.ok(stepsTab(), 'stimulus: the page was closed, not left');
   assert.equal(doc.querySelector('.tbtab[data-tab="collaborate"]').classList.contains('active'), false,
     'stimulus: the mode did not change');
   openSig = { state: 'untampered', signers: [{ coverageEnd: 300, name: 'Me' }] }; // a changed key: it WOULD ask
@@ -336,9 +364,14 @@ test('a load in another mode asks nothing — the checklist is not on screen', a
   doc.querySelector('.modetab[data-tab="collaborate"]').click();
   await settle();
   await settle();
-  // Back in the sidebar's Signing mode the card lands CLOSED (Secure opened its own card), so no row is on screen
-  // until it is opened — and opening it is the forced ask.
-  assert.equal(simpleSignHead().getAttribute('aria-expanded'), 'false', 'the checklist is on screen without having been asked');
+  // Back in the Signing mode the page is still only a tab (entering a mode opens no page), so no row is on screen
+  // until the page comes forward — and that is the forced ask.
+  assert.equal(stepsPage().hidden, true, 'the checklist is on screen without having been asked');
+  assert.equal(probes.length, n, 'returning to the Signing mode asked with the checklist not on screen');
+  stepsTab().click();
+  await settle();
+  await settle();
+  assert.ok(probes.length > n, 'the page coming forward from its tab did not ask');
   openSig = { state: 'unsigned' };
 });
 
@@ -381,19 +414,22 @@ test('nothing but the probe ticks the row after a kept Finalize — not even whi
   probeAnswer = () => new Promise((r) => { release = () => r(new Response(null, { status: 422, headers: { 'X-Nib-Kept-Copy-Cause': 'no-signature' } })); });
   finalizeAnswer = new Response(new Uint8Array([37, 80, 68, 70]), { status: 200,
     headers: { 'Content-Type': 'application/pdf', 'X-Nib-Kept': 'kept_lease_20261003-100000-0011aabb.pdf' } });
+  await toDocument();
   await openModal();
   $('fzKeep').checked = true;
   $('fzGo').click();
   await settle();
   await settle();
-  assert.ok(release, 'stimulus: the kept Finalize did not ask the server');
+  $('saveAsCancel').click();
+  await settle();
+  assert.notEqual(keptRow().dataset.state, 'done', 'the row ticked from the Finalize response');
+  await pageForward(); // the ask, held open
+  assert.ok(release, 'stimulus: the page coming back after the kept Finalize did not ask the server');
   assert.notEqual(keptRow().dataset.state, 'done', 'the row ticked from the Finalize response while its own check was still out');
   release();
   await settle();
   await settle();
   assert.equal(keptRow().dataset.state, 'untracked');
-  $('saveAsCancel').click();
-  await settle();
 });
 
 test('a second press of Finalize while the first is signing signs nothing more', async () => {
@@ -401,6 +437,7 @@ test('a second press of Finalize while the first is signing signs nothing more',
   const held = new Promise((r) => { answerIt = r; });
   const before = posted.length;
   finalizeAnswer = { clone: () => held }; // the route hands back what clone() returns, so the request stays open
+  await toDocument();
   await openModal();
   $('fzKeep').checked = true;
   $('fzGo').click();
@@ -417,7 +454,7 @@ test('a second press of Finalize while the first is signing signs nothing more',
   await settle();
 });
 
-test('a server operation that changes the signatures asks the row again, off the NEW signatures', async () => {
+test('after a server operation that changes the signatures the page asks afresh, off the NEW signatures', async () => {
   openSig = { state: 'valid', signers: [{ coverageEnd: 500, name: 'Me' }] };
   openCanUndo = true;
   await reopen();
@@ -428,11 +465,13 @@ test('a server operation that changes the signatures asks the row again, off the
   undoSig = { state: 'unsigned' };
   probeAnswer = answer(422, 'no-signature');
   setNextDocument({ numPages: 1 });
+  await toDocument(); // Undo is the document's: with the page in front the shortcut does nothing (ADR-104 §5)
   doc.defaultView.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
   await settle();
   await settle();
   await settle();
-  assert.ok(probes.length > n, 'stimulus: the undo that removed the signature did not ask the row again');
+  await pageForward();
+  assert.ok(probes.length > n, 'stimulus: the page came back after the undo that removed the signature without asking');
   assert.equal(keptRow().dataset.state, 'untracked', 'the row still answers for the signatures the undo removed');
   assert.match(keptRow().querySelector('.signstep-mark').title, /carries no signature/);
   openSig = { state: 'unsigned' };
@@ -447,38 +486,51 @@ test('a failed check is asked again on the next load — a failure is not a held
   const n = probes.length;
   await reopen(); // the same key, at once: a load runs on every overlay edit, so a failure is not retried immediately
   assert.equal(probes.length, n, 'a load re-asked a check that had just failed — every edit would re-ask a broken folder');
+  await pageForward(); // the load showed the document; the page again, failing again, so the back-off runs from here
+  assert.equal(keptRow().dataset.state, 'untracked', 'setup: the forced ask did not fail');
+  const m = probes.length;
   const realNow = Date.now;
   Date.now = () => realNow() + 11000; // past the back-off
   try {
     probeAnswer = answer(200);
     await reopen();
   } finally { Date.now = realNow; }
+  assert.ok(probes.length > m, 'a load after the back-off, with the page in front, did not ask the failed check again');
   assert.ok(probes.length > n, 'a load after the back-off did not ask the failed check again');
   assert.equal(keptRow().dataset.state, 'done');
 });
 
-test('with the sidebar shut the checklist sits in the toolbar, and is asked there — on the shutting and on a mode switch', async () => {
+// ADR-105. The checklist was a card, and with the sidebar shut its group sat in the toolbar and counted as on screen.
+// It is a page: with the sidebar shut the ENTRY is what sits in the toolbar's pane, the checklist is on its page, and
+// the page is asked when it comes forward by either door — the entry's own button, or its tab.
+test('with the sidebar shut the entry in the toolbar opens the page, and the page is asked as it comes forward — by the entry and by its tab', async () => {
   probeAnswer = answer(422, 'no-signature');
   await reopenCard();
-  simpleSignHead().click(); // CLOSE the card first: in the toolbar it must count as on screen without being open
+  stepsTab().querySelector('.tabclose').click();
   await settle();
-  assert.equal(doc.querySelector('.tbgroup[data-label="Simple Sign"]').classList.contains('open'), false, 'setup: the card is still open');
   let n = probes.length;
   probeAnswer = answer(200);
-  $('toggleSidebarBtn').click(); // shut: the panes move into the toolbar, where every group shows
+  $('toggleSidebarBtn').click(); // shut: the panes move into the toolbar
   await settle();
   await settle();
-  assert.ok(doc.querySelector('#toolbar .tbgroup[data-label="Simple Sign"]'), 'stimulus: the checklist did not move into the toolbar');
-  assert.ok(probes.length > n, 'shutting the sidebar put the checklist in the toolbar without asking');
+  const entry = doc.querySelector('#toolbar .tbgroup[data-label="Simple Sign"] button[data-apppage="signingStepsPage"]');
+  assert.ok(entry, 'stimulus: the Simple Sign entry did not move into the toolbar');
+  assert.equal(doc.querySelector('#toolbar #signSteps'), null, 'the checklist itself is in the toolbar — it belongs to its page');
+  assert.equal(probes.length, n, 'shutting the sidebar asked with the page not showing');
+  entry.click();
+  await settle();
+  await settle();
+  assert.equal(stepsPage().hidden, false, 'the entry in the toolbar did not open the page');
+  assert.ok(probes.length > n, 'the page came forward from the toolbar entry without asking');
   assert.equal(keptRow().dataset.state, 'done');
   doc.querySelector('.modetab[data-tab="secure"]').click();
   await settle();
   n = probes.length;
   probeAnswer = answer(422, 'none-kept');
-  doc.querySelector('.modetab[data-tab="collaborate"]').click(); // back to the checklist, which never closed
+  stepsTab().click(); // back to the checklist by its tab
   await settle();
   await settle();
-  assert.ok(probes.length > n, 'returning to the mode that shows the checklist did not ask again');
+  assert.ok(probes.length > n, 'returning to the page by its tab did not ask again');
   assert.equal(keptRow().dataset.state, 'todo', 'the row kept the answer from before it left the screen');
   $('toggleSidebarBtn').click();
   await settle();

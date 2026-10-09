@@ -514,6 +514,33 @@ input[type="search"] { width: 100%; }
 .setrow.setgroup { gap: 10px; }
 .setrow.setgroup label.check { font-weight: 400; }
 @media (max-width: 639px) { .pagebody { padding: 18px 16px 32px; } }
+/* ── The Signing pages (ADR-105) ──────────────────────────────────────────────
+   The same column and the same blocks. What they add is structure a settings page did not need:
+   a block that has a NAME (`.rowtitle`) because it explains something rather than holding one
+   control, and a short list inside one (`.pagelist`). All `--text`, for the reason given above. */
+.rowtitle { margin: 0; font-size: 14px; font-weight: 600; }
+.pagelist { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.45; }
+/* A row that says a feature is switched off. Told from a live row by its dashed edge AND by its
+   words — it holds a sentence and a button to the switch, never the feature's own control. */
+.setrow.pageoff { border-style: dashed; }
+/* The checklist on its page. The rows were 12px in a 200px card and carried their hint as a
+   tooltip; here a row is a line of the page's own size, its hint in words on the line under its
+   name, and nothing is dimmed to carry a meaning: `required` is the weight, a tick you made says
+   "you" beside it, and "Nib cannot tell" is the dash itself. */
+.pagebody .signsteps { width: 100%; margin: 0; }
+.signphase { margin: 14px 0 4px; font-size: 13px; font-weight: 600; letter-spacing: .2px; }
+.signphase:first-child { margin-top: 0; }
+.signstep-hint { display: none; }
+.pagebody .signstep { flex-wrap: wrap; column-gap: 10px; padding: 6px 6px; font-size: 14px; color: var(--text); }
+.pagebody .signstep-mark { width: auto; min-width: 22px; font-size: 15px; }
+.pagebody .signstep-label { text-decoration: underline; text-underline-offset: 3px; }
+.pagebody .signstep-need { font-size: 12px; opacity: 1; }
+.pagebody .signstep[data-state="untracked"] .signstep-mark,
+.pagebody .signstep[data-by="hand"] .signstep-mark { opacity: 1; }
+.pagebody .signstep[data-by="hand"] .signstep-mark::after { content: " you"; font-size: 11px; color: var(--text); }
+.pagebody .signstep-extra { font-size: 13px; color: var(--text); }
+.pagebody .signstep-hint { display: block; flex: 0 0 100%; padding-left: 32px; font-size: 13px; line-height: 1.4; }
+.pagebody .signstep-mark:focus-visible, .pagebody .signstep-label:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 .libhint a { color: var(--text); text-decoration: underline; }
 .libhint a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }

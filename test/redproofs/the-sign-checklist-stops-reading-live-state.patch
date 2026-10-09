@@ -1,6 +1,14 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -11763,7 +11763,6 @@
+@@ -5336,7 +5336,6 @@
+   // The checklist reads the verdict this just stored: a server operation (a co-sign, an undo of a signing) sets the
+   // dirty flag BEFORE the badge, so the render and the kept-copy ask that rode on it read the old signatures (the P04
+   // phase-close review). Re-read them here, off the new `lastSig`.
+-  renderSignSteps();
+   if (simpleSignOpen()) refreshKeptProbe(false);
+ }
+ 
+@@ -12592,7 +12591,6 @@
    const state = unsaved ? 'Unsaved changes' : 'Saved';
    els.docDirty.setAttribute('aria-label', state);
    els.docDirty.title = state;
