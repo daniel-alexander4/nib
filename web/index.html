@@ -532,21 +532,16 @@
 
            `Identity & peers…` was in BOTH role sets and appears once — a duplicate that only
            looked like two commands because you could never see both at the same time. -->
-      <div class="tbgroup" data-label="Simple Sign" data-fold="1">
-<!-- The steps of signing a document, in order, each a link to the tool that does it. Built by
-     renderSignSteps(); the markup is empty because every row's STATE is computed, and a row
-     hard-coded here would be a claim about progress that nothing checks.
-
-     A step is ticked by a PROBE or by the USER, and the row says which (ADR-029, superseding
-     ADR-027's "only where Nib can observe it"). `data-by` is `nib` for an observation and `hand`
-     for a claim, and a manual tick never overwrites a probe's answer. A step with neither shows
-     "—" and says on hover that Nib cannot tell — it cannot know whether you ran a hidden-content
-     scan, or where you saved an .ots.
-
-     The old rule protected against an UNATTRIBUTED tick and was too strong: eight steps have no
-     probe and never will, so under it the list could not record what is LEFT for exactly the
-     steps that needed it. Provenance keeps the guarantee that scarcity was standing in for. -->
-<div id="signSteps" class="signsteps"></div>
+      <!-- **Simple Sign opens a PAGE with its own tab (ADR-105, on ADR-104's mechanism).** Dan,
+           2026-10-08: "The Signing menu should be the same, they should open in their own tab with
+           nicely formatted and informational pages rather than expanding in the menu" — and then
+           the test for which: "Only the pages that requires configuration or runs a wizard should
+           be opened in a tab. Any settings that are actions on an open document, like placing
+           flags should be expandable in menu." The checklist is the guided path, so it is a page
+           (`#signingStepsPage`, which holds `#signSteps`); Send & Receive below is one-press
+           actions on the open document and is the card it was. -->
+      <div class="tbgroup" data-label="Simple Sign" data-fold="1" data-entry>
+<button class="pageentry" data-apppage="signingStepsPage">Simple Sign…</button>
             </div>
       <!-- Nib's own peer transport, in its own card. It left Simple Sign at v1.127.1: those are
            the steps of signing a document, and moving the file is the part that flow deliberately
@@ -561,6 +556,12 @@
       <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
       <button data-forward="managePeersBtn">Identity &amp; peers…</button>
       <button data-forward="returnedBtn">Check a signed document that came back…</button>
+            </div>
+      <!-- The ceremony's page (ADR-105): convening and accepting are wizard work. The LIVE panel
+           (`#ceremony`) stays a sidebar panel under its own header. Hidden with the feature
+           (`data-adv`, read by `applyAdvanced`): what is off by default does not advertise itself. -->
+      <div class="tbgroup" data-label="About Ceremonies" data-fold="3" data-entry data-adv="ceremony">
+<button class="pageentry" data-apppage="signingCeremonyPage">About Ceremonies…</button>
             </div>
     </div><div class="tbtab" data-tab="settings">
       <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Nothing here acts on the
@@ -1033,6 +1034,109 @@
             <label class="check"><input type="radio" name="cardhue" value="peach" /> Peach</label>
             <label class="check"><input type="radio" name="cardhue" value="red" /> Red</label>
             <label class="check"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
+          </div>
+        </div>
+      </section>
+      <!-- The Signing pages (ADR-105), on ADR-104's mechanism and registered the way that ADR says:
+           a section here, a `data-apppage` button in the menu.
+
+           **Two, and the test that chose them is ADR-105's**: an entry that is configuration or
+           runs a wizard opens a page; an entry that is an action on the open document stays in the
+           menu. Simple Sign is the guided path and the ceremony is set up in a wizard, so they are
+           here. Place Signing Flags and Send & Receive act on the open document and are in the
+           menu as they were.
+
+           **The wording is held to what Nib does and what it checks**, written against README's
+           ceremony section — change one and re-read the other. A row marked `data-adv` is hidden
+           while that Advanced feature is off, and its `data-advoff` twin says so and where to turn
+           it on (`applyAdvanced`). -->
+      <section id="signingStepsPage" class="sheet apppage" data-group="Signing" data-menu="collaborate" data-title="Simple Sign" role="region" aria-labelledby="signingStepsPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Signing</p>
+          <h2 id="signingStepsPageTitle" tabindex="-1">Simple Sign</h2>
+          <p class="pagelead">The steps of signing a document, in order. It is a checklist, not a wizard: nothing is
+            enforced and nothing is done for you. Two steps cannot be undone — applying a redaction, and
+            signing — and the order puts everything else before them.</p>
+          <div class="setrow">
+            <h3 class="rowtitle">How to read it</h3>
+            <ul class="pagelist">
+              <li><b>✓</b> Nib can see this is done, or you ticked it yourself.</li>
+              <li><b>○</b> Nib can see this is not done yet.</li>
+              <li><b>–</b> Nib cannot tell. Tick it yourself when you have done it.</li>
+            </ul>
+            <p class="sethelp">Click a step’s name to go to the tool that does it. Click its mark to tick it off.
+              A tick you make is your own note, not something Nib checked. Your ticks last until you close
+              Nib, and they are not kept with the document.</p>
+          </div>
+          <!-- Built by renderSignSteps(); empty here because every row's STATE is computed, and a row
+               hard-coded in the markup would be a claim about progress that nothing checks. `data-by`
+               is `nib` for an observation and `hand` for the user's own tick (ADR-029). -->
+          <div class="setrow">
+            <div id="signSteps" class="signsteps"></div>
+          </div>
+        </div>
+      </section>
+      <section id="signingCeremonyPage" class="sheet apppage" data-group="Signing" data-menu="collaborate" data-title="Signing Ceremonies" role="region" aria-labelledby="signingCeremonyPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Signing</p>
+          <h2 id="signingCeremonyPageTitle" tabindex="-1">Signing Ceremonies</h2>
+          <p class="pagelead">A ceremony is one signing that several people take part in, each on their own
+            computer: one list of people, one document, passed from person to person in order until
+            everyone has signed. It is meant for three or more; two people can simply co-sign.</p>
+          <div class="setrow pageoff" data-advoff="ceremony" hidden>
+            <p class="sethelp">Signing ceremonies are switched off on this computer, so none can be started or joined
+              from here.</p>
+            <button type="button" data-gosettings="Advanced features">Open Advanced features…</button>
+          </div>
+          <div class="setrow" data-adv="ceremony">
+            <h3 class="rowtitle">Start one</h3>
+            <button id="cerPageConveneBtn" type="button">Convene a ceremony…</button>
+            <p class="sethelp">You are the convener. You choose the document, write a short statement of what is being
+              agreed, tick the people out of those you have pinned, and set a deadline. Nib gives you one
+              invitation for each person — each one different — and you send them however you like.</p>
+          </div>
+          <div class="setrow" data-adv="ceremony">
+            <h3 class="rowtitle">Join one</h3>
+            <button id="cerPageAcceptBtn" type="button">Accept an invitation…</button>
+            <p class="sethelp">Paste the invitation the convener sent you; the box opens in the menu, under
+              <b>Signing Ceremonies</b>. Accepting pins the convener’s identity and nothing else. An invitation
+              lets Nib watch for your turn. It cannot be used to sign as you: signing needs your key.</p>
+          </div>
+          <div class="setrow">
+            <h3 class="rowtitle">While it runs</h3>
+            <p class="sethelp">The <b>Signing Ceremonies</b> panel in the menu lists every ceremony on this computer:
+              who is in it, your place, and what happens next. The document goes to one person at a time,
+              and each signature is checked against the ceremony’s own record before the next person
+              gets it. When your turn comes you review the document and sign, or decline.</p>
+            <p class="sethelp">While a ceremony is live its document is frozen. Editing it, redacting it or saving over
+              it is refused, because everyone else was invited to sign those exact bytes.</p>
+          </div>
+          <div class="setrow">
+            <h3 class="rowtitle">What it will not do</h3>
+            <ul class="pagelist">
+              <li>The deadline cannot be extended and a person cannot be replaced: both are part of what
+                everyone signs. A ceremony that runs out of time is convened again.</li>
+              <li>One document goes round once, in order. Nib does not sign in counterparts, where
+                everyone signs an identical copy at the same time.</li>
+              <li>A ceremony that has ended cannot be reopened, and signatures already given on it cannot
+                be carried into a new one.</li>
+            </ul>
+          </div>
+          <div class="setrow">
+            <h3 class="rowtitle">What the finished document shows</h3>
+            <p class="sethelp">That its signatures are intact, that they all belong to the same ceremony, and which of
+              the people who had to sign have signed. It does not record how the ceremony ended —
+              completed, declined, out of time or abandoned. That is kept on each person’s own computer,
+              and a signature already given still stands if someone later declines.</p>
+          </div>
+          <div class="setrow">
+            <h3 class="rowtitle">What leaves your computer</h3>
+            <p class="sethelp">The document, to the people in the ceremony, over encrypted connections to the keys the
+              invitations named. To find each other when you are not on the same network, Nib can use the
+              public BitTorrent DHT: that reveals this computer’s public internet address to strangers
+              there, and may publish one small encrypted record of where you can be reached — never the
+              document, and never who you are. <b>Reach peers over the internet</b>, under Advanced features,
+              switches that off.</p>
           </div>
         </div>
       </section>

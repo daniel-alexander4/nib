@@ -217,12 +217,17 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // page's id (ADR-104). **Not `card()`**: a Settings entry opens a page in the main area and
     // expands nothing, so it has no `aria-expanded` for `group()` to wait on — `card('Colours')`
     // would click the entry and then wait thirty seconds for a state the entry does not have.
-    async settingsPage(label) {
-      await this.mode('settings');
+    async settingsPage(label) { return this.appPage('settings', label); },
+
+    // appPage(mode, label) is the same for any menu's entry: Signing has two (ADR-105). The mode is
+    // entered only when it is not the one showing — entering a mode leaves a page of another menu
+    // and re-lands the sidebar, and a caller that is already there asked for neither.
+    async appPage(mode, label) {
+      if (await page.evaluate(() => document.body.dataset.tab) !== mode) await this.mode(mode);
       await this.showSidebar();
       const onFunctions = await page.evaluate(() => document.getElementById('sbFunctions')?.classList.contains('active'));
       if (!onFunctions) await page.click('.sbtab[data-sbtab="functions"]');
-      const entry = `#commands .tbtab[data-tab="settings"] .sbhead.groupcard:text-is("${label}")`;
+      const entry = `#commands .tbtab[data-tab="${mode}"] .sbhead.groupcard:text-is("${label}")`;
       const id = await page.$eval(entry, (e) => e.nextElementSibling.querySelector('button').dataset.apppage);
       await page.click(entry);
       await page.waitForSelector(`#${id}:not([hidden])`);

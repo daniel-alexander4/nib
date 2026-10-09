@@ -3105,6 +3105,14 @@ function syncTabs() {
 // appPageLeave: page id → what to do as that page stops being the one on screen.
 const appPageLeave = { settingsUpdatesPage: () => flushDownloadDir() };
 
+// appPageShow: page id → what to do as that page comes to the front (ADR-105). The mirror of the
+// map above and called from the same door (`showAppPage`), after the page is on screen. A page whose
+// content is COMPUTED names its refresh here — the Simple Sign checklist re-reads the two answers
+// that cost a request — where a card did it from its header's click.
+const appPageShow = {
+  signingStepsPage: () => { refreshProfileFilled().then(renderSignSteps); refreshKeptProbe(true); },
+};
+
 // docShowing is THE answer to "is a document on screen to act on". A document can be open and
 // not showing — a page is in front of it — and every control that acts on the document reads this
 // rather than `view.pdfDocument`, so a tool cannot be armed against a document nobody can see.
@@ -3161,6 +3169,7 @@ function showAppPage(p) {
   reflectDocShowing();
   syncTabs();
   if (from) appPageLeave[from.id]?.();
+  appPageShow[p.id]?.();
 }
 
 // openAppPage is what an entry does: open the page if it is not open, bring it forward if it is —
@@ -10777,7 +10786,9 @@ document.querySelectorAll('.markers button').forEach((b) => {
 });
 if (els.fitNoticeDismiss) els.fitNoticeDismiss.onclick = () => clearFitNotice();
 
-els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
+// The two acts that follow the flags are the document's, and the panel they are in stays beside a
+// Signing page: each shows the document before it acts (ADR-105), as arming a flag does.
+els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); leaveAppPage(); saveForSigning(); };
 
 // "Signing marks completed" locks the document into signing-only mode: flag
 // placement and every content-editing tool turn off and the placed flags freeze.
@@ -10787,6 +10798,7 @@ els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Ope
 els.signCompleteBtn.onclick = () => {
   if (!view.pdfDocument) return;
   if (!view.signLocked && !markerFields().length) return toast('Place at least one flag first.');
+  leaveAppPage(); // the lock is the document's, so the document is what shows it (ADR-105)
   setSignLocked(!view.signLocked);
   toast(view.signLocked
     ? 'Marks locked — the document is in signing mode and can no longer be edited.'
@@ -10918,6 +10930,11 @@ function setMarkerMode(m) {
     // markers are the only tools a raised sheet can be looking at. Checked rather than assumed:
     // `SIDEBAR_FOR.collaborate` names `flags`, and no other mode's panel list does.
     parkCeremonySheet(false);
+    // **And out of an app page, for the same reason (ADR-105).** The flag tools are in the menu
+    // beside the Signing pages, so a flag button is one press away while a page is in front of the
+    // document, and the buttons are not in DOC_REQUIRED. The page yields and stays open in its
+    // tab; a refusal would leave the press doing nothing.
+    leaveAppPage();
     // **The one door, and it is called BEFORE `view.markerMode` is written (ADR-009, /pending
     // 513).** The list that stood here was one of eleven copies of "put down everything else", and
     // it was the only one that also left the pdf.js Text/Highlight/Draw mode armed — a flag placed
@@ -11875,6 +11892,7 @@ const ADVANCED_SURFACES = {
 
 // applyAdvanced writes the server's answer onto the checkboxes and the surfaces.
 function applyAdvanced(state, fromServer = true) {
+  const before = JSON.stringify(advanced);
   advanced = {
     ceremony: !!state.ceremony, discovery: !!state.discovery,
     rendezvous: !!state.rendezvous, timestamp: !!state.timestamp,
@@ -11890,6 +11908,22 @@ function applyAdvanced(state, fromServer = true) {
       }
     }
   }
+  // **On a page a feature that is off is SAID to be off (ADR-105).** A menu can simply not offer
+  // what is switched off; a page that explains a mode and silently lacks one of its rows reads as
+  // the feature not existing. So a page row marked `data-adv` goes with its feature like every
+  // surface above, and the row marked `data-advoff` beside it — the sentence saying it is off and
+  // where to turn it on — shows exactly when the feature does not. A menu ENTRY marked `data-adv`
+  // takes its sidebar header with it (`_head` is a sibling, not a child).
+  for (const el of all('[data-adv]')) {
+    el.hidden = !advanced[el.dataset.adv];
+    if (el._head) el._head.hidden = el.hidden;
+  }
+  for (const el of all('[data-advoff]')) el.hidden = !!advanced[el.dataset.advoff];
+  // A step whose feature is off says so instead of leading to a button that is not there. **Only when a
+  // switch actually moved**: this runs on every status read, and a repaint on each of those would paint over a
+  // checklist that had stopped following the document — the defect
+  // `the-sign-checklist-stops-reading-live-state` is recorded against.
+  if (JSON.stringify(advanced) !== before) renderSignSteps();
   // A panel that just disappeared cannot stay the selected one, or the mode shows an empty column.
   if (typeof syncSidebarForMode === 'function') syncSidebarForMode();
   if (fromServer && els.advError) els.advError.hidden = true;
@@ -11971,6 +12005,11 @@ function applyModeVisibility(list, fromServer = true) {
   // The mode showing cannot be one that just disappeared, or the user is left in a pane with no
   // tab above it — the same silent shape a missing SIDEBAR_FOR entry produces.
   if (hide.has(document.body.dataset.tab)) setMode(firstVisibleMode());
+  // **A hidden menu's pages close with it (ADR-105).** A page's tab outlives leaving its menu
+  // (ADR-104 §6) because the menu is still there to go back to; a menu that has been hidden is
+  // not, and its page would be a tab naming a mode the window no longer offers, whose own
+  // controls say "in the menu, under…". Closed through the page door, for every menu alike.
+  for (const p of [...openAppPages]) if (hide.has(p.dataset.menu)) closeAppPage(p);
   if (fromServer) { const e = $('modeError'); if (e) e.hidden = true; }
 }
 
@@ -15080,15 +15119,9 @@ function buildSidebarAccordion() {
       continue;
     }
     head.setAttribute('aria-expanded', 'false');
-      head.onclick = () => {
-      openCard(g, head);
-      // The steps list is read the moment its card opens, so that is when the profile signal is
-      // re-read and the rows repainted. Cheap for every other card: the label check short-circuits.
-      if ((g.dataset.label || '') === 'Simple Sign') {
-        refreshProfileFilled().then(renderSignSteps);
-        if (g.classList.contains('open')) refreshKeptProbe(true);
-      }
-    };
+    // The Simple Sign checklist was re-read here when its card opened; it is a page now, and its
+    // refresh is `appPageShow.signingStepsPage` (ADR-105).
+    head.onclick = () => openCard(g, head);
   }
 }
 
@@ -15164,14 +15197,14 @@ function openCard(target, head) {
 // `need` is 'required' or 'optional' against the SPINE: open a document, seal it, keep the result.
 // Everything else is something a particular document happens to need.
 const SIGN_STEPS = [
-  { label: 'Enroll your key', need: 'required', hint: 'Nib signs with an identity kept in your vault',
+  { label: 'Enroll your key', phase: 'Once, before your first signing', need: 'required', hint: 'Nib signs with an identity kept in your vault',
     done: () => authState === 'ready', go: () => goCard('settings', 'Identity & Keys') },
   { label: 'Save a signature image', need: 'optional', hint: 'Draw it once; every sign flag reuses it',
     done: () => libraryImages.length > 0, go: () => goPanel('markup', 'library') },
   { label: 'Fill your autofill profile', need: 'optional', hint: 'Name, title and company for the matching flags',
     done: () => profileFilled, go: () => goCard('markup', 'Detect & Fill Fields') },
 
-  { label: 'Open the document', need: 'required', hint: null,
+  { label: 'Open the document', phase: 'Prepare the document', need: 'required', hint: null,
     done: () => !!view.pdfDocument, go: () => goCard('file', 'Open a Document') },
   { label: 'Detect and fill form fields', need: 'optional', hint: 'Only if it is a form',
     done: null, go: () => goCard('markup', 'Detect & Fill Fields') },
@@ -15182,14 +15215,14 @@ const SIGN_STEPS = [
   { label: 'Scan for hidden content', need: 'optional', hint: 'The last privacy check before it leaves',
     done: null, go: () => goCard('secure', 'Protect & Inspect') },
 
-  { label: 'Place your signature or initials', need: 'optional', hint: 'A visible mark — not the cryptographic one',
+  { label: 'Place your signature or initials', phase: 'Marks on the page', need: 'optional', hint: 'A visible mark — not the cryptographic one',
     done: () => stampCount() > 0, go: () => goPanel('markup', 'library') },
   { label: 'Plant flags for someone else', need: 'optional', hint: 'Sign / Date / Initial for a counterparty',
     done: () => markerCount() > 0, go: () => goPanel('collaborate', 'flags') },
   { label: 'Lock the marks and save for signing', need: 'optional', hint: 'Freezes the flags, then email the file yourself',
     done: null, go: () => goPanel('collaborate', 'flags') },
 
-  { label: 'Finalize & sign', need: 'required', hint: 'Seals the document — any later edit breaks it',
+  { label: 'Finalize & sign', phase: 'Seal it and keep it', need: 'required', hint: 'Seals the document — any later edit breaks it',
     done: () => isSigned(), go: () => goCard('secure', 'Sign & Timestamp') },
   // P04.S03 (ADR-073): asked of the SERVER, through the one match door, never from the Finalize response — right after
   // Finalize the open view is still the unsigned document, so this row reads "—" there, and that is declared.
@@ -15197,7 +15230,7 @@ const SIGN_STEPS = [
     done: () => keptStepSeen(), why: () => keptStepWhy(), extra: () => keptStepExtra(),
     go: () => goCard('secure', 'Sign & Timestamp') },
   { label: 'Timestamp (OpenTimestamps)', need: 'optional', hint: 'A sidecar .ots — safe AFTER signing, and only after',
-    done: null, go: () => goCard('secure', 'Sign & Timestamp') },
+    feature: 'timestamp', done: null, go: () => goCard('secure', 'Sign & Timestamp') },
   { label: 'Save or export the signed file', need: 'required', hint: null,
     done: null, go: () => goCard('file', 'Save a Copy') },
   { label: 'Verify a signature or timestamp', need: 'optional', hint: 'What the person receiving it will do',
@@ -15252,17 +15285,14 @@ function keptProbeKey(v) {
   return `${(v.docMeta && v.docMeta.id) || ''}|${sig.state || ''}|${ends}`;
 }
 
-// The Simple Sign checklist is on screen when its mode is, and then either its card is open in the sidebar or the
-// sidebar is shut and the panes sit in the toolbar (`moveCommandsHome`), where a group is shown or, folded on a narrow
-// window, one ⋯ More press away — close enough to on screen that its answer should already be there when it opens.
+// The Simple Sign checklist is on screen when its PAGE is the one in front (ADR-105). It was a card, and "on screen"
+// was the card open in the sidebar or its group sitting in the toolbar; a page has one answer.
 function simpleSignOpen() {
-  const g = [...all('.tbgroup')].find((x) => (x.dataset.label || '') === 'Simple Sign');
-  if (!g || !g.closest('.tbtab.active')) return false;
-  return g.classList.contains('open') || !!g.closest('#toolbar');
+  return !!activeAppPage && activeAppPage.id === 'signingStepsPage';
 }
 
-// keptRowCameIntoView is the checklist arriving on screen by a door other than its card header — a mode switch, the
-// sidebar shutting or opening. Forced: a copy kept or removed while it was off screen changed the folder.
+// keptRowCameIntoView is the checklist arriving on screen by a door other than its page coming forward (which asks for
+// itself, `appPageShow`). Forced: a copy kept or removed while it was off screen changed the folder.
 function keptRowCameIntoView() {
   if (simpleSignOpen()) refreshKeptProbe(true);
 }
@@ -15348,9 +15378,18 @@ function keptStepExtra() {
 function goCard(tab, label) {
   setMode(tab);
   const head = [...all('#commands .sbhead.groupcard')].find((h) => h.textContent.trim() === label);
+  // **A card holds actions on the document, so going to one shows the document (ADR-105).** The
+  // rows are on a page; `setMode` leaves it for another mode's card, and not for Signing's own
+  // (Send & Receive), which would open in the menu beside a page still covering the document —
+  // with its document buttons switched off for exactly that reason (ADR-104 §5). An entry is the
+  // other case: its page comes forward in the page's place.
+  if (head && !head.hasAttribute('data-entry')) leaveAppPage();
   if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
 }
-function goPanel(tab, panel) { setMode(tab); showPanel(panel); }
+// **A panel is a tool for the document, so going to one shows the document (ADR-105).** The rows are on a page now;
+// `setMode` leaves that page when the panel is another mode's, and not when it is Signing's own (Flags), where the
+// panel would open in the menu behind a page still covering the document it is for.
+function goPanel(tab, panel) { setMode(tab); leaveAppPage(); showPanel(panel); }
 
 // Steps the user has ticked herself, by label.
 //
@@ -15370,6 +15409,17 @@ function renderSignSteps() {
   if (!host) return;
   host.innerHTML = '';
   for (const step of SIGN_STEPS) {
+    // A step that opens a phase is preceded by the phase's name (ADR-105): sixteen rows in a 200px card had no room
+    // to say that three of them are done once and the rest per document. A heading, not a row — nothing counts it.
+    if (step.phase) {
+      const h = document.createElement('h3');
+      h.className = 'signphase';
+      h.textContent = step.phase;
+      host.append(h);
+    }
+    // A step whose Advanced feature is switched off (ADR-105) says so and leads to the switch: the button it
+    // would lead to is hidden, and a row that goes to a card without it reads as Nib being broken.
+    const off = !!step.feature && !advanced[step.feature];
     const seen = step.done ? step.done() : null;      // what Nib can observe: true, false, or null
     const byHand = manualSteps.has(step.label);
     const state = seen || byHand ? 'done' : seen === false ? 'todo' : 'untracked';
@@ -15408,14 +15458,21 @@ function renderSignSteps() {
     label.textContent = step.label;
     label.title = [step.hint, why || (state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null)]
       .filter(Boolean).join(' — ');
-    label.onclick = step.go;
+    label.onclick = off ? () => goCard('settings', 'Advanced features') : step.go;
+    if (off) row.dataset.off = step.feature;
+
+    // The hint in words, under the name. It was the label's tooltip alone, which a keyboard does not show and a
+    // touch screen never does; the page has the room. The tooltip stays, for the pointer.
+    const hintText = off ? 'Switched off on this computer. Turn it on under Settings, Advanced features.' : step.hint;
+    const hint = hintText ? document.createElement('span') : null;
+    if (hint) { hint.className = 'signstep-hint'; hint.textContent = hintText; }
 
     const need = document.createElement('span');
     need.className = 'signstep-need';
     need.textContent = step.need === 'required' ? 'required' : 'optional';
 
     const extra = step.extra ? step.extra() : null; // a row's own link, before the need so the need stays at the edge
-    row.append(...[mark, label, extra, need].filter(Boolean));
+    row.append(...[mark, label, extra, need, hint].filter(Boolean)); // the hint last: it wraps onto its own line (style.css)
     host.append(row);
   }
 }
@@ -18587,6 +18644,30 @@ document.getElementById('ceremonyConveneBtn')?.addEventListener('click', async (
   await openCeremonySetup();
 });
 document.getElementById('ceremonyAcceptBtn')?.addEventListener('click', () => showCeremonyForm('accept'));
+
+// The Signing Ceremonies PAGE's two buttons (ADR-105). They click the panel's own — one handler
+// each, as a `data-forward` twin has — after putting the surface that handler needs on screen:
+// Signing is the only mode the setup sheet survives in (`syncSidebarForMode` parks it elsewhere),
+// and the invitation box is IN the ceremony panel, so the sidebar is opened and the panel shown
+// before the box is asked for. Convene's sheet takes the main area from the page through its own
+// door (`showCeremonySheet`); accepting leaves the page where it is, beside the box.
+function ceremonyPanelFromPage() {
+  if (document.body.dataset.tab !== 'collaborate') setMode('collaborate');
+  if ($('sidebar').classList.contains('collapsed')) setSidebarCollapsed(false);
+  showPanel('ceremony');
+}
+document.getElementById('cerPageConveneBtn')?.addEventListener('click', () => {
+  ceremonyPanelFromPage();
+  document.getElementById('ceremonyConveneBtn')?.click();
+});
+document.getElementById('cerPageAcceptBtn')?.addEventListener('click', () => {
+  ceremonyPanelFromPage();
+  document.getElementById('ceremonyAcceptBtn')?.click();
+  document.getElementById('cerInviteText')?.focus();
+});
+// A page's way to a SETTINGS page: through `goCard`, so the mode changes with it and the Settings
+// page is not left standing under the Signing menu.
+for (const b of all('[data-gosettings]')) b.onclick = () => goCard('settings', b.dataset.gosettings);
 document.getElementById('cerConveneCancel')?.addEventListener('click', () => showCeremonyForm(null));
 document.getElementById('cerAcceptCancel')?.addEventListener('click', () => showCeremonyForm(null));
 document.getElementById('ceremonyConveneForm')?.addEventListener('submit', (ev) => {

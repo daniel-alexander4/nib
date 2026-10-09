@@ -745,6 +745,14 @@ home today.
   `several` and `anyDoc` count documents only. `syncMainArea` is the one writer of what the main area shows (viewer,
   sheet or page); `docShowing()` is the one answer to "is a document on screen", so its controls are inert under a page.
   A page is registered in markup alone (`data-apppage`). About still opens its dialog.
+- **[ADR-105 — configuration and wizards open pages; actions on the open document stay in the menu](105-configuration-and-wizards-open-pages-actions-on-the-document-stay-in-the-menu.md)**
+  — extends ADR-104; supersedes nothing. The test for ANY menu entry: something you set up or are led through opens a
+  page with its own tab; a tool or button that acts on the open document stays in the menu and expands there. In
+  Signing: Simple Sign and the ceremony's explanation are pages (`#signingStepsPage`, `#signingCeremonyPage`); Place
+  Signing Flags and Send & Receive are unchanged, and the mode still lands on Flags and opens no tab. `appPageShow`
+  mirrors `appPageLeave`; a step that leads to a tool for the document leaves the page; a tool in the menu beside a
+  page takes the screen back (`setMarkerMode`); a page says when an Advanced feature is off (`data-adv` /
+  `data-advoff`); a hidden menu's pages close. Remainder: the live ceremony panel and the two sheets are not pages.
 - **[ADR-106 — a command runs the prerequisite the app can perform](106-a-command-runs-the-prerequisite-the-app-can-perform.md)**
   — extends ADR-009, ADR-001, ADR-094 and ADR-101. A command that needs a step the app can do does it first, visibly,
   through ONE door per prerequisite, and continues: `ensureText(owner, pages)` reads exactly the pages the server calls
