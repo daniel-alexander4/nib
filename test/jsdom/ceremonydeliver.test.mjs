@@ -24,6 +24,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot } from './boot.mjs';
+import { setNextDocument } from './stub-pdfjs.mjs';
 
 const ME = 'aa'.repeat(32);
 const THEM = 'bb'.repeat(32);
@@ -88,7 +89,8 @@ const listing = {
 // `/api/ceremony/next` answers `complete` for ceremony 6 only. The harness hands a route its
 // options and not its URL, so every card asking gets this body — and every card but 6 must refuse
 // it on the echoed id, which is the guard `ceremonyNextLine` exists to keep.
-const nextAnswer = { ceremony: '6'.repeat(32), state: 'complete' };
+let hopQuote = null;
+let nextAnswer = { ceremony: '6'.repeat(32), state: 'complete' };
 
 // Three of four: Bob is reached, Cy already had it, Dee ended the proceeding, and the fourth leg
 // fails. Every branch of the outcome shape in one answer.
@@ -123,6 +125,15 @@ const { document: doc, settle } = await boot({
     },
     '/api/ceremony/delivery': () => { progressAsks += 1; return progress; },
     '/api/ceremony/next': () => nextAnswer,
+    '/api/ceremony/stop': () => new Response('<html>Bad Gateway</html>', { status: 502 }),
+    // The quote (GET) and the call (POST) share a route; `hopQuote` null is a quote refused with a body that is not JSON.
+    '/api/ceremony/hop': (opts) => ((opts && opts.method) === 'POST' || !hopQuote
+      ? new Response('<html>Bad Gateway</html>', { status: 502 }) : hopQuote),
+    '/api/open': () => ({
+      id: 'deliver:1', name: 'lease.pdf', path: '/tmp/nib-harness/lease.pdf',
+      canSave: true, canUndo: false, canRedo: false, signature: { state: 'unsigned' },
+    }),
+    '/api/scan': { hidden: [] },
   },
 });
 
@@ -318,4 +329,49 @@ test('the watcher stops when the round does', async () => {
     `the watcher kept polling after the round returned (${progressAsks - asksAfterRound} more ` +
     'asks). The stop is called from the round\'s `finally`, on every path out — a poll that ' +
     'outlives its round is a timer nothing will ever clear.');
+});
+
+// A refused stop says what was answered (/pending 609). The control parsed the answer as JSON before it looked at the
+// status, so a refusal with any other body fell to its catch — "Nothing was attested", a claim about the proceeding
+// that a failed answer does not support — and the status the user could have reported was gone.
+test('a refused stop reports the answer it got, even when that is not JSON', async () => {
+  const host = await showPanel();
+  const card = cardFor(host, '3'.repeat(32));
+  const btn = card.querySelector('.cerstopbtn');
+  assert.ok(btn, 'setup: the running convener card has no Stop control');
+  btn.click();
+  await settle();
+  const out = card.querySelector('.cerstopout').textContent;
+  assert.equal(out, 'Nib could not stop it (502).', `the refused stop reads: ${JSON.stringify(out)}`);
+  assert.equal(btn.disabled, false, 'a refused stop left its button dead');
+});
+
+// The convener's call says what its own Nib answered (/pending 609). The quote was parsed with no look at the status,
+// so a refusal that was not JSON fell to the catch — "Nib could not reach that party" — about a request that never
+// left this machine. Last in the file: it opens a document, which no test above expects to be open.
+test('a refused quote or call says what Nib answered, and does not blame the other party', async () => {
+  setNextDocument({ numPages: 1 });
+  doc.getElementById('pathInput').value = '/tmp/nib-harness/lease.pdf';
+  doc.getElementById('openGo').click();
+  await settle();
+
+  nextAnswer = { ceremony: '3'.repeat(32), state: 'waiting', label: 'Bob Landlord', meKnown: true, isMe: false };
+  const host = await showPanel();
+  const card = cardFor(host, '3'.repeat(32));
+  card.querySelector('.cernextbtn').click();
+  await settle();
+  const call = card.querySelector('.cercall');
+  assert.ok(call, `setup: the running convener card offers no call for the next party: ${card.textContent.slice(0, 200)}`);
+  call.click();
+  await settle();
+  const said = card.querySelector('.cercallstate').textContent;
+  assert.equal(said, 'Nib could not work out whose turn it is (502).', `the refused quote reads: ${JSON.stringify(said)}`);
+  assert.equal(call.disabled, false, 'a refused quote left the call button dead');
+
+  // And the call itself: quoted, dialled, and refused with a body that is not JSON. The carry path, so nothing is drawn.
+  hopQuote = { party: 'Bob Landlord', contributes: false, when: '2030-01-01T00:00:00Z' };
+  call.click();
+  await settle();
+  const after = card.querySelector('.cercallstate').textContent;
+  assert.equal(after, 'The call failed (502).', `the refused call reads: ${JSON.stringify(after)}`);
 });
