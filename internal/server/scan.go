@@ -55,6 +55,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	before := s.docBytes(doc)
 	var result []byte
 	var err error
+	capFields(w, r)
 	switch r.FormValue("method") {
 	case "strip":
 		result, err = pdfops.StripActive(before)
@@ -154,6 +155,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 	// between, so the undo entry records the NEW bytes as the state to return to and a
 	// later undo restores a document that never existed.
 	before := s.docBytes(doc)
+	capFields(w, r)
 	result, err := pdfops.RemovePassword(before, r.FormValue("password"))
 	if err != nil {
 		switch {

@@ -56,6 +56,18 @@ func parseMultipart(w http.ResponseWriter, r *http.Request, max int64) (cleanup 
 	return func() { _ = r.MultipartForm.RemoveAll() }, true
 }
 
+// maxFieldBody caps the body of a route that reads a few short form fields and no file.
+const maxFieldBody = 1 << 16
+
+// capFields is parseMultipart's cap for a route whose body is OPTIONAL — a flag, a method name, a
+// password — and may not be there at all, so parseMultipart's "could not parse upload" would
+// refuse the ordinary request. A bare r.FormValue parses a multipart body implicitly with no
+// limit on it: 32 MiB of it held in memory and the rest written to temp files, for a route that
+// wanted one word (/pending 627). Past the cap the parse fails and the fields read as absent.
+func capFields(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFieldBody)
+}
+
 // docID names one open document. It is deliberately two fields rather than a
 // packed integer, so a test can fail on one without the other.
 //
