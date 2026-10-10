@@ -154,7 +154,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"ChainedPatterns":     "test-support — /pending 764's chained-pattern documents, the depth half of those tests.",
 		"FanIn":               "test-support — /pending 764's pages sharing one function, the per-page half of the path budget.",
 		"FanInShapes":         "test-support — /pending 767's four entry edges whose shared structure `FanIn` cannot build.",
-		"AssembleCompressed":  "test-support — `Assemble` with named objects in an object stream, for the reference door's read of compressed objects.",
+		"ManyPages":           "test-support — /pending 840's honest large document: n pages with /Parent links, a shared resource dict and object streams.",
 		"WithContent": "test-support — a one-page document drawing exactly the operators a test names, for the reflow " +
 			"server tests (text-reflow P06.S05) that must control what the page's content stream holds.",
 		"SplitContents": "test-support — ADR-056's divided-page fixtures (a fused `Tj`+`ET`, an unterminated " +
