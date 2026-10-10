@@ -34,6 +34,15 @@ func carryAttachments(src, dst []byte, err error) ([]byte, error) {
 	return out, nil
 }
 
+// optionalInt reads a whole-number form field that may be left out: "" is 0, anything else must
+// parse.
+func optionalInt(v string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(v)
+}
+
 // handlePages applies a structural page operation (rotate, delete, reorder,
 // append) to the posted document and makes the result the current document.
 // The client posts its saved bytes (edits already baked) since these ops
@@ -155,9 +164,16 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = pdfops.NUp(pdfBytes, n, r.FormValue("border") == "1")
 	case "pagenum":
-		start, _ := strconv.Atoi(r.FormValue("start"))
-		pad, _ := strconv.Atoi(r.FormValue("pad"))
-		size, _ := strconv.Atoi(r.FormValue("size"))
+		// A field left out takes StampPageNumbers' default; one that is sent and is not a whole
+		// number is refused. Discarding the parse error stamped "abc" as 0 — the default — and
+		// answered 200 for a request that asked for something else (/pending 591).
+		start, sErr := optionalInt(r.FormValue("start"))
+		pad, pErr := optionalInt(r.FormValue("pad"))
+		size, zErr := optionalInt(r.FormValue("size"))
+		if sErr != nil || pErr != nil || zErr != nil {
+			httpError(w, http.StatusBadRequest, "page numbering needs whole numbers for the start, the padding and the size")
+			return
+		}
 		result, err = pdfops.StampPageNumbers(pdfBytes, pdfops.PageNumberStyle{
 			Position: r.FormValue("position"),
 			Prefix:   r.FormValue("prefix"),
