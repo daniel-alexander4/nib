@@ -470,10 +470,10 @@ func widenLimits(ctx *model.Context, node types.Dict, key int) {
 // insertNum puts the pair (key, val) into a number tree's flat `[key value …]` array before the first larger key, so the
 // keys stay ascending as ISO 32000-1 §7.9.7 requires. Appending was right only for a key above every key; a page that
 // declares `/StructParents` with no row below the highest key put its row out of order (P07.S07's review).
-func insertNum(nums types.Array, key int, val types.Object) types.Array {
+func insertNum(ctx *model.Context, nums types.Array, key int, val types.Object) types.Array {
 	at := len(nums)
 	for i := 0; i+1 < len(nums); i += 2 {
-		if n, ok := nums[i].(types.Integer); ok && n.Value() > key {
+		if n, ok := numsKey(ctx, nums[i]); ok && n > key {
 			at = i
 			break
 		}
@@ -527,7 +527,7 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 		}
 		nums[at] = arr
 	} else {
-		nums = insertNum(nums, key, arr)
+		nums = insertNum(ctx, nums, key, arr)
 		claimParentTreeKey(ctx, tree, key)
 	}
 	pt["Nums"] = nums
@@ -742,7 +742,7 @@ func setParentTreeSingle(ctx *model.Context, tree *structTree, key int, ref type
 		return fmt.Errorf("pdfops: /ParentTree key %d is already taken — overwriting it would "+
 			"re-point whatever owns it at a different element", key)
 	}
-	pt["Nums"] = insertNum(nums, key, ref)
+	pt["Nums"] = insertNum(ctx, nums, key, ref)
 	claimParentTreeKey(ctx, tree, key)
 	return nil
 }

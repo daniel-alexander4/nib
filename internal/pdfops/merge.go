@@ -368,6 +368,13 @@ func attachGraft(ctx *model.Context, host *hostTree, gs *graftSource) error {
 	hostNums := derefArray(xt, host.pt["Nums"])
 	srcNums := derefArray(xt, derefDict(xt, gs.root["ParentTree"])["Nums"])
 	host.pt["Nums"] = append(append(types.Array{}, hostNums...), srcNums...)
+	// A host root that carries `/Limits` now spans the grafted keys, as `parentTreeDict` widens for a key it
+	// adds: a reader honouring the old bounds found none of the grafted rows (/pending 836).
+	for i := 0; i+1 < len(srcNums); i += 2 {
+		if key, ok := numsKey(ctx, srcNums[i]); ok {
+			widenLimits(ctx, host.pt, key)
+		}
+	}
 	host.nextKey = gs.nextKey
 	host.root["ParentTreeNextKey"] = types.Integer(gs.nextKey)
 
