@@ -6153,6 +6153,7 @@ async function loadTagTree() {
   if (!owner.pdfDocument || !owner.docMeta || !owner.docMeta.id) {
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
     drawReadingOrder();
@@ -6172,6 +6173,7 @@ async function loadTagTree() {
     if (seq !== tagTreeSeq) return;
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
     drawReadingOrder();
@@ -6200,6 +6202,7 @@ function renderTagTree(tree, owner) {
   tagTreeSelected = -1;
   tagTreeView = owner;
   drawReadingOrder();
+  $('tagTreeRemove').hidden = !tree.tagged;
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
@@ -6391,6 +6394,29 @@ async function applyTagEdit(...edits) {
     status.textContent = err.message || 'Could not change the structure.';
   }
 }
+
+// removeAllTags takes the whole tree away (ADR-120) — the way to tag again a document that arrived tagged. It is
+// asked for by name and confirmed, never done on the way to a proposal (ADR-106: nothing destructive is automatic).
+// The server refuses a signed document, and its sentence is shown where the tree's summary is.
+async function removeAllTags() {
+  const owner = view;
+  if (!owner.docMeta || !owner.docMeta.id) return;
+  if (!confirm('Remove every tag from this document?\n\nIts headings, lists, tables and alternative text will no longer be '
+    + 'announced until it is tagged again (Tag structure…). What is marked as decoration stays marked. Ctrl+Z brings the tags back.')) return;
+  const summary = $('tagTreeSummary');
+  summary.textContent = 'Removing the tags…';
+  try {
+    const res = await apiFetch('/api/tags/remove', { method: 'POST', docId: owner.docMeta.id });
+    if (!res.ok) {
+      summary.textContent = await errText(res, 'Could not remove the tags.');
+      return;
+    }
+    await setDocumentFromServer(await res.json(), owner);
+  } catch (err) {
+    summary.textContent = err.message || 'Could not remove the tags.';
+  }
+}
+$('tagTreeRemove').onclick = removeAllTags;
 
 function wireTagEditBar() {
   const type = $('tagEditType');

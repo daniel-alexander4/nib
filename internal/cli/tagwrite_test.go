@@ -123,6 +123,8 @@ func TestTagWriteRefusesASignedDocument(t *testing.T) {
 		{"commit", "-w", in, "--review", review},
 		{"edit", in, "-o", out, "--edits", edits},
 		{"edit", "-w", in, "--edits", edits},
+		{"remove", in, "-o", out},
+		{"remove", "-w", in},
 	} {
 		_, errOut, code := runTag(t, args...)
 		if code != 1 || !strings.Contains(errOut, "would change the bytes its signatures cover") {
@@ -210,5 +212,37 @@ func TestTagEditWritesACellsSpansAndHeadersAndTheTreePrintsThem(t *testing.T) {
 	}
 	if !strings.Contains(th, "spans 2 columns") || !strings.Contains(th, "spans 3 rows") || !strings.Contains(td, "headed by: 12") {
 		t.Errorf("the tree prints the header as %q and the cell as %q", th, td)
+	}
+}
+
+// TestTagRemoveLeavesADocumentThatCanBeTaggedAgain — ADR-120, through the command: commit refuses a tagged
+// document and names the way out; after `nib tag remove` the tree is gone and the same commit succeeds.
+func TestTagRemoveLeavesADocumentThatCanBeTaggedAgain(t *testing.T) {
+	dir := t.TempDir()
+	in := taggedMarkdownPDF(t, dir)
+	bare := filepath.Join(dir, "bare.pdf")
+	if _, errOut, code := runTag(t, "remove", in, "-o", bare); code != 0 {
+		t.Fatalf("remove exited %d: %s", code, errOut)
+	}
+	if tree, err := pdfops.ReadStructure(readPDF(t, bare)); err != nil || tree.Tagged {
+		t.Fatalf("after remove the document still reads as tagged: %+v, %v", tree.Tagged, err)
+	}
+	js, errOut, code := runTag(t, "propose", "--json", bare)
+	if code != 0 {
+		t.Fatalf("propose exited %d: %s", code, errOut)
+	}
+	review := writeFile(t, dir, "review.json", js)
+	if _, errOut, code := runTag(t, "commit", in, "-o", filepath.Join(dir, "over.pdf"), "--review", review); code == 0 || !strings.Contains(errOut, "remove its tags first") {
+		t.Errorf("commit over the tagged original: exit %d, %q — want a refusal naming the way out", code, errOut)
+	}
+	again := filepath.Join(dir, "again.pdf")
+	if _, errOut, code := runTag(t, "commit", bare, "-o", again, "--review", review); code != 0 {
+		t.Fatalf("commit after remove exited %d: %s", code, errOut)
+	}
+	if tree, err := pdfops.ReadStructure(readPDF(t, again)); err != nil || !tree.Tagged {
+		t.Errorf("the document was not tagged again: %v", err)
+	}
+	if _, errOut, code := runTag(t, "remove", bare, "-o", filepath.Join(dir, "twice.pdf")); code != 1 || !strings.Contains(errOut, "no structure tree") {
+		t.Errorf("remove on an untagged document: exit %d, %q — want 1 saying it has no tree", code, errOut)
 	}
 }

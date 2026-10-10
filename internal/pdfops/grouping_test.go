@@ -243,6 +243,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"structartifact.go": {
 			"readPageRuns": "the artifact edit finds an element's marked-content sequences by the run reader's reading of BDC, text or not, and groups nothing (P09.S03)",
 		},
+		"tagremove.go": {
+			"readPageRuns": "removing a tree finds every marked-content sequence that carries an id by the run reader's reading of BDC, in pages and forms, and groups nothing (ADR-120)",
+		},
 		"claimtagging.go": {
 			"readPageRuns": "the claim door counts text runs under no MCID and no artifact before making a new claim of tagging, and groups nothing (/pending 495)",
 		},

@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagremove.go b/internal/pdfops/tagremove.go
+--- a/internal/pdfops/tagremove.go
++++ b/internal/pdfops/tagremove.go
+@@ -150,7 +150,7 @@
+ // was so the tokens either side stay apart. A sequence the stream ended before closing has no `EMC` to take.
+ func unbracket(edit *contentstream.Edit, opener, closer opSpan) {
+ 	edit.Replace(opener.start, opener.end, []byte(" "))
+-	if closer != (opSpan{}) {
++	if false {
+ 		edit.Replace(closer.start, closer.end, []byte(" "))
+ 	}
+ }

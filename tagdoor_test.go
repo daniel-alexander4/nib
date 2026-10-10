@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// Every user-directed structure write (a commit, an edit) reaches one door — `PLAN-accessibility.md` P10.S02.
+// Every user-directed structure write (a commit, an edit, a removal) reaches one door — `PLAN-accessibility.md` P10.S02.
 // The operations that author a tree while producing a document (OCR, forms, Markdown) do not route here;
 // `internal/tagwrite`'s package comment names them.
 //
@@ -20,13 +20,13 @@ import (
 // and `tagwrite.Edit`, and nothing outside `internal/tagwrite` may call `pdfops.CommitTags` or
 // `pdfops.EditStructure` — a caller that did would skip the signed refusal, or compose its own.
 func TestEveryStructureWriteReachesTheSignedDocumentDoor(t *testing.T) {
-	doorCalls := map[string]map[string]int{"Commit": {}, "Edit": {}}
+	doorCalls := map[string]map[string]int{"Commit": {}, "Edit": {}, "Remove": {}}
 	var bypasses []string
 	scanned := walkCallers(t, "internal/tagwrite", func(file, surface string, f *ast.File) {
 		tagwrite, _ := importNames(f, "nib/internal/tagwrite")
 		pdfops, dot := importNames(f, "nib/internal/pdfops")
 		if dot {
-			bypasses = append(bypasses, file+" dot-imports pdfops, which hides a CommitTags or EditStructure call from this guard")
+			bypasses = append(bypasses, file+" dot-imports pdfops, which hides a CommitTags, EditStructure or RemoveStructure call from this guard")
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
@@ -40,7 +40,7 @@ func TestEveryStructureWriteReachesTheSignedDocumentDoor(t *testing.T) {
 			switch {
 			case tagwrite[pkg.Name] && doorCalls[sel.Sel.Name] != nil:
 				doorCalls[sel.Sel.Name][surface]++
-			case pdfops[pkg.Name] && (sel.Sel.Name == "CommitTags" || sel.Sel.Name == "EditStructure"):
+			case pdfops[pkg.Name] && (sel.Sel.Name == "CommitTags" || sel.Sel.Name == "EditStructure" || sel.Sel.Name == "RemoveStructure"):
 				bypasses = append(bypasses, file+" calls pdfops."+sel.Sel.Name)
 			}
 			return true

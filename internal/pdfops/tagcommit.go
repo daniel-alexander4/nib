@@ -48,7 +48,7 @@ import (
 // claimed over — the same answer `errCommitInForm` gives for text.
 
 var (
-	errCommitTagged = errors.New("pdfops: this document already has a structure tree; a proposal is not written over it")
+	errCommitTagged = errors.New("pdfops: this document already has a structure tree; a proposal is not written over it — remove its tags first (Review Structure Tree, Remove all tags), then propose again")
 	errCommitMarked = errors.New("pdfops: this page already carries marked content with ids and no tree to say what they mean, so new structure cannot be written into it")
 	errCommitInForm = errors.New("pdfops: text on this page is drawn inside a form XObject, which a commit cannot mark without describing the form instead of its text")
 	errCommitStale  = errors.New("pdfops: the proposal does not match the document any more — propose again")

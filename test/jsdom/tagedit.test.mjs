@@ -56,12 +56,14 @@ let tree = baseTree();
 const edits = [];
 let editReply = null;
 
-const { document: doc, window: win, settle, calls } = await boot({
+let removeReply = null;
+const { document: doc, window: win, settle, calls, confirms, setConfirmAnswer } = await boot({
   routes: {
     '/api/docs': () => ({ docs: [OPEN], activeId: OPEN.id }),
     '/api/open': OPEN,
     '/api/scan': { hidden: [] },
     '/api/tags/tree': () => tree,
+    '/api/tags/remove': () => (removeReply ? removeReply() : { ...OPEN, canUndo: true }),
     '/api/tags/edit': (opts) => {
       edits.push(JSON.parse(opts.body));
       return editReply ? editReply() : { ...OPEN, canUndo: true };
@@ -241,6 +243,7 @@ test('a tree that re-reads as untagged takes the edit bar away with it', async (
   tree = { tagged: false, unaddressable: 0, elements: [] };
   await reopenPanel();
   assert.equal($('tagEditBar').hidden, true, 'the edit bar still offers changes to an element the tree no longer has');
+  assert.equal($('tagTreeRemove').hidden, true, 'a document with no tree is offered the removal of its tags');
   tree = baseTree();
   await reopenPanel();
 });
@@ -252,6 +255,48 @@ test('a refused edit leaves nothing behind for the next read of the tree to act 
   editReply = null;
   await reopenPanel();
   assert.doesNotMatch($('tagEditStatus').textContent, /Ctrl\+Z/, 'a read of the tree after a REFUSED edit announces the change as made');
+});
+
+// Removing the whole tree (ADR-120): asked for by name, confirmed, pinned to its document, and a refusal is
+// shown where the tree's summary is.
+test('Remove all tags asks first, sends nothing when declined, and re-reads the tree when it is done', async () => {
+  await reopenPanel();
+  assert.equal($('tagTreeRemove').hidden, false, 'a tagged document is not offered the removal of its tags');
+  const sent = () => calls.filter((c) => c.url.includes('/api/tags/remove'));
+  const asked = confirms.length;
+  setConfirmAnswer(false);
+  $('tagTreeRemove').click();
+  await settle();
+  assert.equal(confirms.length, asked + 1, 'removing every tag did not ask first');
+  assert.match(confirms[asked], /Ctrl\+Z brings the tags back/, 'the question does not say the removal can be taken back');
+  assert.equal(sent().length, 0, 'a declined removal was sent');
+  setConfirmAnswer(true);
+
+  removeReply = () => new Response(JSON.stringify({ error: 'this document is signed, and removing its tags would change the bytes its signatures cover' }),
+    { status: 409, headers: { 'Content-Type': 'application/json' } });
+  const before = treeCalls();
+  $('tagTreeRemove').click();
+  await settle();
+  await settle();
+  removeReply = null;
+  assert.match($('tagTreeSummary').textContent, /signed/, 'a refused removal does not show the server\'s reason');
+  assert.equal(treeCalls(), before, 'a refused removal reloaded the tree');
+
+  tree = { tagged: false, unaddressable: 0, elements: [] };
+  setNextDocument({ numPages: 2 });
+  $('tagTreeRemove').click();
+  await settle();
+  await settle();
+  await settle();
+  const [, done] = sent();
+  assert.equal(done.method, 'POST', 'the removal is not a POST');
+  const h = done.headers || {};
+  assert.equal(typeof h.get === 'function' ? h.get('X-Nib-Doc') : h['X-Nib-Doc'], OPEN.id, 'the removal went out without naming its document (ADR-004)');
+  assert.ok(treeCalls() > before, 'the tree was not read again after the removal');
+  assert.match($('tagTreeSummary').textContent, /no structure tree/, 'the panel does not say the document is now untagged');
+  assert.equal($('tagTreeRemove').hidden, true, 'the removal is still offered once the tags are gone');
+  tree = baseTree();
+  await reopenPanel();
 });
 
 test('the types offered are exactly the types the server accepts', () => {

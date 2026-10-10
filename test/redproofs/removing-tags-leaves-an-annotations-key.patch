@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagremove.go b/internal/pdfops/tagremove.go
+--- a/internal/pdfops/tagremove.go
++++ b/internal/pdfops/tagremove.go
+@@ -132,7 +132,7 @@
+ 			annots, _ := ctx.DereferenceArray(rec.dict["Annots"])
+ 			for _, a := range annots {
+ 				if ad, aerr := ctx.DereferenceDict(a); aerr == nil && ad != nil {
+-					delete(ad, "StructParent")
++					_ = ad
+ 				}
+ 			}
+ 			if rec.res != nil {

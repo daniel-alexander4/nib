@@ -328,6 +328,7 @@ var geometryKeepers = map[string]func(t *testing.T, pdf []byte) ([]byte, error){
 		}
 		return CommitTags(pdf, reviews)
 	},
+	"RemoveStructure": func(_ *testing.T, pdf []byte) ([]byte, error) { return RemoveStructure(pdf) },
 	"EditStructure": func(_ *testing.T, pdf []byte) ([]byte, error) {
 		v, err := readStructureView(pdf)
 		if err != nil {
@@ -350,10 +351,11 @@ var geometryKeepers = map[string]func(t *testing.T, pdf []byte) ([]byte, error){
 //
 // Two rewrites refuse some fixtures by their own rules, and those pairs are named rather than skipped on any
 // error: a tag proposal is not written over an existing tree, nor committed with nothing in it (the scan has no
-// text), and a structure edit needs a tree. Any other failure is a failure.
+// text), and a structure edit, like the removal of a tree, needs a tree. Any other failure is a failure.
 var notApplicable = map[string]bool{
 	"CommitTags/tagged": true, "CommitTags/scan": true,
 	"EditStructure/body text": true, "EditStructure/scan": true, "EditStructure/turned and offset": true,
+	"RemoveStructure/body text": true, "RemoveStructure/scan": true, "RemoveStructure/turned and offset": true,
 }
 
 func TestEveryRewriteOfAHeldDocumentKeepsWhatAFlagWasPlacedBeside(t *testing.T) {
