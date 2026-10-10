@@ -6,6 +6,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"hash/crc32"
+	"image"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,14 +90,27 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	tf, err := pdfops.AuthorForm(plain, textField)
 	cf, cerr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 660, 112, 672}, Kind: "check", Name: "a", Label: "I agree"}})
 	// Both tagging doors add to the committed proposal (`/pending 495`): over `plain`'s own untagged text they
-	// now claim nothing. Not a picture for the OCR layer: its text is then invisible only, and 7.21.4.1 t1
-	// reads NotApplicable where veraPDF passes — a checker question outside that item.
+	// now claim nothing. The OCR layer is hosted here on TEXT, and — since `/pending 557` — on a PICTURE too
+	// (`scanOCR` below): until then law 5 had never been asked about an image no element covers, which is how an
+	// OCR'd scan failing 7.1 t3 on every document nib produced survived a phase with this oracle green. The gate
+	// that kept the picture out (7.21.4.1 t1 reading NotApplicable over invisible-only text, where veraPDF passes)
+	// closed at P07.S02.
 	df, _, derr := pdfops.AuthorTaggedForm(w.pdf, textField)
 	md, merr := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
 	mdt, terr := pdfops.SetTitle(md, "A named document")
 	mdl, lerr := pdfops.SetLang(mdt, "en")
 	st, serr := pdfops.StampWatermark(plain, "DRAFT", pdfops.WatermarkStyle{})
 	ocr, _, oerr := pdfops.TagOCRLayer(w.pdf, []pdfops.Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice", Block: 1, Para: 1, Line: 1}}, "eng")
+
+	var scanPNG bytes.Buffer
+	if err := png.Encode(&scanPNG, image.NewGray(image.Rect(0, 0, 200, 260))); err != nil {
+		t.Fatal(err)
+	}
+	scan, scerr := pdfops.ImagesToPDF([]pdfops.RasterPage{{Image: scanPNG.Bytes(), W: 612, H: 792}})
+	if scerr != nil {
+		t.Fatal(scerr)
+	}
+	scanOCR, _, soerr := pdfops.TagOCRLayer(scan, []pdfops.Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice", Block: 1, Para: 1, Line: 1}}, "eng")
 
 	docs := []oracleDoc{
 		{"plain page", plain},
@@ -108,6 +123,8 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		must("Markdown + title + lang", mdl, lerr),
 		must("stamped page", st, serr),
 		must("OCR layer tagged into a committed proposal", ocr, oerr),
+		{"a scanned page, no OCR", scan},
+		must("OCR layer tagged over a scanned page", scanOCR, soerr),
 	}
 	// P05.S01. `AddNotes` is the product door for the PASSING side of 7.18.1 t1 and t2: it writes a
 	// `/Text` annotation with `/Contents` and, on a tagged document, nests it in an `/Annot` element.
@@ -677,7 +694,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 694 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74 + P07.S06's 125 + the P07 close's 36 font-door shapes (33, and the re-review's 3: RR1-2, RR1-5) and 2 codespace shapes (R3-7)
+	const wantGenerated = 696 // 150 (148 + /pending 557's scanned page and its OCR'd twin) + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74 + P07.S06's 125 + the P07 close's 36 font-door shapes (33, and the re-review's 3: RR1-2, RR1-5) and 2 codespace shapes (R3-7)
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
