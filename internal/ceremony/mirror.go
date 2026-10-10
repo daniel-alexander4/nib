@@ -513,11 +513,13 @@ func readMirrorAt(dir, id string, now time.Time) (Record, []byte, error) {
 
 // RemoveMirror deletes a ceremony's directory.
 //
-// **It is NOT the close-out prune, though it was written to be** — corrected 2026-08-29 by the
-// P08.S01 deepdive, which found the claim describing a caller that does not exist. Its only
-// production caller is `unconvene`, the convene ROLLBACK (`internal/server/convene.go:272`), so
-// today a ceremony that completes, declines, expires or is abandoned keeps its directory forever.
-// D29's close-out prune is P08.S06's, and this function is what it will call.
+// **It is the convene ROLLBACK's verb and never the close-out's** (ADR-012). Its one production
+// caller is `unconvene` (`internal/server/convene.go`): a convene whose commit failed never
+// produced a contribution, so there is nothing in the directory to preserve. A ceremony that has
+// ENDED — completed, declined, expired, abandoned or left — is moved to `~/nib/ended/` by
+// `CloseOutMirror` and nothing deletes it, because on every machine but the convener's this
+// directory holds the only copy of that party's own signature. A second caller here is a new
+// decision and supersedes that ADR.
 //
 // `os.RemoveAll`, so it takes whatever else is in the directory with it — including any leftover
 // `.nib-*.tmp` from an interrupted `atomicfile` write, which nothing else sweeps.
