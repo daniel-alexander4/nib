@@ -82,3 +82,25 @@ context left unrestored is written as before — an entry is never restored into
   pointed at is not fixed either; both are pdfcpu's and predate this. `pdfread.MergeRaw`'s restore is held by the
   guard and by no behaviour test. The checker's own search (`fontsTheValidatorLoses`, ADR-116) walks
   `e.Object` before validation and so has the object-stream blind spot §3 describes — unmeasured there.
+- **2026-10-10, the declared gaps measured (/pending 866) — one is a loss, and it is NOT restored here.** Each
+  entry of the same 331 documents was read without the validator, before and after a rewrite that changes
+  nothing, and compared by what it reaches (references followed, never printed), not object for object.
+  Carrying nothing: every `/Outlines` removed (17) had no `/First` (`validate/outlineTree.go:454`); every
+  `/AcroForm` removed but one (10 of 11) held `/DA`, `/DR` and an empty `/Fields` (`validate/form.go:744`);
+  `/Names` removed (3) held only an `/IDTree`, which is not a name-dictionary key — the same object the structure
+  root's own `/IDTree` still names in the two documents where it is not empty; `/Names` changed (5) lost an empty
+  `/EmbeddedFiles` (`validate/xReftable.go:316`, `:333`); and no surviving `/AcroForm`, `/Fields` or page
+  `/Annots` reaches anything different afterwards — those counts were a direct object made indirect or an array
+  built again. **The loss: an XFA-only form.** `form.go:734` and `:744` delete an `/AcroForm` whose `/Fields` is
+  absent or empty whatever else it holds, so veraPDF's `7.15-t01-fail-a.pdf` (eight XFA packets) and a hand-built
+  fixture of either shape are written with no `/XFA` and with `/NeedsRendering true` still in the catalog.
+  **It cannot be put back the way a font is.** The validator deletes the catalog's KEY, so at the write "the
+  validator took it" and "the operation took it" are the same catalog, where an emptied `/Font` entry is told
+  from a removed one (§4); `StripActive`, the signature strip and `pruneAcroForm` all end by having no form, and
+  a put-back would hand `StripActive`'s output the XFA scripts `Scan` reports and it exists to remove. pdfcpu's
+  merge also adopts a source's `/AcroForm` (`merge.go:632`), so the pre-move restore of §6 would graft one
+  document's XFA onto another. Restoring it needs the form to be SEEN between the read and the write, which §2
+  refused for fonts, and is a decision of its own. Two more, read from the source and shown on fixtures, in no
+  corpus document: an outline with one empty item dictionary is removed whole, titled bookmarks with it
+  (`outlineTree.go:406`, `:483`, `:471`), and a name tree whose only key is the empty string is dropped
+  (`xReftable.go:325`).
