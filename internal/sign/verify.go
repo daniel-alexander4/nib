@@ -921,8 +921,81 @@ func pdfcpuRead(pdf []byte) (ctx *model.Context, err error) {
 // of `Unsigned`. That is the safe direction: telling a user a broken document may carry a signature
 // costs them a look, where telling them a tampered signed document was never signed costs them the
 // thing they were relying on.
+//
+// **The token is a NAME, and a name may spell any of its characters `#xx`** (/pending 579, ISO 32000-1
+// 7.3.5): `/Byte#52ange` is `/ByteRange` to the library, to pdfcpu and to every other reader. A scan
+// for the plain spelling alone answered false for a validly signed document written that way —
+// measured: `Verify` read it `unsigned`, and a hybrid one was unsigned to `HasSignatureBlob` too, the
+// gate every rewrite asks. `nameIn` reads both spellings.
 func scanForSignatureBlob(pdf []byte) bool {
-	return bytes.Contains(pdf, []byte("/ByteRange"))
+	return nameIn(pdf, "ByteRange")
+}
+
+// nameIn reports whether pdf holds the name `/name` anywhere, spelled plainly or with any of its
+// characters as `#xx` escapes — the two byte scans' one reading of a name (`scanForSignatureBlob`,
+// `hybridReference`). Like the plain search it replaced it matches a longer name that begins with
+// name, and parses nothing. The plain search answers first, and a file with no `#` has no other
+// spelling to look for; only past both is each `/` read (measured over 64 MiB with no match: as the
+// plain search on dictionary-shaped bytes, 71 ms against 71, and 11× it — 422 ms — on nothing but `/`s).
+func nameIn(pdf []byte, name string) bool {
+	if bytes.Contains(pdf, []byte("/"+name)) {
+		return true
+	}
+	if bytes.IndexByte(pdf, '#') < 0 {
+		return false
+	}
+	for i := 0; i < len(pdf); {
+		j := bytes.IndexByte(pdf[i:], '/')
+		if j < 0 {
+			return false
+		}
+		i += j + 1
+		if nameAt(pdf[i:], name) {
+			return true
+		}
+	}
+	return false
+}
+
+// nameAt reports whether b, the bytes after a name's `/`, begin with name once `#xx` escapes are
+// decoded (as the library's `readName` decodes them).
+func nameAt(b []byte, name string) bool {
+	i := 0
+	for k := 0; k < len(name); k++ {
+		if i >= len(b) {
+			return false
+		}
+		c := b[i]
+		i++
+		if c == '#' {
+			if i+2 > len(b) {
+				return false
+			}
+			hi, lo := unhexDigit(b[i]), unhexDigit(b[i+1])
+			if hi < 0 || lo < 0 {
+				return false
+			}
+			c = byte(hi<<4 | lo)
+			i += 2
+		}
+		if c != name[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// unhexDigit is the value of one hexadecimal digit, or -1.
+func unhexDigit(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
 }
 
 // signerInfo projects a pdfsign verify.Signer onto the integrity-focused subset

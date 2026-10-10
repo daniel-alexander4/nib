@@ -411,8 +411,10 @@ func readableBySigner(pdf []byte) ([]byte, error) {
 
 // hybridReference reports whether pdf names a hybrid-reference `/XRefStm` anywhere. A byte scan, as
 // `signatureBlobPresent` uses it: it over-reports (the token in a string) and that routes an
-// ordinary file to a rewrite or the byte scan, never past a stream the library cannot see.
-func hybridReference(pdf []byte) bool { return bytes.Contains(pdf, []byte("/XRefStm")) }
+// ordinary file to a rewrite or the byte scan, never past a stream the library cannot see. The name
+// is read in either spelling (`nameIn`, /pending 579): pdfcpu follows `/XRef#53tm` as it follows
+// `/XRefStm`, and a signed file whose field only that stream lists read as unsigned.
+func hybridReference(pdf []byte) bool { return nameIn(pdf, "XRefStm") }
 
 // ErrTimestampAuthority reports that signing failed because the timestamp authority the
 // user named could not be used. Callers reprompt or offer to sign without one.
