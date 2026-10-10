@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/scaling"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -519,26 +521,43 @@ func reversed(s []string) []string {
 // TestStandardRoleIsLinearInTheChain — P03's phase-close review measured 60 s on the Tags panel's route for a
 // tree whose 20,000 elements each start a different link of one 20,000-name chain. Every link must now
 // answer the chain's end, in time proportional to the chain.
+//
+// The clock is `scaling.GrowsLinearly` over the chain length and not an absolute limit (/pending 841): a
+// fixed 2 s measured the machine's load as much as the walk. Without the memo the end-first pass walks
+// n-i links for link i, so ×4 the chain is ×16 the time.
 func TestStandardRoleIsLinearInTheChain(t *testing.T) {
-	const n = 20000
-	rm := map[string]string{}
-	for i := 0; i < n; i++ {
-		rm[fmt.Sprintf("T%d", i)] = fmt.Sprintf("T%d", i+1)
-	}
-	rm[fmt.Sprintf("T%d", n)] = "H2"
-	tree := &structTree{roleMap: rm}
-	start := time.Now()
-	for i := n; i >= 0; i-- { // end first, then start first: the memo must hold from either side
-		if got := standardRole(tree, fmt.Sprintf("T%d", i)); got != "H2" {
-			t.Fatalf("T%d = %q, want H2", i, got)
+	maps := map[int]map[string]string{}
+	chain := func(n int) map[string]string {
+		if rm, ok := maps[n]; ok {
+			return rm
 		}
+		rm := map[string]string{}
+		for i := 0; i < n; i++ {
+			rm[fmt.Sprintf("T%d", i)] = fmt.Sprintf("T%d", i+1)
+		}
+		rm[fmt.Sprintf("T%d", n)] = "H2"
+		maps[n] = rm
+		return rm
 	}
-	for i := 0; i <= n; i++ {
-		standardRole(tree, fmt.Sprintf("T%d", i))
-	}
-	if el := time.Since(start); el > 2*time.Second {
-		t.Fatalf("%d chain links took %v; the walk is not memoised", n, el)
-	}
+	scaling.GrowsLinearly(t, "standardRole over one chain", 2000, 8000, 8, func(n int) time.Duration {
+		link := make([]string, n+1)
+		for i := range link {
+			link[i] = fmt.Sprintf("T%d", i)
+		}
+		tree := &structTree{roleMap: chain(n)} // a fresh tree each time: the memo is the tree's
+		return scaling.TimeOnce(func() {
+			for i := n; i >= 0; i-- { // end first, then start first: the memo must hold from either side
+				if got := standardRole(tree, link[i]); got != "H2" {
+					t.Fatalf("T%d = %q, want H2", i, got)
+				}
+			}
+			for i := 0; i <= n; i++ {
+				if got := standardRole(tree, link[i]); got != "H2" {
+					t.Fatalf("T%d = %q on the second pass, want H2", i, got)
+				}
+			}
+		})
+	})
 }
 
 // TestAnIndirectRoleMapNameIsFollowed — P03's phase close: the checker dereferences a role map value stored as an
