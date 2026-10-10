@@ -171,7 +171,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 
 	// The two Go commands have no file to check, so only their presence in the
 	// contract can be asserted.
-	for _, cmd := range []string{"go build ./...", "go test -timeout 40m ./..."} {
+	for _, cmd := range []string{"go build ./...", "go test -timeout 90m ./..."} {
 		if !strings.Contains(contract, cmd) {
 			t.Errorf("CONTRIBUTING.md does not name %q", cmd)
 		}
@@ -245,8 +245,8 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// The timeout is part of the command, not decoration (/pending 746): `internal/pdfops` and
 		// `internal/uacheck` outrun the default 10 minutes under load, and a binary killed by it
 		// reports FAIL with no failing test, so a row that dropped it would name a gate that goes red
-		// over green code.
-		{"1", "`go test -timeout 40m ./...`"},
+		// over green code. 90 minutes since /pending 839: `internal/pdfops` outran 40 the same way.
+		{"1", "`go test -timeout 90m ./...`"},
 		{"2", "`./build/jsdomtest.sh`"},
 		{"3", "`./build/uirepro.sh`"},
 		{"4", "`./build/pairrepro.sh`"},
