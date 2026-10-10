@@ -254,6 +254,11 @@ func TestThePreHopEndStateMechanismIsStillWired(t *testing.T) {
 		{"s.stopListeningFor(",
 			"the pull no longer stops listening for a proceeding it has just learned is over, so " +
 				"the interactive slot stays taken for a ceremony that has ended"},
+		{"s.tellEndState(cer, t, cer.hasSigned())",
+			"the pull no longer asks whether this party has signed at the moment it tells them " +
+				"(/pending 666). It is started only for a party who has not, but it outlives the " +
+				"signing — the arm's context runs on through the re-delivery window — so a constant " +
+				"tells a party who signed that nothing of theirs is on the document"},
 		{"ceremony.OpenEndState(",
 			"the pull no longer opens the sealed end state against its anchor, which is the only " +
 				"thing standing between it and a published object somebody else wrote"},
