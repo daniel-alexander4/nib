@@ -54,14 +54,13 @@ Every *Gap* and *Unmeasured* row above, plus what the *Partial* rows say is miss
 
 - a fix from the check's results;
 - a WCAG check, and the 1 PDF/UA-1 rules Nib does not check;
-- proposing tables and figures;
-- removing a tree to retag;
+- proposing a table that has merged cells or no ruled lines, a ruled grid with fewer than a quarter of its cells filled, and a figure for a drawing made of lines and shapes (a person tags one as a region);
 - choosing a region by dragging on the page, a region that takes part of a line or part of content marked as one piece of decoration, tagging content a form XObject draws, and reordering by dragging on the page;
 - tag titles, and deleting a top-level tag that holds content itself;
 - editing one inline (id 0) element without numbering them all first (*Make inline tags editable*);
 - alt text measured on links and abbreviations;
 - artifacting an arbitrary selection;
-- ColSpan, RowSpan and Headers/IDs, and table recognition;
+- proposing ColSpan, RowSpan or Headers (they are set by hand in the tree editor), and naming a header cell written inline before it is given a number;
 - mapping a custom type onto another custom type, and retyping a tag to a custom type;
 - setting an existing document's language or title, and per-element language;
 - naming the fields of a form Nib did not author;
