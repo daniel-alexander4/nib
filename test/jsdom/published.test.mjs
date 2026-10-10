@@ -800,9 +800,8 @@ test('every field of every published shape has a reader in the file that declare
 // can see them come back.
 const COINCIDENTAL = {
   'attestationView.signer': 'read in Go by the side that SETS it (internal/p2p), never at the far end; the client renders signer identity from sign.Status instead. Its only match is `pending.signer`, a pendingView.',
-  'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
+  'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash, oneProceeding, valid and commits (/pending 826), not this.',
   'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',
-  'attestationView.valid': 'as above. Matches are `s.valid`, a sign.SignerInfo.',
   // Reached through docResponse.Signature (and its two embedders) once the nested walk landed —
   // /pending 259. Both are read in Go only by the side that SETS them (internal/p2p builds every
   // attestation from them), which by this file\'s own updateResponse.managed doctrine is no
