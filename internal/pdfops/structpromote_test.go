@@ -285,10 +285,19 @@ func TestASlotThatNamesAnotherElementIsLeftAndDoesNotRefuseThePromotion(t *testi
 	if !equalInts(rows[1], []int{sect}) {
 		t.Errorf("page 2's row reads %v, want the promoted Sect (%d)", rows[1], sect)
 	}
-	// What the checker now says is the defect that was there: slot 1 names 20 while the Sect claims it.
+	// What the checker now says is the defects that were there: slot 1 names 20 while the Sect claims it, and
+	// the form's row names 31 while the Sect's MCR claims its /MCID 0 — the second seen since an MCID in a
+	// stream is checked against the stream's own row (/pending 665).
 	_, defects := checkTree(t, out)
-	if len(defects) != 1 || !strings.HasPrefix(defects[0].key, "mcid-owner key=0 mcid=1 ") {
-		t.Errorf("the promoted tree's defects read %v — want the one conflict the tree already had, now nameable", defects)
+	var keys []string
+	for _, d := range defects {
+		keys = append(keys, d.key[:strings.LastIndex(d.key, " ")])
+	}
+	if len(keys) == 2 && keys[0] > keys[1] {
+		keys[0], keys[1] = keys[1], keys[0]
+	}
+	if got, want := strings.Join(keys, "; "), "mcid-owner key=0 mcid=1; mcid-owner key=3 mcid=0"; got != want {
+		t.Errorf("the promoted tree's defects read [%s], want [%s] — the two conflicts the tree already had, now nameable", got, want)
 	}
 }
 
