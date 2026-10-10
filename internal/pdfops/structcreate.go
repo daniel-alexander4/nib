@@ -87,7 +87,7 @@ func createElement(ctx *model.Context, tree *structTree, ed structEdit) error {
 func deleteElement(ctx *model.Context, tree *structTree, e *structElem) error {
 	parent := e.parent
 	if parent != nil && parent.objNr == 0 {
-		return fmt.Errorf("%w: element %d is inside a tag written inline, which has no object number, so nothing could name that tag as the owner of what element %d holds — change element %d's type instead", ErrTagsReview, e.objNr, e.objNr, e.objNr)
+		return fmt.Errorf("%w: element %d is inside a tag written inline, which has no object number, so nothing could name that tag as the owner of what element %d holds — make inline tags editable first (the promote edit), then delete it", ErrTagsReview, e.objNr, e.objNr)
 	}
 	entries, _ := kidsArray(ctx, e.dict)
 	if parent == nil {

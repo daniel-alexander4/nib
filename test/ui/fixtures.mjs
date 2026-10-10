@@ -129,6 +129,38 @@ export function makeCJKPDF(text = '日本語') {
   return Buffer.from(out, 'latin1');
 }
 
+// makeInlineTaggedPDF builds a TAGGED one-page document of the two shapes no document Nib tags itself has
+// (ADR-126, ADR-127): a structure element written INLINE in its parent's /K — a Sect with no object number,
+// owning the marked content "Inside" — and a /RoleMap, under which the heading is typed `Heading 1`. Its
+// tree reads Document › Heading 1 "Title", Sect "Inside" › P "Body".
+export function makeInlineTaggedPDF() {
+  const content = ['Title', 'Inside', 'Body']
+    .map((w, i) => `/P <</MCID ${i}>> BDC\nBT /F1 24 Tf 72 ${700 - 40 * i} Td (${w}) Tj ET\nEMC\n`).join('');
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 6 0 R /Lang (en-GB) >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /StructParents 0 >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << /Heading#201 /H1 /Unused /Note >> >>',
+    '<< /Type /StructElem /S /Document /P 6 0 R /K [9 0 R << /S /Sect /Pg 3 0 R /K [1 10 0 R] >>] >>',
+    '<< /Nums [0 [9 0 R null 10 0 R]] >>',
+    '<< /Type /StructElem /S /Heading#201 /P 7 0 R /Pg 3 0 R /K [0] >>',
+    '<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [2] >>',
+  ];
+  let out = '%PDF-1.7\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
 // writeRawFixture writes already-built bytes into the run's work dir.
 export function writeRawFixture(name, bytes) {
   const dir = path.join(WORK, 'fixtures');

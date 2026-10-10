@@ -142,7 +142,8 @@ test('selecting an element shows what can be changed about it, and says when not
   for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditUp', 'tagEditDown', 'tagEditArtifact']) {
     assert.equal($(id).disabled, true, `${id} is enabled on an element written inline, which no edit can name`);
   }
-  assert.match($('tagEditStatus').textContent, /inline/, 'the bar does not say why an inline element cannot be edited');
+  assert.equal($('tagEditInlineWhy').hidden, false, 'the bar does not say why an inline element cannot be edited');
+  assert.match($('tagEditInlineWhy').textContent, /inline/, 'the line shown for an inline element does not say it is inline');
 
   await select(0);
   assert.equal($('tagEditUp').disabled || $('tagEditDown').disabled, true, 'the root, with no siblings, can move');
@@ -441,7 +442,8 @@ test('a move that cannot be made is disabled and says why, where a screen reader
     assert.equal($(id).disabled, true, `${id} is enabled on an element written inline, which no edit can name`);
   }
   assert.deepEqual([why('tagEditIn'), why('tagEditOut')], ['', ''], 'an inline element is given a second reason beside the bar\'s own');
-  assert.match($('tagEditStatus').textContent, /inline/, 'the bar does not say why an inline element cannot be edited');
+  assert.equal($('tagEditInlineWhy').hidden, false, 'the bar does not say why an inline element cannot be edited');
+  assert.match($('tagEditInlineWhy').textContent, /inline/, 'the line shown for an inline element does not say it is inline');
 
   // A Document holding an INLINE section, which holds a paragraph, which holds a span.
   tree = {

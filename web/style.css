@@ -708,6 +708,15 @@ body > div[id$="Modal"] {
 .tagedit .tagsub { font-size: 12px; font-weight: 600; color: var(--text); }
 .tagpieces { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 14em; overflow: auto; }
 .tagpieces label { align-items: flex-start; overflow-wrap: anywhere; }
+.tagroles { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--surface0); font-size: 12px; }
+.tagroles > summary { cursor: pointer; font-weight: 600; color: var(--text); padding: 2px 0; }
+.tagroles > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.tagrolelist { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tagrolelist li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tagrolelist label { display: inline-flex; gap: 4px; align-items: center; }
+.tagrolelist .tagrolename { flex: 1 1 100%; font-weight: 600; overflow-wrap: anywhere; }
+.tagrolelist p { flex: 1 1 100%; margin: 0; }
+.tagroleadd { border-top: 0; padding-top: 0; }
 /* The Reading Order view (P09.S06c): a number at each element's top-left corner, over the page. */
 .tag-order { position: absolute; z-index: 6; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
   border-radius: 8px; background: var(--blue); color: var(--base); font: 600 10px/16px system-ui, sans-serif;

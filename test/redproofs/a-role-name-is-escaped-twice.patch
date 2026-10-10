@@ -1,0 +1,11 @@
+diff --git a/internal/pdfops/structrolemap.go b/internal/pdfops/structrolemap.go
+--- a/internal/pdfops/structrolemap.go
++++ b/internal/pdfops/structrolemap.go
+@@ -115,6 +115,6 @@
+ 		rm = types.Dict{}
+ 		tree.root["RoleMap"] = rm
+ 	}
+-	rm[role] = types.Name(ed.value)
++	rm[types.EncodeName(role)] = types.Name(ed.value)
+ 	return nil
+ }

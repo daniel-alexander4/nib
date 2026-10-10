@@ -78,8 +78,9 @@ func tagWrite(args []string, mode string) int {
 	if mode == "edit" {
 		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
 		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
-			"\"parent\", \"index\", \"headers\", \"page\", \"rect\", \"pieces\", \"alt\"}]} — kind retype, move, alt, scope,\n" +
-			"colspan, rowspan, headers, artifact, create, delete or region; element an id from \"nib tag tree\"; headers\n" +
+			"\"parent\", \"index\", \"headers\", \"page\", \"rect\", \"pieces\", \"alt\", \"role\"}]} — kind retype, move, alt, scope,\n" +
+			"colspan, rowspan, headers, artifact, create, delete, region, promote or rolemap; element an id from\n" +
+			"\"nib tag tree\"; headers\n" +
 			"the ids of the header cells that head a table cell. create adds an empty tag: \"value\" its type,\n" +
 			"\"parent\" the id it goes under (0 or -1: the top of the tree), \"index\" its place among that tag's tags\n" +
 			"(left out: last), and no \"element\". delete takes a tag away and keeps what it held, which moves up\n" +
@@ -88,7 +89,11 @@ func tagWrite(args []string, mode string) int {
 			"tag owns — text, pictures, drawn graphics — as ONE new tag: \"value\", \"parent\" and \"index\" as create's,\n" +
 			"\"page\", and \"rect\" [left, top, right, bottom] as fractions of the page as it is shown (0 0 is its top\n" +
 			"left) — or \"pieces\", the \"rect\" of each piece \"nib tag untagged --json\" lists — and \"alt\", which a\n" +
-			"Figure needs. A rect takes what is centred in it; a piece takes what lies inside it. A signed document is refused."
+			"Figure needs. A rect takes what is centred in it; a piece takes what lies inside it.\n" +
+			"promote takes nothing else: it gives every tag written inline (id 0 in \"nib tag tree\") a number of its\n" +
+			"own, so that it can be named — read the tree again for the ids. rolemap sets what one of the document's\n" +
+			"own type names means: \"role\" the name, \"value\" the standard type it is mapped to, or \"\" to remove a\n" +
+			"mapping no tag uses any more. A signed document is refused."
 	}
 	if mode == "remove" {
 		usage = "nib tag remove IN -o OUT  |  nib tag remove -w IN"
@@ -178,7 +183,8 @@ func tagTree(args []string) int {
 	fs.BoolVar(&asJSON, "json", false, "print the tree as JSON, in the shape the Tags panel reads")
 	fs.Usage = usageFunc(fs, "nib tag tree IN [--json]",
 		"Print the document's existing structure tree in reading order: each element's id (what an edit names),\n"+
-			"type, page, alt text, header scope, a table cell's spans and header cells, and text. Writes nothing.")
+			"type, page, alt text, header scope, a table cell's spans and header cells, and text; then the role map —\n"+
+			"each of the document's own type names, what it is mapped to, and how many tags carry it. Writes nothing.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -257,8 +263,20 @@ func tagTree(args []string) int {
 		// parts of the line carry no control character, so the whole line goes through the door.
 		fmt.Println(termText(line))
 	}
+	// The role map (ADR-127): what each of the document's own type names means, and how many tags carry it.
+	if len(tree.RoleMap) > 0 {
+		fmt.Println("role map:")
+		for _, m := range tree.RoleMap {
+			line := fmt.Sprintf("  %s → %s", m.Name, m.To)
+			if m.Standard != m.To {
+				line += fmt.Sprintf(" (read as %s)", m.Standard)
+			}
+			// The names are the document's own (/pending 727).
+			fmt.Println(termText(fmt.Sprintf("%s  %d tag(s)", line, m.Elements)))
+		}
+	}
 	if tree.Unaddressable > 0 {
-		errf("%d element(s) are written inline (id 0) and cannot be named by an edit", tree.Unaddressable)
+		errf("%d element(s) are written inline (id 0) and cannot be named by an edit — a \"promote\" edit gives each a number (\"nib tag edit\")", tree.Unaddressable)
 	}
 	return 0
 }

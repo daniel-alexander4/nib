@@ -652,6 +652,11 @@
              change is applied by a button (or Enter in the alt field) — a select that applied on change
              would send an edit for every arrow press a keyboard user makes through its options. -->
         <div id="tagEditBar" class="tagedit" hidden>
+          <!-- A tag written inline has no number an edit can name (ADR-126). Shown in place of a dead end: one
+               line that says so, and the one button that gives every such tag in the document a number. -->
+          <p id="tagEditInlineWhy" class="libhint" hidden>This tag is written inline in the file, so it cannot be changed until it is given a number of its own.</p>
+          <button id="tagEditPromote" aria-describedby="tagEditInlineWhy tagEditPromoteHelp" hidden>Make inline tags editable</button>
+          <p id="tagEditPromoteHelp" class="libhint" hidden>Gives every inline tag in this document a number. Nothing a screen reader reads changes, and Ctrl+Z takes it back as one step.</p>
           <label>Type <select id="tagEditType"></select></label>
           <button id="tagEditTypeApply">Change type</button>
           <label>Alt text <input id="tagEditAlt" type="text"></label>
@@ -691,6 +696,21 @@
           <button id="tagUntaggedApply">Tag selected</button>
           <p id="tagUntaggedStatus" class="libhint" role="status"></p>
         </div>
+        <!-- The role map (ADR-127): what each of the document's own tag types means. A native details, closed
+             until asked for, last in the panel so it adds one Tab stop and none before the controls above.
+             Native controls, and a button applies — never a select's change event. -->
+        <details id="tagRoleMap" class="tagroles" hidden>
+          <summary id="tagRoleSummary">Role map</summary>
+          <p id="tagRoleHelp" class="libhint">A document may use tag types of its own. The role map says which standard type each one means, so a screen reader knows a “Heading 1” is a heading. A type mapped to nothing cannot be announced.</p>
+          <ul id="tagRoleList" class="tagrolelist"></ul>
+          <div class="tagedit tagroleadd" role="group" aria-labelledby="tagRoleAddTitle">
+            <p id="tagRoleAddTitle" class="tagsub">Map another type</p>
+            <label>Custom type <input id="tagRoleNewName" type="text" autocomplete="off" spellcheck="false"></label>
+            <label>means <select id="tagRoleNewType"></select></label>
+            <button id="tagRoleAdd">Add</button>
+          </div>
+          <p id="tagRoleStatus" class="libhint" role="status"></p>
+        </details>
       </div>
       <div id="library" class="panel">
         <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use <strong>Finalize &amp; sign</strong>, on the <strong>Secure</strong> tab, to add a cryptographic signature.</p>

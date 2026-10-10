@@ -66,11 +66,20 @@ type tagTreeElementView struct {
 	PageBox  [4]float64 `json:"pageBox"`
 }
 
+// tagRoleView is one entry of the open document's role map on the wire (ADR-127).
+type tagRoleView struct {
+	Name     string `json:"name"`
+	To       string `json:"to"`
+	Standard string `json:"standard"`
+	Elements int    `json:"elements"`
+}
+
 // tagTreeResponse is the open document's existing structure tree.
 type tagTreeResponse struct {
 	Tagged        bool                 `json:"tagged"`
 	Unaddressable int                  `json:"unaddressable"`
 	Elements      []tagTreeElementView `json:"elements"`
+	RoleMap       []tagRoleView        `json:"roleMap"`
 }
 
 // untaggedPieceView is one piece of a page no structure element owns, on the wire (ADR-125).
@@ -143,7 +152,10 @@ func (s *Server) handleTagsTree(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnprocessableEntity, "could not read the structure: "+strings.TrimPrefix(err.Error(), "pdfops: "))
 		return
 	}
-	out := tagTreeResponse{Tagged: tree.Tagged, Unaddressable: tree.Unaddressable, Elements: []tagTreeElementView{}}
+	out := tagTreeResponse{Tagged: tree.Tagged, Unaddressable: tree.Unaddressable, Elements: []tagTreeElementView{}, RoleMap: []tagRoleView{}}
+	for _, m := range tree.RoleMap {
+		out.RoleMap = append(out.RoleMap, tagRoleView{Name: m.Name, To: m.To, Standard: m.Standard, Elements: m.Elements})
+	}
 	for _, e := range tree.Elements {
 		// Kids and Headers are never nil: ReadStructure copies each into a fresh slice, and its own test holds that.
 		out.Elements = append(out.Elements, tagTreeElementView{

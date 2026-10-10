@@ -849,3 +849,16 @@ home today.
   sequence taken whole has its opener rewritten, and part of one is refused. `GET /api/tags/untagged` and
   `nib tag untagged` list what a page draws that no tag owns. This is where a drawn graphic becomes a Figure.
   The region is chosen from a list, not by dragging.
+- **[ADR-126 — an inline tag is given a number, not an address](126-an-inline-tag-is-given-a-number-not-an-address.md)**
+  — `promote` joins the tree editor's batch and names no element: every element written inline becomes an object
+  of its own, in place and in order, with the `/P`, the kids' `/P` and the `/ParentTree` slots a reference makes
+  sayable — a slot only where it is null or absent, a row grown only to 65,536. A tree with none is refused. The
+  defects the checker could not name of an element with no number are not blamed on the promotion; a null slot
+  it should have filled is. The editor shows an inline tag one line and one button, *Make inline tags editable*.
+  No producer in the local corpus writes one (0 of 316 tagged documents).
+- **[ADR-127 — the role map is published, and a custom type maps only to a standard one](127-the-role-map-is-published-and-a-custom-type-maps-only-to-a-standard-one.md)**
+  — the tree's answer carries `roleMap` (name, target as written, the standard type it reads as, how many tags
+  carry it), and `rolemap` sets, replaces or removes one entry. The target is always a standard type, so no
+  chain or loop can be written; a standard type is never the name; a mapping is not removed while tags use it.
+  Names are stored as pdfcpu reads them — never escaped by hand. A *Role map* section in the panel, a native
+  details, a button per change.

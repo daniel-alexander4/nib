@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structpromote.go b/internal/pdfops/structpromote.go
+--- a/internal/pdfops/structpromote.go
++++ b/internal/pdfops/structpromote.go
+@@ -96,7 +96,7 @@
+ 		if at < 0 {
+ 			return nil, fmt.Errorf("pdfops: an inline element of type /%s is not in its parent's /K as read, so it cannot be given a number", e.kind)
+ 		}
+-		kids[at] = *ref
++		kids = append(append(kids[:at:at], kids[at+1:]...), *ref)
+ 		set(kids)
+ 		e.objNr = ref.ObjectNumber.Value() // read by the element's own kids, promoted after it
+ 		promoted[e.objNr] = true

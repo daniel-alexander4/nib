@@ -300,7 +300,10 @@ fi
 # 50 since ADR-125 (tagregion.test.mjs): a paragraph marked as decoration, listed as untagged and tagged again by a
 # real keyboard against the real server — Tab order, Space on a tick box, the outline on its page, and the tree and
 # the check reading as they did at the start.
-expect_files=50
+# 52 since ADR-126 and ADR-127 (tagpromote.test.mjs, tagrolemap.test.mjs): on a file that really has a tag written
+# inline and a role map — the inline tag reached by the arrow keys, numbered, retyped and undone twice; and a
+# mapping changed in a native details by typing and Enter, the heading's line in the tree reading its new type.
+expect_files=52
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

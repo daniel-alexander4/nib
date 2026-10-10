@@ -114,10 +114,12 @@ func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 }
 
 // DecodeEdits reads a batch of edits: `{"edits": [{"kind", "element", "value", "parent", "index", "headers", "page",
-// "rect", "pieces", "alt"}]}`. An absent index appends — Go's zero value would put a moved or created element first.
+// "rect", "pieces", "alt", "role"}]}`. An absent index appends — Go's zero value would put a moved or created element first.
 // A create (ADR-124) names its type in "value" and no element; a parent of -1 is the structure tree root. A region
 // (ADR-125) is a create that also names a "page" and what on it to take — "rect", or the "pieces" to take in its
-// place, each [left, top, right, bottom] as fractions of the page as displayed — and its "alt".
+// place, each [left, top, right, bottom] as fractions of the page as displayed — and its "alt". A promote (ADR-126)
+// names nothing; a rolemap (ADR-127) names a custom type in "role" and the standard type it means in "value" — ""
+// removes the mapping.
 func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 	var body struct {
 		Edits []struct {
@@ -133,6 +135,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 			Rect   []float64   `json:"rect"`
 			Pieces [][]float64 `json:"pieces"`
 			Alt    string      `json:"alt"`
+			Role   string      `json:"role"`
 		} `json:"edits"`
 	}
 	if err := json.NewDecoder(r).Decode(&body); err != nil {
@@ -145,7 +148,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 			index = *e.Index
 		}
 		edits[i] = pdfops.StructureEdit{Kind: e.Kind, Element: e.Element, Value: e.Value, Parent: e.Parent, Index: index, Headers: e.Headers,
-			Page: e.Page, Alt: e.Alt}
+			Page: e.Page, Alt: e.Alt, Role: e.Role}
 		rects := e.Pieces
 		if e.Rect != nil {
 			rects = append([][]float64{e.Rect}, rects...)

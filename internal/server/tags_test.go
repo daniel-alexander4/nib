@@ -315,6 +315,7 @@ func TestTheCLIsJSONIsTheRoutesShape(t *testing.T) {
 	for _, c := range []struct{ door, route any }{
 		{pdfops.StructureTree{}, tagTreeResponse{}},
 		{pdfops.StructureElement{}, tagTreeElementView{}},
+		{pdfops.RoleMapping{}, tagRoleView{}},
 		{pdfops.TagProposal{}, tagProposalResponse{}},
 		{pdfops.TagElement{}, tagElementView{}},
 		{pdfops.TagPageNote{}, tagPageView{}},

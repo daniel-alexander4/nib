@@ -64,6 +64,8 @@ const PUBLISHED = [
   // The existing structure tree (P09.S06a); its reader is the Tags panel.
   { type: 'tagTreeResponse', readers: ['web/app.js'] },
   { type: 'tagTreeElementView', readers: ['web/app.js'] },
+  // The document's role map (ADR-127), nested in tagTreeResponse; its reader is the panel's Role map section.
+  { type: 'tagRoleView', readers: ['web/app.js'] },
   // What a page draws that no tag owns (ADR-125); its reader is the panel's Tag untagged content section.
   { type: 'untaggedResponse', readers: ['web/app.js'] },
   { type: 'untaggedPieceView', readers: ['web/app.js'] },

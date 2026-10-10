@@ -675,7 +675,7 @@ func TestADeleteThatWouldBreakTheTreeIsRefused(t *testing.T) {
 		{"a top-level element that holds content", taggedFixture(), 8, ErrTagsReview, []string{"element 8", "top of the structure tree", "change its type", "decoration"}},
 		{"a top-level element holding an element and content", bytes.Replace(deleteFixture(false, false), []byte("/K [20 0 R 21 0 R 23 0 R 24 0 R 30 0 R]"), []byte("/Pg 3 0 R /K [20 0 R 21 0 R 23 0 R 24 0 R 30 0 R << /Type /MCR /MCID 3 >>]"), 1), 8, ErrTagsReview, []string{"element 8", "top of the structure tree"}},
 		{"the last element of the tree", emptyOnly, 8, ErrTagsReview, []string{"element 8", "last element", "remove all tags"}},
-		{"an element inside one written inline", underInline, 9, ErrTagsReview, []string{"element 9", "written inline", "change element 9's type"}},
+		{"an element inside one written inline", underInline, 9, ErrTagsReview, []string{"element 9", "written inline", "make inline tags editable first"}},
 		{"an element written inline", editFixture(), 0, ErrTagsReview, []string{"written inline has no object number"}},
 		{"an element the tree does not have", editFixture(), 99, ErrTagsStale, []string{"element 99"}},
 	} {
