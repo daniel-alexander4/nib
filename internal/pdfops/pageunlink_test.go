@@ -158,6 +158,219 @@ func TestNoRoadFromAKeptAnnotationShipsARemovedPage(t *testing.T) {
 	}
 }
 
+// removedScreen, removedMovie and removedField put an annotation of the kind an action needs on removed
+// page 1; uriNext is an action that names no page, behind the one under test.
+const (
+	removedScreen = "<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] /Contents (onremovedpage) /P 3 0 R >>"
+	removedMovie  = "<< /Type /Annot /Subtype /Movie /Rect [0 0 10 10] /Contents (onremovedpage) /P 3 0 R /Movie << /F (m.mov) >> >>"
+	removedField  = "<< /Type /Annot /Subtype /Widget /FT /Tx /T (gone) /TU (onremovedpage) /Rect [0 0 10 10] /P 3 0 R >>"
+	uriNext       = "/Next << /S /URI /URI (https://example.org) >>"
+)
+
+// link is annotation 11 on kept page 2, carrying action.
+func link(action string) string {
+	return "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /P 4 0 R /A << " + action + " >> >>"
+}
+
+// brokenActions is `/pending 835`: every action type that names an annotation, a field or a bead, with
+// what it names on removed page 1. `want` is the `/S` chain the kept link must be left with — "" for no
+// `/A` at all — and `check` reads what a surviving action is left holding.
+var brokenActions = []struct {
+	name  string
+	extra map[int]string
+	want  string
+	check func(t *testing.T, xt *model.XRefTable, act types.Dict)
+}{
+	{"a /Hide of one annotation, with a /Next", map[int]string{
+		11: link("/S /Hide /T 10 0 R " + uriNext),
+	}, "URI", nil},
+	{"a /Hide of a list that is all on the removed page", map[int]string{
+		11: link("/S /Hide /T [10 0 R]"),
+	}, "", nil},
+	{"a /Hide of a list held as its own object", map[int]string{
+		11: link("/S /Hide /T 12 0 R"),
+		12: "[10 0 R]",
+	}, "", nil},
+	{"a /Hide of a list with one target still on a page", map[int]string{
+		11: link("/S /Hide /T [10 0 R 11 0 R]"),
+	}, "Hide", func(t *testing.T, xt *model.XRefTable, act types.Dict) {
+		if got := derefArray(xt, act["T"]); len(got) != 1 {
+			t.Errorf("the /Hide's /T is %v, want the one target that is still on a page", got)
+		}
+	}},
+	{"a /Rendition with an /OP", map[int]string{
+		10: removedScreen,
+		11: link("/S /Rendition /OP 1 /AN 10 0 R " + uriNext),
+	}, "URI", nil},
+	{"a script-only /Rendition", map[int]string{
+		10: removedScreen,
+		11: link("/S /Rendition /JS (1) /AN 10 0 R"),
+	}, "Rendition", func(t *testing.T, _ *model.XRefTable, act types.Dict) {
+		if _, has := act["AN"]; has {
+			t.Errorf("the rendition action still names its screen annotation: %v", act)
+		}
+	}},
+	{"a /GoTo3DView", map[int]string{
+		11: link("/S /GoTo3DView /TA 10 0 R /V 0"),
+	}, "", nil},
+	{"a /RichMediaExecute", map[int]string{
+		11: link("/S /RichMediaExecute /TA 10 0 R /CMD << /C (go) >> " + uriNext),
+	}, "URI", nil},
+	{"a /Movie", map[int]string{
+		10: removedMovie,
+		11: link("/S /Movie /Annotation 10 0 R"),
+	}, "", nil},
+	{"a /ResetForm of the one field that went", map[int]string{
+		10: removedField,
+		11: link("/S /ResetForm /Fields [10 0 R] " + uriNext),
+	}, "URI", nil},
+	{"a /SubmitForm of the one field that went", map[int]string{
+		10: removedField,
+		11: link("/S /SubmitForm /F << /FS /URL /F (https://example.org/f) >> /Fields [10 0 R]"),
+	}, "", nil},
+	{"a /Thread whose only bead went", map[int]string{
+		3:  "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [10 0 R] /B [20 0 R] >>",
+		11: link("/S /Thread /D 19 0 R " + uriNext),
+		19: "<< /Type /Thread /F 20 0 R >>",
+		20: "<< /Type /Bead /T 19 0 R /N 20 0 R /V 20 0 R /P 3 0 R /R [0 0 10 10] >>",
+	}, "URI", nil},
+	{"a /Thread whose first bead went", map[int]string{
+		3:  "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [10 0 R] /B [20 0 R] >>",
+		4:  "<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Annots [11 0 R] /B [21 0 R 22 0 R] >>",
+		11: link("/S /Thread /D 19 0 R /B 20 0 R"),
+		19: "<< /Type /Thread /F 20 0 R >>",
+		20: "<< /Type /Bead /T 19 0 R /N 21 0 R /V 22 0 R /P 3 0 R /R [0 0 10 10] >>",
+		21: "<< /Type /Bead /T 19 0 R /N 22 0 R /V 20 0 R /P 4 0 R /R [0 20 10 30] >>",
+		22: "<< /Type /Bead /T 19 0 R /N 20 0 R /V 21 0 R /P 4 0 R /R [0 40 10 50] >>",
+	}, "Thread", func(t *testing.T, xt *model.XRefTable, act types.Dict) {
+		if _, has := act["B"]; has {
+			t.Errorf("the thread action still names the bead that went: %v", act)
+		}
+		ringIsTheKeptBeads(t, xt, derefDict(xt, act["D"]))
+	}},
+	// No action names this thread: only the kept page's own /B reaches it.
+	{"an article whose first bead went, named by no action", map[int]string{
+		3:  "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [10 0 R] /B [20 0 R] >>",
+		4:  "<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Annots [11 0 R] /B [21 0 R 22 0 R] >>",
+		11: link("/S /URI /URI (https://example.org)"),
+		19: "<< /Type /Thread /F 20 0 R >>",
+		20: "<< /Type /Bead /T 19 0 R /N 21 0 R /V 22 0 R /P 3 0 R /R [0 0 10 10] >>",
+		21: "<< /Type /Bead /T 19 0 R /N 22 0 R /V 20 0 R /P 4 0 R /R [0 20 10 30] >>",
+		22: "<< /Type /Bead /T 19 0 R /N 20 0 R /V 21 0 R /P 4 0 R /R [0 40 10 50] >>",
+	}, "URI", func(t *testing.T, xt *model.XRefTable, _ types.Dict) {
+		root, _ := xt.Catalog()
+		leaves, _, _ := collectLeaves(xt, root)
+		beads := derefArray(xt, leaves[0].dic["B"])
+		if len(beads) != 2 {
+			t.Fatalf("the kept page's /B is %v, want its two beads", beads)
+		}
+		ringIsTheKeptBeads(t, xt, derefDict(xt, derefDict(xt, beads[0])["T"]))
+	}},
+}
+
+// ringIsTheKeptBeads walks thread's beads from its first: every bead names a page the output holds and
+// its neighbours both ways, the first carries /T, and the ring closes having read the two beads of the
+// kept page in their order.
+func ringIsTheKeptBeads(t *testing.T, xt *model.XRefTable, thread types.Dict) {
+	t.Helper()
+	first, ok := thread["F"].(types.IndirectRef)
+	if !ok {
+		t.Fatalf("the thread has no first bead: %v", thread)
+	}
+	pages := map[int]bool{}
+	root, _ := xt.Catalog()
+	leaves, _, _ := collectLeaves(xt, root)
+	for _, l := range leaves {
+		pages[l.ref.ObjectNumber.Value()] = true
+	}
+	rects := ""
+	cur, prev := first, types.IndirectRef{}
+	for i := 0; i < 5; i++ {
+		b := derefDict(xt, cur)
+		if p, isRef := b["P"].(types.IndirectRef); !isRef || !pages[p.ObjectNumber.Value()] {
+			t.Fatalf("bead %v names no page of the output as its /P: %v", cur, b)
+		}
+		if v, isRef := b["V"].(types.IndirectRef); i > 0 && (!isRef || v != prev) {
+			t.Errorf("bead %v has /V %v, want the bead before it %v", cur, b["V"], prev)
+		}
+		if i == 0 && b["T"] == nil {
+			t.Errorf("the thread's first bead has no /T: %v", b)
+		}
+		rects += fmt.Sprint(derefArray(xt, b["R"])[1]) + " "
+		next, isRef := b["N"].(types.IndirectRef)
+		if !isRef {
+			t.Fatalf("bead %v has no /N: %v", cur, b)
+		}
+		prev, cur = cur, next
+		if cur == first {
+			break
+		}
+	}
+	if rects != "20 40 " {
+		t.Errorf("the ring from the thread's first bead reads beads at %q, want the two on the kept page in their order", rects)
+	}
+}
+
+// TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid — `/pending 835`. The net cut the reference
+// and left the action: a `/Hide` with no `/T`, a bead with no `/P`. Each case is read back two ways —
+// pdfcpu's own validator over the output, which is what names a required entry as missing, and the
+// chain the kept link is left with.
+func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
+	doors := map[string]func([]byte) ([]byte, error){
+		"RemovePages": func(src []byte) ([]byte, error) { return RemovePages(src, []string{"1"}) },
+		"Collect":     func(src []byte) ([]byte, error) { return Collect(src, []string{"2"}) },
+	}
+	for _, c := range brokenActions {
+		for door, run := range doors {
+			t.Run(door+"/"+c.name, func(t *testing.T) {
+				// The pages draw a rectangle and name no font: roadDoc's font dictionary is one pdfcpu's
+				// strict mode refuses for itself, and this test's question is the action.
+				objs := map[int]string{
+					2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+					5: stream("0 0 10 10 re f"),
+					6: stream("0 0 10 10 re f"),
+				}
+				for k, v := range c.extra {
+					objs[k] = v
+				}
+				src := roadDoc("11 0 R", objs)
+				if !parsedStringsContain(t, src, "onremovedpage") {
+					t.Fatal("setup: the source holds no annotation on the removed page")
+				}
+				out, err := run(src)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if parsedStringsContain(t, out, "onremovedpage") {
+					t.Error("the removed page's annotation is in the output")
+				}
+				if d := danglingRefs(t, out); len(d) > 0 {
+					t.Errorf("the output names object(s) %v it does not hold", d)
+				}
+				ctx := readCtx(t, out)
+				pages := keptAnnots(t, out)
+				if len(pages) != 1 || len(pages[0]) != 1 {
+					t.Fatalf("want one page with the link on it, got %v", pages)
+				}
+				// STRICT, because pdfcpu's relaxed mode — its default — does not read an annotation's action
+				// at all: measured, a `/Hide` with no `/T` validates relaxed and is refused strict.
+				strict := model.NewDefaultConfiguration()
+				strict.ValidationMode = model.ValidationStrict
+				if verr := api.Validate(bytes.NewReader(out), strict); verr != nil {
+					t.Errorf("pdfcpu's validator refuses the output: %v", verr)
+				}
+				act := derefDict(ctx.XRefTable, pages[0][0]["A"])
+				if got := strings.Join(actionChain(act), ","); got != c.want {
+					t.Fatalf("the link's action chain is %q, want %q: %v", got, c.want, pages[0][0])
+				}
+				if c.check != nil {
+					c.check(t, ctx.XRefTable, act)
+				}
+			})
+		}
+	}
+}
+
 // eachParsedObject calls fn with every direct object inside every object pdf holds, parsed — so an
 // object in a compressed object stream is seen as well as one written plainly.
 func eachParsedObject(t *testing.T, pdf []byte, fn func(xt *model.XRefTable, o types.Object)) {
