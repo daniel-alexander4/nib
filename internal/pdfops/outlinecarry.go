@@ -92,10 +92,10 @@ import (
 //
 // An outline item may carry its navigation in `/A` rather than `/Dest`, and an action can be
 // `/Launch`, `/JavaScript`, `/SubmitForm` or `/GoToR` — and can CHAIN to one through `/Next`, which
-// is the precise trick `eachAction`'s header records catching in annotations. Named search:
-// `grep -n "Outlines\|Outline" internal/pdfops/scan.go` returns nothing, so neither `Scan` nor
-// `StripActive` has ever walked the outline. Carrying `/A` would therefore widen an action surface
-// nib's own scanner does not inspect, in a subset that dropped the whole thing for free yesterday.
+// is the precise trick `eachAction`'s header records catching in annotations. When this was written
+// neither `Scan` nor `StripActive` walked the outline (they do since `/pending 580`, through
+// `eachOutlineItem`), and carrying `/A` would have widened an action surface nib's own scanner did
+// not inspect, in a subset that dropped the whole thing for free the day before.
 //
 // So a `/S /GoTo` action is read for its `/D` and REWRITTEN as a plain `/Dest`, and `/A` is dropped
 // outright — chain and all. Navigation is preserved; the executable surface after this change is the
