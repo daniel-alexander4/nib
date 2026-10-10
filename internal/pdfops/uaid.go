@@ -2,12 +2,14 @@ package pdfops
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"nib/internal/pdfread"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -57,6 +59,11 @@ var errUnparsedClaim = errors.New("the metadata packet names the PDF/UA or PDF/A
 // declarations and escapes whitespace as character references — a packet's padding and prefixes would
 // change on every edit, and a claim is not a reason to disturb the rest of someone's metadata. The
 // namespace bookkeeping is done here too, per element scope, since `RawToken` reports prefixes only.
+//
+// **The bindings in scope are ONE map, and each element records what it changed in it** (/pending 665). They
+// were a map per element, searched from the innermost outwards for every name, so a packet of nested elements
+// cost the square of its depth — measured on `<a>` nested under one claim: 10,000 deep 208 ms, 20,000 618 ms,
+// 40,000 2.28 s, 80,000 10.1 s, inside every rewrite of a document whose packet names the schema.
 func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 	// Well-formedness first, with `Token`: `RawToken` does not check that an end tag matches its start,
 	// so the rewriting pass below would re-serialise a broken packet as if it were whole.
@@ -71,15 +78,21 @@ func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 	dec := xml.NewDecoder(bytes.NewReader(packet))
 	dec.Strict = true
 	var out bytes.Buffer
-	var scopes []map[string]string
-	resolve := func(prefix string) string {
-		for i := len(scopes) - 1; i >= 0; i-- {
-			if uri, ok := scopes[i][prefix]; ok {
-				return uri
-			}
-		}
-		return ""
+	// bound is every prefix in scope and its URI. rebound is what the open elements changed in it, oldest
+	// first — the binding each declaration replaced — and opened where each open element's changes begin.
+	type binding struct {
+		prefix, was string
+		had         bool
 	}
+	bound := map[string]string{}
+	var rebound []binding
+	var opened []int
+	bind := func(prefix, uri string) {
+		was, had := bound[prefix]
+		rebound = append(rebound, binding{prefix, was, had})
+		bound[prefix] = uri
+	}
+	resolve := func(prefix string) string { return bound[prefix] }
 	removed := false
 	skipDepth := 0
 	for {
@@ -92,16 +105,15 @@ func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			scope := map[string]string{}
+			opened = append(opened, len(rebound))
 			for _, a := range t.Attr {
 				switch {
 				case a.Name.Space == "xmlns":
-					scope[a.Name.Local] = a.Value
+					bind(a.Name.Local, a.Value)
 				case a.Name.Space == "" && a.Name.Local == "xmlns":
-					scope[""] = a.Value
+					bind("", a.Value)
 				}
 			}
-			scopes = append(scopes, scope)
 			if skipDepth > 0 {
 				skipDepth++
 				continue
@@ -130,8 +142,17 @@ func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 			}
 			out.WriteByte('>')
 		case xml.EndElement:
-			if len(scopes) > 0 {
-				scopes = scopes[:len(scopes)-1]
+			if n := len(opened); n > 0 {
+				from := opened[n-1]
+				opened = opened[:n-1]
+				for i := len(rebound) - 1; i >= from; i-- { // newest first: one element may bind a prefix twice
+					if b := rebound[i]; b.had {
+						bound[b.prefix] = b.was
+					} else {
+						delete(bound, b.prefix)
+					}
+				}
+				rebound = rebound[:from]
 			}
 			if skipDepth > 0 {
 				skipDepth--
@@ -223,11 +244,21 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 		// would skip.
 		return false, nil
 	}
-	if !bytes.Contains(sd.Content, []byte(pdfuaidNS)) && !bytes.Contains(sd.Content, []byte(pdfaidNS)) {
+	// The cheap question first, and it must not be cheaper than the reader's (/pending 665). A packet names a
+	// schema in its bytes — in UTF-8 or, as XMP allows, UTF-16 — or it may spell one with a character
+	// reference (`…/ns/id&#x2F;` is the same URI to every XML reader, veraPDF's included), and then only the
+	// parse can say. A byte search for the URI alone let both through, and the claim survived every change.
+	named := namesIdentification(sd.Content)
+	if !named && !bytes.Contains(sd.Content, []byte("&#")) {
 		return false, nil
 	}
 	clean, removed, err := withoutUAIdentification(sd.Content)
 	if errors.Is(err, errUnparsedClaim) {
+		if !named {
+			// Not XML, and no schema named in its bytes: there is no claim here a reader could find, and a
+			// stray `&#` is not a reason to take someone's metadata.
+			return false, nil
+		}
 		dropKey(xt, root, "Metadata")
 		return true, nil
 	}
@@ -246,6 +277,35 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 	}
 	root["Metadata"] = *sd
 	return true, nil
+}
+
+// identificationSpellings is each identification URI as a packet's bytes may hold it: UTF-8, and UTF-16 in
+// both byte orders (XMP permits either; `encoding/xml` reads neither UTF-16, so such a packet is one nib
+// cannot edit and loses its `/Metadata`, as any unparsed claim does).
+var identificationSpellings = func() [][]byte {
+	var out [][]byte
+	for _, uri := range []string{pdfuaidNS, pdfaidNS} {
+		out = append(out, []byte(uri))
+		units := utf16.Encode([]rune(uri))
+		for _, order := range []binary.ByteOrder{binary.BigEndian, binary.LittleEndian} {
+			b := make([]byte, 2*len(units))
+			for i, u := range units {
+				order.PutUint16(b[2*i:], u)
+			}
+			out = append(out, b)
+		}
+	}
+	return out
+}()
+
+// namesIdentification reports whether the packet's bytes hold an identification schema's URI.
+func namesIdentification(packet []byte) bool {
+	for _, s := range identificationSpellings {
+		if bytes.Contains(packet, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // withoutUAClaim drops the claim from bytes this package already wrote. Its one caller today
