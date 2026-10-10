@@ -371,6 +371,7 @@ func boundaryCandidate(prefix []byte, fingerprint string) *candidate {
 
 var (
 	byteRangeName = []byte("/ByteRange")
+	contentsName  = []byte("/Contents")
 	reObjHeader   = regexp.MustCompile(`^\d+\s+\d+\s+obj`)
 )
 
@@ -384,6 +385,11 @@ type rawByteRange struct {
 
 // rawByteRangesEndingAt is every literal `/ByteRange [ints]` in pdf whose last pair ends at one of bounds (newest first,
 // strictly descending, as `revisionBoundaries` gives them), ordered by that end newest first and by position within it.
+// The name is read in either spelling (`nextName`, /pending 862): `/Byte#52ange` is the same name to the library, and
+// read plainly a signature written that way had no earlier version — measured `no-signature` about a signer whose
+// signature a later revision had replaced. Still one pass, charged as before; measured over 64 MiB with a `#` in it:
+// as the plain search on dictionary-shaped bytes (124 ms against 133) and on nothing but literals (1.26 s against 1.45),
+// and 1.47 s against 72 ms on nothing but `/`s — no more than the literals already cost.
 // A signature that can verify has its ByteRange in literal bytes (an indirect one is refused by the sweep), so a
 // boundary no literal ends at holds no version `holder` could accept, and is never screened. Every byte scanned is
 // charged to budget; false when it runs out.
@@ -394,12 +400,12 @@ func rawByteRangesEndingAt(pdf []byte, bounds []int64, budget *int64) ([]rawByte
 	}
 	var out []rawByteRange
 	var buf []int64
+	escapes := bytes.IndexByte(pdf, '#') >= 0
 	for i := 0; ; {
-		j := bytes.Index(pdf[i:], byteRangeName)
-		if j < 0 {
+		at, _ := nextName(pdf, i, byteRangeName, escapes)
+		if at < 0 {
 			break
 		}
-		at := i + j
 		br, next, ok := parseByteRange(pdf, at, buf[:0])
 		*budget -= int64(next - at)
 		if *budget < 0 {
@@ -422,12 +428,16 @@ func rawByteRangesEndingAt(pdf []byte, bounds []int64, budget *int64) ([]rawByte
 	return out, true
 }
 
-// parseByteRange reads the literal ByteRange beginning at pdf[at] (which holds `/ByteRange`) into dst: the name, PDF
-// white space, `[`, then only digits, signs and white space up to `]` — the shape `/ByteRange\s*\[([0-9\s+\-]*)\]`
+// parseByteRange reads the literal ByteRange beginning at pdf[at] (which holds `/ByteRange`, in either spelling) into
+// dst: the name, PDF white space, `[`, then only digits, signs and white space up to `]` — the shape `/ByteRange\s*\[([0-9\s+\-]*)\]`
 // names, read by hand so a scan over every literal allocates nothing — and every field a whole base-10 integer, as
 // `strconv.ParseInt` takes it. next is where a scan resumes: past the `]` of a literal, else past the name.
 func parseByteRange(pdf []byte, at int, dst []int64) (br []int64, next int, ok bool) {
-	i := at + len(byteRangeName)
+	n := nameLen(pdf[at+1:], byteRangeName[1:])
+	if n < 0 {
+		return nil, at + 1, false
+	}
+	i := at + 1 + n
 	next = i
 	for i < len(pdf) && isRegexpSpace(pdf[i]) {
 		i++
@@ -502,7 +512,33 @@ func parseInt64(tok []byte) (int64, bool) {
 	return int64(u), true
 }
 
-var reRawContents = regexp.MustCompile(`/Contents\s*<([0-9A-Fa-f\s]*)>`)
+// rawContents is the hex digits of the first literal `/Contents <hex>` in span — the shape
+// `/Contents\s*<([0-9A-Fa-f\s]*)>` names, leftmost as a regexp finds it — with the name read in either spelling
+// (`nextName`), as `rawByteRangesEndingAt` reads its own. One pass over span, which the caller has charged.
+func rawContents(span []byte) (digits []byte, ok bool) {
+	escapes := bytes.IndexByte(span, '#') >= 0
+	for i := 0; ; {
+		at, n := nextName(span, i, contentsName, escapes)
+		if at < 0 {
+			return nil, false
+		}
+		i = at + n
+		j := i
+		for j < len(span) && isRegexpSpace(span[j]) {
+			j++
+		}
+		if j >= len(span) || span[j] != '<' {
+			continue
+		}
+		k := j + 1
+		for k < len(span) && (isRegexpSpace(span[k]) || unhexDigit(span[k]) >= 0) {
+			k++
+		}
+		if k < len(span) && span[k] == '>' {
+			return span[j+1 : k], true
+		}
+	}
+}
 
 // prescreen reports whether a literal ByteRange ending at a boundary could be the signer's, from the bytes around it
 // alone and BEFORE pdfcpu reads the prefix: its object's literal `/Contents` must parse as a SignerInfo naming the
@@ -545,12 +581,12 @@ func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int6
 		if *budget < 0 {
 			return false
 		}
-		m := reRawContents.FindSubmatch(span)
-		if m == nil {
+		digits, ok := rawContents(span)
+		if !ok {
 			continue
 		}
-		raw := make([]byte, 0, len(m[1]))
-		for _, f := range bytes.Fields(m[1]) {
+		raw := make([]byte, 0, len(digits))
+		for _, f := range bytes.Fields(digits) {
 			raw = append(raw, f...)
 		}
 		blob := make([]byte, len(raw)/2)
@@ -630,7 +666,7 @@ func revisionBoundaries(pdf []byte, budget *int64) ([]int64, bool) {
 			if k := bytes.Index(w, []byte("stream")); k >= 0 {
 				w = w[:k]
 			}
-			isXref = bytes.Contains(w, []byte("/XRef"))
+			isXref = nameIn(w, "XRef")
 		}
 		*budget -= look
 		if *budget < 0 {
