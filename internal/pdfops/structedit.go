@@ -16,13 +16,16 @@ import (
 // an element's type, its place among its parent's kids or under another parent, its alternate
 // description, a header cell's scope, and a table cell's spans and the header cells it names (ADR-119).
 // Marking content as an artifact is the one edit that rewrites page content; it is applied through the
-// same batch and lives in `structartifact.go` (S03).
+// same batch and lives in `structartifact.go` (S03). Creating an element and deleting one are applied
+// through the same batch too and live in `structcreate.go` (ADR-124).
 //
 // # Why the dictionary edits never touch the ParentTree
 //
 // A ParentTree slot names the element that OWNS a marked-content id, and none of these edits changes
 // who owns what: a moved element takes its MCIDs with it. What a move changes is the two directions the
-// tree is walked — the parent's `/K` and the element's `/P` — and both are written together.
+// tree is walked — the parent's `/K` and the element's `/P` — and both are written together. (A delete is
+// the one edit that does change an owner — the deleted element's content passes to its parent — and it
+// re-points the slots itself.)
 //
 // # What is never written through
 //
@@ -49,23 +52,27 @@ const (
 	editColSpan
 	editRowSpan
 	editHeaders
+	editCreate
+	editDelete
 )
 
 // structEdit is one correction to an existing tree.
 type structEdit struct {
 	kind editKind
-	// elem is the object number of the element edited — `viewElement.id`.
+	// elem is the object number of the element edited — `viewElement.id`. editCreate names none: 0.
 	elem int
-	// value is the new `/S` (editRetype), the alternate description (editAlt; "" removes it), the
+	// value is the new `/S` (editRetype, editCreate), the alternate description (editAlt; "" removes it), the
 	// scope (editScope: Row, Column, Both; "" removes it), or a span (editColSpan, editRowSpan: a whole
 	// number of at least 1; "" removes it).
 	value string
 	// headers is editHeaders' header cells, by object number; none removes the cell's `/Headers`.
 	headers []int
-	// parent is editMove's new parent, by object number; 0 keeps the element under its current one.
+	// parent is editMove's new parent, by object number; 0 keeps the element under its current one and
+	// `rootParent` names the structure tree root. For editCreate it is the new element's parent, and 0 names
+	// the root as `rootParent` does — a create has no current parent to keep.
 	parent int
-	// index is editMove's position among the new parent's element kids; negative or past the end
-	// appends.
+	// index is the position among the parent's element kids an editMove or editCreate places its element
+	// at; negative or past the end appends (`placeAmongElements`).
 	index int
 }
 
@@ -82,6 +89,10 @@ var standardStructTypes = map[string]bool{
 	"Link": true, "Annot": true, "Ruby": true, "RB": true, "RT": true, "RP": true,
 	"Warichu": true, "WT": true, "WP": true, "Figure": true, "Formula": true, "Form": true,
 }
+
+// rootParent is the `Parent` that names the structure tree root. Not 0: a move's 0 has always meant "the
+// parent it already has", and the editor has sent it with every reorder since P09.S06.
+const rootParent = -1
 
 // staleEdit is an edit naming an element the tree no longer has. It is ErrTagsStale to `errors.Is`, so
 // the route answers it as it answers a stale review, with a sentence about a tree rather than a
@@ -103,15 +114,16 @@ var tableScopes = map[string]bool{"Row": true, "Column": true, "Both": true}
 // StructureEdit is one correction to an existing structure tree, as a reviewer sends it —
 // `PLAN-accessibility.md` P09.S04.
 type StructureEdit struct {
-	// Kind is retype, move, alt, scope, colspan, rowspan, headers or artifact.
+	// Kind is retype, move, alt, scope, colspan, rowspan, headers, artifact, create or delete.
 	Kind string
-	// Element is the edited element's object number.
+	// Element is the edited element's object number. A create names none: 0.
 	Element int
-	// Value is the new type (retype), the alternate description (alt; "" removes it), the scope
+	// Value is the new type (retype, create), the alternate description (alt; "" removes it), the scope
 	// (scope: Row, Column, Both; "" removes it), or how many columns or rows a cell spans (colspan,
 	// rowspan: a whole number of at least 1; "" removes it).
 	Value string
-	// Parent is a move's new parent by object number; 0 keeps the current one. Index is the position
+	// Parent is a move's new parent by object number; 0 keeps the current one and -1 is the structure tree
+	// root. A create's Parent is the new element's parent, and 0 or -1 is the root. Index is the position
 	// among that parent's element kids; negative appends.
 	Parent, Index int
 	// Headers is a headers edit's header cells — the `TH` elements of the same table that head this
@@ -123,6 +135,7 @@ type StructureEdit struct {
 var structEditKinds = map[string]editKind{
 	"retype": editRetype, "move": editMove, "alt": editAlt, "scope": editScope, "artifact": editArtifact,
 	"colspan": editColSpan, "rowspan": editRowSpan, "headers": editHeaders,
+	"create": editCreate, "delete": editDelete,
 }
 
 // EditStructure applies edits, in order and as one batch, to pdf's existing structure tree. An element
@@ -133,7 +146,7 @@ func EditStructure(pdf []byte, edits []StructureEdit) ([]byte, error) {
 	for i, e := range edits {
 		k, ok := structEditKinds[e.Kind]
 		if !ok {
-			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers or artifact", ErrTagsReview, e.Kind)
+			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers, artifact, create or delete", ErrTagsReview, e.Kind)
 		}
 		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index, headers: e.Headers}
 	}
@@ -184,6 +197,10 @@ func applyStructEdits(pdf []byte, edits []structEdit) ([]byte, error) {
 }
 
 func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error {
+	if ed.kind == editCreate {
+		// Before the element lookup: a create is the one edit that names no element the tree has.
+		return createElement(ctx, tree, ed)
+	}
 	if ed.elem <= 0 {
 		return fmt.Errorf("%w: an element written inline has no object number, so an edit cannot name it", ErrTagsReview)
 	}
@@ -242,6 +259,8 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 		return moveElement(ctx, tree, e, ed)
 	case editArtifact:
 		return artifactElement(ctx, tree, e)
+	case editDelete:
+		return deleteElement(ctx, tree, e)
 	default:
 		return fmt.Errorf("%w: unknown edit", ErrTagsReview)
 	}
@@ -385,7 +404,10 @@ func setCellHeaders(ctx *model.Context, tree *structTree, e *structElem, ed stru
 // points its `/P` at the new parent.
 func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structEdit) error {
 	to := e.parent
-	if ed.parent != 0 {
+	switch {
+	case ed.parent == rootParent:
+		to = nil
+	case ed.parent != 0:
 		if to = tree.byObj[ed.parent]; to == nil {
 			return staleEdit{ed.parent}
 		}
@@ -403,24 +425,7 @@ func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structE
 	if to != nil {
 		holder = to.dict
 	}
-	toKids, setTo := kidsArray(ctx, holder)
-	at := len(toKids)
-	if ed.index >= 0 {
-		seen := 0
-		for i, en := range toKids {
-			if !isElementEntry(ctx, en) {
-				continue
-			}
-			if seen == ed.index {
-				at = i
-				break
-			}
-			seen++
-		}
-	}
-	placed := append(types.Array{}, toKids[:at]...)
-	placed = append(placed, *ref)
-	setTo(append(placed, toKids[at:]...))
+	placeAmongElements(ctx, holder, *ref, ed.index)
 
 	if to == nil {
 		rootRef, err := structTreeRootRef(ctx)
@@ -445,21 +450,54 @@ func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structE
 	return nil
 }
 
+// placeAmongElements puts ref into holder's `/K` — an element's, or the root's — as its index-th ELEMENT
+// kid: before the element that holds that place now, with marked content and object references between
+// elements not counted. A negative index, or one past the last element, appends. It is the one placement
+// rule (ADR-009): a move and a create both place through it.
+func placeAmongElements(ctx *model.Context, holder types.Dict, ref types.IndirectRef, index int) {
+	kids, set := kidsArray(ctx, holder)
+	at := len(kids)
+	if index >= 0 {
+		seen := 0
+		for i, en := range kids {
+			if !isElementEntry(ctx, en) {
+				continue
+			}
+			if seen == index {
+				at = i
+				break
+			}
+			seen++
+		}
+	}
+	placed := append(types.Array{}, kids[:at]...)
+	placed = append(placed, ref)
+	set(append(placed, kids[at:]...))
+}
+
 // removeFromParent takes e out of its parent's `/K` — the root's, for a top-level element — and returns
-// the reference that listed it. Shared by a move and an artifact edit, the two ways an element leaves
-// where it is.
+// the reference that listed it. Shared by a move and an artifact edit, two of the three ways an element
+// leaves where it is; the third, a delete, leaves its kids in its place (`replaceInParent`).
 func removeFromParent(ctx *model.Context, tree *structTree, e *structElem) (*types.IndirectRef, error) {
+	return replaceInParent(ctx, tree, e, nil)
+}
+
+// replaceInParent puts with where e is listed in its parent's `/K` — the root's, for a top-level element
+// — in e's place and in order, and returns the reference that listed e. With nothing, e is simply taken
+// out. It is the one way an element leaves its parent's `/K` (ADR-009).
+func replaceInParent(ctx *model.Context, tree *structTree, e *structElem, with types.Array) (*types.IndirectRef, error) {
 	holder := tree.root
 	if e.parent != nil {
 		holder = e.parent.dict
 	}
 	kids, set := kidsArray(ctx, holder)
 	var ref *types.IndirectRef
-	kept := kids[:0:0]
+	kept := make(types.Array, 0, len(kids)+len(with))
 	for _, en := range kids {
 		if ir, ok := en.(types.IndirectRef); ok && ir.ObjectNumber.Value() == e.objNr && ref == nil {
 			r := ir
 			ref = &r
+			kept = append(kept, with...)
 			continue
 		}
 		kept = append(kept, en)

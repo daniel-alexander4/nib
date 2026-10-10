@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structcreate.go b/internal/pdfops/structcreate.go
+--- a/internal/pdfops/structcreate.go
++++ b/internal/pdfops/structcreate.go
+@@ -92,7 +92,7 @@
+ 	if parent == nil {
+ 		elements := 0
+ 		for _, en := range entries {
+-			if !isElementEntry(ctx, en) {
++			if !isElementEntry(ctx, en) && false {
+ 				return fmt.Errorf("%w: element %d is at the top of the structure tree and holds content itself, and the top of the tree may hold only tags — change its type instead, or mark it as decoration if it is not content", ErrTagsReview, e.objNr)
+ 			}
+ 			elements++

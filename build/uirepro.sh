@@ -295,7 +295,9 @@ fi
 # (its count, its scroll and zoom on return, its controls going inert), where focus lands, and a 375px window.
 # 48 since ADR-106 (autoprereq.test.mjs): a scanned page really read by the shipped recogniser in a real browser, and
 # the command that asked for it then working — the one thing the stubbed tier below cannot show.
-expect_files=48
+# 49 since ADR-124 (tagcreate.test.mjs): a tag added, filled and deleted again by a real keyboard against the real
+# server — Tab order, a select answering typing, the arrow keys, and the tree reading as it did at the start.
+expect_files=49
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

@@ -109,11 +109,12 @@ func TestAResultThatDoesNotValidateIsNotReturned(t *testing.T) {
 // TestDecodingReadsTheRequestShapes — an absent index appends, a present one (0 included) is kept, the
 // proposal's own JSON is a review, and a body that is not JSON is ErrMalformed.
 func TestDecodingReadsTheRequestShapes(t *testing.T) {
-	edits, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"move","element":7},{"kind":"move","element":8,"parent":3,"index":0},{"kind":"alt","element":9,"value":"v"},{"kind":"headers","element":10,"headers":[4,5]}]}`))
+	edits, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"move","element":7},{"kind":"move","element":8,"parent":3,"index":0},{"kind":"alt","element":9,"value":"v"},{"kind":"headers","element":10,"headers":[4,5]},{"kind":"create","value":"Sect","parent":3,"index":2},{"kind":"create","value":"Div"},{"kind":"delete","element":11},{"kind":"move","element":12,"parent":-1}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []pdfops.StructureEdit{{Kind: "move", Element: 7, Index: -1}, {Kind: "move", Element: 8, Parent: 3, Index: 0}, {Kind: "alt", Element: 9, Value: "v", Index: -1}, {Kind: "headers", Element: 10, Index: -1, Headers: []int{4, 5}}}
+	want := []pdfops.StructureEdit{{Kind: "move", Element: 7, Index: -1}, {Kind: "move", Element: 8, Parent: 3, Index: 0}, {Kind: "alt", Element: 9, Value: "v", Index: -1}, {Kind: "headers", Element: 10, Index: -1, Headers: []int{4, 5}},
+		{Kind: "create", Value: "Sect", Parent: 3, Index: 2}, {Kind: "create", Value: "Div", Index: -1}, {Kind: "delete", Element: 11, Index: -1}, {Kind: "move", Element: 12, Parent: -1, Index: -1}}
 	if len(edits) != len(want) {
 		t.Fatalf("decoded %+v", edits)
 	}

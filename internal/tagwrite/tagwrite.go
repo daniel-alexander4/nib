@@ -114,7 +114,8 @@ func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 }
 
 // DecodeEdits reads a batch of edits: `{"edits": [{"kind", "element", "value", "parent", "index", "headers"}]}`. An
-// absent index appends — Go's zero value would put a moved element first.
+// absent index appends — Go's zero value would put a moved or created element first. A create (ADR-124) names its
+// type in "value" and no element; a parent of -1 is the structure tree root.
 func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 	var body struct {
 		Edits []struct {

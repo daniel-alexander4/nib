@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structcreate.go b/internal/pdfops/structcreate.go
+--- a/internal/pdfops/structcreate.go
++++ b/internal/pdfops/structcreate.go
+@@ -194,7 +194,7 @@
+ 		// An element. One the tree lists under another parent first is that parent's, and is left as it is.
+ 		if ir, isRef := en.(types.IndirectRef); isRef {
+ 			if kid := tree.byObj[ir.ObjectNumber.Value()]; kid == nil || kid.parent == e {
+-				d["P"] = owner
++				_ = owner
+ 				if pageMoves && !ownPage {
+ 					d["Pg"] = ePg
+ 				}

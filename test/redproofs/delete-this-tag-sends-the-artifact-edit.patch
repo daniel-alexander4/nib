@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6617,7 +6617,7 @@
+   $('tagEditIn').onclick = () => { const can = tagMoveIn(tagTreeSelected, tagTreeElements); if (can.edit) applyTagEdit(can.edit); };
+   $('tagEditOut').onclick = () => { const can = tagMoveOut(tagTreeSelected, tagTreeElements); if (can.edit) applyTagEdit(can.edit); };
+   // A delete takes the tag and keeps what it held — not Mark as decoration, which takes the content.
+-  $('tagEditDelete').onclick = () => applyTagEdit({ kind: 'delete' });
++  $('tagEditDelete').onclick = () => applyTagEdit({ kind: 'artifact' });
+   const fresh = $('tagNewType');
+   for (const t of STRUCT_TYPES) {
+     const o = document.createElement('option');

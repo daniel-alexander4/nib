@@ -483,6 +483,117 @@ func TestTheEditRouteRefusesASignedDocumentAtTheDoor(t *testing.T) {
 	}
 }
 
+// TestTheEditRouteCreatesATagFillsItAndDeletesItAgain — ADR-124 through the route's own JSON: a create
+// places a new element among the root's, a move puts an element in it, and a delete takes the tag away and
+// leaves what it held where it was. Each batch is one undo.
+func TestTheEditRouteCreatesATagFillsItAndDeletesItAgain(t *testing.T) {
+	base, c, csrf := committedTagsFixture(t)
+	kinds := func(els []rootElement) string {
+		var k []string
+		for _, e := range els {
+			k = append(k, e.kind)
+		}
+		return strings.Join(k, " ")
+	}
+	els := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(els) < 3 || els[0].kind != "H1" || els[1].kind != "P" {
+		t.Fatalf("setup: the committed tree's top level reads %s", kinds(els))
+	}
+	start := kinds(els)
+	edit := func(what string, edits ...map[string]any) []rootElement {
+		t.Helper()
+		if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": edits}); code != http.StatusOK {
+			t.Fatalf("%s = %d: %s", what, code, body)
+		}
+		return rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	}
+
+	made := edit("create", map[string]any{"kind": "create", "value": "Sect", "parent": 0, "index": 1})
+	if len(made) != len(els)+1 || made[1].kind != "Sect" || made[0].obj != els[0].obj || made[2].obj != els[1].obj {
+		t.Fatalf("after the create the top level reads %s — want a Sect second", kinds(made))
+	}
+	sect := made[1].obj
+	filled := edit("move into it", map[string]any{"kind": "move", "element": els[1].obj, "parent": sect})
+	if len(filled) != len(els) || filled[1].obj != sect || filled[2].obj != els[2].obj {
+		t.Fatalf("after the move the top level reads %s — want the paragraph gone into the Sect", kinds(filled))
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	for i, e := range tree.Elements {
+		if e.ID == sect && (len(e.Kids) != 1 || tree.Elements[e.Kids[0]].ID != els[1].obj || e.Text == "") {
+			t.Errorf("the tree route reads the new Sect (element %d of the answer) as %+v — want the paragraph and its text under it", i, e)
+		}
+	}
+
+	// A top-level element that holds content cannot be deleted, and the refusal is the sentence.
+	before := getBytes(t, c, base+"/api/pdf")
+	code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{{"kind": "delete", "element": els[0].obj}}})
+	if code != http.StatusBadRequest || !strings.Contains(body, "top of the structure tree") || !strings.Contains(body, "change its type") {
+		t.Errorf("deleting a top-level heading: edit = %d %q, want 400 saying why and what to do instead", code, body)
+	}
+	for _, bad := range []map[string]any{
+		{"kind": "create", "value": "Bogus"},
+		{"kind": "create", "value": "Div", "element": sect},
+	} {
+		if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{bad}}); code != http.StatusBadRequest {
+			t.Errorf("%v: edit = %d %q, want 400", bad, code, body)
+		}
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{{"kind": "create", "value": "Div", "parent": 999999}}}); code != http.StatusConflict {
+		t.Errorf("a create under an element the tree does not have: edit = %d %q, want 409", code, body)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{{"kind": "delete", "element": 999999}}}); code != http.StatusConflict {
+		t.Errorf("a delete of an element the tree does not have: edit = %d %q, want 409", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused edit changed the document")
+	}
+
+	gone := edit("delete", map[string]any{"kind": "delete", "element": sect})
+	if kinds(gone) != start || gone[1].obj != els[1].obj {
+		t.Errorf("with the Sect deleted the top level reads %s — want %s, the paragraph back where the Sect was", kinds(gone), start)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if undone := rootElements(t, getBytes(t, c, base+"/api/pdf")); len(undone) != len(els) || undone[1].obj != sect {
+		t.Errorf("one undo of the delete left %s — want the Sect back", kinds(undone))
+	}
+
+	// A batch is one step: a create and a delete of something else together, taken back by one undo.
+	sizeBefore := kinds(rootElements(t, getBytes(t, c, base+"/api/pdf")))
+	batch := edit("a batch", map[string]any{"kind": "create", "value": "Div"}, map[string]any{"kind": "delete", "element": sect})
+	if len(batch) != len(els)+1 || batch[len(batch)-1].kind != "Div" {
+		t.Fatalf("after the batch the top level reads %s", kinds(batch))
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if got := kinds(rootElements(t, getBytes(t, c, base+"/api/pdf"))); got != sizeBefore {
+		t.Errorf("one undo of a two-edit batch left %s, want %s", got, sizeBefore)
+	}
+}
+
+// TestCreateAndDeleteAreRefusedOnASignedDocumentAtTheDoor — the same door as every other edit.
+func TestCreateAndDeleteAreRefusedOnASignedDocumentAtTheDoor(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, threeSigned(t))
+	before := getBytes(t, c, base+"/api/pdf")
+	for _, e := range []map[string]any{
+		{"kind": "create", "value": "Div"},
+		{"kind": "delete", "element": 1},
+	} {
+		code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{e}})
+		if code != http.StatusConflict || !strings.Contains(body, "signed") {
+			t.Errorf("%v on a signed document: edit = %d %q, want 409 naming the signature", e, code, body)
+		}
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused edit changed the signed document")
+	}
+}
+
 // TestTheEditRouteTellsAStaleEditFromAMalformedOne — 409 for an element or a tree the document no
 // longer has; 400 for an edit no document could take. Nothing is written either way.
 func TestTheEditRouteTellsAStaleEditFromAMalformedOne(t *testing.T) {

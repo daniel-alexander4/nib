@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structcreate.go b/internal/pdfops/structcreate.go
+--- a/internal/pdfops/structcreate.go
++++ b/internal/pdfops/structcreate.go
+@@ -132,7 +132,7 @@
+ 	moved := make(types.Array, 0, len(entries))
+ 	for _, en := range entries {
+ 		if n, ok := en.(types.Integer); ok {
+-			if pageMoves {
++			if pageMoves && false {
+ 				moved = append(moved, types.Dict{"Type": types.Name("MCR"), "Pg": ePg, "MCID": n})
+ 			} else {
+ 				moved = append(moved, en)

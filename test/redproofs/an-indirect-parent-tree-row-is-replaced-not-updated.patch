@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structwrite.go b/internal/pdfops/structwrite.go
+--- a/internal/pdfops/structwrite.go
++++ b/internal/pdfops/structwrite.go
+@@ -519,7 +519,7 @@
+ 		// read the same, and a different document than the edit asked for (ADR-124, measured on a delete).
+ 		if ind, isInd := nums[at].(types.IndirectRef); isInd {
+ 			if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
+-				if _, isArr := en.Object.(types.Array); isArr {
++				if _, isArr := en.Object.(types.Array); isArr && false {
+ 					en.Object = arr
+ 					return nil
+ 				}

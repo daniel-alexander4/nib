@@ -6238,6 +6238,7 @@ async function loadTagTree() {
   if (!owner.pdfDocument || !owner.docMeta || !owner.docMeta.id) {
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    $('tagNewBar').hidden = true;
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
@@ -6258,6 +6259,7 @@ async function loadTagTree() {
     if (seq !== tagTreeSeq) return;
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    $('tagNewBar').hidden = true;
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
@@ -6288,6 +6290,7 @@ function renderTagTree(tree, owner) {
   tagTreeView = owner;
   drawReadingOrder();
   $('tagTreeRemove').hidden = !tree.tagged;
+  $('tagNewBar').hidden = !tree.tagged;
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
@@ -6321,14 +6324,28 @@ function renderTagTree(tree, owner) {
   if (tagEditRestore) {
     const r = tagEditRestore;
     tagEditRestore = null;
-    let at = r.id > 0 ? elements.findIndex((x) => x.id === r.id) : -1;
-    if (at < 0) at = Math.min(r.index, elements.length - 1);
-    if (at >= 0) {
-      selectTagTreeItem(at, elements, owner);
-      const control = r.control ? document.getElementById(r.control) : null;
-      if (control && !control.disabled && !control.closest('[hidden]')) control.focus();
-      else list.children[at].focus();
-      $('tagEditStatus').textContent = 'Changed — Ctrl+Z takes it back.';
+    if (r.created) {
+      // A new tag (ADR-124) has no id the page could know beforehand: it is found where it was asked for —
+      // that place among its parent's tags, or last — and it, not the button, takes the selection and focus.
+      const p = r.created.parent > 0 ? elements.findIndex((x) => x.id === r.created.parent) : -1;
+      const among = p >= 0 ? (elements[p].kids || []) : elements.map((x, j) => (x.parent === -1 ? j : -1)).filter((j) => j >= 0);
+      const at = among.length ? among[Math.min(r.created.index < 0 ? among.length - 1 : r.created.index, among.length - 1)] : -1;
+      if (at >= 0 && (r.created.parent <= 0 || p >= 0)) {
+        list.children[at].focus();
+        // Focus selects (the item's focus listener); selecting again covers a window that is not focused.
+        selectTagTreeItem(at, elements, owner);
+        $('tagEditStatus').textContent = 'Tag added — Ctrl+Z takes it back.';
+      }
+    } else {
+      let at = r.id > 0 ? elements.findIndex((x) => x.id === r.id) : -1;
+      if (at < 0) at = Math.min(r.index, elements.length - 1);
+      if (at >= 0) {
+        selectTagTreeItem(at, elements, owner);
+        const control = r.control ? document.getElementById(r.control) : null;
+        if (control && !control.disabled && !control.closest('[hidden]')) control.focus();
+        else list.children[at].focus();
+        $('tagEditStatus').textContent = 'Changed — Ctrl+Z takes it back.';
+      }
     }
   }
   drawReadingOrder();
@@ -6402,6 +6419,28 @@ function tagHeaderCells(i, elements) {
     elements[j].id > 0 && tagTableOf(j, elements) === table);
 }
 
+// tagMoveIn and tagMoveOut are the two moves that change an element's parent (ADR-124), each as the edit
+// to send or the reason it cannot be made. Into the tag above: the last kid of the previous sibling. Out
+// one level: the next sibling after its parent — under the grandparent, or at the top of the tree (-1).
+// An element written inline has no id, so nothing can be moved into one or named as a parent.
+function tagMoveIn(i, elements) {
+  const siblings = tagSiblings(i, elements);
+  const pos = siblings.indexOf(i);
+  if (pos <= 0) return { why: 'There is no tag above this one at the same level to move it into.' };
+  const into = elements[siblings[pos - 1]];
+  if (!(into.id > 0)) return { why: 'The tag above is written inline, so nothing can be moved into it here.' };
+  return { edit: { kind: 'move', parent: into.id } };
+}
+
+function tagMoveOut(i, elements) {
+  const p = elements[i].parent;
+  if (p < 0) return { why: 'This tag is already at the top level.' };
+  if (!(elements[p].id > 0)) return { why: 'This tag is inside one written inline, so it cannot be moved out here.' };
+  const g = elements[p].parent;
+  if (g >= 0 && !(elements[g].id > 0)) return { why: 'The level above is a tag written inline, so nothing can be moved into it here.' };
+  return { edit: { kind: 'move', parent: g >= 0 ? elements[g].id : -1, index: tagSiblings(p, elements).indexOf(p) + 1 } };
+}
+
 function showTagEditBar(e, i, elements) {
   $('tagEditBar').hidden = false;
   const editable = e.id > 0;
@@ -6445,8 +6484,14 @@ function showTagEditBar(e, i, elements) {
   const siblings = tagSiblings(i, elements);
   const pos = siblings.indexOf(i);
   for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditScope', 'tagEditScopeApply',
-    'tagEditColSpan', 'tagEditRowSpan', 'tagEditSpanApply', 'tagEditHeadersApply', 'tagEditArtifact']) {
+    'tagEditColSpan', 'tagEditRowSpan', 'tagEditSpanApply', 'tagEditHeadersApply', 'tagEditArtifact', 'tagEditDelete']) {
     $(id).disabled = !editable;
+  }
+  for (const [id, can] of [['tagEditIn', tagMoveIn(i, elements)], ['tagEditOut', tagMoveOut(i, elements)]]) {
+    $(id).disabled = !editable || !can.edit;
+    const why = $(`${id}Why`);
+    why.textContent = editable && !can.edit ? can.why : '';
+    why.hidden = !why.textContent;
   }
   $('tagEditUp').disabled = !editable || pos <= 0;
   $('tagEditDown').disabled = !editable || pos < 0 || pos >= siblings.length - 1;
@@ -6456,17 +6501,24 @@ function showTagEditBar(e, i, elements) {
 // applyTagEdit sends the edits — one, or several as one batch that one Ctrl+Z takes back — for the
 // element selected.
 async function applyTagEdit(...edits) {
-  const owner = view;
   const i = tagTreeSelected;
   const e = tagTreeElements[i];
-  if (!e || !owner.docMeta || !owner.docMeta.id) return;
-  const status = $('tagEditStatus');
+  if (!e) return;
+  await sendTagEdits(edits.map((edit) => ({ element: e.id, ...edit })),
+    { id: e.id, index: i, control: document.activeElement ? document.activeElement.id : '' }, $('tagEditStatus'));
+}
+
+// sendTagEdits is the one sender of `POST /api/tags/edit`: the batch as written, what to return to once
+// the tree has been read again, and where a refusal is shown — the server's sentence, as it is.
+async function sendTagEdits(edits, restore, status) {
+  const owner = view;
+  if (!owner.docMeta || !owner.docMeta.id) return;
   status.textContent = 'Changing the structure…';
-  tagEditRestore = { id: e.id, index: i, control: document.activeElement ? document.activeElement.id : '' };
+  tagEditRestore = restore;
   try {
     const res = await apiFetch('/api/tags/edit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
-      body: JSON.stringify({ edits: edits.map((edit) => ({ element: e.id, ...edit })) }),
+      body: JSON.stringify({ edits }),
     });
     if (!res.ok) {
       tagEditRestore = null;
@@ -6478,6 +6530,27 @@ async function applyTagEdit(...edits) {
     tagEditRestore = null;
     status.textContent = err.message || 'Could not change the structure.';
   }
+}
+
+// addTag creates an empty tag of the chosen type (ADR-124): directly after the selected element, under the
+// parent it has, or last at the top of the tree when nothing is selected. -1 names the top of the tree.
+async function addTag() {
+  const elements = tagTreeElements;
+  const i = tagTreeSelected;
+  const e = elements[i];
+  const value = $('tagNewType').value;
+  if (!e) {
+    // Nothing selected, so the edit bar and its status are hidden: a refusal is shown beside the tree's summary.
+    await sendTagEdits([{ kind: 'create', value, parent: -1 }], { created: { parent: -1, index: -1 } }, $('tagTreeSummary'));
+    return;
+  }
+  const parent = e.parent >= 0 ? elements[e.parent].id : -1;
+  if (e.parent >= 0 && !(parent > 0)) {
+    $('tagEditStatus').textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it. Select a different tag first.';
+    return;
+  }
+  const index = tagSiblings(i, elements).indexOf(i) + 1;
+  await sendTagEdits([{ kind: 'create', value, parent, index }], { created: { parent, index } }, $('tagEditStatus'));
 }
 
 // removeAllTags takes the whole tree away (ADR-120) — the way to tag again a document that arrived tagged. It is
@@ -6539,6 +6612,21 @@ function wireTagEditBar() {
   $('tagEditUp').onclick = () => move(-1);
   $('tagEditDown').onclick = () => move(1);
   $('tagEditArtifact').onclick = () => applyTagEdit({ kind: 'artifact' });
+  // Indent and outdent are the same move, naming a parent (ADR-124). The edit is worked out at the press,
+  // from the tree as it is then.
+  $('tagEditIn').onclick = () => { const can = tagMoveIn(tagTreeSelected, tagTreeElements); if (can.edit) applyTagEdit(can.edit); };
+  $('tagEditOut').onclick = () => { const can = tagMoveOut(tagTreeSelected, tagTreeElements); if (can.edit) applyTagEdit(can.edit); };
+  // A delete takes the tag and keeps what it held — not Mark as decoration, which takes the content.
+  $('tagEditDelete').onclick = () => applyTagEdit({ kind: 'delete' });
+  const fresh = $('tagNewType');
+  for (const t of STRUCT_TYPES) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = TAG_ROLE_NAMES[t] ? `${TAG_ROLE_NAMES[t]} (${t})` : t;
+    fresh.appendChild(o);
+  }
+  fresh.value = 'Sect'; // a new tag is a container until something is moved into it
+  $('tagNewAdd').onclick = addTag;
 }
 wireTagEditBar();
 
