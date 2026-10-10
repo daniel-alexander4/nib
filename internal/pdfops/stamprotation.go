@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"nib/internal/pdfread"
 
@@ -40,30 +41,38 @@ import (
 // already deleted, so that page would be drawn unturned in a turned box. A refused stamp is a refused
 // save; a silently displaced page is a document the user signs without seeing it.
 //
-// # What it does not repair
+// # Annotations
 //
-// Annotations. pdfcpu moves no annotation when it internalizes a rotation, so a widget, link or note on a
-// turned page keeps a `/Rect` written for the old user space — at any box corner, the origin included. That
-// is a separate defect, filed rather than built here, because an annotation's `/Rect`, its appearance
-// matrix and its rotation flag are a larger change than the content stream's one matrix.
+// pdfcpu moves no annotation when it internalizes a rotation, so a widget, link or note on a turned page
+// kept a `/Rect` written for the old user space — at any box corner, the origin included (/pending 829).
+// turnAnnotations carries them with the same matrix, after the content is where it belongs.
 func stampInPlace(ctx *model.Context, stamp func() error) error {
-	turned := turnedOffsetPages(ctx)
+	turned := turnedPages(ctx)
 	if err := stamp(); err != nil {
 		return err
 	}
-	return turnAboutTheCorner(ctx, turned)
+	if err := turnAboutTheCorner(ctx, turned); err != nil {
+		return err
+	}
+	return turnAnnotations(ctx, turned)
 }
 
-// turnedOffset is a page pdfcpu will turn about the wrong point: its rotation, and the lower-left corner of
-// the box pdfcpu reads as the visible one (`stamp.go` `viewPort`: the crop box where there is one).
-type turnedOffset struct {
+// turnedPage is a page pdfcpu will turn when it stamps it: its rotation, the lower-left corner of the box
+// pdfcpu reads as the visible one (`stamp.go` `viewPort`: the crop box where there is one) — the point the
+// turn belongs about, and pdfcpu's own only where it is the origin — and how many annotations it holds now,
+// before the stamp can add one.
+type turnedPage struct {
 	nr       int
 	rot      int
 	llx, lly float64
+	annots   int
 }
 
-func turnedOffsetPages(ctx *model.Context) []turnedOffset {
-	var out []turnedOffset
+// offset is a page pdfcpu turns about the wrong point.
+func (t turnedPage) offset() bool { return t.llx != 0 || t.lly != 0 }
+
+func turnedPages(ctx *model.Context) []turnedPage {
+	var out []turnedPage
 	for _, p := range pdfread.Pages(ctx) {
 		if p.Err != nil || p.Attrs == nil || p.Attrs.Rotate%360 == 0 {
 			continue
@@ -72,10 +81,11 @@ func turnedOffsetPages(ctx *model.Context) []turnedOffset {
 		if p.Attrs.CropBox != nil {
 			vp = p.Attrs.CropBox
 		}
-		if vp == nil || (vp.LL.X == 0 && vp.LL.Y == 0) {
+		if vp == nil {
 			continue
 		}
-		out = append(out, turnedOffset{nr: p.Nr, rot: p.Attrs.Rotate, llx: vp.LL.X, lly: vp.LL.Y})
+		annots, _ := ctx.DereferenceArray(p.Dict["Annots"])
+		out = append(out, turnedPage{nr: p.Nr, rot: p.Attrs.Rotate, llx: vp.LL.X, lly: vp.LL.Y, annots: len(annots)})
 	}
 	return out
 }
@@ -83,13 +93,16 @@ func turnedOffsetPages(ctx *model.Context) []turnedOffset {
 // errStampMovedPage is a stamp that moved a turned page's drawing and could not put it back.
 var errStampMovedPage = fmt.Errorf("pdfops: stamping would move a turned page's content, and it could not be put back")
 
-func turnAboutTheCorner(ctx *model.Context, turned []turnedOffset) error {
-	if len(turned) == 0 {
+func turnAboutTheCorner(ctx *model.Context, turned []turnedPage) error {
+	if !slices.ContainsFunc(turned, turnedPage.offset) {
 		return nil
 	}
 	pages := pdfread.Pages(ctx)
 	done := map[int]bool{} // a content stream two pages share is patched once, as pdfcpu patched it once
 	for _, t := range turned {
+		if !t.offset() {
+			continue // pdfcpu's turn about the origin is this page's own
+		}
 		if t.nr > len(pages) || pages[t.nr-1].Err != nil {
 			return errStampMovedPage
 		}
