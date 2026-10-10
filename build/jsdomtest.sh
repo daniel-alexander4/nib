@@ -106,7 +106,7 @@ echo "$Nib_out"
 # 107 since ADR-126 and ADR-127 (tagpromote.test.mjs, tagrolemap.test.mjs): an inline tag's one button and where
 # the selection lands after it, and the role map's rows — each its own boot, because each needs a tree of its own
 # shape and the other tag files' trees are asserted on by position.
-Nib_expect_files=107
+Nib_expect_files=108
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"
