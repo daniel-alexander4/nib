@@ -166,61 +166,58 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 	return out
 }
 
-// inPackageOnlyRecorded is the population above, as it stands: **41 of 545 published fields**, close
-// to the `47 of 511` `observables_test.go`'s header measured when it refused the field-level rule.
-// It is a MEASUREMENT written down, not a list anybody chose.
+// inPackageOnlyRecorded is the population above, as it stands: **26 of 659 published fields**. It was
+// 47 of 511 when `observables_test.go`'s header refused the field-level rule, and 43 when the
+// verdicts below were taken.
 //
-// **The verdicts are NOT here, and that is the honest state rather than an omission.** The item
-// this closes asked for the population to be made visible first — *"print the 47 with their
-// declaring package and current readers, then take them in one pass"* — and this is the first
-// half. Reading 34 call sites to say which are genuinely unread is the second, and it is filed
-// rather than guessed: an automatic verdict is exactly what both unsound filters would give.
+// **Every entry now carries its verdict** (/pending 575). The pass read each field's uses resolved by
+// TYPE (go/types over every non-test package, so `.State` of another struct is not a use of this
+// one) and then the JSON tag in the window and the CLI. Of the 36 that were undecided:
 //
-// **Seven of the forty-one are already answered at SHAPE level.** `ceremony.Anchor` and `p2p.Channel`
-// are in `internalShapes` with reasons — an opaque token and an inward parameter carrier — so
-// their fields are in this list because the per-field question is narrower than the rule, not
-// because anything is undecided about them.
+//   - **17 had a real reader the table never named**, and left this list when `published` named the
+//     one file that reads each: `ceremony.Stored` (7) and `ceremony.Receipt` (3) are drawn by the
+//     window, `ceremony.Record`'s `DocHash`/`Intent`/`Roster`/`Version` and `ceremony.Invitation`'s
+//     `ConvenerFingerprint`/`Secret`/`Seeds` are read by the server and the CLI.
+//   - **18 stay, deliberately in-package**, each for one of three reasons written against it: the
+//     field is VERIFIED where it is defined (a signature, a format number, a commitment — a reader
+//     outside would re-implement the check); it is WRITTEN outside and read inside (a constructor's
+//     input); or it is working state behind an accessor.
+//   - **1 is read by nothing at all**: `vault.ExternalSigner.ChainPEM`, below.
+//
+// **Seven are answered at SHAPE level.** `ceremony.Anchor` and `p2p.Channel` are in
+// `internalShapes` with reasons — an opaque token and an inward parameter carrier — so their fields
+// are in this list because the per-field question is narrower than the rule.
 var inPackageOnlyRecorded = []string{
 	// ceremony.Anchor  // shape declared internal, with a reason
 	"ceremony.Anchor.Ceremony", // /pending 686: read by VerifyAgainst, the one door
 	"ceremony.Anchor.Convener",
 	"ceremony.Anchor.RosterHash",
-	// ceremony.CandidateRecord
-	"ceremony.CandidateRecord.Addrs",
-	"ceremony.CandidateRecord.CeremonyID",
-	"ceremony.CandidateRecord.SPKI",
+	// ceremony.CandidateRecord — a signed DHT record. The server and `nib rendezvous` BUILD one
+	// (`ceremonynet.go:191-194`, `cli/rendezvous.go:603-616`, keyed literals) and hand it to this
+	// package, which signs it and, on the way back, verifies it; nothing outside reads a field back.
+	"ceremony.CandidateRecord.Addrs",      // written outside, read in candidate.go
+	"ceremony.CandidateRecord.CeremonyID", // written outside, read in candidate.go
+	"ceremony.CandidateRecord.SPKI",       // verified where defined: candidate.go:227,258
 	// `Sig` joined at /pending 808 R5: its out-of-package "reader" was `.Sig` as a PREFIX of `.Signature`.
-	"ceremony.CandidateRecord.Sig",
-	"ceremony.CandidateRecord.Version",
+	"ceremony.CandidateRecord.Sig",     // verified where defined: candidate.go:352,404
+	"ceremony.CandidateRecord.Version", // verified where defined: candidate.go:276,335
 	// ceremony.Invitation
-	"ceremony.Invitation.ConvenerFingerprint",
-	"ceremony.Invitation.Secret",
-	"ceremony.Invitation.Seeds",
+	// `SeedsDropped` is `json:"-"` and its own doc says it: "Its only reader today is `seeds_test.go`",
+	// kept because the acceptance clause wants the count observable. A declared diagnostic.
 	"ceremony.Invitation.SeedsDropped",
+	// Written by the two constructors (`delivery.go:1543`, `cli/rendezvous.go:532`), checked by the parse.
 	"ceremony.Invitation.Version",
-	// ceremony.Receipt
-	"ceremony.Receipt.Name",
-	"ceremony.Receipt.ObservedAt",
-	"ceremony.Receipt.State",
-	// ceremony.Record
+	// ceremony.Record — the convener's signature material and the digest's format number: verified
+	// by `Record.Verify` and the embed reader (`record.go:286,512-519`, `embed.go:129,295,301`).
 	"ceremony.Record.ConvenerCert",
 	"ceremony.Record.ConvenerSig",
 	"ceremony.Record.DigestVersion",
-	"ceremony.Record.DocHash",
-	"ceremony.Record.Intent",
-	"ceremony.Record.Roster",
-	"ceremony.Record.Version",
-	// ceremony.Stored
-	"ceremony.Stored.Ended",
-	"ceremony.Stored.Joined",
-	"ceremony.Stored.Me",
-	"ceremony.Stored.Name",
-	"ceremony.Stored.Reason",
-	"ceremony.Stored.State",
-	"ceremony.Stored.Verification",
-	// ceremony.Termination
+	// ceremony.Termination — compared with an `Anchor`'s, in-package (`termination.go:242`,
+	// `mirror.go:893`): `ceremony.Anchor`'s reason in `internalShapes`, from the other side.
 	"ceremony.Termination.RosterHash",
-	// discovery.Announcement
+	// discovery.Announcement — written by the three announcers (`server/discover.go:545`,
+	// `server/lan.go:177`, `cli/discover.go:150`), read by the package's own encoding and its
+	// own-echo check (`announce.go:266`, `mcast.go:421`).
 	"discovery.Announcement.Nonce",
 	// instance.Record — at /pending 808 R5 the second launch (`cmd/nib/main.go`, `rec.Addr`) was named
 	// as the reader, taking Addr OFF this list; Token and Handoff came ON, because the only outside
@@ -228,7 +225,8 @@ var inPackageOnlyRecorded = []string{
 	// to Probe and HandOff, which read them in-package — true, and what this list records. Token left it again
 	// at /pending 630 (v1.182.18): the launch's exit removal passes its own `rec.Token` to `instance.Remove`.
 	// Challenge joined at /pending 827: the launch WRITES it (`Challenge: true`) and hands the record to
-	// Probe, which is its one reader and is in-package.
+	// Probe, which is its one reader and is in-package. All three: written at `cmd/nib/main.go:132`,
+	// read inside.
 	"instance.Record.Challenge",
 	"instance.Record.Handoff",
 	"instance.Record.Version",
@@ -237,12 +235,17 @@ var inPackageOnlyRecorded = []string{
 	"p2p.Channel.PeerFP",
 	"p2p.Channel.Proto",
 	"p2p.Channel.Stream",
-	// rendezvous.SelfAddress
+	// rendezvous.SelfAddress — the evidence `V4` and `V6` are classified from (`selfaddr.go:162-171`);
+	// the CLI prints the two classes and never the observations.
 	"rendezvous.SelfAddress.Observations",
-	// vault.ExternalSigner
+	// vault.ExternalSigner — **READ BY NOTHING** (/pending 575). `extsigner.go:72-76` builds the chain
+	// and stores it, `ExternalSigner()` copies it out (`vault.go:1204`), and no caller reads the copy:
+	// signing takes the chain from the PKCS#12 bundle itself. It is on disk in every vault that
+	// imported an identity, so removing it is a vault-format change and is left to its own item.
 	"vault.ExternalSigner.ChainPEM",
-	// vault.PinnedPeer
+	// vault.PinnedPeer — the pin's scope set, read and written only through the vault's own scope
+	// doors (`vault.go:1289-1365`); the peers route never shows it.
 	"vault.PinnedPeer.Ceremonies",
-	// vault.Slot
+	// vault.Slot — the wrapped content key: unwrapped in `vault.go:628` and not to be read elsewhere.
 	"vault.Slot.Wrapped",
 }
