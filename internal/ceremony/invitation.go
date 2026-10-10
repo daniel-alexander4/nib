@@ -472,6 +472,11 @@ func ParseInvitation(text string) (Invitation, error) {
 		// claims"* — an accusation of impersonation over a difference in letter case.
 		inv.Roster[i].Fingerprint = strings.ToLower(p.Fingerprint)
 	}
+	// The same refusal `Record.Verify` makes, through the same door (/pending 583): this roster
+	// is what `l3Roster` pins from and what the hop numbers are counted over.
+	if err := duplicateParty(inv.Roster); err != nil {
+		return Invitation{}, fmt.Errorf("%w: %w", ErrInvitationCorrupt, err)
+	}
 	// Seeds last, and the whole-refusal discipline applies: an over-cap list returns the
 	// ZERO invitation, never a partly-filtered one. A caller that ignores the error is the
 	// ordinary mistake, and a half-applied invitation is worse than none.

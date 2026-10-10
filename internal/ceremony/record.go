@@ -531,6 +531,18 @@ func (r Record) Verify(now time.Time) error {
 	if !inRoster {
 		return ErrConvenerNotInRoster
 	}
+	// **One party, one roster entry — and it is here because `Convene` was the only door that
+	// said so** (/pending 583). `canonicalRoster` refuses a duplicate for the convener's own
+	// request; a record assembled by anything else arrives through Extract → Decode → Verify and
+	// was accepted naming one party twice. `ErrDuplicateParty`'s own doc has the harm: the
+	// invitations are keyed by fingerprint, so two entries collapse into one hop while the roster
+	// still counts both, and a party listed twice is owed two signatures it can only give once.
+	//
+	// After the signature, for the ceiling's reason below: a convener who signed such a roster
+	// mis-built it, and one who did not sign at all should be told that instead.
+	if err := duplicateParty(r.Roster); err != nil {
+		return err
+	}
 	// **The text bounds, and they are here for the reason the roster bound one block up is**
 	// (/pending 308's grill). `checkIntent` and `checkRosterText` had exactly two callers, both
 	// in `Convene` — the CONVENER's own door. So the caps bound the emitter and left every
@@ -559,6 +571,26 @@ func (r Record) Verify(now time.Time) error {
 	if r.Expires.After(now.Add(MaxCeremonyLife)) {
 		return fmt.Errorf("%w: it claims to run until %s, more than %s from now",
 			ErrCeremonyTooLong, r.Expires.UTC().Format(time.RFC3339), MaxCeremonyLife)
+	}
+	return nil
+}
+
+// duplicateParty refuses a roster that names one fingerprint twice, and is the one statement of
+// that rule for a roster arriving from OUTSIDE — `Record.Verify` and `ParseInvitation` both call
+// it (ADR-009). `canonicalRoster` keeps its own loop: it normalises a convener's typed request as
+// it goes and reports a malformed entry before a repeated one.
+//
+// Case-folded, because `hex.DecodeString` accepts both cases and `ParseInvitation` asks before it
+// has lowercased anything.
+func duplicateParty(roster []Party) error {
+	seen := make(map[string]int, len(roster))
+	for i, p := range roster {
+		fp := strings.ToLower(p.Fingerprint)
+		if first, dup := seen[fp]; dup {
+			return fmt.Errorf("%w: %s is party %d and party %d", ErrDuplicateParty,
+				short(fp), first+1, i+1)
+		}
+		seen[fp] = i
 	}
 	return nil
 }
