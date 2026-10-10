@@ -10,6 +10,8 @@ var (
 	CountPaths             = countPaths     // the same walk stopped past a budget, with the edges it followed
 	ObjectLevels           = objectLevels   // the every-reference depth pass (refall.go)
 	MaxObjectLevels        = maxObjectLevels
+	FixFreeReferences      = fixFreeReferences         // pdfcpu's free-reference walk, without recursion (optimize.go)
+	FreeReferencePass      = &freeReferencePass        // what `optimize` runs ahead of pdfcpu's pass
 	RefuseUnbounded        = refuseUnboundedReferences // the whole door, on a context nothing has validated
 	PathBudget             = pathBudget                // the reference door's budget (refgraph.go)
 	ValidatorDepth         = validatorDepth            // the depth pass through guarded edges (refdepth.go)

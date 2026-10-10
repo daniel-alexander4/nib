@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -14,14 +15,16 @@ import (
 	"nib/internal/testpdf"
 )
 
-// ignoredChain is a one-page document whose catalog names, under /Foo — a key pdfcpu's validator never reads — a
-// chain of links objects, each holding the next's reference nest arrays deep. ring > 0 closes the last link back on
-// the first instead of ending it.
+// ignoredChain is a one-page document whose page font names, under /Foo — a key pdfcpu's validator never reads — a
+// chain of links objects, each holding the next's reference nest arrays deep. The chain hangs off a FONT because the
+// depth pass walks from fonts and images (that is what pdfcpu's optimize pass follows every reference under). ring
+// closes the last link back on the first instead of ending it.
 func ignoredChain(links, nest int, ring bool) map[int]string {
 	objs := map[int]string{
-		1: "<< /Type /Catalog /Pages 2 0 R /Foo 10 0 R >>",
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
 		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << /Font << /F 9 0 R >> >> >>",
+		9: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Foo 10 0 R >>",
 	}
 	open, shut := strings.Repeat("[", nest), strings.Repeat("]", nest)
 	for i := 0; i < links; i++ {
@@ -68,24 +71,60 @@ func TestAChainUnderAKeyTheValidatorIgnoresIsRefused(t *testing.T) {
 
 // TestLevelsCountEveryContainerOnTheWayToAReference pins what a level is: the object a reference names, each array or
 // dictionary nested in it down to the next reference, and — for objects that name each other in a ring — every one of
-// them, because a walk that enters an object once can cross them all.
+// them, because a walk that enters an object once can cross them all. The chain hangs off the page's font (object 9),
+// where the walk starts.
 func TestLevelsCountEveryContainerOnTheWayToAReference(t *testing.T) {
 	for _, c := range []struct {
-		name         string
-		links, nest  int
-		ring         bool
-		want         int
-		wantFromRoot int
+		name        string
+		links, nest int
+		ring        bool
+		want        int
 	}{
-		{"fifty links", 50, 1, false, 52, 1}, // the catalog, fifty links, the end
-		{"fifty links, each three arrays deep", 50, 3, false, 152, 1},
-		{"a ring of ten", 10, 1, true, 11, 1},                     // the catalog, then all ten
-		{"no chain: the page tree's own ring", 0, 1, false, 4, 1}, // catalog, /Pages (its /Kids array is a level), page
+		{"fifty links", 50, 1, false, 52},                          // the font, fifty links, the end
+		{"fifty links, each three arrays deep", 50, 3, false, 152}, // the font, then three levels a link
+		{"a ring of ten", 10, 1, true, 11},                         // the font, then all ten
+		{"no chain", 0, 1, false, 2},                               // the font and the one array it names
 	} {
 		got, from := pdfread.ObjectLevels(unvalidated(t, testpdf.Assemble(ignoredChain(c.links, c.nest, c.ring))))
-		if got != c.want || from != c.wantFromRoot {
-			t.Errorf("%s: %d levels from object %d, want %d from object %d", c.name, got, from, c.want, c.wantFromRoot)
+		if got != c.want || from != 9 {
+			t.Errorf("%s: %d levels from object %d, want %d from object 9", c.name, got, from, c.want)
 		}
+	}
+}
+
+// TestALargeHonestDocumentPassesTheDoor is the rework's acceptance (/pending 840, coordinator). A real document's
+// size is in its pages, and pages name each other back and forth through /Parent — the shape that made a size-based
+// bound refuse honest work. The depth pass walks from fonts and images, which do not reach the page tree, so 20,000
+// pages — with /Parent links, one shared resource dictionary and every page in object streams — measure the same few
+// levels a one-page document does, and the door passes them.
+func TestALargeHonestDocumentPassesTheDoor(t *testing.T) {
+	pdf := testpdf.ManyPages(20000)
+	ctx := unvalidated(t, pdf)
+	levels, _ := pdfread.ObjectLevels(ctx)
+	if levels > 100 {
+		t.Fatalf("20,000 honest pages measure %d levels — a size-based bound is back", levels)
+	}
+	start := time.Now()
+	if err := pdfread.RefuseUnbounded(ctx); err != nil {
+		t.Fatalf("20,000 honest pages (%d bytes) refused: %v", len(pdf), err)
+	}
+	t.Logf("20,000 pages: %d bytes, %d levels, door %v", len(pdf), levels, time.Since(start))
+
+	// And a structure of 600,000 objects naming each other in a ring, off the catalog and not a font — larger than
+	// maxObjectLevels if charged whole, which is what a page tree through /Parent is. The depth pass walks only fonts
+	// and images, so it never enters this; a pass that walked everything (the fontOrImage scoping removed) would
+	// refuse it. This is the red-proof that the scoping is what keeps an honest large document from being refused.
+	ring := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Ring 10 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+	}
+	const ringN = 600000 // > maxObjectLevels (2^19 = 524288)
+	for i := 0; i < ringN; i++ {
+		ring[10+i] = fmt.Sprintf("<< /Next %d 0 R >>", 10+(i+1)%ringN)
+	}
+	if err := pdfread.RefuseUnbounded(unvalidated(t, testpdf.Assemble(ring))); err != nil {
+		t.Fatalf("a %d-object ring off the catalog, not a font, was refused: %v", ringN, err)
 	}
 }
 
@@ -124,6 +163,40 @@ func TestTheDoorReadsObjectsHeldInAnObjectStream(t *testing.T) {
 	}
 	if got, _ := pdfread.ObjectLevels(ctx); got != 42 {
 		t.Fatalf("a forty-link chain held in an object stream measured %d levels, want 42", got)
+	}
+}
+
+// TestTheFreeReferencePassLetsPdfcpuSkipItsOwnRecursion — /pending 840's free-reference half. pdfcpu's optimize pass
+// walks every reference from the catalog recursively (`fixReferencesToFreeObjects`), one frame a link, and a chain
+// 300,000 links deep under a key the validator ignores overflowed its stack — fatally. The depth pass does NOT cover
+// this chain (it walks only fonts and images, and this hangs off the catalog), so what keeps pdfcpu from recursing is
+// `fixFreeReferences` making the same walk iteratively first and pre-seeding pdfcpu's cache. With it, optimizing the
+// document returns; the mutation that removes the pass (export `FreeReferencePass`) overflows the stack, so the
+// red-proof for this one is a process death and lives in the mutation harness, not here.
+func TestTheFreeReferencePassLetsPdfcpuSkipItsOwnRecursion(t *testing.T) {
+	// 1,600,000 array links: past pdfcpu's own recursive overflow at the default 1 GB max stack (measured: 1,000,000
+	// survives, 1,500,000 overflows), off the catalog so the depth pass — fonts and images only — never sees it.
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Foo 10 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+	}
+	const links = 1600000
+	for i := 0; i < links; i++ {
+		objs[10+i] = fmt.Sprintf("[%d 0 R]", 11+i)
+	}
+	objs[10+links] = "[]"
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.OPTIMIZE
+	done := make(chan error, 1)
+	go func() { _, err := pdfread.ReadOptimized(testpdf.Assemble(objs), conf); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("optimizing a 300,000-link chain under an ignored key: %v", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("optimizing a 300,000-link chain did not return")
 	}
 }
 

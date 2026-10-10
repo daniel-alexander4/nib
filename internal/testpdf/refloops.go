@@ -298,6 +298,26 @@ func FanInShapes() []FanInShape {
 	}
 }
 
+// ManyPages is an honest n-page document: every page carries a `/Parent` back-reference to the page tree, shares one
+// resource dictionary with one font, and is held in an object stream — the shape a size-based depth bound refused.
+func ManyPages(n int) []byte {
+	o := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		5: "<< /Font << /F 6 0 R >> >>",
+		6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	var kids []string
+	var packed []int
+	for i := 0; i < n; i++ {
+		nr := 10 + i
+		kids = append(kids, fmt.Sprintf("%d 0 R", nr))
+		o[nr] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources 5 0 R >>"
+		packed = append(packed, nr)
+	}
+	o[2] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), n)
+	return AssembleCompressed(o, packed...)
+}
+
 // AssembleCompressed is `Assemble` with the objects numbered in packed held in one object stream, under a
 // cross-reference stream — where pdfcpu's read leaves them undecoded until something names them.
 func AssembleCompressed(objs map[int]string, packed ...int) []byte {

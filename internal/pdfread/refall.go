@@ -8,61 +8,52 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// The depth pdfcpu recurses through EVERY reference — /pending 840.
+// The depth pdfcpu recurses through every reference under a font or an image — /pending 840.
 //
-// The two passes before this one follow the edges pdfcpu's VALIDATOR follows. pdfcpu's optimize pass and its writer
-// follow all of them, whatever key they sit under, one recursion per link and with no bound on depth (v0.13.0):
+// The two passes before this one follow the edges pdfcpu's VALIDATOR follows. pdfcpu's optimize pass has three walks
+// that follow every reference, whatever key it sits under, one recursion per link and with no bound on depth (v0.13.0):
 //
-//   - `fixReferencesToFreeObjects` (optimize.go:1526, first step of `OptimizeXRefTable`, :1642) walks from the catalog
-//     through every dictionary entry and array element: `fixDirectObject` :1440 → `fixDeepObject` :1516 →
-//     `fixIndirectObject` :1467 → `fixDeepDict` :1412 / `fixDeepArray` :1426 → `fixDeepObject`. It enters an object
-//     once (`ctx.Optimize.Cache`, :1470-1473), which bounds its work and not its depth.
+//   - `fixReferencesToFreeObjects` (optimize.go:1526, first step of `OptimizeXRefTable`, :1642), from the catalog. nib
+//     makes that walk itself, iteratively, and pdfcpu's then does not recurse (`fixFreeReferences`, optimize.go) — so
+//     it needs no bound here, and gets none: see below.
 //   - `traverseObjectGraphAndMarkDuplicates` (optimize.go:1042, with `traverse` :1019; from `calcRedundantObjects`
-//     :1096, :1104) walks every reference under a duplicate font or image, and marks nothing it has entered.
-//   - `model.EqualObjects` (model/equal.go:51 → `equalArrays` :121, `equalDicts` :214), from optimize.go:274, :486 and
-//     :581, follows both objects' references pairwise.
-//   - The writer: `writeDeepObject` (writeObjects.go:794) → `writeIndirectObject` :754 → `writeObjectGeneric` :714 →
-//     `writeDeepDict` :639 / `writeDeepStreamDict` :668 / `writeDeepArray` :688 → `writeDeepObject`, entering an
-//     object once (`HasWriteOffset`, :758).
+//     :1096, :1104), from every duplicate font and image.
+//   - `model.EqualObjects` (model/equal.go:51 → `equalArrays` :121, `equalDicts` :214), from optimize.go:274 (two
+//     fonts), :486 (two images) and :581 (two forms, which `Unaffordable`'s `shape` bounds at `maxShapeDepth`).
 //
-// So `N 0 obj [N+1 0 R]` chained under a catalog key the validator ignores passed the door: 100,000 links read, and
-// 1,500,000 (80 MB, inside ADR-005's 512 MiB) were a fatal stack overflow in `fixIndirectObject`, which no recover
-// holds. This pass bounds the deepest path through all of a document's references, counted in LEVELS — one per
-// container pdfcpu steps into: the object a reference names, and each array or dictionary nested directly inside it on
-// the way to the next reference (the parser bounds that nesting at `MaxRecursionDepth`, model/parse.go:325).
+// This pass bounds the last two: the deepest path through all references from any font dictionary or image XObject —
+// what pdfcpu takes for one (`DereferenceFontDict`, model/dereference.go:414-419; `/Subtype /Image`) — counted in
+// LEVELS, one per container pdfcpu steps into: the object a reference names, and each array or dictionary nested
+// directly inside it on the way to the next reference (the parser bounds that nesting, model/parse.go:325).
 //
-// Which entry pdfcpu takes first is its map order, so this is an upper bound over every order, as `validatorDepth` is:
-// strongly connected components (Tarjan, iteratively), each charged the levels of ALL its members — a walk that enters
-// an object once crosses a component along a simple path, and no simple path is longer than that — and the depth is
-// the longest path through their condensation. A document's pages, structure tree, outlines and annotations name each
-// other back and forth and are ordinarily ONE component, so the bound is in effect on how many objects a document
-// links mutually; see `maxObjectLevels` for where it sits.
+// Which entry pdfcpu takes first is its map order, so this is an upper bound over every order: strongly connected
+// components (Tarjan, iteratively), each charged the levels of ALL its members, and the longest path through their
+// condensation. **That charge is why the walk starts at fonts and images and nowhere else.** From the catalog it
+// would reach the page tree, which names itself back through `/Parent`, and charge a whole document as one chain:
+// 37,383 levels for a 67-page document whose real pass is 12 to 19 objects deep, so a thousand pages would be
+// refused. A font or an image names its descriptor, its programs, its masks and colour spaces — nothing that names
+// the page tree — so an honest document measures the same however many pages it has (`TestALargeHonestDocument…`).
 
-// maxObjectLevels is the most levels pdfcpu may recurse through a document's references. Measured on the optimize
-// pass with the stack capped at 64 MiB: a chain of dictionaries ran out between 120,002 and 140,002 levels (at most
-// 559 bytes a level), of arrays between 160,002 and 180,002, of arrays nested twenty deep between 240,002 and 320,002.
-// Go ends a goroutine whose stack would grow past 512 MiB, so this bound is about 55% of what the worst of those
-// leaves. The writer's and `EqualObjects`' cost a level is NOT measured (the writer did not follow the two chains
-// tried, under a catalog key and under a page key).
-//
-// **Declared:** the bound counts a component whole, and pdfcpu's own walk is far shallower on a real document — the
-// largest of nib's producer corpus measures 37,383 levels here and pdfcpu's path through it is 12 to 19 objects
-// (simulated, five map orders). So a document linking more than this many levels mutually — about fourteen times that
-// one — is refused though pdfcpu would read it.
+// maxObjectLevels is the most levels pdfcpu may recurse through the references under a font or an image. Measured on
+// the one all-reference walk that could be run alone (the free-reference pass, stack capped at 64 MiB): a chain of
+// dictionaries ran out between 120,002 and 140,002 levels (at most 559 bytes a level), of arrays between 160,002 and
+// 180,002. Go ends a goroutine whose stack would grow past 512 MiB, so this is about 55% of what that leaves.
+// `traverse`'s and `EqualObjects`' own cost a level is NOT measured.
 const maxObjectLevels = 1 << 19
 
-// refuseDeepReferences refuses ctx when a chain of its references, under any key, is deeper than `maxObjectLevels`.
+// refuseDeepReferences refuses ctx when a chain of references under one of its fonts or images, under any key, is
+// deeper than `maxObjectLevels`.
 func refuseDeepReferences(ctx *model.Context) error {
 	if d, nr := objectLevels(ctx); d > maxObjectLevels {
-		return fmt.Errorf("nib will not read this document: %w (more than %d levels through object %d, counting "+
-			"every reference under any key), and pdfcpu's optimizer and writer would recurse through every level",
+		return fmt.Errorf("nib will not read this document: %w (more than %d levels under the font or image in "+
+			"object %d, counting every reference under any key), and pdfcpu's optimizer would recurse through every level",
 			ErrReferenceDepth, maxObjectLevels, nr)
 	}
 	return nil
 }
 
-// objectLevels is the deepest chain of levels through ctx's references, capped just past `maxObjectLevels`, and the
-// object it was measured from.
+// objectLevels is the deepest chain of levels through the references under any font or image of ctx, capped just past
+// `maxObjectLevels`, and the font or image it was measured from.
 func objectLevels(ctx *model.Context) (deepest, from int) {
 	nrs := make([]int, 0, len(ctx.Table))
 	for nr, e := range ctx.Table {
@@ -77,7 +68,10 @@ func objectLevels(ctx *model.Context) (deepest, from int) {
 	}
 	w := &levelWalk{ctx: ctx, nrs: nrs, pos: pos, state: make([]uint8, len(nrs)), index: make([]int32, len(nrs)),
 		low: make([]int32, len(nrs)), depth: make([]int32, len(nrs)), weight: make([]int32, len(nrs))}
-	for i := range nrs {
+	for i, nr := range nrs {
+		if !fontOrImage(ctx.Table[nr].Object) {
+			continue
+		}
 		if w.state[i] == 0 {
 			w.from(int32(i))
 		}
@@ -88,7 +82,19 @@ func objectLevels(ctx *model.Context) (deepest, from int) {
 	return deepest, from
 }
 
-// levelWalk is Tarjan's walk over every live object, by dense position. depth holds, for an object still open, the
+// fontOrImage reports whether pdfcpu's optimize pass could take o for a font or an image: the two kinds it compares
+// with `EqualObjects` and walks with `traverse`.
+func fontOrImage(o types.Object) bool {
+	switch o := o.(type) {
+	case types.Dict:
+		return nameOf(o, "Type") == "Font"
+	case types.StreamDict:
+		return nameOf(o.Dict, "Subtype") == "Image" || nameOf(o.Dict, "Type") == "Font"
+	}
+	return false
+}
+
+// levelWalk is Tarjan's walk over the live objects it reaches, by dense position. depth holds, for an object still open, the
 // deepest finished component one of its references leaves for, and for a finished one its component's depth.
 type levelWalk struct {
 	ctx     *model.Context

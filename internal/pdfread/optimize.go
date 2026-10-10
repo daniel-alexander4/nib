@@ -184,7 +184,93 @@ func optimize(ctx *model.Context, strict bool) error {
 		// The step walks the page tree from its root once per page (`pagebalance.go`, `/pending 825`).
 		defer balancePageTreeForPass(ctx)()
 	}
+	freeReferencePass(ctx)
 	return api.OptimizeContext(ctx)
+}
+
+// freeReferencePass is `fixFreeReferences`, a variable so a test can see that the pass runs it.
+var freeReferencePass = fixFreeReferences
+
+// fixFreeReferences is pdfcpu's `fixReferencesToFreeObjects` (optimize.go:1412-1528, v0.13.0) done without recursion,
+// ahead of pdfcpu's own — /pending 840.
+//
+// The first step of pdfcpu's pass walks every reference from the catalog, under any key, replacing a reference to a
+// free object with one to a null object. It enters an object once (`ctx.Optimize.Cache`, :1470-1473) and recurses once
+// per link with no bound: `N 0 obj [N+1 0 R]` chained under a catalog key the validator never reads was a fatal stack
+// overflow at 1,500,000 links (80 MB), which no recover holds. Bounding that depth at the door instead would refuse
+// honest documents: the only bound a door can prove charges everything that names each other back and forth — a page
+// tree through `/Parent` — as one chain, about 560 levels a page on a real document whose pass is 12 to 19 objects deep.
+//
+// So the same walk is made here with an explicit stack, marking the same cache, and pdfcpu's own then finds every
+// object already entered and returns at its first reference to each (`if ctx.Optimize.Cache[objNr] { return nil }`):
+// it is no deeper than the catalog's own direct nesting. The cache is the pass's alone — `parsePagesDict` replaces it
+// (:953) before its only other reader (:911) — and it ends holding what pdfcpu's walk would have left in it.
+//
+// It restates pdfcpu's pass exactly, including what it does not fix: only the FIRST reference met to a free object is
+// replaced, because a later one finds the object in the cache.
+func fixFreeReferences(ctx *model.Context) {
+	if ctx.PageCount == 0 || ctx.Optimize == nil || ctx.Optimize.Cache == nil {
+		return // pdfcpu's pass does nothing for a document with no pages (:1636)
+	}
+	stack := []types.Object{ctx.RootDict}
+	enter := func(ir types.IndirectRef) types.IndirectRef {
+		nr := ir.ObjectNumber.Value()
+		if ctx.Optimize.Cache[nr] {
+			return ir
+		}
+		ctx.Optimize.Cache[nr] = true
+		e, found := ctx.Find(nr)
+		if !found {
+			return ir
+		}
+		if e.Free {
+			if ctx.Optimize.NullObjNr == nil {
+				null, err := ctx.InsertObject(nil)
+				if err != nil {
+					return ir
+				}
+				ctx.Optimize.NullObjNr = &null
+			}
+			ir.ObjectNumber = types.Integer(*ctx.Optimize.NullObjNr)
+			return ir
+		}
+		switch o := e.Object.(type) {
+		case types.Dict:
+			stack = append(stack, o)
+		case types.StreamDict:
+			stack = append(stack, o.Dict)
+		case types.Array:
+			stack = append(stack, o)
+		}
+		return ir
+	}
+	visit := func(v types.Object) (types.Object, bool) {
+		switch v := v.(type) {
+		case types.IndirectRef:
+			return enter(v), true
+		case types.Dict, types.Array:
+			stack = append(stack, v)
+		}
+		return nil, false
+	}
+	for len(stack) > 0 {
+		o := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch o := o.(type) {
+		case types.Dict:
+			for k, v := range o {
+				if ir, ok := visit(v); ok {
+					o[k] = ir
+				}
+			}
+		case types.Array:
+			for i, v := range o {
+				if ir, ok := visit(v); ok {
+					o[i] = ir
+				}
+			}
+		}
+	}
 }
 
 // ErrUnaffordable is `ReadOptimizedOrRefuse`'s refusal: the pass its reader depends on would exceed its budget.
