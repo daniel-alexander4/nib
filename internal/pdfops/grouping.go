@@ -205,6 +205,9 @@ func placeFigures(l *pageLayout, images []drawnImage) {
 	}
 }
 
+// tableFillDivisor — a grid is proposed as a table only when at least one cell in this many holds text.
+const tableFillDivisor = 4
+
 // groupRunsAndTables is groupRuns with the text inside each regular ruled grid set apart as a table.
 //
 // **A run belongs to the cell that holds the centre of its box**, and is decided run by run before any line is
@@ -235,17 +238,22 @@ func groupRunsAndTables(runs []textRun, shapes []pageShape) pageLayout {
 		}
 		return -1
 	}
-	holds, turned := make([]int, len(grids)), make([]bool, len(grids))
+	// filled is the cells of each grid that hold text.
+	filled, turned := make([]map[[2]int]bool, len(grids)), make([]bool, len(grids))
 	inMerged := false
 	for _, r := range runs {
 		if !joinsALine(r) {
 			continue
 		}
+		b := runBox(r)
 		if i := gridOf(r); i >= 0 {
-			holds[i]++
+			if filled[i] == nil {
+				filled[i] = map[[2]int]bool{}
+			}
+			row, col, _ := grids[i].cellAt((b[0]+b[2])/2, (b[1]+b[3])/2)
+			filled[i][[2]int{row, col}] = true
 			turned[i] = turned[i] || r.rotated
 		}
-		b := runBox(r)
 		for _, f := range merged {
 			inMerged = inMerged || inBox(f, (b[0]+b[2])/2, (b[1]+b[3])/2)
 		}
@@ -253,11 +261,13 @@ func groupRunsAndTables(runs []textRun, shapes []pageShape) pageLayout {
 	if inMerged {
 		notes = append(notes, mergedCellsNote)
 	}
-	// A grid is a table when it holds text, upright, and stands clear of every other grid.
+	// A grid is a table when at least a quarter of its cells hold text, upright, and it stands clear of every
+	// other grid. Fewer is a worksheet's ruling or a form's boxes — and no text at all is fewer — and says
+	// nothing on its page: its text is proposed as it would be with nothing drawn (ADR-123).
 	kept := make([]bool, len(grids))
-	for i := range grids {
+	for i, g := range grids {
 		switch {
-		case holds[i] == 0:
+		case tableFillDivisor*len(filled[i]) < g.rows()*g.cols():
 		case nested[i]:
 			notes = append(notes, nestedTablesNote)
 		case turned[i]:

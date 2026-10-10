@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/grouping.go b/internal/pdfops/grouping.go
+--- a/internal/pdfops/grouping.go
++++ b/internal/pdfops/grouping.go
+@@ -267,7 +267,7 @@
+ 	kept := make([]bool, len(grids))
+ 	for i, g := range grids {
+ 		switch {
+-		case tableFillDivisor*len(filled[i]) < g.rows()*g.cols():
++		case tableFillDivisor*len(filled[i]) < min(1, g.rows()*g.cols()):
+ 		case nested[i]:
+ 			notes = append(notes, nestedTablesNote)
+ 		case turned[i]:
