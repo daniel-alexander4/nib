@@ -198,6 +198,37 @@ func TestAWindowHearsOnlyTheHandoffsThatArriveWhileItIsOpen(t *testing.T) {
 	}
 }
 
+// TestAHandoffAnsweredByAWindowIsHeardByThatWindow — the launch is told "a window has it" on the
+// count, so a window is owed every hand-off from the moment it is counted (/pending 856). The stream
+// took its starting point after the count moved, and a hand-off landing in between was answered as
+// taken by a window that then never heard it.
+func TestAHandoffAnsweredByAWindowIsHeardByThatWindow(t *testing.T) {
+	ts, s := startServerWith(t)
+	s.SetHandoffSecret("secret")
+	c, _ := authedClient(t, ts)
+	// The launch lands exactly there: the window is counted and its stream has read nothing yet.
+	answered := make(chan handoffResponse, 1)
+	s.idle.mu.Lock()
+	s.idle.countedHook = func() {
+		_, out := handoffTo(t, ts, c, "secret", "/nonexistent/x.pdf")
+		answered <- out
+	}
+	s.idle.mu.Unlock()
+	lines := listenAsAWindow(t, ts)
+	var out handoffResponse
+	select {
+	case out = <-answered:
+	case <-time.After(streamWait(t)):
+		t.Fatal("setup: the window connected and the launch behind it never ran")
+	}
+	if out.Result != "refused" || !out.Surfaced {
+		t.Fatalf("setup: the launch = %q surfaced=%v, want refused/true — the window was counted when it asked", out.Result, out.Surfaced)
+	}
+	if ev, ok := nextHandoff(t, lines, streamWait(t)); !ok || ev.Result != "refused" {
+		t.Errorf("the launch was told a window has its refusal, and that window heard %+v (arrived %v) — nothing says it anywhere", ev, ok)
+	}
+}
+
 // TestAQueuedDocumentDoesNotOutliveItsSession — a file handed to a LOCKED Nib whose windows were
 // then closed belonged to that session; the next launch opens its own document and no other.
 func TestAQueuedDocumentDoesNotOutliveItsSession(t *testing.T) {
