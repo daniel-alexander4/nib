@@ -221,10 +221,7 @@ func CreateDurable(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	// Best-effort, as in WriteDurable: the file is complete and synced.
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
+	SyncDir(filepath.Dir(path))
 	return nil
 }
 
@@ -363,11 +360,22 @@ func WriteDurable(path string, data []byte, perm os.FileMode) error {
 	// returning it would report a failed write for bytes that are already in place under the
 	// final name — ADR-073's kept copy would refuse a signing whose copy exists — and Windows
 	// cannot flush a directory handle at all, so every durable write there would fail.
+	SyncDir(dir)
+	return nil
+}
+
+// SyncDir flushes a directory's entries, so a rename or a create inside it survives a crash.
+//
+// The directory half of the two durable doors above, exported for the one thing they cannot do:
+// a caller that renames a whole DIRECTORY (the ceremony close-out's move) has no file to hand
+// them and still needs both parents flushed. **Best-effort, and it returns nothing on purpose** —
+// see WriteDurable: the change it follows has already happened, and Windows cannot flush a
+// directory handle at all.
+func SyncDir(dir string) {
 	d, err := os.Open(dir)
 	if err != nil {
-		return nil
+		return
 	}
-	defer d.Close()
 	_ = d.Sync()
-	return nil
+	d.Close()
 }

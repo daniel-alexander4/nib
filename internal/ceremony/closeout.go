@@ -23,9 +23,9 @@ import (
 // The reason is not caution, it is arithmetic. On declined, expired and abandoned there is no
 // delivery round, so nothing has carried this machine's copy anywhere; and on every machine but
 // the convener's, `~/nib/ceremonies/<id>/document.pdf` is the ONLY place that party's own signed
-// contribution exists. `RemoveMirror` — whose doc comment says *"D29's close-out prune is
+// contribution exists. `RemoveMirror` — whose doc comment once said *"D29's close-out prune is
 // P08.S06's, and this function is what it will call"* — is an `os.RemoveAll`, and calling it as
-// that comment invites is a user's signature destroyed by their own software's tidying.
+// that comment invited is a user's signature destroyed by their own software's tidying.
 //
 // **The mirror holds no key material, which is what makes a move sufficient.** D29's design has
 // the invitation secret in the vault and the mirror as ordinary files; `WriteMirror`'s own doc
@@ -156,8 +156,22 @@ func CloseOutMirror(root, id string) error {
 	if merr := os.MkdirAll(filepath.Dir(dst), 0o700); merr != nil {
 		return merr
 	}
-	return os.Rename(src, dst)
+	if rerr := os.Rename(src, dst); rerr != nil {
+		return rerr
+	}
+	// **Both parents, because a rename is two directory entries** (/pending 584): the one that
+	// appeared in `ended/` and the one that left `ceremonies/`. Without the syncs the move is
+	// atomic and not durable — a power loss can bring the folder back into the live set after the
+	// vault stores that ran next have already dropped its pins and secrets. Best-effort, as
+	// `atomicfile.SyncDir` says of itself: the move has happened.
+	syncDir(filepath.Dir(dst))
+	syncDir(filepath.Dir(src))
+	return nil
 }
+
+// syncDir is `atomicfile.SyncDir`, held in a variable only so a test can see which directories a
+// close-out asked to have flushed — an fsync leaves nothing else to observe.
+var syncDir = atomicfile.SyncDir
 
 // maxSetAside bounds the numbered folders one id can collect in `ended/`. A real machine sees a
 // second at most; the bound is there so a run of re-used ids cannot make the probe for a free
@@ -376,13 +390,23 @@ func WriteReceipt(root, id string, r Receipt) error {
 	if merr := os.MkdirAll(dir, 0o700); merr != nil {
 		return merr
 	}
-	if prev, rerr := ReadReceipt(root, id); rerr == nil {
+	prev, rerr := ReadReceipt(root, id)
+	if rerr == nil {
 		if prev.State == r.State {
 			return nil
 		}
 		return fmt.Errorf("%w: this ceremony is already recorded locally as %q and cannot also "+
 			"be recorded as %q — the first thing this machine observed is the one that stands",
 			ErrReceiptConflict, prev.State, r.State)
+	}
+	// **Only "there is no receipt" licenses writing one** (/pending 584). Any other failure — a
+	// receipt that is there and cannot be opened, or one that will not parse — is a receipt this
+	// machine could not READ, not one it never wrote, and the write below is a rename that would
+	// replace it: the first observation gone, with the worse answer in its place and no trace.
+	// Refused instead, and deliberately not as `ErrReceiptConflict`, so the caller logs it.
+	if !errors.Is(rerr, fs.ErrNotExist) {
+		return fmt.Errorf("this ceremony already has a local receipt that could not be read, so "+
+			"it is left as it is rather than written over: %w", rerr)
 	}
 	b, merr := json.MarshalIndent(r, "", "  ")
 	if merr != nil {
