@@ -1789,7 +1789,8 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 // the collapse the paragraph below already refuses three times over for `ackDeclined`.
 //
 // So `signed` is a parameter rather than an assumption, and the two callers differ: the
-// delivery round reaches a party who signed, the pull reaches one who did not.
+// delivery round reaches a party who signed, the pull is started for one who had not and asks
+// again at the moment it tells them.
 //
 // **Four things, and the criterion names all four** — so they are written as four sentences rather
 // than one summary, because a party reading this has a signed document on their disk and needs to
@@ -2105,7 +2106,11 @@ func (s *Server) fetchEndStateWhenSlow(ctx context.Context, cer *ceremonyID, hol
 		if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
 			return // retried on the next tick; the arm stands until it is recorded
 		}
-		s.tellEndState(cer, t, false) // the pull is guarded to a party who has NOT signed
+		// **Asked now, not assumed (/pending 666).** The pull is STARTED only for a party who has
+		// not signed, but it runs on the arm's context, which stays alive through the post-sign
+		// re-delivery window — so a party who signed after it started can be the one it tells,
+		// and a constant `false` here told them nothing of theirs was on the document.
+		s.tellEndState(cer, t, cer.hasSigned())
 		// **Stop listening for a proceeding that is over.** Through the one door /pending 378
 		// built, keyed by ceremony id, so this releases the interactive slot the same way leaving
 		// does rather than by a second teardown path.
