@@ -486,6 +486,7 @@ func insertNum(nums types.Array, key int, val types.Object) types.Array {
 
 // setParentTreeSlot puts ref at index mcid of the array for key, growing the array and creating the
 // entry as needed. The array is the one a reader finds (`parentTreeLookup`): of a key `/Nums` repeats, the LAST pair.
+// An array written as its own object is updated in that object.
 //
 // **Growing means filling**, not appending: the array is indexed BY MCID, so making room for MCID 7
 // in a four-slot array creates slots 4, 5 and 6 as nulls. An append would put the element at index 4
@@ -513,6 +514,17 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 	}
 	arr[mcid] = ref
 	if at >= 0 {
+		// An indirect slot array is updated where it lives, as `clearParentTreeSlot` updates one: writing the
+		// array over the reference left the row's own object behind, unreferenced, and the entry direct —
+		// read the same, and a different document than the edit asked for (ADR-124, measured on a delete).
+		if ind, isInd := nums[at].(types.IndirectRef); isInd {
+			if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
+				if _, isArr := en.Object.(types.Array); isArr {
+					en.Object = arr
+					return nil
+				}
+			}
+		}
 		nums[at] = arr
 	} else {
 		nums = insertNum(nums, key, arr)
@@ -584,20 +596,7 @@ func structTreeRootRef(ctx *model.Context) (*types.IndirectRef, error) {
 func addGroupingElement(ctx *model.Context, tree *structTree, structType string,
 	parent *types.IndirectRef) (*types.IndirectRef, error) {
 
-	parentRef := parent
-	if parentRef == nil {
-		rootRef, err := structTreeRootRef(ctx)
-		if err != nil {
-			return nil, err
-		}
-		parentRef = rootRef
-	}
-	ref, err := ctx.IndRefForNewObject(types.Dict{
-		"Type": types.Name("StructElem"),
-		"S":    types.Name(structType),
-		"P":    *parentRef,
-		"K":    types.Array{},
-	})
+	ref, err := newGroupingElement(ctx, structType, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -608,6 +607,27 @@ func addGroupingElement(ctx *model.Context, tree *structTree, structType string,
 		return ref, nil
 	}
 	return ref, appendToElementKids(ctx, *parent, *ref)
+}
+
+// newGroupingElement writes the element `addGroupingElement` adds — `/Type /StructElem`, its `/S`, a `/P`
+// naming parent (the tree root when nil) and an empty `/K` — and lists it NOWHERE: the caller places it.
+// The one shape of an element that owns no content (ADR-009): the tree editor's create writes the same
+// dictionary and places it among its parent's kids rather than last (ADR-124).
+func newGroupingElement(ctx *model.Context, structType string, parent *types.IndirectRef) (*types.IndirectRef, error) {
+	parentRef := parent
+	if parentRef == nil {
+		rootRef, err := structTreeRootRef(ctx)
+		if err != nil {
+			return nil, err
+		}
+		parentRef = rootRef
+	}
+	return ctx.IndRefForNewObject(types.Dict{
+		"Type": types.Name("StructElem"),
+		"S":    types.Name(structType),
+		"P":    *parentRef,
+		"K":    types.Array{},
+	})
 }
 
 // appendToElementKids adds a child to an element's `/K`, normalising the forms `/K` may take: a

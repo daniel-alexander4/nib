@@ -249,6 +249,89 @@ func TestTagRemoveLeavesADocumentThatCanBeTaggedAgain(t *testing.T) {
 	}
 }
 
+// TestTagEditCreatesATagMovesIntoItAndDeletesIt — ADR-124 on the command line, in the request file's own
+// grammar: `create` with a type, a parent and an index, `move` naming a parent, and `delete`. The tree
+// `nib tag tree` prints afterwards is the one it printed before.
+func TestTagEditCreatesATagMovesIntoItAndDeletesIt(t *testing.T) {
+	dir := t.TempDir()
+	in := writeFile(t, dir, "tree.pdf", string(testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+		4:  "<< /Length 1 >>\nstream\n \nendstream",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] >>",
+		8:  "<< /Type /StructElem /S /Document /P 7 0 R /K [10 0 R 11 0 R] >>",
+		10: "<< /Type /StructElem /S /H1 /P 8 0 R >>",
+		11: "<< /Type /StructElem /S /P /P 8 0 R >>",
+	})))
+	treeOf := func(path string) (string, pdfops.StructureTree) {
+		t.Helper()
+		stdout, errOut, code := runTag(t, "tree", path)
+		if code != 0 {
+			t.Fatalf("tree exited %d: %s", code, errOut)
+		}
+		tree, err := pdfops.ReadStructure(readPDF(t, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stdout, tree
+	}
+	printed, _ := treeOf(in)
+
+	made := filepath.Join(dir, "made.pdf")
+	create := writeFile(t, dir, "create.json", `{"edits":[{"kind":"create","value":"Sect","parent":8,"index":1}]}`)
+	if _, errOut, code := runTag(t, "edit", in, "-o", made, "--edits", create); code != 0 {
+		t.Fatalf("edit (create) exited %d: %s", code, errOut)
+	}
+	_, tree := treeOf(made)
+	if len(tree.Elements) != 4 || tree.Elements[2].Standard != "Sect" || tree.Elements[2].Parent != 0 || tree.Elements[1].ID != 10 || tree.Elements[3].ID != 11 {
+		t.Fatalf("after the create the tree reads %+v — want a Sect between the heading and the paragraph", tree.Elements)
+	}
+	sect := tree.Elements[2].ID
+
+	filled := filepath.Join(dir, "filled.pdf")
+	move := writeFile(t, dir, "move.json", `{"edits":[{"kind":"move","element":11,"parent":`+itoa(sect)+`},{"kind":"create","value":"Div","parent":-1}]}`)
+	if _, errOut, code := runTag(t, "edit", made, "-o", filled, "--edits", move); code != 0 {
+		t.Fatalf("edit (move) exited %d: %s", code, errOut)
+	}
+	stdout, tree := treeOf(filled)
+	if len(tree.Elements) != 5 || tree.Elements[3].ID != 11 || tree.Elements[tree.Elements[3].Parent].ID != sect || tree.Elements[4].Standard != "Div" || tree.Elements[4].Parent != -1 {
+		t.Fatalf("after the move the tree reads %+v — want the paragraph under the Sect and a Div at the top", tree.Elements)
+	}
+	if !strings.Contains(stdout, "\n"+itoa(sect)+" ") || !strings.Contains(stdout, "    P") {
+		t.Errorf("the tree prints\n%s\nwant the Sect by its id and the paragraph indented under it", stdout)
+	}
+	div := tree.Elements[4].ID
+
+	back := filepath.Join(dir, "back.pdf")
+	del := writeFile(t, dir, "delete.json", `{"edits":[{"kind":"delete","element":`+itoa(sect)+`},{"kind":"delete","element":`+itoa(div)+`}]}`)
+	if _, errOut, code := runTag(t, "edit", filled, "-o", back, "--edits", del); code != 0 {
+		t.Fatalf("edit (delete) exited %d: %s", code, errOut)
+	}
+	if again, _ := treeOf(back); again != printed {
+		t.Errorf("created, filled and deleted, the tree prints\n%s\nand printed\n%s", again, printed)
+	}
+
+	// A refusal is the door's sentence and exit 2; nothing is written.
+	refused := filepath.Join(dir, "refused.pdf")
+	for _, tc := range []struct{ edits, says string }{
+		{`{"edits":[{"kind":"delete","element":10},{"kind":"delete","element":11},{"kind":"delete","element":8}]}`, "last element"},
+		{`{"edits":[{"kind":"create","value":"Chapter","parent":8}]}`, "not a standard structure type"},
+		{`{"edits":[{"kind":"create","value":"Div","element":10}]}`, "names element 10"},
+	} {
+		_, errOut, code := runTag(t, "edit", in, "-o", refused, "--edits", writeFile(t, dir, "bad.json", tc.edits))
+		if code != 2 || !strings.Contains(errOut, tc.says) {
+			t.Errorf("%s: exit %d, %q — want 2 saying %q", tc.edits, code, errOut, tc.says)
+		}
+		if _, err := os.Stat(refused); err == nil {
+			t.Fatalf("%s: wrote %s", tc.edits, refused)
+		}
+	}
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "create or delete") || !strings.Contains(errOut, "keeps what it held") {
+		t.Errorf("nib tag edit -h exited %d and does not describe create and delete:\n%s", code, errOut)
+	}
+}
+
 // picturedPDF is an untagged page with a line of text and one image XObject drawn 100 by 80 points (ADR-122).
 func picturedPDF() []byte {
 	content := "BT /F1 12 Tf 72 700 Td (Above the picture) Tj ET q 100 0 0 80 50 500 cm /Im0 Do Q"

@@ -641,6 +641,13 @@
         <button id="tagOrderToggle" aria-pressed="false" title="Number each element on the page in the order a screen reader reads it (P09.S06c)">Show reading order</button>
         <button id="tagTreeRemove" hidden title="Take every tag out of this document, so that Tag structure… can propose them afresh. What is marked as decoration stays marked. Ctrl+Z brings the tags back">Remove all tags…</button>
         <ul id="tagTreeList" class="tagtree" role="tree" aria-label="Structure tree"></ul>
+        <!-- Adding a tag (ADR-124). Outside the edit bar: it works with nothing selected, when the new tag
+             goes last at the top of the tree. A button applies it, as every control here does. -->
+        <div id="tagNewBar" class="tagedit" hidden>
+          <label>New tag <select id="tagNewType"></select></label>
+          <button id="tagNewAdd" aria-describedby="tagNewHelp">Add tag</button>
+          <p id="tagNewHelp" class="libhint">Adds an empty tag after the selected one — or last, when none is selected. Fill it with <strong>Move into the tag above</strong>.</p>
+        </div>
         <!-- What can be changed about the selected element (P09.S06b). Native controls only, and every
              change is applied by a button (or Enter in the alt field) — a select that applied on change
              would send an edit for every arrow press a keyboard user makes through its options. -->
@@ -658,7 +665,15 @@
           <button id="tagEditHeadersApply">Set header cells</button>
           <button id="tagEditUp">Move up</button>
           <button id="tagEditDown">Move down</button>
+          <!-- Indent and outdent (ADR-124): the existing move, naming a parent. A button that cannot act is
+               disabled and the line under it says why, for a screen reader as for anyone. -->
+          <button id="tagEditIn" aria-describedby="tagEditInWhy">Move into the tag above</button>
+          <button id="tagEditOut" aria-describedby="tagEditOutWhy">Move out one level</button>
+          <p id="tagEditInWhy" class="libhint" hidden></p>
+          <p id="tagEditOutWhy" class="libhint" hidden></p>
           <button id="tagEditArtifact" title="Take this element out of the structure tree and mark what it draws as decoration a screen reader skips">Mark as decoration</button>
+          <button id="tagEditDelete" aria-describedby="tagEditDeleteHelp">Delete this tag — keep its content</button>
+          <p id="tagEditDeleteHelp" class="libhint">Deleting a tag keeps everything in it: its content and the tags inside it move up to the tag above. To hide content from a screen reader, use <strong>Mark as decoration</strong> instead.</p>
           <p id="tagEditStatus" class="libhint" role="status"></p>
         </div>
       </div>

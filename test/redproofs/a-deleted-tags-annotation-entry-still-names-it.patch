@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structcreate.go b/internal/pdfops/structcreate.go
+--- a/internal/pdfops/structcreate.go
++++ b/internal/pdfops/structcreate.go
+@@ -167,7 +167,7 @@
+ 				// The annotation's own `/ParentTree` entry — one reference, under its `/StructParent`.
+ 				if obj, oerr := ctx.DereferenceDict(d["Obj"]); oerr == nil && obj != nil {
+ 					if key, ok := parentTreeKeyValue(ctx.XRefTable, obj["StructParent"]); ok {
+-						passSingle(ctx, tree, key, e.objNr, owner)
++						_ = key
+ 					}
+ 				}
+ 				continue

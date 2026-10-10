@@ -7,6 +7,9 @@
 // edit causes the person is still where they were — same element, same control — and that a refusal
 // keeps them there with the server's reason.
 //
+// The same for the four controls of ADR-124 — Add tag, Delete this tag, Move into the tag above, Move out
+// one level — and where focus lands after a create.
+//
 // What it cannot see: a real browser's Tab order and a select answering the keyboard, which is tier 3's
 // keyboard reader for this panel.
 //
@@ -299,6 +302,172 @@ test('Remove all tags asks first, sends nothing when declined, and re-reads the 
   await reopenPanel();
 });
 
+// ── Adding a tag, deleting one, and the two moves that change a parent — ADR-124 ────────────────────────
+//
+// What the server answers after a create: the tree with one more element, at `at` in the flat order,
+// under the element at index `parent` (-1: the top) as that parent's `place`-th kid.
+function withNewTag(at, parent, place, id = 20, standard = 'Sect') {
+  const t = baseTree();
+  const shift = (j) => (j >= at ? j + 1 : j);
+  for (const e of t.elements) {
+    e.parent = e.parent >= 0 ? shift(e.parent) : e.parent;
+    e.kids = e.kids.map(shift);
+  }
+  t.elements.splice(at, 0, el(id, parent, standard, '', [], { rect: [0, 0, 0, 0], page: 0 }));
+  if (parent >= 0) t.elements[parent].kids.splice(place, 0, at);
+  return t;
+}
+const lastEdit = () => edits[edits.length - 1];
+const selectedItem = () => doc.querySelector('#tagTreeList [aria-selected="true"]');
+
+test('Add tag creates the chosen type after the selected element, and the new tag takes the selection and the focus', async () => {
+  tree = baseTree();
+  await reopenPanel();
+  assert.equal($('tagNewBar').hidden, false, 'a tagged document is not offered a new tag');
+  assert.equal($('tagNewType').value, 'Sect', 'the new-tag picker does not open on a container');
+  assert.equal($('tagNewAdd').getAttribute('aria-describedby'), 'tagNewHelp', 'the Add tag button does not carry its help');
+  assert.match($('tagNewHelp').textContent, /after the selected one/, 'the help does not say where a new tag goes');
+
+  await select(2); // the paragraph, third of the Document's kids
+  edits.length = 0;
+  $('tagNewType').value = 'Div';
+  tree = withNewTag(3, 0, 2);
+  const before = treeCalls();
+  await press('tagNewAdd');
+  assert.deepEqual(edits, [{ edits: [{ kind: 'create', value: 'Div', parent: 4, index: 2 }] }],
+    'the create sent is not "a Div under the Document, directly after the paragraph"');
+  assert.ok(treeCalls() > before, 'the tree was not read again after the create');
+  assert.equal(selectedItem()?.dataset.id, '20', 'the new tag is not selected');
+  assert.equal(doc.activeElement, items()[3], 'focus did not land on the new tag in the tree');
+  assert.match($('tagEditStatus').textContent, /Tag added.*Ctrl\+Z/, 'the bar does not say the tag was added and can be taken back');
+
+  // A top-level element selected: the new tag is its next sibling at the top of the tree, which -1 names.
+  tree = baseTree();
+  await reopenPanel();
+  await select(0);
+  tree = withNewTag(12, -1, 0);
+  await press('tagNewAdd');
+  assert.deepEqual(lastEdit(), { edits: [{ kind: 'create', value: 'Div', parent: -1, index: 1 }] },
+    'a create beside a top-level element does not name the top of the tree and the place after it');
+  assert.equal(selectedItem()?.dataset.id, '20', 'the new top-level tag is not selected');
+  assert.equal(doc.activeElement, items()[12], 'focus did not land on the new top-level tag');
+});
+
+test('with nothing selected, Add tag puts the new tag last at the top of the tree, and a refusal shows beside the summary', async () => {
+  tree = baseTree();
+  await reopenPanel();
+  assert.equal(selectedItem(), null, 'setup: something is selected after a fresh read');
+  editReply = () => new Response(JSON.stringify({ error: 'this document is signed, and correcting its structure would change the bytes its signatures cover' }),
+    { status: 409, headers: { 'Content-Type': 'application/json' } });
+  const before = treeCalls();
+  await press('tagNewAdd');
+  editReply = null;
+  assert.match($('tagTreeSummary').textContent, /signed/, 'a create refused with nothing selected does not show the server\'s reason');
+  assert.equal(treeCalls(), before, 'a refused create reloaded the tree');
+
+  tree = withNewTag(12, -1, 0);
+  await press('tagNewAdd');
+  assert.deepEqual(lastEdit(), { edits: [{ kind: 'create', value: 'Div', parent: -1 }] },
+    'a create with nothing selected does not append at the top of the tree');
+  assert.equal(selectedItem()?.dataset.id, '20', 'the new tag is not selected');
+  assert.equal(doc.activeElement, items()[12], 'focus did not land on the new tag');
+  assert.match($('tagTreeSummary').textContent, /13 element/, 'the summary was not rewritten once the tree was read again');
+});
+
+test('Delete this tag sends a delete — never an artifact — and says the content is kept', async () => {
+  tree = baseTree();
+  await reopenPanel();
+  assert.match($('tagEditDelete').textContent, /keep its content/, 'the delete button does not say the content is kept');
+  assert.equal($('tagEditDelete').getAttribute('aria-describedby'), 'tagEditDeleteHelp', 'the delete button does not carry its help');
+  assert.match($('tagEditDeleteHelp').textContent, /move up to the tag above/, 'the help does not say where the content goes');
+  assert.match($('tagEditDeleteHelp').textContent, /Mark as decoration/, 'the help does not tell a delete from Mark as decoration');
+  await select(2);
+  edits.length = 0;
+  await press('tagEditDelete');
+  assert.deepEqual(edits, [{ edits: [{ element: 6, kind: 'delete' }] }], 'the edit sent is not a delete of the selected element');
+
+  await select(1);
+  editReply = () => new Response(JSON.stringify({ error: 'element 5 is at the top of the structure tree and holds content itself — change its type instead' }),
+    { status: 400, headers: { 'Content-Type': 'application/json' } });
+  const before = treeCalls();
+  await press('tagEditDelete');
+  editReply = null;
+  assert.match($('tagEditStatus').textContent, /change its type instead/, 'a refused delete does not show the server\'s sentence');
+  assert.equal(treeCalls(), before, 'a refused delete reloaded the tree');
+  assert.equal(selectedItem()?.dataset.id, '5', 'a refused delete moved the selection');
+});
+
+test('Move into the tag above and Move out one level are the move edit, naming the new parent', async () => {
+  tree = baseTree();
+  await reopenPanel();
+  edits.length = 0;
+  await select(2); // P, after the H1
+  await press('tagEditIn');
+  await select(7); // the first TH: in a row, in the table
+  await press('tagEditOut');
+  await select(6); // the first row: in the table, in the Document
+  await press('tagEditOut');
+  await select(1); // the H1: in the Document, which is at the top
+  await press('tagEditOut');
+  assert.deepEqual(edits, [
+    { edits: [{ element: 6, kind: 'move', parent: 5 }] },
+    { edits: [{ element: 10, kind: 'move', parent: 8, index: 1 }] },
+    { edits: [{ element: 9, kind: 'move', parent: 4, index: 5 }] },
+    { edits: [{ element: 5, kind: 'move', parent: -1, index: 1 }] },
+  ], 'the moves sent are not: last into the previous sibling; next after the parent, under the grandparent or at the top');
+});
+
+test('a move that cannot be made is disabled and says why, where a screen reader finds it', async () => {
+  tree = baseTree();
+  await reopenPanel();
+  const why = (id) => ($(`${id}Why`).hidden ? '' : $(`${id}Why`).textContent);
+  for (const id of ['tagEditIn', 'tagEditOut']) {
+    assert.equal($(id).getAttribute('aria-describedby'), `${id}Why`, `${id} does not name the line that says why it is disabled`);
+  }
+  await select(2);
+  assert.deepEqual([$('tagEditIn').disabled, $('tagEditOut').disabled, why('tagEditIn'), why('tagEditOut')], [false, false, '', ''],
+    'an element with a tag above it and a parent cannot move in and out, or a reason is shown for a move that can be made');
+  await select(1); // first of its siblings
+  assert.equal($('tagEditIn').disabled, true, 'the first of its siblings can move into a tag above it');
+  assert.match(why('tagEditIn'), /no tag above/, 'the bar does not say why it cannot move in');
+  await select(5); // the Table: the tag above it is written inline
+  assert.equal($('tagEditIn').disabled, true, 'an element can be moved into one written inline');
+  assert.match(why('tagEditIn'), /written inline/, 'the bar does not say the tag above is inline');
+  await select(0); // top level
+  assert.equal($('tagEditOut').disabled, true, 'a top-level element can move out');
+  assert.match(why('tagEditOut'), /already at the top level/, 'the bar does not say why it cannot move out');
+  await select(4); // itself inline: nothing here can name it
+  for (const id of ['tagEditIn', 'tagEditOut', 'tagEditDelete']) {
+    assert.equal($(id).disabled, true, `${id} is enabled on an element written inline, which no edit can name`);
+  }
+  assert.deepEqual([why('tagEditIn'), why('tagEditOut')], ['', ''], 'an inline element is given a second reason beside the bar\'s own');
+  assert.match($('tagEditStatus').textContent, /inline/, 'the bar does not say why an inline element cannot be edited');
+
+  // A Document holding an INLINE section, which holds a paragraph, which holds a span.
+  tree = {
+    tagged: true,
+    unaddressable: 1,
+    elements: [el(4, -1, 'Document', 'x', [1]), el(0, 0, 'Sect', 'x', [2]), el(6, 1, 'P', 'x', [3]), el(7, 2, 'Span', 'x', [])],
+  };
+  await reopenPanel();
+  await select(2);
+  assert.equal($('tagEditOut').disabled, true, 'an element can be moved out of a parent written inline');
+  assert.match(why('tagEditOut'), /inside one written inline/, 'the bar does not say its parent is inline');
+  edits.length = 0;
+  await press('tagNewAdd');
+  assert.deepEqual(edits, [], 'a create beside an element whose parent is inline was sent, naming a parent with no id');
+  assert.match($('tagEditStatus').textContent, /inside one written inline/, 'the bar does not say why a tag cannot be added there');
+  await select(3);
+  assert.equal($('tagEditOut').disabled, true, 'an element can be moved out into a tag written inline');
+  assert.match(why('tagEditOut'), /level above is a tag written inline/, 'the bar does not say the level above is inline');
+
+  tree = { tagged: false, unaddressable: 0, elements: [] };
+  await reopenPanel();
+  assert.equal($('tagNewBar').hidden, true, 'a document with no tree is offered a new tag');
+  tree = baseTree();
+  await reopenPanel();
+});
+
 test('the types offered are exactly the types the server accepts', () => {
   const src = fs.readFileSync(path.join(REPO, 'internal', 'pdfops', 'structedit.go'), 'utf8');
   const block = src.match(/var standardStructTypes = map\[string\]bool\{([\s\S]*?)\n\}/);
@@ -308,4 +477,6 @@ test('the types offered are exactly the types the server accepts', () => {
   // Every element selected in the tests above is a standard type, so the picker holds only its own list.
   const offered = [...$('tagEditType').options].map((o) => o.value).sort();
   assert.deepEqual(offered, server, 'the type picker and pdfops.standardStructTypes disagree — one will offer a type the other refuses');
+  assert.deepEqual([...$('tagNewType').options].map((o) => o.value).sort(), server,
+    'the new-tag picker and pdfops.standardStructTypes disagree — it will offer a type a create refuses');
 });

@@ -74,9 +74,12 @@ func tagWrite(args []string, mode string) int {
 	if mode == "edit" {
 		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
 		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
-			"\"parent\", \"index\", \"headers\"}]} — kind retype, move, alt, scope, colspan, rowspan, headers or artifact;\n" +
-			"element an id from \"nib tag tree\"; headers the ids of the header cells that head a table cell.\n" +
-			"A signed document is refused."
+			"\"parent\", \"index\", \"headers\"}]} — kind retype, move, alt, scope, colspan, rowspan, headers, artifact,\n" +
+			"create or delete; element an id from \"nib tag tree\"; headers the ids of the header cells that head a\n" +
+			"table cell. create adds an empty tag: \"value\" its type, \"parent\" the id it goes under (0 or -1: the top\n" +
+			"of the tree), \"index\" its place among that tag's tags (left out: last), and no \"element\". delete takes\n" +
+			"a tag away and keeps what it held, which moves up to the tag above. move takes \"parent\" and \"index\"\n" +
+			"the same way (0: the parent it has; -1: the top of the tree). A signed document is refused."
 	}
 	if mode == "remove" {
 		usage = "nib tag remove IN -o OUT  |  nib tag remove -w IN"

@@ -836,3 +836,9 @@ home today.
   — supersedes one clause of ADR-121 ("a grid that holds no text" is not read). Of 31 tables proposed on the
   local corpus about 23 are tables, 5 are form boxes and 3 are near-empty worksheets; the rule drops the three
   and says nothing on their pages. The form boxes stay with the reviewer's *Not a table*.
+- **[ADR-124 — a tag is created empty, and deleted without its content](124-a-tag-is-created-empty-and-deleted-without-its-content.md)**
+  — `create` and `delete` join the tree editor's batch. A created element is a grouping element placed by the
+  one rule a move places by. A delete hands the element's kids, `/ParentTree` slots and annotation entry to its
+  parent, changes no content stream, and writes a page onto whatever took its page from the deleted element.
+  Refused: a top-level element holding content, the tree's last element, an element inside an inline one. A
+  move names the root as -1.
