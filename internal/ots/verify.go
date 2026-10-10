@@ -334,7 +334,6 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	attempts := 0
 	var fetchErr error // a network refusal, remembered rather than acted on immediately
 	var lastComputeErr error
-	var sawBranch bool
 
 	for _, s := range attested {
 		root, err := s.compute(ctx, p.digest)
@@ -380,7 +379,6 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 			hdr = header{merkle, t, n}
 			seen[s.height] = hdr
 		}
-		sawBranch = true
 		if !bytes.Equal(root, hdr.merkle) {
 			// This branch does not attest to this document; another may.
 			continue
@@ -391,16 +389,17 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 		}
 		return res, nil
 	}
-	if !sawBranch {
-		// No branch was both walkable and fetchable, so we have no opinion rather than a
-		// negative one. A negative verdict here would be StateInvalid — "this proof does not
-		// verify" — about a document we never finished checking.
-		if fetchErr != nil {
-			return nil, fetchErr
-		}
-		if lastComputeErr != nil {
-			return nil, lastComputeErr
-		}
+	// Nothing confirmed. StateInvalid — "this proof does not verify" — is earned only when
+	// EVERY branch was walked, fetched and compared. One branch left unchecked is no opinion,
+	// whatever the others said (/pending 645): the test here was "some branch was checked",
+	// so a decoy that fetched and mismatched, beside a genuine branch whose height no
+	// explorer answered just then, read as a negative verdict instead of "try again". The
+	// file is unsigned, so appending that decoy is all it took.
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+	if lastComputeErr != nil {
+		return nil, lastComputeErr
 	}
 	return &VerifyResult{State: StateInvalid}, nil
 }
