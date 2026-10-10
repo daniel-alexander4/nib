@@ -308,6 +308,7 @@ const LIVE_BY_DESIGN = {
   'async function ensureAlignment() {': 'every await is followed by `if (seq !== cmpSeq) return;`, and a switch closes Compare, which bumps cmpSeq',
   'async function renderCompareVisual(mode) {': 'as ensureAlignment — the cmpSeq token is its pin',
   'async function save() {': 'captures `owner`; the two later reads are the check itself (`view.docMeta.id !== doc.id`) and one made only once that check has passed',
+  'async function runOCR(cmd = null) {': 'the one late read restores the OCR BUTTON, which belongs to whichever document is in front when the read ends — its lock, not the lock of the document that was read (/pending 830); the words themselves go to the captured owner',
   'async function loadImages() {': 'the read is inside a card\'s click handler, which runs at the click — placing an image on the document then in front is the intent',
 };
 function asyncBodies(src) {
