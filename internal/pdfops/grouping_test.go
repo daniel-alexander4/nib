@@ -230,7 +230,7 @@ func TestAnImageOnlyPageHasNoLayout(t *testing.T) {
 // tesseract's own ids and never touches a run.
 func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 	owners := map[string]bool{"textrun.go": true, "grouping.go": true}
-	idents := map[string]bool{"textRun": true, "pageRuns": true, "readPageRuns": true, "lineSegments": true, "groupRuns": true}
+	idents := map[string]bool{"textRun": true, "pageRuns": true, "readPageRuns": true, "readPageDrawings": true, "lineSegments": true, "groupRuns": true}
 	// exempt names a file that reads runs for a purpose other than grouping them, and the identifiers
 	// it may use — each with why. ADR-009: a deliberate exemption is named, and it is narrow: the
 	// grouping identifiers stay forbidden to an exempt file, so a second grouping written there still
@@ -269,6 +269,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		},
 		"pagemap.go": {
 			"textRun": "the page map reports each run where the page sets it, with its glyph boundaries — one show operator, one entry — for placing a field or a redaction; it joins no runs into lines or paragraphs (ADR-088)",
+		},
+		"structregion.go": {
+			"readPageDrawings": "a region brackets the runs, images and paths of a page that no element owns, each at its own operator, and the reader of untagged content hands the runs to the grouping door (groupUnowned); neither groups anything itself (ADR-125)",
 		},
 		"structview.go": {
 			"readPageRuns": "the structure view matches an existing tree's MCIDs to the text drawn under them, the truth reader's way, and groups nothing (P09.S01)",

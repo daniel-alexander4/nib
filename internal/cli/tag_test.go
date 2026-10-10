@@ -274,7 +274,7 @@ func TestTheTagCommandsReachTheRoutesDoors(t *testing.T) {
 		j := strings.Index(body[i:], "\n}\n")
 		return body[i : i+j]
 	}
-	for name, door := range map[string]string{"tagTree": "pdfops.ReadStructure(", "tagPropose": "pdfops.ProposeTags("} {
+	for name, door := range map[string]string{"tagTree": "pdfops.ReadStructure(", "tagPropose": "pdfops.ProposeTags(", "tagUntagged": "pdfops.ReadUntagged("} {
 		f := fn(name)
 		if !strings.Contains(f, door) {
 			t.Errorf("%s does not reach %s", name, door)

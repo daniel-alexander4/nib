@@ -676,6 +676,21 @@
           <p id="tagEditDeleteHelp" class="libhint">Deleting a tag keeps everything in it: its content and the tags inside it move up to the tag above. To hide content from a screen reader, use <strong>Mark as decoration</strong> instead.</p>
           <p id="tagEditStatus" class="libhint" role="status"></p>
         </div>
+        <!-- Tagging what no tag owns (ADR-125): text the tagger missed, content marked as decoration, a picture,
+             a drawn graphic. After the edit bar, so it adds no Tab stop between the tree and the controls for
+             the selected tag. The list of labelled tick boxes is the whole path by keyboard; nothing happens on
+             a tick or on the select's change but an outline — a button applies. -->
+        <div id="tagUntaggedBar" class="tagedit" role="group" aria-labelledby="tagUntaggedTitle" hidden>
+          <p id="tagUntaggedTitle" class="tagsub">Tag untagged content</p>
+          <p id="tagUntaggedHelp" class="libhint">Content with no tag is skipped or read out of place by a screen reader. List what a page draws that no tag owns — text, pictures, drawings — tick what belongs together, and tag it as one new tag. It goes after the selected tag, or last when none is selected.</p>
+          <label>Page <input id="tagUntaggedPage" type="number" min="1" step="1" inputmode="numeric"></label>
+          <button id="tagUntaggedShow" aria-describedby="tagUntaggedHelp">Show untagged content</button>
+          <fieldset id="tagUntaggedPieces" hidden><legend id="tagUntaggedLegend">Untagged on this page</legend><ul id="tagUntaggedList" class="tagpieces"></ul></fieldset>
+          <label>Tag as <select id="tagUntaggedType"></select></label>
+          <label>Description — required for a figure <input id="tagUntaggedAlt" type="text"></label>
+          <button id="tagUntaggedApply">Tag selected</button>
+          <p id="tagUntaggedStatus" class="libhint" role="status"></p>
+        </div>
       </div>
       <div id="library" class="panel">
         <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use <strong>Finalize &amp; sign</strong>, on the <strong>Secure</strong> tab, to add a cryptographic signature.</p>

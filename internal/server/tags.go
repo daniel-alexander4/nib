@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"nib/internal/pdfops"
@@ -72,6 +73,22 @@ type tagTreeResponse struct {
 	Elements      []tagTreeElementView `json:"elements"`
 }
 
+// untaggedPieceView is one piece of a page no structure element owns, on the wire (ADR-125).
+type untaggedPieceView struct {
+	Page       int        `json:"page"`
+	Kind       string     `json:"kind"`
+	Text       string     `json:"text"`
+	Rect       [4]float64 `json:"rect"`
+	Decoration bool       `json:"decoration"`
+	InForm     bool       `json:"inForm"`
+}
+
+// untaggedResponse is what one page of the open document draws that no tag owns.
+type untaggedResponse struct {
+	Pages  int                 `json:"pages"`
+	Pieces []untaggedPieceView `json:"pieces"`
+}
+
 // maxTagReviewBytes bounds a review: one short entry per element, and a long document has thousands.
 const maxTagReviewBytes = 8 << 20
 
@@ -134,6 +151,42 @@ func (s *Server) handleTagsTree(w http.ResponseWriter, r *http.Request) {
 			Text: e.Text, Alt: e.Alt, HasAlt: e.HasAlt, Scope: e.Scope,
 			ColSpan: e.ColSpan, RowSpan: e.RowSpan, Headers: e.Headers, Rect: e.Rect, PageBox: e.PageBox,
 		})
+	}
+	writeJSON(w, out)
+}
+
+// handleTagsUntagged lists what one page of the open document draws that no structure element owns — text,
+// pictures, drawings, rules — each placed on the page as displayed (ADR-125). It writes nothing. The page is
+// named: a whole document's pieces are thousands, and the panel shows a page at a time.
+func (s *Server) handleTagsUntagged(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("tags: recovered panic reading untagged content: %v", rec)
+			httpError(w, http.StatusUnprocessableEntity, "could not read what is untagged on this page")
+		}
+	}()
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		httpError(w, http.StatusBadRequest, "page must be a page number, 1 or more")
+		return
+	}
+	got, err := pdfops.ReadUntagged(s.docBytes(doc), page)
+	var outOfRange *pdfops.PageRangeError
+	if errors.As(err, &outOfRange) {
+		httpError(w, http.StatusBadRequest, strings.TrimPrefix(err.Error(), "pdfops: "))
+		return
+	}
+	if err != nil {
+		httpError(w, http.StatusUnprocessableEntity, "could not read what is untagged on this page: "+strings.TrimPrefix(err.Error(), "pdfops: "))
+		return
+	}
+	out := untaggedResponse{Pages: got.Pages, Pieces: []untaggedPieceView{}}
+	for _, p := range got.Pieces {
+		out.Pieces = append(out.Pieces, untaggedPieceView{Page: p.Page, Kind: p.Kind, Text: p.Text, Rect: p.Rect, Decoration: p.Decoration, InForm: p.InForm})
 	}
 	writeJSON(w, out)
 }

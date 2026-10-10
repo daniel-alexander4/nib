@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structregion.go b/internal/pdfops/structregion.go
+--- a/internal/pdfops/structregion.go
++++ b/internal/pdfops/structregion.go
+@@ -254,7 +254,7 @@
+ 		}
+ 		opener := fmt.Sprintf("/%s <</MCID %d>> BDC", ed.value, mcid)
+ 		if u.art > 0 {
+-			edit.Replace(u.span.start, u.span.end, []byte(opener))
++			edit.InsertBefore(u.span.end, []byte("\n"+opener))
+ 			continue
+ 		}
+ 		edit.InsertBefore(u.span.start, []byte(opener+"\n"))

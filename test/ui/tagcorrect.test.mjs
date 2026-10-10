@@ -244,6 +244,14 @@ test('undo takes each correction back, clause by clause', { skip: SKIP }, async 
   assert.equal((await result('7.3 t1'))?.verdict, 'pass', 'undoing the scopes also took back the alt text');
   await page.keyboard.press('Control+z');
   await waitVerdict('7.3 t1', 'fail');
+  // **The verdict is the SERVER's, and the panel is still reading.** The window reloads the document and only
+  // then reads the tree again; when that read lands it redraws the tree — no selection, the edit bar hidden,
+  // focus on the body. The next test walks the tree by keyboard, and it used to start here: on a loaded machine
+  // the redraw landed after its arrow keys, and sixty Tabs from the body never reached a header cell's tick box
+  // (measured 2026-10-09 by pausing 800 ms after the arrows: the tree read had not come back, and after it did
+  // the bar was hidden and nothing was selected). So this test ends when the PANEL shows the undone tree, as
+  // the undo above it already waits for.
+  await page.waitForFunction(() => [...document.querySelectorAll('#tagTreeList [role="treeitem"]')].some((i) => i.textContent.startsWith('Figure') && i.textContent.includes('no alt text')), null, { timeout: 30000 });
 });
 
 // With no scope anywhere (the undo test left the document as it arrived), the other way a table says which

@@ -147,3 +147,35 @@ func TestDecodingReadsTheRequestShapes(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodingReadsARegion — ADR-125: a region's page, rectangle, pieces and description reach the edit as
+// written; a rectangle that is not four numbers is ErrMalformed, never padded or cut to four.
+func TestDecodingReadsARegion(t *testing.T) {
+	edits, err := DecodeEdits(strings.NewReader(`{"edits":[
+		{"kind":"region","value":"Figure","page":3,"rect":[0.1,0.2,0.3,0.4],"alt":"A chart \\ ü","parent":7,"index":0},
+		{"kind":"region","value":"P","page":1,"pieces":[[0,0,0.5,0.5],[0.5,0.5,1,1]]},
+		{"kind":"region","value":"P","page":2,"rect":[0,0,1,1],"pieces":[[0.25,0.25,0.75,0.75]]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []pdfops.StructureEdit{
+		{Kind: "region", Value: "Figure", Page: 3, Rect: [4]float64{0.1, 0.2, 0.3, 0.4}, Alt: `A chart \ ü`, Parent: 7, Index: 0},
+		{Kind: "region", Value: "P", Page: 1, Pieces: [][4]float64{{0, 0, 0.5, 0.5}, {0.5, 0.5, 1, 1}}, Index: -1},
+		{Kind: "region", Value: "P", Page: 2, Rect: [4]float64{0, 0, 1, 1}, Pieces: [][4]float64{{0.25, 0.25, 0.75, 0.75}}, Index: -1},
+	}
+	if !reflect.DeepEqual(edits, want) {
+		t.Errorf("decoded\n%+v\nwant\n%+v", edits, want)
+	}
+	for _, bad := range []string{
+		`{"edits":[{"kind":"region","rect":[0,0,1]}]}`,
+		`{"edits":[{"kind":"region","rect":[0,0,1,1,1]}]}`,
+		`{"edits":[{"kind":"region","rect":[]}]}`,
+		`{"edits":[{"kind":"region","pieces":[[0,0,1,1],[0,0,1]]}]}`,
+		`{"edits":[{"kind":"region","pieces":[[0,0,1,1,0.5]]}]}`,
+		`{"edits":[{"kind":"region","rect":"all"}]}`,
+	} {
+		if _, err := DecodeEdits(strings.NewReader(bad)); !errors.Is(err, ErrMalformed) {
+			t.Errorf("DecodeEdits(%s) = %v, want ErrMalformed", bad, err)
+		}
+	}
+}

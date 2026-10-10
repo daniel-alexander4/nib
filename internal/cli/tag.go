@@ -23,11 +23,13 @@ import (
 func cmdTag(args []string) int {
 	usage := func(w *os.File) {
 		fmt.Fprint(w, "usage: nib tag tree|propose IN [--json]\n"+
+			"       nib tag untagged IN [--page N] [--json]\n"+
 			"       nib tag commit IN -o OUT --review REVIEW.json\n"+
 			"       nib tag edit IN -o OUT --edits EDITS.json\n"+
 			"       nib tag remove IN -o OUT\n\n"+
 			"Read and write a document's structure. tree prints the tags it already has, in reading order, and\n"+
-			"propose prints the structure nib would propose; neither writes anything. commit writes a reviewed\n"+
+			"propose prints the structure nib would propose; untagged prints what the pages draw that no tag\n"+
+			"owns — what \"nib tag edit\" can tag as a region; none of the three writes anything. commit writes a reviewed\n"+
 			"proposal, edit corrects the existing tree and remove takes every tag away so the document can be\n"+
 			"tagged again (-w rewrites the one input); all three refuse a signed document.\n"+
 			"Run \"nib tag SUBCOMMAND -h\" for a subcommand's flags.\n")
@@ -44,6 +46,8 @@ func cmdTag(args []string) int {
 		return tagTree(args[1:])
 	case "propose":
 		return tagPropose(args[1:])
+	case "untagged":
+		return tagUntagged(args[1:])
 	case "commit":
 		return tagWrite(args[1:], "commit")
 	case "edit":
@@ -51,7 +55,7 @@ func cmdTag(args []string) int {
 	case "remove":
 		return tagWrite(args[1:], "remove")
 	}
-	errf("unknown tag subcommand %q — tree, propose, commit, edit or remove (run \"nib tag -h\")", args[0])
+	errf("unknown tag subcommand %q — tree, propose, untagged, commit, edit or remove (run \"nib tag -h\")", args[0])
 	return 1
 }
 
@@ -74,12 +78,17 @@ func tagWrite(args []string, mode string) int {
 	if mode == "edit" {
 		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
 		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
-			"\"parent\", \"index\", \"headers\"}]} — kind retype, move, alt, scope, colspan, rowspan, headers, artifact,\n" +
-			"create or delete; element an id from \"nib tag tree\"; headers the ids of the header cells that head a\n" +
-			"table cell. create adds an empty tag: \"value\" its type, \"parent\" the id it goes under (0 or -1: the top\n" +
-			"of the tree), \"index\" its place among that tag's tags (left out: last), and no \"element\". delete takes\n" +
-			"a tag away and keeps what it held, which moves up to the tag above. move takes \"parent\" and \"index\"\n" +
-			"the same way (0: the parent it has; -1: the top of the tree). A signed document is refused."
+			"\"parent\", \"index\", \"headers\", \"page\", \"rect\", \"pieces\", \"alt\"}]} — kind retype, move, alt, scope,\n" +
+			"colspan, rowspan, headers, artifact, create, delete or region; element an id from \"nib tag tree\"; headers\n" +
+			"the ids of the header cells that head a table cell. create adds an empty tag: \"value\" its type,\n" +
+			"\"parent\" the id it goes under (0 or -1: the top of the tree), \"index\" its place among that tag's tags\n" +
+			"(left out: last), and no \"element\". delete takes a tag away and keeps what it held, which moves up\n" +
+			"to the tag above. move takes \"parent\" and \"index\" the same way (0: the parent it has; -1: the top of\n" +
+			"the tree). region tags what a page draws that no\n" +
+			"tag owns — text, pictures, drawn graphics — as ONE new tag: \"value\", \"parent\" and \"index\" as create's,\n" +
+			"\"page\", and \"rect\" [left, top, right, bottom] as fractions of the page as it is shown (0 0 is its top\n" +
+			"left) — or \"pieces\", the \"rect\" of each piece \"nib tag untagged --json\" lists — and \"alt\", which a\n" +
+			"Figure needs. A rect takes what is centred in it; a piece takes what lies inside it. A signed document is refused."
 	}
 	if mode == "remove" {
 		usage = "nib tag remove IN -o OUT  |  nib tag remove -w IN"
@@ -250,6 +259,72 @@ func tagTree(args []string) int {
 	}
 	if tree.Unaddressable > 0 {
 		errf("%d element(s) are written inline (id 0) and cannot be named by an edit", tree.Unaddressable)
+	}
+	return 0
+}
+
+// tagUntagged prints what the document's pages draw that no structure element owns (ADR-125) — the reader
+// the untagged route reaches (`pdfops.ReadUntagged`), and the keyboard's way to what a region edit can take.
+func tagUntagged(args []string) int {
+	fs := flag.NewFlagSet("nib tag untagged", flag.ContinueOnError)
+	var asJSON bool
+	var page int
+	fs.BoolVar(&asJSON, "json", false, "print the pieces as JSON, in the shape the Tags panel reads")
+	fs.IntVar(&page, "page", 0, "the one page to read (left out: every page)")
+	fs.Usage = usageFunc(fs, "nib tag untagged IN [--page N] [--json]",
+		"Print what the pages draw that no tag owns: text grouped into paragraphs, pictures, drawings (painted\n"+
+			"paths whose boxes touch), and rules and plain boxes last. Each line gives the page, the kind, whether the\n"+
+			"page marks the piece as decoration (an artifact), and where it is — left, top, right, bottom as fractions\n"+
+			"of the page as it is shown, which is what a region edit's \"pieces\" takes (\"nib tag edit\"). A piece a\n"+
+			"form XObject draws is listed and cannot be tagged from the page. Writes nothing.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	if page < 0 {
+		errf("--page is a page number, 1 or more")
+		return 2
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	got, err := pdfops.ReadUntagged(pdf, page)
+	if err != nil {
+		errf("%s: %s", inputName(fs.Arg(0)), strings.TrimPrefix(err.Error(), "pdfops: "))
+		return 1
+	}
+	if asJSON {
+		return printTagJSON(got)
+	}
+	for _, p := range got.Pieces {
+		var notes []string
+		if p.Decoration {
+			notes = append(notes, "decoration")
+		}
+		if p.InForm {
+			notes = append(notes, "drawn inside a form")
+		}
+		line := fmt.Sprintf("p%-3d %-7s %.4f %.4f %.4f %.4f", p.Page, p.Kind, p.Rect[0], p.Rect[1], p.Rect[2], p.Rect[3])
+		if len(notes) > 0 {
+			line += "  [" + strings.Join(notes, "; ") + "]"
+		}
+		if t := strings.TrimSpace(p.Text); t != "" {
+			line += "  " + clipRunes(t, 60)
+		}
+		// The text is the document's own (/pending 727): the whole line goes through the terminal door.
+		fmt.Println(termText(line))
+	}
+	if len(got.Pieces) == 0 {
+		where := "this document"
+		if page > 0 {
+			where = fmt.Sprintf("page %d", page)
+		}
+		errf("nothing on %s is untagged", where)
 	}
 	return 0
 }

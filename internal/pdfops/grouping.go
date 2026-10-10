@@ -427,6 +427,46 @@ func groupRuns(runs []textRun) pageLayout {
 	return out
 }
 
+// unownedText is one paragraph of text no structure element owns (ADR-125): decoration says the page marks it
+// an artifact, inForm that a form XObject's stream draws it.
+type unownedText struct {
+	paragraph          textParagraph
+	decoration, inForm bool
+}
+
+// groupUnowned groups the runs no element owns — those under no MCID — into paragraphs, by the one grouping
+// rule (`groupRuns`): what the page leaves bare, then what it marks as an artifact, then the same two for text
+// a form draws. Each is grouped as a page holding nothing else would be, so an untagged paragraph reads as the
+// proposer would have proposed it. An artifact's run is handed to the rule as a plain run, because the rule
+// drops artifacts and these are the ones being asked about.
+func groupUnowned(runs []textRun) []unownedText {
+	var sets [4][]textRun
+	for _, r := range runs {
+		if r.mcid >= 0 {
+			continue
+		}
+		k := 0
+		if r.artifact {
+			k |= 1
+		}
+		if r.inForm {
+			k |= 2
+		}
+		r.artifact = false
+		sets[k] = append(sets[k], r)
+	}
+	var out []unownedText
+	for k, set := range sets {
+		if len(set) == 0 {
+			continue
+		}
+		for _, p := range groupRuns(set).paragraphs {
+			out = append(out, unownedText{paragraph: p, decoration: k&1 != 0, inForm: k&2 != 0})
+		}
+	}
+	return out
+}
+
 // noteUnsupported adds a reason the page's layout is outside the rule, keeping any reason already given.
 func noteUnsupported(l *pageLayout, why string) {
 	switch {

@@ -167,7 +167,9 @@ echo "$Nib_out"
 # reads a scan through, with the recogniser stubbed, and each thing the door must never do.
 # 104 since ADR-110 (alwaysshown.test.mjs): a vault that already hides File or Mark Up — its own boot, because only
 # the status a window boots on can carry that list.
-Nib_expect_files=104
+# 105 since ADR-125 (taguntagged.test.mjs): tagging what no tag owns from the tree panel — its own boot, because its
+# document has nine pages and its routes answer the untagged reader, which no other file stubs.
+Nib_expect_files=105
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

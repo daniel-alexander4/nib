@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structregion.go b/internal/pdfops/structregion.go
+--- a/internal/pdfops/structregion.go
++++ b/internal/pdfops/structregion.go
+@@ -143,7 +143,7 @@
+ 		}
+ 	}
+ 	// ADR-122's law, for a Figure made here as for one proposed: none is written without what it shows.
+-	if standardRole(tree, ed.value) == figureRole && strings.TrimSpace(ed.alt) == "" {
++	if false && standardRole(tree, ed.value) == figureRole && strings.TrimSpace(ed.alt) == "" {
+ 		return fmt.Errorf("%w: a figure is written only with a description of what it shows — describe the region, or give it another type", ErrTagsReview)
+ 	}
+ 	holder := tree.root

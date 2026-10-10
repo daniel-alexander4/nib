@@ -288,6 +288,10 @@ func TestTheTagRoutesReachTheirDoors(t *testing.T) {
 	if !strings.Contains(tree, "pdfops.ReadStructure(") || strings.Contains(tree, "commitMutation") {
 		t.Error("handleTagsTree must read through pdfops.ReadStructure and write nothing")
 	}
+	untagged := fn("handleTagsUntagged")
+	if !strings.Contains(untagged, "pdfops.ReadUntagged(") || strings.Contains(untagged, "commitMutation") || strings.Contains(untagged, "tagwrite.") {
+		t.Error("handleTagsUntagged must read through pdfops.ReadUntagged and write nothing")
+	}
 }
 
 // TestTheCLIsJSONIsTheRoutesShape — P10.S01. `nib tag tree --json` and `nib tag propose --json` print the
@@ -314,6 +318,8 @@ func TestTheCLIsJSONIsTheRoutesShape(t *testing.T) {
 		{pdfops.TagProposal{}, tagProposalResponse{}},
 		{pdfops.TagElement{}, tagElementView{}},
 		{pdfops.TagPageNote{}, tagPageView{}},
+		{pdfops.UntaggedContent{}, untaggedResponse{}},
+		{pdfops.UntaggedPiece{}, untaggedPieceView{}},
 	} {
 		d, r := tags(c.door), tags(c.route)
 		if strings.Join(d, " ") != strings.Join(r, " ") {
@@ -792,5 +798,198 @@ func TestTheCommitRouteWritesAFigureOnlyWithItsDescription(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []string{"P ", "Figure " + alt}) {
 		t.Errorf("the tree reads %q, want the paragraph and the Figure with its description", got)
+	}
+}
+
+// ignoredParagraphFixture opens the untagged fixture and commits its proposal with the opening paragraph
+// ignored — written as decoration — and answers that paragraph's text (ADR-125).
+func ignoredParagraphFixture(t *testing.T) (base string, c *http.Client, csrf, words string) {
+	t.Helper()
+	base, c, csrf = openTagsFixture(t, untaggedTagsFixture(t))
+	prop := proposeOpen(t, c, base)
+	at := -1
+	for i, e := range prop.Elements {
+		if e.Role == "P" && at < 0 {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatal("setup: the proposal holds no paragraph")
+	}
+	code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(prop, func(e []map[string]any) []map[string]any {
+		e[at]["ignore"] = true
+		return e
+	}))
+	if code != http.StatusOK {
+		t.Fatalf("setup: commit = %d: %s", code, body)
+	}
+	return base, c, csrf, prop.Elements[at].Text
+}
+
+// getAnswer is a GET's status and body, for the answers that are not 200.
+func getAnswer(t *testing.T, c *http.Client, url string) (int, string) {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func squashed(s string) string { return strings.Join(strings.Fields(s), "") }
+
+// TestTheUntaggedRouteListsWhatNoTagOwnsAndChangesNothing — ADR-125: the ignored paragraph is listed on its
+// page as decoration, placed on the page as displayed; the read leaves the document byte-identical; and a
+// page that is not a number, or not a page of the document, is a 400 with the reason.
+func TestTheUntaggedRouteListsWhatNoTagOwnsAndChangesNothing(t *testing.T) {
+	base, c, _, words := ignoredParagraphFixture(t)
+	before := getBytes(t, c, base+"/api/pdf")
+	var got untaggedResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/untagged?page=1"), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("reading what is untagged changed the document")
+	}
+	if got.Pages != 1 || len(got.Pieces) != 1 {
+		t.Fatalf("page 1 of %d lists %+v, want the one ignored paragraph", got.Pages, got.Pieces)
+	}
+	p := got.Pieces[0]
+	if p.Kind != "text" || squashed(p.Text) != squashed(words) || !p.Decoration || p.InForm || p.Page != 1 {
+		t.Errorf("the ignored paragraph is listed as %+v, want the text %q marked as decoration", p, words)
+	}
+	if r := p.Rect; !(0 <= r[0] && r[0] < r[2] && r[2] <= 1 && 0 <= r[1] && r[1] < r[3] && r[3] <= 1) {
+		t.Errorf("the piece is placed at %v, which is not a rectangle on the displayed page", r)
+	}
+	for _, c2 := range []struct{ query, says string }{
+		{"", "page must be a page number"},
+		{"?page=one", "page must be a page number"},
+		{"?page=0", "page must be a page number"},
+		{"?page=-1", "page must be a page number"},
+		{"?page=2", "page 2"},
+	} {
+		if code, body := getAnswer(t, c, base+"/api/tags/untagged"+c2.query); code != http.StatusBadRequest || !strings.Contains(body, c2.says) {
+			t.Errorf("untagged%s = %d %q, want 400 saying %q", c2.query, code, body, c2.says)
+		}
+	}
+	// A document with no tree at all: everything it draws is untagged, and the route still answers.
+	ubase, uc, _ := openTagsFixture(t, untaggedTagsFixture(t))
+	var bare untaggedResponse
+	if err := json.Unmarshal(getBytes(t, uc, ubase+"/api/tags/untagged?page=1"), &bare); err != nil || len(bare.Pieces) < 4 {
+		t.Errorf("an untagged document lists %d piece(s) (%v), want its headings, paragraphs and list", len(bare.Pieces), err)
+	}
+	for _, p := range bare.Pieces {
+		if p.Decoration {
+			t.Errorf("an untagged document's bare text is listed as decoration: %+v", p)
+		}
+	}
+}
+
+// TestARegionThroughTheEditRouteTagsWhatWasIgnoredAndOneUndoTakesItBack — ADR-125 through the route's own
+// JSON: the pieces the untagged route lists are what a region edit takes; the tree gains one paragraph that
+// reads the words, placed where the edit says; the page lists nothing afterwards; and one undo takes it back.
+func TestARegionThroughTheEditRouteTagsWhatWasIgnoredAndOneUndoTakesItBack(t *testing.T) {
+	base, c, csrf, words := ignoredParagraphFixture(t)
+	had := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	var listed untaggedResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/untagged?page=1"), &listed); err != nil || len(listed.Pieces) != 1 {
+		t.Fatalf("setup: the page lists %+v (%v)", listed.Pieces, err)
+	}
+	rect := listed.Pieces[0].Rect
+	region := func(over map[string]any) map[string]any {
+		e := map[string]any{"kind": "region", "value": "P", "page": 1, "pieces": [][4]float64{rect}, "parent": -1, "index": 1}
+		for k, v := range over {
+			if v == nil {
+				delete(e, k)
+			} else {
+				e[k] = v
+			}
+		}
+		return map[string]any{"edits": []map[string]any{e}}
+	}
+	before := getBytes(t, c, base+"/api/pdf")
+	for _, bad := range []struct {
+		name string
+		over map[string]any
+		code int
+		says string
+	}{
+		{"a figure with no description", map[string]any{"value": "Figure"}, http.StatusBadRequest, "only with a description of what it shows"},
+		{"a type that is not standard", map[string]any{"value": "Paragraph"}, http.StatusBadRequest, "not a standard structure type"},
+		{"a page the document does not have", map[string]any{"page": 7}, http.StatusBadRequest, "page 7 is not a page of this document"},
+		{"no rectangle at all", map[string]any{"pieces": nil}, http.StatusBadRequest, "a region is a rectangle on the page"},
+		{"a rectangle past the page", map[string]any{"pieces": nil, "rect": []float64{0, 0, 1.5, 1}}, http.StatusBadRequest, "a region is a rectangle on the page"},
+		{"a rectangle of three numbers", map[string]any{"pieces": nil, "rect": []float64{0, 0, 1}}, http.StatusBadRequest, "could not read the edits"},
+		{"an empty part of the page", map[string]any{"pieces": nil, "rect": []float64{0.9, 0.9, 0.99, 0.99}}, http.StatusBadRequest, "nothing untagged is in that region of page 1"},
+		{"an element named", map[string]any{"element": 5}, http.StatusBadRequest, "leave the element out"},
+		{"a parent the tree does not have", map[string]any{"parent": 9999}, http.StatusConflict, "element 9999"},
+	} {
+		if code, body := postTags(t, c, csrf, base+"/api/tags/edit", region(bad.over)); code != bad.code || !strings.Contains(body, bad.says) {
+			t.Errorf("%s: edit = %d %q, want %d saying %q", bad.name, code, body, bad.code, bad.says)
+		}
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Fatal("a refused region changed the document")
+	}
+
+	// The whole page as one rectangle — what the pointer would send — takes the same paragraph.
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", region(map[string]any{"pieces": nil, "rect": []float64{0, 0, 1, 1}})); code != http.StatusOK {
+		t.Fatalf("a region over the whole page = %d: %s", code, body)
+	}
+	if got := rootElements(t, getBytes(t, c, base+"/api/pdf")); len(got) != len(had)+1 {
+		t.Errorf("a region over the whole page left %d top-level elements, want one more than %d", len(got), len(had))
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Fatal("one undo did not take the region back")
+	}
+
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", region(nil)); code != http.StatusOK {
+		t.Fatalf("a region of the listed piece = %d: %s", code, body)
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	if got := rootElements(t, getBytes(t, c, base+"/api/pdf")); len(got) != len(had)+1 || tree.Elements[1].Kind != "P" || squashed(tree.Elements[1].Text) != squashed(words) || tree.Elements[1].Parent != -1 {
+		t.Errorf("the tree's second element reads %+v among %d at the top, want the paragraph %q, second of %d", tree.Elements[1], len(got), words, len(had)+1)
+	}
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/untagged?page=1"), &listed); err != nil || len(listed.Pieces) != 0 {
+		t.Errorf("with the paragraph tagged the page still lists %+v (%v)", listed.Pieces, err)
+	}
+	var st struct {
+		CanUndo bool `json:"canUndo"`
+	}
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/doc"), &st); err != nil || !st.CanUndo {
+		t.Errorf("after a region the document cannot be undone (%v)", err)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if back := rootElements(t, getBytes(t, c, base+"/api/pdf")); !reflect.DeepEqual(back, had) {
+		t.Errorf("undoing the region left %+v, and the tree was %+v", back, had)
+	}
+}
+
+// TestARegionIsRefusedOnASignedDocumentAtTheDoor — and changes nothing; the read of what is untagged is still
+// answered, because it writes nothing.
+func TestARegionIsRefusedOnASignedDocumentAtTheDoor(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, threeSigned(t))
+	before := getBytes(t, c, base+"/api/pdf")
+	code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "region", "value": "P", "page": 1, "rect": []float64{0, 0, 1, 1}},
+	}})
+	if code != http.StatusConflict || !strings.Contains(body, "signed") {
+		t.Errorf("a signed document: region = %d %q, want 409 naming the signature", code, body)
+	}
+	if code, body := getAnswer(t, c, base+"/api/tags/untagged?page=1"); code != http.StatusOK {
+		t.Errorf("a signed document: untagged = %d %q, want the read answered", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused region changed the signed document")
 	}
 }

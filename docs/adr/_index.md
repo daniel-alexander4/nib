@@ -842,3 +842,10 @@ home today.
   parent, changes no content stream, and writes a page onto whatever took its page from the deleted element.
   Refused: a top-level element holding content, the tree's last element, an element inside an inline one. A
   move names the root as -1.
+- **[ADR-125 — a region of a page is tagged from what no element owns](125-a-region-of-a-page-is-tagged-from-what-no-element-owns.md)**
+  — `region` joins the tree editor's batch: one new element owning every unowned piece of a page centred in a
+  rectangle (or in any of `Pieces`), given as fractions of the displayed page — text runs, images and painted
+  paths, bare or inside an `/Artifact` sequence. A bare piece is bracketed at its own operator; an artifact
+  sequence taken whole has its opener rewritten, and part of one is refused. `GET /api/tags/untagged` and
+  `nib tag untagged` list what a page draws that no tag owns. This is where a drawn graphic becomes a Figure.
+  The region is chosen from a list, not by dragging.

@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structregion.go b/internal/pdfops/structregion.go
+--- a/internal/pdfops/structregion.go
++++ b/internal/pdfops/structregion.go
+@@ -404,7 +404,7 @@
+ 			if a.artifact != b.artifact || a.inForm != b.inForm || !touches(a.box, b.box) {
+ 				continue
+ 			}
+-			if (plainBox(a) && covers(a.box, b.box)) || (plainBox(b) && covers(b.box, a.box)) {
++			if false {
+ 				continue
+ 			}
+ 			group[find(j)] = find(i)
