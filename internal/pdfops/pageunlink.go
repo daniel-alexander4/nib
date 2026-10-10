@@ -35,9 +35,18 @@ import (
 // a POISONED object: a dropped page; an annotation that is on a dropped page and not on a kept one (or,
 // listed nowhere, names a dropped page as its `/P`), because its `/Contents` is that page's comment
 // text; and a destination array whose page is a dropped one. In a dictionary the key goes; in an array
-// the element goes. That repair is crude by design — a `/Hide` action losing its `/T`, a bead losing its
-// `/P` — and it only ever fires on a reference that would otherwise be either a leak or, where pdfcpu
-// happens not to follow the key, a dangling object number in the file.
+// the element goes. That repair is crude by design, and it only ever fires on a reference that would
+// otherwise be either a leak or, where pdfcpu happens not to follow the key, a dangling object number
+// in the file.
+//
+// # What the net's cut would leave malformed has a rule of its own
+//
+// The cut alone left an action without the entry that says what it acts on — a `/Hide` with no `/T` —
+// and a bead with no `/P` (`/pending 835`). So an action that names an annotation or a field is judged
+// by type in `deadAction`, and is spliced out of its chain exactly as a dead GoTo is when what it names
+// is gone; a list of targets keeps the ones that are left. An article thread is repaired before the net
+// runs (`repairArticles`): a bead on a dropped page comes out of its ring, and the thread starts at the
+// next bead still on a page.
 //
 // **Destinations are judged by `destReachesAKeptPage`, never a narrower question** (ADR-009,
 // `/pending 709` R2-4): a name — how Word and hyperref write internal links — resolves through the
@@ -58,6 +67,8 @@ func unlinkDroppedPages(xt *model.XRefTable, root types.Dict, pages []keptPage, 
 		onGone:  map[int]bool{},
 		poison:  map[int]bool{},
 		seen:    map[int]bool{},
+		emptied: map[int]bool{},
+		ring:    map[int]bool{},
 	}
 	for _, p := range pages {
 		for _, a := range derefArray(xt, p.dic["Annots"]) {
@@ -94,6 +105,7 @@ func unlinkDroppedPages(xt *model.XRefTable, root types.Dict, pages []keptPage, 
 		keptDicts = append(keptDicts, p.dic)
 	}
 	unlinkAnnotationThreads(xt, keptDicts)
+	u.repairArticles(pages)
 
 	u.dict(root, 0)
 }
@@ -111,6 +123,8 @@ type pageUnlink struct {
 	onGone  map[int]bool // annotations in a dropped page's /Annots and no kept one's
 	poison  map[int]bool // objects every reference to which is cut
 	seen    map[int]bool
+	emptied map[int]bool // indirect arrays the net left with no element
+	ring    map[int]bool // a bead whose thread is settled, and whether that thread still has a bead on a page
 }
 
 // cut reports whether a reference to r must go, visiting r first if it has not been visited. Whether
@@ -143,6 +157,7 @@ func (u *pageUnlink) cut(r types.IndirectRef, depth int) bool {
 			if e, ok := u.xt.Table[nr]; ok && e != nil {
 				e.Object = out
 			}
+			u.emptied[nr] = len(out) == 0
 		}
 	}
 	return false
@@ -274,8 +289,8 @@ func (u *pageUnlink) array(a types.Array, depth int) (types.Array, bool) {
 }
 
 // chain returns an action (a dictionary, or an array of them, under `/A`, `/Next` or an `/AA` trigger)
-// with every GoTo that does not reach a kept page spliced out, its own `/Next` taking its place. nil
-// means nothing in the chain survived. A dictionary already on this chain is a cycle and is returned
+// with every action that has lost what it acts on (`deadAction`) spliced out, its own `/Next` taking its
+// place. nil means nothing in the chain survived. A dictionary already on this chain is a cycle and is returned
 // as it is.
 func (u *pageUnlink) chain(o types.Object, onChain map[int]bool, depth int) types.Object {
 	if depth > maxDirectDepth {
@@ -312,12 +327,156 @@ func (u *pageUnlink) chain(o types.Object, onChain map[int]bool, depth int) type
 				act["Next"] = next
 			}
 		}
-		if nameVal(act, "S") == "GoTo" {
-			if d, has := act["D"]; has && !destReachesAKeptPage(u.xt, d, u.kept) {
-				return next
-			}
+		if u.deadAction(act, depth) {
+			return next
 		}
 		return o
 	}
 	return o
+}
+
+// deadAction reports whether an action has lost what it acts on, one rule per action type (ISO 32000-1
+// 12.6.4, 12.7.5). An action with no rule here names no page, annotation or field of this file.
+//
+//   - `/GoTo`: its `/D` reaches no kept page.
+//   - `/Hide` `/T`, `/SubmitForm` and `/ResetForm` `/Fields`: one target, or a list. The list keeps what
+//     is left; the action goes when nothing is, because an empty `/Fields` means EVERY field.
+//   - `/GoTo3DView` and `/RichMediaExecute` `/TA`, `/Movie` `/Annotation`: the one annotation it drives.
+//   - `/Rendition` `/AN`: required with an `/OP`; a script-only rendition action stands without it.
+//   - `/Thread`: a `/D` naming a thread none of whose beads is still on a page. A `/B` naming a bead that
+//     went is cut by the net, and the action then opens the thread at its first bead.
+func (u *pageUnlink) deadAction(act types.Dict, depth int) bool {
+	switch nameVal(act, "S") {
+	case "GoTo":
+		d, has := act["D"]
+		return has && !destReachesAKeptPage(u.xt, d, u.kept)
+	case "Hide":
+		return u.targetGone(act, "T", depth)
+	case "SubmitForm", "ResetForm":
+		return u.targetGone(act, "Fields", depth)
+	case "GoTo3DView", "RichMediaExecute":
+		return u.targetGone(act, "TA", depth)
+	case "Movie":
+		return u.targetGone(act, "Annotation", depth)
+	case "Rendition":
+		if u.targetGone(act, "AN", depth) {
+			if _, has := act["OP"]; has {
+				return true
+			}
+			delete(act, "AN")
+		}
+	case "Thread":
+		if b, ok := act["B"].(types.IndirectRef); ok {
+			u.beadRing(b)
+		}
+		if th, ok := act["D"].(types.IndirectRef); ok {
+			if f, isRef := derefDict(u.xt, th)["F"].(types.IndirectRef); isRef {
+				return !u.beadRing(f)
+			}
+		}
+	}
+	return false
+}
+
+// targetGone reports whether what an action names under key is gone: a reference the net cuts, or a
+// list the net leaves empty. A list that keeps a target is written back without the ones that went.
+func (u *pageUnlink) targetGone(act types.Dict, key string, depth int) bool {
+	switch v := act[key].(type) {
+	case types.IndirectRef:
+		return u.cut(v, depth+1) || u.emptied[v.ObjectNumber.Value()]
+	case types.Array:
+		out, changed := u.array(v, depth+1)
+		if changed {
+			act[key] = out
+		}
+		return changed && len(out) == 0
+	}
+	return false
+}
+
+// repairArticles settles every article thread a kept page's `/B` reaches, before the net runs.
+func (u *pageUnlink) repairArticles(pages []keptPage) {
+	for _, p := range pages {
+		for i, b := range derefArray(u.xt, p.dic["B"]) {
+			if i >= maxBeads {
+				break
+			}
+			if br, ok := b.(types.IndirectRef); ok {
+				u.beadRing(br)
+			}
+		}
+	}
+}
+
+// beadRing settles the article thread bead r is on, once, and reports whether any of its beads is still
+// on a page. A thread's beads are a ring through `/N` and `/V`, each naming its page as `/P` (ISO 32000-1
+// 12.4.3). A bead on a dropped page is poisoned, so the net cuts every reference to it; the beads left
+// are joined to each other in their order; and a thread whose first bead went starts at the next one
+// left, which takes the `/T` a first bead must carry. A ring longer than `maxBeads` is left as it is.
+func (u *pageUnlink) beadRing(r types.IndirectRef) bool {
+	if alive, done := u.ring[r.ObjectNumber.Value()]; done {
+		return alive
+	}
+	var refs []types.IndirectRef
+	var beads []types.Dict
+	at := map[int]int{}
+	for cur, more := r, true; more; {
+		nr := cur.ObjectNumber.Value()
+		d := derefDict(u.xt, cur)
+		if _, again := at[nr]; again || d == nil {
+			break
+		}
+		if len(refs) >= maxBeads {
+			for _, ref := range refs {
+				u.ring[ref.ObjectNumber.Value()] = true
+			}
+			return true
+		}
+		at[nr] = len(refs)
+		refs, beads = append(refs, cur), append(beads, d)
+		cur, more = d["N"].(types.IndirectRef)
+	}
+	var live []int
+	for i, d := range beads {
+		if pr, ok := d["P"].(types.IndirectRef); ok && u.dropped[pr.ObjectNumber.Value()] {
+			u.poison[refs[i].ObjectNumber.Value()] = true
+			continue
+		}
+		live = append(live, i)
+	}
+	alive := len(live) > 0
+	for _, ref := range refs {
+		u.ring[ref.ObjectNumber.Value()] = alive
+	}
+	if !alive || len(live) == len(refs) {
+		return alive
+	}
+	for j, i := range live {
+		beads[i]["N"] = refs[live[(j+1)%len(live)]]
+		beads[i]["V"] = refs[live[(j+len(live)-1)%len(live)]]
+	}
+	for _, d := range beads {
+		tr, ok := d["T"].(types.IndirectRef)
+		if !ok {
+			continue
+		}
+		th := derefDict(u.xt, tr)
+		fr, ok := th["F"].(types.IndirectRef)
+		if !ok || !u.poison[fr.ObjectNumber.Value()] {
+			continue
+		}
+		first, onRing := at[fr.ObjectNumber.Value()]
+		if !onRing {
+			continue
+		}
+		for k := 1; k <= len(refs); k++ {
+			i := (first + k) % len(refs)
+			if !u.poison[refs[i].ObjectNumber.Value()] {
+				th["F"] = refs[i]
+				beads[i]["T"] = tr
+				break
+			}
+		}
+	}
+	return alive
 }
