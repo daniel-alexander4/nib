@@ -40,8 +40,9 @@ const { document: doc } = h;
 const CODE = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
 // In the menu's own order: how Nib looks and reads, what it does and offers, your identity and its backup, About.
-// Seven since ADR-109: Updates, Advanced features and Main menu are the three sections of Toggle Features.
-const ENTRIES = ['Appearance', 'Colours', 'Read Aloud', 'Toggle Features', 'Identity & Keys', 'Vault', 'About'];
+// Six: Updates, Advanced features and Main menu are the cards of Toggle Features (ADR-109), and Colours is a row
+// of Appearance (ADR-118).
+const ENTRIES = ['Appearance', 'Read Aloud', 'Toggle Features', 'Identity & Keys', 'Vault', 'About'];
 const settingsPane = () => doc.querySelector('.tbtab[data-tab="settings"]');
 // The Settings pane's own: Signing has entries too (ADR-105), in its own pane.
 const entries = () => [...settingsPane().querySelectorAll('.sbhead[data-entry]')];
@@ -53,9 +54,9 @@ const tabs = () => [...doc.getElementById('tabstrip').children].map((t) => ({
 const marked = () => [...doc.querySelectorAll('#commands .tbgroup.open')].map((g) => g.dataset.label);
 const openDialogs = () => [...doc.querySelectorAll('body > div[id$="Modal"]')].filter((m) => !m.hidden).map((m) => m.id);
 
-test('Settings is seven entries and no settings: each group holds one button, and each names a page that exists', () => {
+test('Settings is six entries and no settings: each group holds one button, and each names a page that exists', () => {
   const groups = [...settingsPane().querySelectorAll('.tbgroup')];
-  assert.deepEqual(groups.map((g) => g.dataset.label), ENTRIES, 'the Settings pane is not the seven entries in their order');
+  assert.deepEqual(groups.map((g) => g.dataset.label), ENTRIES, 'the Settings pane is not the six entries in their order');
   for (const g of groups) {
     assert.ok(g.hasAttribute('data-entry'), `${g.dataset.label} is not marked as an entry, so the accordion makes it a card that expands`);
     const controls = [...g.querySelectorAll('button, input, select, textarea, label, p')];
@@ -91,7 +92,9 @@ test('every control that was a Settings card is on a page, once, under the id it
   assert.equal([...doc.querySelectorAll('.modeChk')].filter((c) => c.onclick).length, 0, 'a Main menu box is wired as an annotation tool');
   assert.equal(doc.querySelectorAll('.apppage input[name="cardhue"]').length, 7, 'the seven Colours choices are not on a page');
   assert.ok(doc.querySelector('.apppage [data-forward="themeToggle"]'), 'the theme switch is not on a page');
-  assert.equal(doc.querySelector('.apppage input[name="cardhue"]').closest('[role="radiogroup"]')?.getAttribute('aria-labelledby'), 'settingsColoursPageTitle');
+  assert.equal(doc.querySelector('.apppage input[name="cardhue"]').closest('[role="radiogroup"]')?.getAttribute('aria-labelledby'), 'appearanceColoursTitle');
+  assert.equal(doc.querySelector('.apppage input[name="cardhue"]').closest('.apppage').id, 'settingsAppearancePage', 'the Colours choices are not on the Appearance page (ADR-118)');
+  assert.equal(doc.querySelector('#settingsAppearancePage [data-forward="themeToggle"]') !== null, true, 'the theme switch left the Appearance page');
   assert.equal(doc.querySelector('.apppage .modeChk').closest('[role="group"]')?.getAttribute('aria-labelledby'), 'featuresMenuTitle');
   assert.equal(doc.getElementById('downloadDirError').getAttribute('role'), 'alert', 'the folder refusal lost its role');
 });
@@ -103,12 +106,12 @@ test('entering Settings opens nothing: no page, no tab, no dialog, no card', () 
   assert.equal(doc.getElementById('tabrow').hidden, true, 'entering Settings showed the tab row');
   assert.deepEqual(openDialogs(), []);
   assert.deepEqual(marked(), [], 'a card is marked open while Settings is showing');
-  assert.deepEqual(entries().map((e) => e.textContent.trim()), ENTRIES, 'the sidebar does not show the seven entries');
+  assert.deepEqual(entries().map((e) => e.textContent.trim()), ENTRIES, 'the sidebar does not show the six entries');
   for (const e of entries()) assert.equal(e.hasAttribute('aria-expanded'), false, `${e.textContent.trim()} says it expands`);
 });
 
 test('an entry opens its page in the main area; the pages share ONE tab, which names the page showing; a second click makes no second tab', () => {
-  assert.equal(entries().length, 7, 'setup: the sidebar does not show seven entries');
+  assert.equal(entries().length, 6, 'setup: the sidebar does not show six entries');
   for (const e of entries()) {
     const name = e.textContent.trim();
     const id = e.nextElementSibling.querySelector('button').dataset.apppage;

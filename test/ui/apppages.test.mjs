@@ -23,11 +23,11 @@ const h = await launch();
 const { page } = h;
 after(() => shutdown(h));
 
-// The seven entries, in the order the menu shows them (seven since ADR-109: Updates, Advanced features
-// and Main menu are the sections of Toggle Features). Each opens a page — About too, since
+// The six entries, in the order the menu shows them: Updates, Advanced features and Main menu are the cards of
+// Toggle Features (ADR-109), and Colours is a row of Appearance (ADR-118). Each opens a page — About too, since
 // ADR-108; it opened a dialog until then.
 const PAGES = [
-  ['Appearance', 'settingsAppearancePage'], ['Colours', 'settingsColoursPage'],
+  ['Appearance', 'settingsAppearancePage'],
   ['Read Aloud', 'settingsReadAloudPage'], ['Toggle Features', 'settingsFeaturesPage'],
   ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['About', 'settingsAboutPage'],
 ];
@@ -54,11 +54,11 @@ const state = () => page.evaluate(() => {
   };
 });
 
-test('entering Settings shows seven entries, in order, and opens nothing', async () => {
+test('entering Settings shows six entries, in order, and opens nothing', async () => {
   await h.mode('settings');
   const entries = await page.$$eval(ENTRY, (es) => es.filter((e) => e.getClientRects().length).map((e) => ({
     text: e.textContent.trim(), tag: e.tagName, expanded: e.getAttribute('aria-expanded') })));
-  assert.deepEqual(entries.map((e) => e.text), ENTRIES, 'the Settings menu is not the seven entries in their order');
+  assert.deepEqual(entries.map((e) => e.text), ENTRIES, 'the Settings menu is not the six entries in their order');
   for (const e of entries) {
     assert.equal(e.tag, 'BUTTON', `${e.text} is not a button`);
     assert.equal(e.expanded, null, `${e.text} carries aria-expanded="${e.expanded}" — it announces a card that expands, and it opens a page`);
@@ -320,13 +320,13 @@ test('the pages share one tab: another entry replaces what it shows, where it wa
 
     // A folder typed, and another entry clicked straight from the box.
     await page.fill('#downloadDirInput', good);
-    await h.settingsPage('Colours');
+    await h.settingsPage('Appearance');
     let t = await tab();
-    assert.deepEqual(t, { ...first, page: 'settingsColoursPage', name: 'Colours', label: 'Colours, Settings page', controls: 'settingsColoursPage', close: 'Close the Colours page' },
-      'Colours did not take the tab Toggle Features had: a second page tab, or the tab moved, or it does not name the page showing');
+    assert.deepEqual(t, { ...first, page: 'settingsAppearancePage', name: 'Appearance', label: 'Appearance, Settings page', controls: 'settingsAppearancePage', close: 'Close the Appearance page' },
+      'Appearance did not take the tab Toggle Features had: a second page tab, or the tab moved, or it does not name the page showing');
     let s = await state();
-    assert.deepEqual([s.pages, s.selected, s.docTabs.length], [['settingsColoursPage'], ['settingsColoursPage'], 1]);
-    assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Colours', `the page that took the tab has focus on ${s.focus.tag}#${s.focus.id} "${s.focus.text}", not on its heading`);
+    assert.deepEqual([s.pages, s.selected, s.docTabs.length], [['settingsAppearancePage'], ['settingsAppearancePage'], 1]);
+    assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Appearance', `the page that took the tab has focus on ${s.focus.tag}#${s.focus.id} "${s.focus.text}", not on its heading`);
     await page.waitForFunction(async (g) => (await (await window.nibFetch('/api/status')).json()).downloadDirSet === g, good, { timeout: 15000 }).catch(() => {});
     assert.equal(await stored(), good, 'the Toggle Features page was replaced by another and the folder typed on it was never saved');
 
@@ -366,14 +366,14 @@ test('the pages share one tab: another entry replaces what it shows, where it wa
 test('by keyboard: Enter on an entry opens its page; its tab is in the strip\'s arrow order with the document\'s; × by keyboard closes it', async () => {
   await h.openDocument(DOC_B, 2);
   await h.mode('settings');
-  await page.focus(`${ENTRY}:text-is("Colours")`);
+  await page.focus(`${ENTRY}:text-is("Appearance")`);
   await page.keyboard.press('Enter');
-  await page.waitForSelector('#settingsColoursPage:not([hidden])');
+  await page.waitForSelector('#settingsAppearancePage:not([hidden])');
   let s = await state();
-  assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Colours', `Enter on the entry put focus on ${s.focus.tag} "${s.focus.text}"`);
+  assert.ok(s.focus.tag === 'H2' && s.focus.text === 'Appearance', `Enter on the entry put focus on ${s.focus.tag} "${s.focus.text}"`);
   // Tab from the heading reaches the page's first control.
   await page.keyboard.press('Tab');
-  assert.equal(await page.evaluate(() => document.activeElement.matches('#settingsColoursPage input[name="cardhue"]')), true,
+  assert.equal(await page.evaluate(() => document.activeElement.matches('#settingsAppearancePage [data-forward="themeToggle"]')), true,
     'Tab from the heading did not reach the page\'s first control');
   // The strip is one tab stop, on the tab in front; arrows move along it across both kinds.
   const stops = await page.$$eval('#tabstrip .tab', (ts) => ts.map((t) => [t.classList.contains('pagetab'), t.tabIndex]));
@@ -382,12 +382,12 @@ test('by keyboard: Enter on an entry opens its page; its tab is in the strip\'s 
   await page.keyboard.press('ArrowLeft');
   assert.equal(await page.evaluate(() => document.activeElement.matches('#tabstrip .tab:not(.pagetab)')), true, 'ArrowLeft from the page\'s tab did not reach the document\'s');
   await page.keyboard.press('Enter');
-  await page.waitForSelector('#settingsColoursPage', { state: 'hidden' });
+  await page.waitForSelector('#settingsAppearancePage', { state: 'hidden' });
   s = await state();
   assert.equal(s.viewer, true, 'Enter on the document\'s tab did not bring the document back');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Enter');
-  await page.waitForSelector('#settingsColoursPage:not([hidden])');
+  await page.waitForSelector('#settingsAppearancePage:not([hidden])');
   // Tab from the page's tab is its ×; Enter closes the page and focus stays in the strip.
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => document.activeElement.matches('#tabstrip .pagetab .tabclose')), true, 'Tab from the page\'s tab did not reach its ×');
@@ -509,7 +509,7 @@ test('a shut card shows its name and nothing in it; its header opens it, by mous
   await h.closeAppPage(id);
 });
 
-test('with the sidebar shut the seven entries are in ⋯ More, and each opens its page', async () => {
+test('with the sidebar shut the six entries are in ⋯ More, and each opens its page', async () => {
   await h.mode('settings');
   await page.click('#toggleSidebarBtn');
   await page.waitForFunction(() => document.getElementById('sidebar').classList.contains('collapsed'));
@@ -522,7 +522,7 @@ test('with the sidebar shut the seven entries are in ⋯ More, and each opens it
         captions: [...d.querySelectorAll('.menucap')].filter(vis).length,
         other: [...d.querySelectorAll('input, select, p, label')].filter(vis).length };
     }, MORE);
-    assert.deepEqual(listed.buttons, ENTRIES.map((n) => n + '…'), '⋯ More does not hold the seven entries in their order');
+    assert.deepEqual(listed.buttons, ENTRIES.map((n) => n + '…'), '⋯ More does not hold the six entries in their order');
     assert.equal(listed.captions, 0, 'each entry is listed twice — a caption and a button of the same name');
     assert.equal(listed.other, 0, 'a setting is still drawn inside the menu');
     await page.keyboard.press('Escape');
@@ -588,8 +588,8 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         assert.deepEqual(m.past, [], `at ${width}px these run past the edge of ${label}'s page: ${m.past.join(', ')}`);
         if (id === 'settingsAboutPage') await aboutDocsAway();
       }
-      // Seven entries, one tab — the last page's; the strip does not push the window sideways.
-      assert.equal((await state()).pageTabs.length, 1, `at ${width}px seven entries left more than the one page tab`);
+      // Six entries, one tab — the last page's; the strip does not push the window sideways.
+      assert.equal((await state()).pageTabs.length, 1, `at ${width}px six entries left more than the one page tab`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px the page tab pushes the window sideways`);
       await h.closeAppPages();
     }
@@ -617,7 +617,7 @@ test('pictures of the pages in both themes, when asked for', { skip: !process.en
   try {
     for (const theme of [start, start === 'light' ? 'dark' : 'light']) {
       await page.evaluate((t) => { document.documentElement.dataset.appearance = t; }, theme);
-      for (const [label, file] of [['Toggle Features', 'features'], ['Identity & Keys', 'identity'], ['Colours', 'colours'], ['About', 'about']]) {
+      for (const [label, file] of [['Toggle Features', 'features'], ['Identity & Keys', 'identity'], ['Appearance', 'appearance'], ['About', 'about']]) {
         await h.settingsPage(label);
         await page.screenshot({ path: join(dir, `page-${file}-${theme}.png`) });
       }

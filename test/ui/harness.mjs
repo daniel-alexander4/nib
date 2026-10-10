@@ -215,7 +215,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
 
     // settingsPage(label) opens one Settings page by its entry in the sidebar and returns the
     // page's id (ADR-104). **Not `card()`**: a Settings entry opens a page in the main area and
-    // expands nothing, so it has no `aria-expanded` for `group()` to wait on — `card('Colours')`
+    // expands nothing, so it has no `aria-expanded` for `group()` to wait on — `card('Vault')`
     // would click the entry and then wait thirty seconds for a state the entry does not have.
     async settingsPage(label) { return this.appPage('settings', label); },
 

@@ -1,4 +1,4 @@
-// Settings → Colours: the sidebar's cards as ONE hue at stepped tints, and the choice surviving.
+// Settings → Appearance → Sidebar colours: the sidebar's cards as ONE hue at stepped tints, and the choice surviving.
 //
 // Tier 2 measures the ladder's contrast from the stylesheet and compares the three lists that
 // describe the hue set. What it cannot do is resolve `color-mix()` — the rendered colour of a card
@@ -20,10 +20,10 @@ const cards = () => page.evaluate(() => {
     .map((e) => ({ step: e.dataset.step, bg: getComputedStyle(e).backgroundColor }));
 });
 
-// Colours is a page in the main area since ADR-104, beside the sidebar this file reads, so the
-// choice is made on it and the page closed again.
+// The colours are on the Appearance page (ADR-118; their own page from ADR-104 until then), in the main area
+// beside the sidebar this file reads, so the choice is made on it and the page closed again.
 const pick = async (value) => {
-  const id = await h.settingsPage('Colours');
+  const id = await h.settingsPage('Appearance');
   await page.click(`input[name="cardhue"][value="${value}"]`);
   await page.waitForFunction((v) => (document.documentElement.dataset.cardhue || 'all') === v, value);
   await h.closeAppPage(id);
@@ -36,7 +36,7 @@ test('choosing a hue repaints every card into one colour', async () => {
   // ADR-035 then took Tag Structure out of `edit` as well, which is why this reads Settings and
   // not the mode with the most cards at any given moment. Since ADR-104 the entries in Settings open
   // pages instead of expanding; they are still the sidebar's coloured headers, painted by the
-  // same rule, and seven of them (ADR-109) is still enough for the six-step ladder.
+  // same rule, and six of them (ADR-118) is still exactly enough for the six-step ladder.
   await h.mode('settings');
   const rainbow = await cards();
   assert.ok(rainbow.length >= 6,
