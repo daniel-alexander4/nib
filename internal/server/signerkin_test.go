@@ -72,7 +72,7 @@ func TestSignerKinNamesEachSignerInOrder(t *testing.T) {
 	if _, w := signerKin(v, sig(extFP)); w[0] != "" {
 		t.Fatalf("stimulus: the external certificate reads %q before it is imported", w[0])
 	}
-	if err := v.SetExternalSigner([]byte("p12"), extPEM, nil); err != nil {
+	if err := v.SetExternalSigner([]byte("p12"), extPEM); err != nil {
 		t.Fatal(err)
 	}
 	if n, w := signerKin(v, sig(extFP, self)); !reflect.DeepEqual(w, []string{"you", "you"}) || *n != 0 {

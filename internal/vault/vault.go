@@ -246,12 +246,15 @@ type Advanced struct {
 // identity (which stays the native self-signed key). The .p12 is stored exactly
 // as imported (still passphrase-encrypted); the passphrase is supplied per sign
 // and never persisted, so the private key is never at rest in decrypted form.
-// CertPEM/ChainPEM hold the public certificate and chain, captured at import for
-// display.
+// CertPEM holds the public certificate, captured at import for display.
+//
+// A vault written before /pending 863 also holds a `chain` key here — the bundle's CA certificates,
+// which nothing ever read: signing takes the chain from the bundle. It is not decoded, a vault is not
+// rewritten to drop it, and the payload version did not move for it; the next ordinary save leaves it
+// out (`TestAVaultHoldingTheRemovedChainStillOpensListsAndSigns`).
 type ExternalSigner struct {
-	P12      []byte `json:"p12"`
-	CertPEM  []byte `json:"cert"`
-	ChainPEM []byte `json:"chain,omitempty"`
+	P12     []byte `json:"p12"`
+	CertPEM []byte `json:"cert"`
 }
 
 // CeremonySecret is one party's invitation secret, held by the CONVENER.
@@ -1199,24 +1202,22 @@ func (v *Vault) ExternalSigner() (*ExternalSigner, bool) {
 	}
 	e := v.contents.ExternalSigner
 	return &ExternalSigner{
-		P12:      append([]byte(nil), e.P12...),
-		CertPEM:  append([]byte(nil), e.CertPEM...),
-		ChainPEM: append([]byte(nil), e.ChainPEM...),
+		P12:     append([]byte(nil), e.P12...),
+		CertPEM: append([]byte(nil), e.CertPEM...),
 	}, true
 }
 
 // SetExternalSigner stores the imported PKCS#12 bundle (as imported) and its
-// captured public certificate/chain, and persists the vault.
-func (v *Vault) SetExternalSigner(p12, certPEM, chainPEM []byte) error {
+// captured public certificate, and persists the vault.
+func (v *Vault) SetExternalSigner(p12, certPEM []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// Copied in, `AddImage`'s rule (/pending 567, 807 R8): the vault must not hold a slice its caller
 	// still has, and this one is a private key bundle.
 	return v.mutateLocked(func() {
 		v.contents.ExternalSigner = &ExternalSigner{
-			P12:      append([]byte(nil), p12...),
-			CertPEM:  append([]byte(nil), certPEM...),
-			ChainPEM: append([]byte(nil), chainPEM...),
+			P12:     append([]byte(nil), p12...),
+			CertPEM: append([]byte(nil), certPEM...),
 		}
 	})
 }

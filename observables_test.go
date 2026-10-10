@@ -385,9 +385,9 @@ var published = map[string][]string{
 	// real readers, both verified at the line: `extsigner.go:33` decodes `es.CertPEM`, and
 	// `finalize.go:106` passes `es.P12` to `sign.SignExternal`.
 	//
-	// **`ChainPEM` is read by neither**, and is therefore a field this shape stores and no caller
-	// outside `internal/vault` consumes — the `historyEvicted` shape, found by this repair. It is
-	// left visible in the residue rather than parked, for the reason `internalShapes` gives.
+	// **`ChainPEM` was read by neither** — a field this shape stored and no caller consumed, the
+	// `historyEvicted` shape, found by this repair. It is removed (/pending 863).
+	//
 	"vault.ExternalSigner": {"internal/server/extsigner.go", "internal/server/finalize.go", "internal/vault/vault.go"},
 	"vault.Slot":           {"internal/vault/vault.go", "internal/server/keys.go"},
 }

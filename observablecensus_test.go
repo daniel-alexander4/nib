@@ -166,7 +166,7 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 	return out
 }
 
-// inPackageOnlyRecorded is the population above, as it stands: **26 of 659 published fields**. It was
+// inPackageOnlyRecorded is the population above, as it stands: **25 of 658 published fields**. It was
 // 47 of 511 when `observables_test.go`'s header refused the field-level rule, and 43 when the
 // verdicts below were taken.
 //
@@ -182,7 +182,8 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 //     field is VERIFIED where it is defined (a signature, a format number, a commitment — a reader
 //     outside would re-implement the check); it is WRITTEN outside and read inside (a constructor's
 //     input); or it is working state behind an accessor.
-//   - **1 is read by nothing at all**: `vault.ExternalSigner.ChainPEM`, below.
+//   - **1 was read by nothing at all**, `vault.ExternalSigner.ChainPEM`, and is gone (/pending 863): the
+//     field is removed, and a vault that still holds its key opens as before.
 //
 // **Seven are answered at SHAPE level.** `ceremony.Anchor` and `p2p.Channel` are in
 // `internalShapes` with reasons — an opaque token and an inward parameter carrier — so their fields
@@ -238,11 +239,6 @@ var inPackageOnlyRecorded = []string{
 	// rendezvous.SelfAddress — the evidence `V4` and `V6` are classified from (`selfaddr.go:162-171`);
 	// the CLI prints the two classes and never the observations.
 	"rendezvous.SelfAddress.Observations",
-	// vault.ExternalSigner — **READ BY NOTHING** (/pending 575). `extsigner.go:72-76` builds the chain
-	// and stores it, `ExternalSigner()` copies it out (`vault.go:1204`), and no caller reads the copy:
-	// signing takes the chain from the PKCS#12 bundle itself. It is on disk in every vault that
-	// imported an identity, so removing it is a vault-format change and is left to its own item.
-	"vault.ExternalSigner.ChainPEM",
 	// vault.PinnedPeer — the pin's scope set, read and written only through the vault's own scope
 	// doors (`vault.go:1289-1365`); the peers route never shows it.
 	"vault.PinnedPeer.Ceremonies",
