@@ -399,11 +399,15 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		// `carried`. The three types are one rule and not three: whatever names a page this n-up
 		// dismantled is repointed at the sheet that page's content now lives on, or the whole carry
 		// is abandoned below.
-		if t := d.NameEntry("Type"); t != nil && (*t == "StructElem" || *t == "MCR" || *t == "OBJR") {
+		//
+		// **What a dictionary under `/K` IS is the reader's answer** (`kidDictType`, ADR-009; /pending 632). This
+		// asked for an explicit `/Type`, which Table 323 makes optional on an element, so a producer that omits
+		// it had nothing repointed and its tagging dropped by every n-up and booklet.
+		if t := kidDictType(d); t == "StructElem" || t == "MCR" || t == "OBJR" {
 			// **The stale-key removal is unconditional, because the key is illegal on these two
 			// types whatever this element's `/Pg` turns out to be.** Scoping it to the repointed
 			// branch left a `/Stm` in place on exactly the elements the branch could not reach.
-			if *t != "MCR" {
+			if t != "MCR" {
 				delete(d, "Stm")
 			}
 			if pg, ok := d["Pg"]; ok {
@@ -420,14 +424,14 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 					// A dict is a map and `DereferenceDict` hands back the stored one, so writing
 					// this key writes it into the document.
 					d["Pg"] = pl.page
-					if *t == "MCR" {
+					if t == "MCR" {
 						d["Stm"] = pl.xobj // the one dictionary Table 324 gives the key to
 					}
 					inherited = &pl
 					repointed++
 				}
 			}
-			if *t == "StructElem" {
+			if t == "StructElem" {
 				toMCR = append(toMCR, mcrTarget{elem: d, pl: inherited})
 			}
 		}

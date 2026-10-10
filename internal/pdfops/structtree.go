@@ -335,6 +335,17 @@ func (t *structTree) readKids(ctx *model.Context, o types.Object, parent *struct
 	return out, nil
 }
 
+// kidDictType is what a dictionary under a `/K` is, for the reader and for a carry that rewrites one (ADR-009):
+// its `/Type`, and a structure element where it has none. `/Type` is OPTIONAL on a structure element (ISO 32000-1
+// table 323), so an untyped dictionary under a `/K` is an element; refusing it would reject documents that are
+// legal and common. An MCR and an OBJR are required to say so (tables 324, 325).
+func kidDictType(d types.Dict) string {
+	if n := d.NameEntry("Type"); n != nil {
+		return *n
+	}
+	return "StructElem"
+}
+
 func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *structElem,
 	inheritPg int, livePages map[int]bool, visited map[int]bool, depth int) (*structKid, error) {
 
@@ -358,10 +369,7 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 			"this tree holds something the model cannot represent", raw)
 	}
 
-	ty := ""
-	if n := d.NameEntry("Type"); n != nil {
-		ty = *n
-	}
+	ty := kidDictType(d)
 	switch ty {
 	case "MCR":
 		pg := inheritPg
@@ -392,10 +400,8 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 			pg = ind.ObjectNumber.Value()
 		}
 		return &structKid{kind: kidOBJR, obj: obj, pgObj: pg, pgLive: livePages[pg], raw: raw}, nil
-	case "StructElem", "":
-		// `/Type` is OPTIONAL on a structure element (ISO 32000-1 table 323), so an untyped
-		// dictionary under a `/K` is an element. Refusing it would reject documents that are legal
-		// and common; the `/S` check below is what actually identifies one.
+	case "StructElem":
+		// Typed so or untyped (`kidDictType`); the `/S` check below is what actually identifies one.
 	default:
 		return nil, fmt.Errorf("pdfops: a /K entry has /Type /%s, which the model cannot "+
 			"represent — it is neither a structure element, an MCR nor an OBJR", ty)
