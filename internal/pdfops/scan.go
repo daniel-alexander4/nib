@@ -142,7 +142,7 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, budget *int, fn 
 }
 
 // Scan reads the PDF and reports active or hidden content: auto-run hooks
-// (OpenAction / additional actions), JavaScript, risky annotation actions,
+// (OpenAction / additional actions), JavaScript, risky annotation and bookmark actions,
 // embedded files, optional-content layers, and metadata. It is strictly
 // read-only — it opens the document without validation (so it tolerates the
 // malformed files this is most useful on) and never writes anything back.
@@ -297,11 +297,71 @@ func Scan(pdf []byte) (ScanReport, error) {
 	}); err != nil {
 		return ScanReport{}, err
 	}
+	// Bookmarks (`/pending 580`): an outline item's /A is an action like an annotation's, chain and all, and a
+	// scan that never opened the outline called a bookmark that runs JavaScript clean. Document-level — a
+	// bookmark is on no page.
+	eachOutlineItem(xt, root, func(item types.Dict) {
+		eachAction(xt, derefDict(xt, item["A"]), 0, &actions, func(act types.Dict) {
+			if sev, ok := riskyActions[nameVal(act, "S")]; ok {
+				add("action", sev, actionDetail(nameVal(act, "S"))+" (from a bookmark)", 0)
+			}
+		})
+	})
 	if actions < 0 {
 		return ScanReport{}, errActionWalkTooLarge
 	}
 
 	return rep, nil
+}
+
+// eachOutlineItem calls fn for every item of the document outline (§12.3.3), ONCE: the tree is /Outlines /First,
+// each item naming its next sibling in /Next and its first child in /First. It is the one walk of the outline Scan
+// and StripActive share (ADR-009, `/pending 580`) — neither opened the outline before, so a bookmark's action was
+// never reported and never removed.
+//
+// Breadth-first over a visited set, as eachFormField is and for its reason: an item is an indirect object, each is
+// queued at its first naming only, so a /Next that loops back, or one item named as sibling and child both, costs
+// one visit, and the walk is linear in what the file holds. A DIRECT item dict has no number to mark and needs
+// none: it sits inside exactly one object, which is itself reached once. /Prev, /Last and /Parent are never
+// followed — every item is reachable forwards, and an item only they name is one no reader shows.
+func eachOutlineItem(xt *model.XRefTable, root types.Dict, fn func(item types.Dict)) {
+	seen := map[int]bool{}
+	if !firstVisit(seen, root["Outlines"]) {
+		return
+	}
+	outlines := derefDict(xt, root["Outlines"])
+	if outlines == nil {
+		return
+	}
+	var queue []types.Object
+	enqueue := func(o types.Object) {
+		if o != nil && firstVisit(seen, o) {
+			queue = append(queue, o)
+		}
+	}
+	enqueue(outlines["First"])
+	for len(queue) > 0 {
+		item := derefDict(xt, queue[0])
+		queue = queue[1:]
+		if item == nil {
+			continue
+		}
+		fn(item)
+		enqueue(item["First"])
+		enqueue(item["Next"])
+	}
+}
+
+// riskyChain reports whether act, or anything its /Next chains to, is a riskyActions type — the whole chain, not
+// the head: a benign /GoTo whose /Next runs JavaScript is a risky action wearing a safe name.
+func riskyChain(xt *model.XRefTable, act types.Dict, budget *int) bool {
+	risky := false
+	eachAction(xt, act, 0, budget, func(a types.Dict) {
+		if _, bad := riskyActions[nameVal(a, "S")]; bad {
+			risky = true
+		}
+	})
+	return risky
 }
 
 // eachFormField calls fn for every dict in the AcroForm field tree, parents included.
@@ -367,8 +427,8 @@ func eachFormField(xt *model.XRefTable, af types.Dict, fn func(o types.Object, f
 // StripActive neutralizes all active content while preserving the document's
 // visible pages, vector text, and benign internal navigation: it deletes
 // document/page/annotation auto-run hooks, JavaScript, optional-content layer
-// machinery, XFA, and the action on any link/widget that could run code or
-// reach outside the document, and removes embedded files. The annotations
+// machinery, XFA, and the action on any link, widget or bookmark that could run
+// code or reach outside the document, and removes embedded files. The annotations
 // themselves are kept. It never edits a content stream or an annotation
 // appearance (/AP) stream, so a page's rendering is unchanged except that
 // dropping /OCProperties reveals optional-content layers (reveal-only — content
@@ -435,25 +495,23 @@ func StripActive(pdf []byte) ([]byte, error) {
 		actions := pageWalkBudget(xt)
 		if err := eachPageAnnot(xt, root, func(annot types.Dict, _ int) {
 			dropKey(xt, annot, "AA")
-			if act := derefDict(xt, annot["A"]); act != nil {
-				risky := false
-				// The whole chain, not the head: a benign /GoTo whose /Next runs
-				// JavaScript is a risky action wearing a safe name. Dropping /A drops
-				// the chain with it, which is the only answer that cannot leave a
-				// dangling /Next — keeping the head and rewriting the chain would mean
-				// re-parenting actions this function has no way to validate.
-				eachAction(xt, act, 0, &actions, func(a types.Dict) {
-					if _, bad := riskyActions[nameVal(a, "S")]; bad {
-						risky = true
-					}
-				})
-				if risky {
-					dropKey(xt, annot, "A")
-				}
+			// Dropping /A drops the chain with it, which is the only answer that cannot leave a
+			// dangling /Next — keeping the head and rewriting the chain would mean re-parenting
+			// actions this function has no way to validate.
+			if act := derefDict(xt, annot["A"]); act != nil && riskyChain(xt, act, &actions) {
+				dropKey(xt, annot, "A")
 			}
 		}); err != nil {
 			return err
 		}
+		// A bookmark's action, by the annotation's rule (`/pending 580`): a chain that reaches a risky type
+		// goes whole, and a bookmark that only navigates keeps its /A. The item stays — its title and its
+		// place in the tree are not active content.
+		eachOutlineItem(xt, root, func(item types.Dict) {
+			if act := derefDict(xt, item["A"]); act != nil && riskyChain(xt, act, &actions) {
+				dropKey(xt, item, "A")
+			}
+		})
 		if actions < 0 {
 			return errActionWalkTooLarge
 		}
