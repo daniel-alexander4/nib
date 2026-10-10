@@ -1,0 +1,11 @@
+diff --git a/internal/pdfops/structedit.go b/internal/pdfops/structedit.go
+--- a/internal/pdfops/structedit.go
++++ b/internal/pdfops/structedit.go
+@@ -367,7 +367,6 @@
+ 		}
+ 		taken[name] = true
+ 		id := types.StringLiteral(name)
+-		th.dict["ID"] = id
+ 		gen := 0
+ 		if en, ok := ctx.XRefTable.Table[h]; ok && en != nil && en.Generation != nil {
+ 			gen = *en.Generation

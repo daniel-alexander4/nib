@@ -3,6 +3,7 @@ package tagwrite
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -108,16 +109,16 @@ func TestAResultThatDoesNotValidateIsNotReturned(t *testing.T) {
 // TestDecodingReadsTheRequestShapes — an absent index appends, a present one (0 included) is kept, the
 // proposal's own JSON is a review, and a body that is not JSON is ErrMalformed.
 func TestDecodingReadsTheRequestShapes(t *testing.T) {
-	edits, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"move","element":7},{"kind":"move","element":8,"parent":3,"index":0},{"kind":"alt","element":9,"value":"v"}]}`))
+	edits, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"move","element":7},{"kind":"move","element":8,"parent":3,"index":0},{"kind":"alt","element":9,"value":"v"},{"kind":"headers","element":10,"headers":[4,5]}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []pdfops.StructureEdit{{Kind: "move", Element: 7, Index: -1}, {Kind: "move", Element: 8, Parent: 3, Index: 0}, {Kind: "alt", Element: 9, Value: "v", Index: -1}}
+	want := []pdfops.StructureEdit{{Kind: "move", Element: 7, Index: -1}, {Kind: "move", Element: 8, Parent: 3, Index: 0}, {Kind: "alt", Element: 9, Value: "v", Index: -1}, {Kind: "headers", Element: 10, Index: -1, Headers: []int{4, 5}}}
 	if len(edits) != len(want) {
 		t.Fatalf("decoded %+v", edits)
 	}
 	for i := range want {
-		if edits[i] != want[i] {
+		if !reflect.DeepEqual(edits[i], want[i]) {
 			t.Errorf("edit %d decoded %+v, want %+v", i, edits[i], want[i])
 		}
 	}

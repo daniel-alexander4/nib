@@ -3,6 +3,8 @@ package pdfops
 import (
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -10,10 +12,11 @@ import (
 
 // The structure editor's dictionary edits — `PLAN-accessibility.md` P09.S02.
 //
-// Four corrections a person makes to a tree someone else wrote, none of which touches a content stream:
+// The corrections a person makes to a tree someone else wrote, none of which touches a content stream:
 // an element's type, its place among its parent's kids or under another parent, its alternate
-// description, and a header cell's scope. Marking content as an artifact is the one edit that rewrites
-// page content; it is applied through the same batch and lives in `structartifact.go` (S03).
+// description, a header cell's scope, and a table cell's spans and the header cells it names (ADR-119).
+// Marking content as an artifact is the one edit that rewrites page content; it is applied through the
+// same batch and lives in `structartifact.go` (S03).
 //
 // # Why the dictionary edits never touch the ParentTree
 //
@@ -24,9 +27,10 @@ import (
 // # What is never written through
 //
 // An attribute object may be shared between elements (it is an indirect object; LibreOffice writes
-// them direct, other producers need not). A scope edit writes a NEW attribute value onto the edited
-// element, copying the Table attribute object it changes and keeping every other attribute object as
-// it was, so a correction to one header cell cannot change another's.
+// them direct, other producers need not). An edit to a table attribute — scope, a span, the headers —
+// writes a NEW attribute value onto the edited element (`withTableAttribute`), copying the Table attribute
+// object it changes and keeping every other attribute object as it was, so a correction to one cell cannot
+// change another's.
 //
 // # What it refuses to leave behind
 //
@@ -42,6 +46,9 @@ const (
 	editAlt
 	editScope
 	editArtifact
+	editColSpan
+	editRowSpan
+	editHeaders
 )
 
 // structEdit is one correction to an existing tree.
@@ -49,9 +56,12 @@ type structEdit struct {
 	kind editKind
 	// elem is the object number of the element edited — `viewElement.id`.
 	elem int
-	// value is the new `/S` (editRetype), the alternate description (editAlt; "" removes it), or the
-	// scope (editScope: Row, Column, Both; "" removes it).
+	// value is the new `/S` (editRetype), the alternate description (editAlt; "" removes it), the
+	// scope (editScope: Row, Column, Both; "" removes it), or a span (editColSpan, editRowSpan: a whole
+	// number of at least 1; "" removes it).
 	value string
+	// headers is editHeaders' header cells, by object number; none removes the cell's `/Headers`.
+	headers []int
 	// parent is editMove's new parent, by object number; 0 keeps the element under its current one.
 	parent int
 	// index is editMove's position among the new parent's element kids; negative or past the end
@@ -93,21 +103,26 @@ var tableScopes = map[string]bool{"Row": true, "Column": true, "Both": true}
 // StructureEdit is one correction to an existing structure tree, as a reviewer sends it —
 // `PLAN-accessibility.md` P09.S04.
 type StructureEdit struct {
-	// Kind is retype, move, alt, scope or artifact.
+	// Kind is retype, move, alt, scope, colspan, rowspan, headers or artifact.
 	Kind string
 	// Element is the edited element's object number.
 	Element int
-	// Value is the new type (retype), the alternate description (alt; "" removes it), or the scope
-	// (scope: Row, Column, Both; "" removes it).
+	// Value is the new type (retype), the alternate description (alt; "" removes it), the scope
+	// (scope: Row, Column, Both; "" removes it), or how many columns or rows a cell spans (colspan,
+	// rowspan: a whole number of at least 1; "" removes it).
 	Value string
 	// Parent is a move's new parent by object number; 0 keeps the current one. Index is the position
 	// among that parent's element kids; negative appends.
 	Parent, Index int
+	// Headers is a headers edit's header cells — the `TH` elements of the same table that head this
+	// cell — by object number. None removes the cell's `/Headers`.
+	Headers []int
 }
 
 // structEditKinds maps a StructureEdit's Kind onto the edit it names.
 var structEditKinds = map[string]editKind{
 	"retype": editRetype, "move": editMove, "alt": editAlt, "scope": editScope, "artifact": editArtifact,
+	"colspan": editColSpan, "rowspan": editRowSpan, "headers": editHeaders,
 }
 
 // EditStructure applies edits, in order and as one batch, to pdf's existing structure tree. An element
@@ -118,9 +133,9 @@ func EditStructure(pdf []byte, edits []StructureEdit) ([]byte, error) {
 	for i, e := range edits {
 		k, ok := structEditKinds[e.Kind]
 		if !ok {
-			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope or artifact", ErrTagsReview, e.Kind)
+			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers or artifact", ErrTagsReview, e.Kind)
 		}
-		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index}
+		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index, headers: e.Headers}
 	}
 	out, err := applyStructEdits(pdf, internal)
 	if errors.Is(err, errNoStructTree) {
@@ -199,11 +214,30 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 		if ed.value != "" && !tableScopes[ed.value] {
 			return fmt.Errorf("%w: %q is not a scope — Row, Column or Both", ErrTagsReview, ed.value)
 		}
-		if a := withTableScope(ctx, e.dict["A"], ed.value); a != nil {
-			e.dict["A"] = a
-		} else {
-			delete(e.dict, "A")
+		var scope types.Object
+		if ed.value != "" {
+			scope = types.Name(ed.value)
 		}
+		setTableAttribute(ctx, e, "Scope", scope)
+	case editColSpan, editRowSpan:
+		key, what := "ColSpan", "columns"
+		if ed.kind == editRowSpan {
+			key, what = "RowSpan", "rows"
+		}
+		if role := standardRole(tree, e.kind); role != "TH" && role != "TD" {
+			return fmt.Errorf("%w: only a table cell (TH or TD) spans %s, and element %d is a %s", ErrTagsReview, what, ed.elem, e.kind)
+		}
+		var span types.Object
+		if ed.value != "" {
+			n, err := strconv.Atoi(ed.value)
+			if err != nil || n < 1 || n > math.MaxInt32 {
+				return fmt.Errorf("%w: %q is not a number of %s a cell can span — a whole number, 1 or more", ErrTagsReview, ed.value, what)
+			}
+			span = types.Integer(n)
+		}
+		setTableAttribute(ctx, e, key, span)
+	case editHeaders:
+		return setCellHeaders(ctx, tree, e, ed)
 	case editMove:
 		return moveElement(ctx, tree, e, ed)
 	case editArtifact:
@@ -214,10 +248,20 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 	return nil
 }
 
-// withTableScope is attrs with the Table attribute object's `/Scope` set to scope ("" removes it). The
+// setTableAttribute sets e's Table attribute key to value, or removes it when value is nil.
+func setTableAttribute(ctx *model.Context, e *structElem, key string, value types.Object) {
+	if a := withTableAttribute(ctx, e.dict["A"], key, value); a != nil {
+		e.dict["A"] = a
+	} else {
+		delete(e.dict, "A")
+	}
+}
+
+// withTableAttribute is attrs with key set to value in the Table attribute object (a nil value removes
+// it) — THE writer of an `/O /Table` attribute: Scope, ColSpan, RowSpan, Headers (ADR-119; ADR-009). The
 // result is a new value: the Table attribute object is copied, and every other entry is kept as it was
 // written, references included.
-func withTableScope(ctx *model.Context, attrs types.Object, scope string) types.Object {
+func withTableAttribute(ctx *model.Context, attrs types.Object, key string, value types.Object) types.Object {
 	var entries types.Array
 	if attrs != nil {
 		if o, err := ctx.Dereference(attrs); err == nil && o != nil {
@@ -241,16 +285,16 @@ func withTableScope(ctx *model.Context, attrs types.Object, scope string) types.
 		for k, v := range d {
 			cp[k] = v
 		}
-		if scope == "" {
-			delete(cp, "Scope")
+		if value == nil {
+			delete(cp, key)
 		} else {
-			cp["Scope"] = types.Name(scope)
+			cp[key] = value
 		}
 		entries[i] = cp
 		found = true
 	}
-	if !found && scope != "" {
-		entries = append(entries, types.Dict{"O": types.Name("Table"), "Scope": types.Name(scope)})
+	if !found && value != nil {
+		entries = append(entries, types.Dict{"O": types.Name("Table"), key: value})
 	}
 	switch len(entries) {
 	case 0:
@@ -259,6 +303,82 @@ func withTableScope(ctx *model.Context, attrs types.Object, scope string) types.
 		return entries[0]
 	}
 	return entries
+}
+
+// tableOf is the nearest Table element holding e, or nil.
+func tableOf(tree *structTree, e *structElem) *structElem {
+	for p := e.parent; p != nil; p = p.parent {
+		if standardRole(tree, p.kind) == "Table" {
+			return p
+		}
+	}
+	return nil
+}
+
+// setCellHeaders writes a cell's `/Headers`: the `/ID` of each header cell the edit names (ADR-119).
+//
+// **The edit names ELEMENTS and nib writes the identifiers.** `/Headers` holds byte strings that must each
+// equal the `/ID` of a `TH` in the same table (ua1 7.5 t2), so a person asked to type one could only get it
+// wrong. A header cell that has no `/ID` is given one no element of the tree carries and entered in the
+// root's `/IDTree`, which ISO 32000-1 Table 322 requires once any element has an identifier; a header cell
+// that has one keeps it, and the bytes written into `/Headers` are that very object.
+func setCellHeaders(ctx *model.Context, tree *structTree, e *structElem, ed structEdit) error {
+	if role := standardRole(tree, e.kind); role != "TH" && role != "TD" {
+		return fmt.Errorf("%w: only a table cell (TH or TD) names header cells, and element %d is a %s", ErrTagsReview, ed.elem, e.kind)
+	}
+	if len(ed.headers) == 0 {
+		setTableAttribute(ctx, e, "Headers", nil)
+		return nil
+	}
+	table := tableOf(tree, e)
+	if table == nil {
+		return fmt.Errorf("%w: element %d is in no table, so no header cell heads it", ErrTagsReview, ed.elem)
+	}
+	var taken map[string]bool // every identifier the tree's elements carry, read once and only when one is allocated
+	ids := types.Array{}
+	named := map[int]bool{}
+	for _, h := range ed.headers {
+		if named[h] {
+			continue
+		}
+		named[h] = true
+		th := tree.byObj[h]
+		if h <= 0 || th == nil {
+			return staleEdit{h}
+		}
+		if th == e || standardRole(tree, th.kind) != "TH" || tableOf(tree, th) != table {
+			return fmt.Errorf("%w: element %d is not another header cell (TH) of the table element %d is in", ErrTagsReview, h, ed.elem)
+		}
+		if _, id, has := elementID(ctx, th.dict); has {
+			ids = append(ids, id)
+			continue
+		}
+		if taken == nil {
+			taken = map[string]bool{}
+			for _, other := range tree.elems {
+				if s, _, ok := elementID(ctx, other.dict); ok {
+					taken[s] = true
+				}
+			}
+		}
+		name := fmt.Sprintf("nib-%d", h)
+		for n := 2; taken[name]; n++ {
+			name = fmt.Sprintf("nib-%d-%d", h, n)
+		}
+		taken[name] = true
+		id := types.StringLiteral(name)
+		th.dict["ID"] = id
+		gen := 0
+		if en, ok := ctx.XRefTable.Table[h]; ok && en != nil && en.Generation != nil {
+			gen = *en.Generation
+		}
+		if err := setIDTreeEntry(ctx, tree, name, id, *types.NewIndirectRef(h, gen)); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	setTableAttribute(ctx, e, "Headers", ids)
+	return nil
 }
 
 // moveElement takes e out of its parent's `/K` and puts it into the new parent's at ed.index, and

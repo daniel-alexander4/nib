@@ -97,7 +97,7 @@ func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 	return reviews, nil
 }
 
-// DecodeEdits reads a batch of edits: `{"edits": [{"kind", "element", "value", "parent", "index"}]}`. An
+// DecodeEdits reads a batch of edits: `{"edits": [{"kind", "element", "value", "parent", "index", "headers"}]}`. An
 // absent index appends — Go's zero value would put a moved element first.
 func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 	var body struct {
@@ -107,6 +107,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 			Value   string `json:"value"`
 			Parent  int    `json:"parent"`
 			Index   *int   `json:"index"`
+			Headers []int  `json:"headers"`
 		} `json:"edits"`
 	}
 	if err := json.NewDecoder(r).Decode(&body); err != nil {
@@ -118,7 +119,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.StructureEdit, error) {
 		if e.Index != nil {
 			index = *e.Index
 		}
-		edits[i] = pdfops.StructureEdit{Kind: e.Kind, Element: e.Element, Value: e.Value, Parent: e.Parent, Index: index}
+		edits[i] = pdfops.StructureEdit{Kind: e.Kind, Element: e.Element, Value: e.Value, Parent: e.Parent, Index: index, Headers: e.Headers}
 	}
 	return edits, nil
 }

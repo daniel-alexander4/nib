@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6412,8 +6412,7 @@
+   // Both spans go as one batch: an empty field removes the attribute, and the server refuses what is not
+   // a whole number of at least 1.
+   $('tagEditSpanApply').onclick = () => applyTagEdit(
+-    { kind: 'colspan', value: $('tagEditColSpan').value.trim() },
+-    { kind: 'rowspan', value: $('tagEditRowSpan').value.trim() });
++    { kind: 'colspan', value: $('tagEditColSpan').value.trim() });
+   $('tagEditHeadersApply').onclick = () => applyTagEdit({
+     kind: 'headers',
+     headers: [...$('tagEditHeaders').querySelectorAll('input:checked')].map((b) => Number(b.value)),

@@ -819,3 +819,116 @@ func addOBJRTo(ctx *model.Context, elem types.IndirectRef, obj, page types.Indir
 	}
 	return appendToElementKids(ctx, elem, *ref)
 }
+
+// byteString reads o — direct or indirect — as a PDF string's BYTES, the form an element identifier and a name
+// tree's key are compared in, and returns the string object itself beside them. A string of no bytes is none.
+func byteString(ctx *model.Context, o types.Object) (raw string, lit types.Object, ok bool) {
+	if o == nil {
+		return "", nil, false
+	}
+	v, err := ctx.Dereference(o)
+	if err != nil {
+		return "", nil, false
+	}
+	var b []byte
+	switch s := v.(type) {
+	case types.StringLiteral:
+		b, err = types.Unescape(s.Value())
+	case types.HexLiteral:
+		b, err = s.Bytes()
+	default:
+		return "", nil, false
+	}
+	if err != nil || len(b) == 0 {
+		return "", nil, false
+	}
+	return string(b), v, true
+}
+
+// elementID is a structure element's `/ID` — its bytes and the string object — and whether it has one.
+func elementID(ctx *model.Context, elem types.Dict) (raw string, lit types.Object, ok bool) {
+	return byteString(ctx, elem["ID"])
+}
+
+// setIDTreeEntry enters ref under id in the root's `/IDTree`, the name tree ISO 32000-1 Table 322 requires once any
+// element carries an identifier — created, flat and indirect (pdfcpu's validator reads it only through a reference),
+// when the document has none (ADR-119). key is id as the string object the element carries.
+//
+// A producer's tree is added to and never rebuilt: the entry goes into the leaf whose `/Limits` hold id — the first kid
+// whose upper bound is not below it, else the last — in byte order, and each `/Limits` on the way down is widened to it,
+// so a reader following `/Limits` finds it where it looks. An entry already under id is re-pointed: an identifier is
+// allocated only where no element of the tree carries it, so what that entry named is no element of this tree.
+func setIDTreeEntry(ctx *model.Context, tree *structTree, id string, key types.Object, ref types.IndirectRef) error {
+	if _, has := tree.root["IDTree"]; !has {
+		treeRef, err := ctx.IndRefForNewObject(types.Dict{"Names": types.Array{key, ref}})
+		if err != nil {
+			return err
+		}
+		tree.root["IDTree"] = *treeRef
+		return nil
+	}
+	node, err := ctx.DereferenceDict(tree.root["IDTree"])
+	if err != nil || node == nil {
+		return fmt.Errorf("pdfops: /IDTree does not resolve to a dictionary: %w", err)
+	}
+	for depth := 0; depth <= maxStructDepth; depth++ {
+		if depth > 0 {
+			lim, _ := ctx.DereferenceArray(node["Limits"])
+			lo, hi := key, key
+			if len(lim) >= 2 {
+				if s, _, ok := byteString(ctx, lim[0]); ok && s <= id {
+					lo = lim[0]
+				}
+				if s, _, ok := byteString(ctx, lim[1]); ok && s >= id {
+					hi = lim[1]
+				}
+			}
+			node["Limits"] = types.Array{lo, hi}
+		}
+		kids, _ := ctx.DereferenceArray(node["Kids"])
+		if _, leaf := node["Names"]; leaf || len(kids) == 0 {
+			names, _ := ctx.DereferenceArray(node["Names"])
+			at, replace := len(names), false
+			for i := 0; i+1 < len(names); i += 2 {
+				if s, _, ok := byteString(ctx, names[i]); ok && s >= id {
+					at, replace = i, s == id
+					break
+				}
+			}
+			out := append(types.Array{}, names[:at]...)
+			out = append(out, key, ref)
+			if replace {
+				at += 2
+			}
+			out = append(out, names[at:]...)
+			// An indirect /Names is updated where it lives, or the node keeps pointing at the old array.
+			if ind, isInd := node["Names"].(types.IndirectRef); isInd {
+				if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
+					en.Object = out
+					return nil
+				}
+			}
+			node["Names"] = out
+			return nil
+		}
+		next := kids[len(kids)-1]
+		for _, k := range kids {
+			kd, kerr := ctx.DereferenceDict(k)
+			if kerr != nil || kd == nil {
+				continue
+			}
+			if lim, _ := ctx.DereferenceArray(kd["Limits"]); len(lim) >= 2 {
+				if s, _, ok := byteString(ctx, lim[1]); ok && s >= id {
+					next = k
+					break
+				}
+			}
+		}
+		child, cerr := ctx.DereferenceDict(next)
+		if cerr != nil || child == nil {
+			return fmt.Errorf("pdfops: a kid of the nested /IDTree does not resolve to a dictionary: %w", cerr)
+		}
+		node = child
+	}
+	return fmt.Errorf("pdfops: the nested /IDTree is deeper than %d", maxStructDepth)
+}

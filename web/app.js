@@ -6185,6 +6185,9 @@ function tagTreeLabel(e) {
   const notes = [];
   if (e.standard === 'Figure') notes.push(e.hasAlt ? `alt text: ${e.alt}` : 'no alt text');
   if (e.standard === 'TH') notes.push(e.scope ? `scope: ${e.scope}` : 'no scope');
+  if (e.colSpan > 1) notes.push(`spans ${e.colSpan} columns`);
+  if (e.rowSpan > 1) notes.push(`spans ${e.rowSpan} rows`);
+  if ((e.headers || []).length) notes.push(`headed by ${e.headers.length} cell(s)`);
   return [name, words, notes.join(', ')].filter(Boolean).join(' — ');
 }
 
@@ -6284,14 +6287,31 @@ function onTagTreeKey(ev, elements) {
 //
 // Each control sends one edit through `POST /api/tags/edit`, which installs through the server's commit
 // door, so Ctrl+Z takes it back like any other change. The server refuses what cannot be applied — a type
-// that is not standard, a scope on a cell that is not a header, an element the document no longer has —
-// and its sentence is shown here rather than replaced with a second opinion.
+// that is not standard, a scope on a cell that is not a header, a span that is not a number, an element the
+// document no longer has — and its sentence is shown here rather than replaced with a second opinion.
 
 // tagSiblings is the element's parent's element kids, or the top-level elements, as indices.
 function tagSiblings(i, elements) {
   const p = elements[i].parent;
   if (p >= 0) return elements[p].kids || [];
   return elements.map((x, j) => (x.parent === -1 ? j : -1)).filter((j) => j >= 0);
+}
+
+// tagTableOf is the index of the nearest Table holding element i, or -1.
+function tagTableOf(i, elements) {
+  for (let p = elements[i].parent, d = 0; p >= 0 && d < 64; p = elements[p].parent, d++) {
+    if (elements[p].standard === 'Table') return p;
+  }
+  return -1;
+}
+
+// tagHeaderCells is the header cells a cell can name (ADR-119): every other TH of the same table that an
+// edit can name — one written inline has no id to send.
+function tagHeaderCells(i, elements) {
+  const table = tagTableOf(i, elements);
+  if (table < 0) return [];
+  return elements.map((x, j) => j).filter((j) => j !== i && elements[j].standard === 'TH' &&
+    elements[j].id > 0 && tagTableOf(j, elements) === table);
 }
 
 function showTagEditBar(e, i, elements) {
@@ -6312,9 +6332,32 @@ function showTagEditBar(e, i, elements) {
   $('tagEditScopeRow').hidden = !header;
   $('tagEditScopeApply').hidden = !header;
   $('tagEditScope').value = header ? (e.scope || '') : '';
+  // A table cell's spans and the header cells that head it (ADR-119). The span fields show what a reader
+  // takes — 1 where the cell declares none.
+  const cell = e.standard === 'TH' || e.standard === 'TD';
+  for (const id of ['tagEditColSpanRow', 'tagEditRowSpanRow', 'tagEditSpanApply']) $(id).hidden = !cell;
+  $('tagEditColSpan').value = cell ? String(e.colSpan || 1) : '';
+  $('tagEditRowSpan').value = cell ? String(e.rowSpan || 1) : '';
+  const heads = cell ? tagHeaderCells(i, elements) : [];
+  $('tagEditHeadersRow').hidden = !heads.length;
+  $('tagEditHeadersApply').hidden = !heads.length;
+  const boxes = $('tagEditHeaders');
+  boxes.textContent = '';
+  for (const j of heads) {
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = String(elements[j].id);
+    box.checked = (e.headers || []).includes(j);
+    box.disabled = !editable;
+    const words = elements[j].text.length > 40 ? elements[j].text.slice(0, 40) + '…' : elements[j].text;
+    label.append(box, ` ${words || `Header cell ${elements[j].id}`}`);
+    boxes.appendChild(label);
+  }
   const siblings = tagSiblings(i, elements);
   const pos = siblings.indexOf(i);
-  for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditScope', 'tagEditScopeApply', 'tagEditArtifact']) {
+  for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditScope', 'tagEditScopeApply',
+    'tagEditColSpan', 'tagEditRowSpan', 'tagEditSpanApply', 'tagEditHeadersApply', 'tagEditArtifact']) {
     $(id).disabled = !editable;
   }
   $('tagEditUp').disabled = !editable || pos <= 0;
@@ -6322,7 +6365,9 @@ function showTagEditBar(e, i, elements) {
   $('tagEditStatus').textContent = editable ? '' : 'This element is written inline in its parent, so it cannot be edited here.';
 }
 
-async function applyTagEdit(edit) {
+// applyTagEdit sends the edits — one, or several as one batch that one Ctrl+Z takes back — for the
+// element selected.
+async function applyTagEdit(...edits) {
   const owner = view;
   const i = tagTreeSelected;
   const e = tagTreeElements[i];
@@ -6333,7 +6378,7 @@ async function applyTagEdit(edit) {
   try {
     const res = await apiFetch('/api/tags/edit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
-      body: JSON.stringify({ edits: [{ element: e.id, ...edit }] }),
+      body: JSON.stringify({ edits: edits.map((edit) => ({ element: e.id, ...edit })) }),
     });
     if (!res.ok) {
       tagEditRestore = null;
@@ -6364,6 +6409,15 @@ function wireTagEditBar() {
     applyTagEdit({ kind: 'alt', value: alt.value });
   });
   $('tagEditScopeApply').onclick = () => applyTagEdit({ kind: 'scope', value: $('tagEditScope').value });
+  // Both spans go as one batch: an empty field removes the attribute, and the server refuses what is not
+  // a whole number of at least 1.
+  $('tagEditSpanApply').onclick = () => applyTagEdit(
+    { kind: 'colspan', value: $('tagEditColSpan').value.trim() },
+    { kind: 'rowspan', value: $('tagEditRowSpan').value.trim() });
+  $('tagEditHeadersApply').onclick = () => applyTagEdit({
+    kind: 'headers',
+    headers: [...$('tagEditHeaders').querySelectorAll('input:checked')].map((b) => Number(b.value)),
+  });
   // A move names its position among the siblings; parent 0 keeps the element under the one it has.
   const move = (delta) => {
     const siblings = tagSiblings(tagTreeSelected, tagTreeElements);

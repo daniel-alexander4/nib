@@ -67,7 +67,8 @@ func tagWrite(args []string, mode string) int {
 	if mode == "edit" {
 		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
 		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
-			"\"parent\", \"index\"}]} — kind retype, move, alt, scope or artifact; element an id from \"nib tag tree\".\n" +
+			"\"parent\", \"index\", \"headers\"}]} — kind retype, move, alt, scope, colspan, rowspan, headers or artifact;\n" +
+			"element an id from \"nib tag tree\"; headers the ids of the header cells that head a table cell.\n" +
 			"A signed document is refused."
 	}
 	fs.StringVar(&request, requestFlag, "", "the request file")
@@ -146,7 +147,7 @@ func tagTree(args []string) int {
 	fs.BoolVar(&asJSON, "json", false, "print the tree as JSON, in the shape the Tags panel reads")
 	fs.Usage = usageFunc(fs, "nib tag tree IN [--json]",
 		"Print the document's existing structure tree in reading order: each element's id (what an edit names),\n"+
-			"type, page, alt text, header scope and text. Writes nothing.")
+			"type, page, alt text, header scope, a table cell's spans and header cells, and text. Writes nothing.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -197,6 +198,19 @@ func tagTree(args []string) int {
 			} else {
 				notes = append(notes, "no scope")
 			}
+		}
+		if e.ColSpan > 1 {
+			notes = append(notes, fmt.Sprintf("spans %d columns", e.ColSpan))
+		}
+		if e.RowSpan > 1 {
+			notes = append(notes, fmt.Sprintf("spans %d rows", e.RowSpan))
+		}
+		if len(e.Headers) > 0 {
+			heads := make([]string, len(e.Headers))
+			for k, j := range e.Headers {
+				heads[k] = strconv.Itoa(tree.Elements[j].ID)
+			}
+			notes = append(notes, "headed by: "+strings.Join(heads, ", "))
 		}
 		line := fmt.Sprintf("%-6d %s%s", e.ID, strings.Repeat("  ", level(i)), name)
 		if e.Page > 0 {

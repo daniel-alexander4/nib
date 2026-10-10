@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structedit.go b/internal/pdfops/structedit.go
+--- a/internal/pdfops/structedit.go
++++ b/internal/pdfops/structedit.go
+@@ -288,7 +288,7 @@
+ 		if value == nil {
+ 			delete(cp, key)
+ 		} else {
+-			cp[key] = value
++			_ = value
+ 		}
+ 		entries[i] = cp
+ 		found = true

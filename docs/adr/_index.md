@@ -815,3 +815,7 @@ home today.
 - **[ADR-118 — Colours is a row of Appearance](118-colours-is-a-row-of-appearance.md)**
   — supersedes ADR-109's seven entries only. Settings is six: Appearance, Read Aloud, Toggle Features, Identity & Keys,
   Vault, About. Appearance holds *Theme* and *Sidebar colours* as two named rows; no cards.
+- **[ADR-119 — a cell's headers are named by element, and one door writes a table attribute](119-a-cells-headers-are-named-by-element-and-one-door-writes-a-table-attribute.md)**
+  — `withTableAttribute` writes Scope, ColSpan, RowSpan and Headers, copy-on-write. A headers edit names `TH` elements
+  of the cell's own table; nib allocates a missing `/ID` and enters it in the `/IDTree`. A span of 1 is written, an
+  empty one removed; a cell edit does not judge the table.

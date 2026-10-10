@@ -246,6 +246,38 @@ test('undo takes each correction back, clause by clause', { skip: SKIP }, async 
   await waitVerdict('7.3 t1', 'fail');
 });
 
+// With no scope anywhere (the undo test left the document as it arrived), the other way a table says which
+// header heads which cell: each data cell names its header cells (ADR-119). Keyboard alone, like the rest
+// of the region the last-but-one test scans.
+test('naming each data cell\'s header cells passes the header clause with no scope at all', { skip: SKIP }, async () => {
+  assert.equal((await result('7.5 t1'))?.verdict, 'fail', 'setup: the header clause does not fail before any cell names a header');
+  const cells = await page.evaluate(() => [...document.querySelectorAll('#tagTreeList [role="treeitem"]')]
+    .map((li, i) => (li.textContent.startsWith('TD') ? i : -1)).filter((i) => i >= 0));
+  assert.ok(cells.length >= 2, `setup: the tree shows ${cells.length} data cell(s)`);
+  for (const at of cells) {
+    assert.ok(await tabTo('#tagTreeList [role="treeitem"]', { back: true }), 'Shift+Tab never returned to the tree');
+    await page.keyboard.press('Home');
+    for (let i = 0; i < at; i++) await page.keyboard.press('ArrowDown');
+    assert.ok(await tabTo('#tagEditHeaders input'), `Tab never reached a header cell's tick box for the cell at ${at}`);
+    const boxes = await page.evaluate(() => document.querySelectorAll('#tagEditHeaders input').length);
+    assert.equal(boxes, 2, `the cell at ${at} is offered ${boxes} header cell(s), and its table has two`);
+    for (let b = 0; b < boxes; b++) {
+      if (!await page.evaluate(() => document.activeElement.checked)) await page.keyboard.press('Space');
+      await page.keyboard.press('Tab');
+    }
+    assert.ok(await tabTo('#tagEditHeadersApply'), 'Tab never reached Set header cells');
+    await page.keyboard.press('Enter');
+    await changed();
+  }
+  await waitVerdict('7.5 t1', 'pass');
+  const noted = await page.evaluate(() => [...document.querySelectorAll('#tagTreeList [role="treeitem"]')]
+    .filter((li) => /headed by 2 cell/.test(li.textContent)).length);
+  assert.equal(noted, cells.length, 'the tree does not say each data cell names its two header cells');
+  // Focus is on Set header cells, a button, so Ctrl+Z is the document's.
+  for (let i = 0; i < cells.length; i++) await page.keyboard.press('Control+z');
+  await waitVerdict('7.5 t1', 'fail');
+});
+
 test('the correction region used no pointer at all', { skip: SKIP }, () => {
   const src = fs.readFileSync(new URL('./tagcorrect.test.mjs', import.meta.url), 'utf8');
   const START = "test('the corrections are made by keyboard alone";
