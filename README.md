@@ -202,7 +202,8 @@ you ignore is marked as decoration rather than left unaccounted for. The proposa
 not an answer — multi-column pages it cannot separate, and body paragraphs with no visible spacing
 between them, are the known weak spots. A ruled table with merged cells is not read as a table (the
 review says so on its page and its text is proposed as paragraphs), and a table with no ruled lines is
-never recognized. A figure is proposed for a picture — an image — and never for a drawing made of lines
+never recognized. A ruled grid with fewer than a quarter of its cells filled in — a blank worksheet, a
+form's ruling — is not proposed as a table either: what text it holds is proposed as paragraphs. A figure is proposed for a picture — an image — and never for a drawing made of lines
 and shapes, which stays decoration; not for a picture smaller than 8 points either way, one drawn
 inside a form (a reusable block of page content), or one on a page with no text at all; a picture drawn
 turned or slanted is reported on its page and not proposed. Nib cannot tell that a picture was swapped

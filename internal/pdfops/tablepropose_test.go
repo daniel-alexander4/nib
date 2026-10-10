@@ -224,6 +224,57 @@ func TestWhatIsNotARegularRuledGridIsNotATable(t *testing.T) {
 	}
 }
 
+// gridRules draws every rule of the grid with these column and row boundaries, rows from the top down.
+func gridRules(xs, ys []float64) string {
+	var b strings.Builder
+	for _, y := range ys {
+		b.WriteString(hRule(xs[0], xs[len(xs)-1], y))
+	}
+	for _, x := range xs {
+		b.WriteString(vRule(x, ys[len(ys)-1], ys[0]))
+	}
+	return b.String()
+}
+
+// TestAGridWithFewerThanAQuarterOfItsCellsFilledIsNotATable — ADR-123: a worksheet's ruling with a word here
+// and there proposes exactly what its text proposes with nothing drawn, and says nothing on its page; a grid
+// with a quarter of its cells filled, or more, is a table still.
+func TestAGridWithFewerThanAQuarterOfItsCellsFilledIsNotATable(t *testing.T) {
+	two, three := []float64{100, 250, 400}, []float64{100, 200, 300, 400}
+	for _, c := range []struct {
+		name   string
+		xs, ys []float64
+		filled [][2]int // row, column
+		table  bool
+	}{
+		{"two cells of nine", three, gridYs, [][2]int{{0, 0}, {1, 1}}, false},
+		{"one cell of six", two, gridYs, [][2]int{{0, 0}}, false},
+		{"one cell of four", two, gridYs[:3], [][2]int{{0, 0}}, true},
+		{"three cells of nine", three, gridYs, [][2]int{{0, 0}, {1, 1}, {2, 2}}, true},
+		// Two words in one cell fill one cell.
+		{"two words in one cell of six", two, gridYs, [][2]int{{0, 0}, {0, 0}}, false},
+	} {
+		text := ""
+		for i, f := range c.filled {
+			text += drawText(c.xs[f[1]]+6+30*float64(i), c.ys[f[0]+1]+10, fmt.Sprintf("W%d", i))
+		}
+		got, pr := proposed(t, ruledFixture(gridRules(c.xs, c.ys)+text))
+		if c.table {
+			if len(got) == 0 || !strings.HasPrefix(got[0], "Table") {
+				t.Errorf("%s: proposed %v, want a table", c.name, got)
+			}
+			continue
+		}
+		bare, barePr := proposed(t, ruledFixture(text))
+		if !reflect.DeepEqual(got, bare) {
+			t.Errorf("%s: the grid changed the proposal:\n  with    %v\n  without %v", c.name, got, bare)
+		}
+		if notes, want := tableNotes(pr), tableNotes(barePr); !reflect.DeepEqual(notes, want) {
+			t.Errorf("%s: the page is reported %q, want %q", c.name, notes, want)
+		}
+	}
+}
+
 // TestRulesAHalfPointApartAreOneRule — tiles set a half point apart: each pair of neighbouring sides is one
 // rule, at the middle of the two.
 func TestRulesAHalfPointApartAreOneRule(t *testing.T) {

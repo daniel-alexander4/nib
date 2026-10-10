@@ -832,3 +832,7 @@ home today.
   the rules; not for one in a form, under 8pt, already an artifact, or turned. A review keeps it with an `alt` or
   ignores it; the commit brackets the image's operator and writes `/Alt`. An inline image is bracketed with its
   `q … cm … Q` (`drawingBrackets`), because pdfcpu ends one only at `EI` then `Q`. Painted paths stay artifacts.
+- **[ADR-123 — a ruled grid is a table only with a quarter of its cells filled](123-a-ruled-grid-is-a-table-only-with-a-quarter-of-its-cells-filled.md)**
+  — supersedes one clause of ADR-121 ("a grid that holds no text" is not read). Of 31 tables proposed on the
+  local corpus about 23 are tables, 5 are form boxes and 3 are near-empty worksheets; the rule drops the three
+  and says nothing on their pages. The form boxes stay with the reviewer's *Not a table*.
