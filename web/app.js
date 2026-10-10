@@ -5953,7 +5953,7 @@ const STRUCT_TYPES = [
   'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link', 'Annot', 'Ruby', 'RB', 'RT', 'RP',
   'Warichu', 'WT', 'WP', 'Figure', 'Formula', 'Form',
 ];
-let tagsReview = null; // [{ id, role, ignore, text, page, rect, pageBox, marker, list, parent }]
+let tagsReview = null; // [{ id, role, ignore, text, alt, page, rect, pageBox, marker, list, parent }]
 let tagsProposal = null;
 // The document the review was opened for, pinned at entry (ADR-001): both requests name it.
 let tagsOwner = null;
@@ -5997,12 +5997,10 @@ function tagsBlockEnd(i) {
   return j;
 }
 
-function renderTagsReview() {
-  const list = els.tagsList;
-  list.innerHTML = '';
+// renderTagsSummary writes the line above the review, and enables Commit while anything is kept.
+function renderTagsSummary() {
   // A row or a cell is ignored when its table is, and only then.
   const byId = new Map(tagsReview.map((r) => [r.id, r]));
-  const depthOf = (r) => { let d = 0; for (let p = byId.get(r.parent); p; p = byId.get(p.parent)) d++; return d; };
   const ignored = (r) => { for (let p = r; p; p = byId.get(p.parent)) if (p.ignore) return true; return false; };
   const kept = tagsReview.filter((r) => !ignored(r)).length;
   const notes = [];
@@ -6010,16 +6008,30 @@ function renderTagsReview() {
   if ((tagsProposal.noText || []).length) {
     notes.push(`No text on page ${tagsProposal.noText.join(', ')} — make a scan searchable (OCR) before tagging it.`);
   }
+  // A kept figure with no description is refused at the commit (ADR-122). The count says so before the press;
+  // the button stays enabled, and the server's own sentence is what a refusal shows.
+  const undescribed = tagsReview.filter((r) => r.role === 'Figure' && !r.ignore && !(r.alt || '').trim()).length;
+  if (undescribed) notes.unshift(`${undescribed} figure(s) still need a description — describe each, or ignore it.`);
   els.tagsSummary.textContent = `${tagsReview.length} element(s) proposed, ${kept} kept. Nothing is written until you commit.` +
     (notes.length ? ' ' + notes.join(' ') : '');
   els.tagsCommit.disabled = kept === 0;
+}
+
+function renderTagsReview() {
+  const list = els.tagsList;
+  list.innerHTML = '';
+  const byId = new Map(tagsReview.map((r) => [r.id, r]));
+  const depthOf = (r) => { let d = 0; for (let p = byId.get(r.parent); p; p = byId.get(p.parent)) d++; return d; };
+  const ignored = (r) => { for (let p = r; p; p = byId.get(p.parent)) if (p.ignore) return true; return false; };
+  renderTagsSummary();
 
   tagsReview.forEach((r, i) => {
     const inTable = r.parent >= 0;
     const isCell = TAG_CELL_ROLES.includes(r.role);
     const fixed = r.role === 'TR';
     const depth = depthOf(r);
-    const words = r.text === '' ? '(empty cell)' : r.text.length > 80 ? r.text.slice(0, 80) + '…' : r.text;
+    const isFigure = r.role === 'Figure';
+    const words = isFigure ? 'a picture' : r.text === '' ? '(empty cell)' : r.text.length > 80 ? r.text.slice(0, 80) + '…' : r.text;
     const li = document.createElement('li');
     li.className = 'tags-row' + (ignored(r) ? ' tags-ignored' : '') + (r.role === 'LI' ? ' tags-item' : '') +
       (depth ? ` tags-sub${Math.min(depth, 2)}` : '');
@@ -6039,7 +6051,23 @@ function renderTagsReview() {
     const table = inTable ? byId.get(byId.get(r.parent).parent >= 0 ? byId.get(r.parent).parent : r.parent) : r;
     const declined = inTable && table.role === 'P';
     let role;
-    if (r.role === 'Table' || (r.role === 'P' && r.wasTable)) {
+    // A figure is a picture the page draws (ADR-122): it says its type and offers no other, and what it asks
+    // for is a description of what the picture shows. Typing re-renders nothing — the field keeps its value
+    // and the caret — and only the summary's count follows it.
+    let describe = null;
+    if (isFigure) {
+      role = document.createElement('span');
+      role.className = 'tags-kind';
+      role.textContent = 'Figure';
+      describe = document.createElement('input');
+      describe.type = 'text';
+      describe.className = 'tags-alt';
+      describe.value = r.alt || '';
+      describe.disabled = r.ignore;
+      describe.placeholder = 'What the picture shows';
+      describe.setAttribute('aria-label', `Description of the picture on page ${r.page} (what it shows)`);
+      describe.oninput = () => { r.alt = describe.value; renderTagsSummary(); };
+    } else if (r.role === 'Table' || (r.role === 'P' && r.wasTable)) {
       role = document.createElement('select');
       role.setAttribute('aria-label', `Is this a table: ${words}`);
       for (const [code, name] of [['Table', 'Table'], ['P', 'Not a table — paragraphs']]) {
@@ -6083,7 +6111,7 @@ function renderTagsReview() {
     const ignore = document.createElement('input');
     ignore.type = 'checkbox';
     ignore.checked = r.ignore;
-    ignore.onchange = () => { r.ignore = ignore.checked; renderTagsReview(); focusTagsControl(i, 'input'); };
+    ignore.onchange = () => { r.ignore = ignore.checked; renderTagsReview(); focusTagsControl(i, 'input[type="checkbox"]'); };
     ignoreLabel.append(ignore, document.createTextNode('Ignore'));
 
     // A move takes the element and everything under it past the whole of its neighbour.
@@ -6109,7 +6137,7 @@ function renderTagsReview() {
     down.disabled = end === tagsReview.length;
     down.onclick = () => move(i + (tagsBlockEnd(end) - end), '.tags-down');
 
-    li.append(text, role, ignoreLabel, up, down, show);
+    li.append(text, role, ...(describe ? [describe] : []), ignoreLabel, up, down, show);
     list.appendChild(li);
   });
 }
@@ -6135,7 +6163,7 @@ async function openTags() {
     if (!res.ok) throw new Error(await errText(res, 'Could not propose a structure for this document.'));
     tagsProposal = await res.json();
     tagsReview = (tagsProposal.elements || []).map((e) => ({
-      id: e.id, role: e.role, ignore: false, text: e.text, page: e.page,
+      id: e.id, role: e.role, ignore: false, text: e.text, alt: '', page: e.page,
       rect: e.rect, pageBox: e.pageBox, marker: e.marker || '', list: e.list, parent: e.parent ?? -1,
     }));
     renderTagsReview();
@@ -6153,7 +6181,7 @@ async function commitTags() {
   try {
     const res = await apiFetch('/api/tags/commit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: doc && doc.id,
-      body: JSON.stringify({ elements: tagsReview.map((r) => ({ id: r.id, role: r.role, ignore: r.ignore, text: r.text })) }),
+      body: JSON.stringify({ elements: tagsReview.map((r) => ({ id: r.id, role: r.role, ignore: r.ignore, text: r.text, alt: r.alt || '' })) }),
     });
     if (!res.ok) {
       // The refusal is the server's own sentence — signed, stale, or malformed — and the review stays

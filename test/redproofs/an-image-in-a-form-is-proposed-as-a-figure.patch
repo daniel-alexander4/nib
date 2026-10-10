@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/grouping.go b/internal/pdfops/grouping.go
+--- a/internal/pdfops/grouping.go
++++ b/internal/pdfops/grouping.go
+@@ -173,8 +173,6 @@
+ // whole number of quarter turns it fills a parallelogram, and the box that bounds it is not where it is.
+ func figureRefusal(im drawnImage) string {
+ 	switch {
+-	case im.inForm:
+-		return figureInForm
+ 	case im.artifact:
+ 		return figureArtifact
+ 	case im.marked:

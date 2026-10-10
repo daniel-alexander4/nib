@@ -45,7 +45,7 @@ import (
 
 // proposedElement is one element the autotagger proposes.
 type proposedElement struct {
-	// role is a standard structure type: H1–H6, P or LI, or one of a table's — Table, TR, TH, TD.
+	// role is a standard structure type: H1–H6, P or LI, one of a table's — Table, TR, TH, TD — or Figure.
 	role string
 	// parent is the index, in the proposal, of the element this one sits under, or -1 at the top level.
 	// Only a table has children: a TR's parent is its Table and a cell's its TR, each directly after its
@@ -66,6 +66,12 @@ type proposedElement struct {
 	lines  []textLine
 	// list numbers the list a list item belongs to — consecutive items share one — or is -1.
 	list int
+	// figure is the operator that draws a Figure's image — `Do` with its operand, or `BI … EI` — in the page's
+	// own content; a Figure has no text, and box is the image as drawn (ADR-122).
+	figure opSpan
+	// alt is the description a reviewer gave a Figure. The proposer sets none: nothing here can say what a
+	// picture shows.
+	alt string
 }
 
 // tableRoles are the roles of a table's own elements; cellRoles the two a cell may have.
@@ -122,11 +128,20 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 		if l.unsupported != "" {
 			out.unsupported[page] = l.unsupported
 		}
-		tables := l.tables
+		blocks := pageBlocks(l)
+		emit := func(b pageBlock) {
+			if b.table == nil {
+				out.elements = append(out.elements, proposedElement{role: figureRole, parent: -1, page: page, list: -1,
+					box: b.figure.box, boxed: true, figure: b.figure.span})
+				return
+			}
+			out.elements = appendTable(out.elements, page, *b.table)
+			inList = false
+		}
 		for pi, par := range l.paragraphs {
-			for len(tables) > 0 && tables[0].before <= pi {
-				out.elements = appendTable(out.elements, page, tables[0])
-				tables, inList = tables[1:], false
+			for len(blocks) > 0 && blocks[0].before <= pi {
+				emit(blocks[0])
+				blocks = blocks[1:]
 			}
 			for _, piece := range splitAtListMarkers(par) {
 				first := piece.lines[0]
@@ -148,12 +163,69 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 				out.elements = append(out.elements, el)
 			}
 		}
-		for _, t := range tables {
-			out.elements = appendTable(out.elements, page, t)
-			inList = false
+		for _, b := range blocks {
+			emit(b)
 		}
 	}
 	return out
+}
+
+// figureRole is the role of the one proposed element that is a picture (ADR-122).
+const figureRole = "Figure"
+
+// pageBlock is something a page's proposal holds between its paragraphs: a table or a figure.
+type pageBlock struct {
+	table  *ruledTable
+	figure pageFigure
+	// before is how many of the page's paragraphs are proposed before it.
+	before int
+}
+
+// pageBlocks is a page's tables and figures in the order they are proposed.
+//
+// **The tables keep the order and the places they had before a figure was ever proposed** — a table is proposed
+// once every table before it has been, so its place is the furthest any of them reached — and each figure is
+// set among them: before the first table that comes after it. Where a figure and a table have the same number
+// of paragraphs before them, the one whose top is higher comes first, and of two with one top the one further
+// left (ADR-122). A figure ends no list: the items either side of a picture are proposed as the one list they
+// were, and a KEPT figure between them parts them at the commit, where lists follow the reviewed order.
+func pageBlocks(l pageLayout) []pageBlock {
+	blocks := make([]pageBlock, 0, len(l.tables)+len(l.figures))
+	reached := 0
+	for i := range l.tables {
+		reached = max(reached, l.tables[i].before)
+		blocks = append(blocks, pageBlock{table: &l.tables[i], before: reached})
+	}
+	figures := append([]pageFigure(nil), l.figures...)
+	sort.SliceStable(figures, func(i, j int) bool {
+		a, b := figures[i], figures[j]
+		if a.before != b.before {
+			return a.before < b.before
+		}
+		return above(a.box, b.box)
+	})
+	for _, f := range figures {
+		at := len(blocks)
+		for j, b := range blocks {
+			if b.table != nil && (b.before > f.before || (b.before == f.before && above(f.box, b.table.grid.frame()))) {
+				at = j
+				break
+			}
+		}
+		blocks = append(blocks, pageBlock{})
+		copy(blocks[at+1:], blocks[at:])
+		blocks[at] = pageBlock{figure: f, before: f.before}
+	}
+	return blocks
+}
+
+// above says box a is read before box b where nothing else orders them: its top is higher, or it is as high
+// and starts further left.
+func above(a, b [4]float64) bool {
+	if a[3] != b[3] {
+		return a[3] > b[3]
+	}
+	return a[0] < b[0]
 }
 
 // appendTable adds a table to a proposal: the Table, then each row's TR and its cells, row by row. The first

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
@@ -42,6 +43,15 @@ import (
 // row has as many cells as the grid has columns. A `TH` gets its `/Scope` through `withTableAttribute`, the
 // one writer of a Table attribute (ADR-119). The rules themselves are painted paths and become artifacts with
 // every other uncovered drawing.
+//
+// # Figures (ADR-122)
+//
+// A kept Figure brackets its image's own operator — `Do` with its operand, or an inline image together with
+// the `q … cm` and the `Q` it is drawn between (`drawingBrackets`) — under
+// an MCID, and carries the reviewer's description as `/Alt`, written as the structure editor writes one. The
+// operator must be one a fresh read of the page finds uncovered (`uncoveredDrawingSpans`), or the proposal is
+// stale; and a figure that is kept is not ALSO declared an artifact. An ignored one is, with every other
+// drawing nothing covers.
 //
 // # What is marked as an artifact
 //
@@ -92,6 +102,12 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			// `uncoveredDrawingSpans` an uncovered `Do` is a picture and not a form.
 			images map[string]bool
 			res    types.Dict
+			// drawings is every drawing on the page that nothing covers, by where its operator ENDS — which is
+			// one place for the walker's reading of an image and for this one — and figured those a Figure took.
+			drawings map[int]opSpan
+			figured  map[int]bool
+			// brackets is where a sequence about one of them opens and closes (`drawingBrackets`).
+			brackets drawingBrackets
 		}
 		pages := map[int]*committedPage{}
 		var order []int
@@ -158,6 +174,12 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			pages[pg].edit = contentstream.NewEdit(src)
 			pages[pg].images = imageXObjectNames(ctx, res)
 			pages[pg].res = res
+			pages[pg].drawings, pages[pg].figured = map[int]opSpan{}, map[int]bool{}
+			pages[pg].brackets = drawingBrackets{src: src}
+			drawings, _ := uncoveredDrawingSpans(ctx.XRefTable, res, src, pages[pg].images)
+			for _, sp := range drawings {
+				pages[pg].drawings[sp.end] = sp
+			}
 		}
 
 		// mark brackets runs as one element of structType under parent, and answers the element — nil for no runs.
@@ -241,6 +263,38 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 				continue
 			}
 			table, row = nil, nil
+			if el.role == figureRole {
+				// The image's operator, where a fresh read of this page finds a drawing nothing covers: the
+				// proposal was made from these bytes, and one that names anything else is stale (ADR-122).
+				cp, sp := pages[el.page], el.figure
+				fresh, ok := cp.drawings[sp.end]
+				if !ok || fresh.start > sp.start || !drawsAnImage(cp.src[fresh.start:sp.end]) {
+					return fmt.Errorf("%w (page %d, a figure)", errCommitStale, el.page)
+				}
+				// The writer's own half of the law, whoever calls it: a Figure with nothing to say fails the clause
+				// it exists for (ua1 7.3 t1), so none is written.
+				if strings.TrimSpace(el.alt) == "" {
+					return fmt.Errorf("pdfops: a figure is written only with a description of what it shows (page %d)", el.page)
+				}
+				mcid, ref, aerr := addMarkedElementUnder(ctx, tree, el.page, figureRole, nil)
+				if aerr != nil {
+					return aerr
+				}
+				d, derr := ctx.DereferenceDict(*ref)
+				if derr != nil || d == nil {
+					return fmt.Errorf("pdfops: the figure just written does not resolve: %v", derr)
+				}
+				esc, eerr := types.EscapedUTF16String(el.alt)
+				if eerr != nil {
+					return eerr
+				}
+				d["Alt"] = types.StringLiteral(*esc)
+				cp.figured[sp.end] = true
+				sp = cp.brackets.around(sp)
+				cp.edit.InsertBefore(sp.start, []byte(fmt.Sprintf("/%s <</MCID %d>> BDC\n", figureRole, mcid)))
+				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))
+				continue
+			}
 			if el.role != "LI" {
 				if _, err := mark(el.page, runs, el.role, nil); err != nil {
 					return err
@@ -294,8 +348,16 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			// committed page with one underline failed 7.1 t3 under the claim this writer makes. Since
 			// `/pending 514` the same is true of a picture, a shading and an inline image: 495 left
 			// those out and 514 measured that leaving them out fixes nothing (`uncoveredDrawingSpans`).
-			drawings, _ := uncoveredDrawingSpans(ctx.XRefTable, cp.res, cp.src, cp.images)
-			for _, sp := range drawings {
+			// A picture a Figure took is content now, and is not declared decoration as well (ADR-122).
+			ends := make([]int, 0, len(cp.drawings))
+			for e := range cp.drawings {
+				if !cp.figured[e] {
+					ends = append(ends, e)
+				}
+			}
+			sort.Ints(ends)
+			for _, e := range ends {
+				sp := cp.brackets.around(cp.drawings[e])
 				cp.edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
 				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))
 			}
@@ -320,6 +382,12 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 		return nil, orphanedClaimError("commitProposal", out)
 	}
 	return claimed, nil
+}
+
+// drawsAnImage says whether op — one operator and its operands — is what draws an image: `Do`, or an inline
+// image, which ends at its `EI`.
+func drawsAnImage(op []byte) bool {
+	return bytes.HasSuffix(op, []byte("Do")) || bytes.HasSuffix(op, []byte("EI"))
 }
 
 // elementRuns is an element's runs, line by line, in the order they were drawn on each line.

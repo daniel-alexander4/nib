@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagcommit.go b/internal/pdfops/tagcommit.go
+--- a/internal/pdfops/tagcommit.go
++++ b/internal/pdfops/tagcommit.go
+@@ -351,7 +351,7 @@
+ 			// A picture a Figure took is content now, and is not declared decoration as well (ADR-122).
+ 			ends := make([]int, 0, len(cp.drawings))
+ 			for e := range cp.drawings {
+-				if !cp.figured[e] {
++				if true {
+ 					ends = append(ends, e)
+ 				}
+ 			}

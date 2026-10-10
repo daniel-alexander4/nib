@@ -827,3 +827,8 @@ home today.
   — `ruledGrids` over the page map's shapes: a regular ruled grid of two rows and two columns or more is `Table` → `TR` →
   `TH`/`TD`, each element naming its `parent`; a grid with a merged cell is reported and left as paragraphs; text with no
   rules is never a table. A table is reviewed whole, and a `TH`'s scope goes through `withTableAttribute`.
+- **[ADR-122 — a figure is proposed for an image the page draws, and is written only with a description](122-a-figure-is-proposed-for-an-image-the-page-draws-and-is-written-only-with-a-description.md)**
+  — one `Figure` for each image XObject or inline image in the page's own content, from the same read that finds
+  the rules; not for one in a form, under 8pt, already an artifact, or turned. A review keeps it with an `alt` or
+  ignores it; the commit brackets the image's operator and writes `/Alt`. An inline image is bracketed with its
+  `q … cm … Q` (`drawingBrackets`), because pdfcpu ends one only at `EI` then `Q`. Painted paths stay artifacts.

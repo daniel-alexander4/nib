@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagcommit.go b/internal/pdfops/tagcommit.go
+--- a/internal/pdfops/tagcommit.go
++++ b/internal/pdfops/tagcommit.go
+@@ -268,7 +268,7 @@
+ 				// proposal was made from these bytes, and one that names anything else is stale (ADR-122).
+ 				cp, sp := pages[el.page], el.figure
+ 				fresh, ok := cp.drawings[sp.end]
+-				if !ok || fresh.start > sp.start || !drawsAnImage(cp.src[fresh.start:sp.end]) {
++				if (!ok && false) || fresh.start > sp.start || !drawsAnImage(cp.src[fresh.start:sp.end]) {
+ 					return fmt.Errorf("%w (page %d, a figure)", errCommitStale, el.page)
+ 				}
+ 				// The writer's own half of the law, whoever calls it: a Figure with nothing to say fails the clause

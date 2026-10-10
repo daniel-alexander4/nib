@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -186,6 +187,10 @@ var (
 //     7.1 t3 exactly as the tagged one did, because the unmarked image is there either way. Refusing
 //     removes a false claim and costs the text layer, and leaves the clause failing.
 //
+// **Since ADR-122 the tagger does propose a `/Figure` for an image, and asks for the description that fills
+// it** — the first measurement above is why it is written only with one. This function is unchanged by that:
+// it returns every drawing nothing covers, and the commit leaves out the one a described Figure took.
+//
 // `/Artifact` is what is left, and it is what veraPDF's own corpus does: over its 297 PDF/UA-1 files,
 // 39 images sit inside an `/Artifact` sequence and 16 inside a marked one, and exactly ONE image in
 // the whole corpus is inside neither — `7.1-t03-fail-a.pdf`, the file written to fail this clause.
@@ -292,6 +297,61 @@ func uncoveredDrawingSpans(xt *model.XRefTable, res types.Dict, src []byte, imag
 		operandStart = -1
 	}
 	return out, forms
+}
+
+// drawingBrackets answers where a marked-content sequence about a drawing is opened and closed — the one door
+// for every writer that brackets what `uncoveredDrawingSpans` returns, or a Figure's image (ADR-122).
+//
+// **An inline image is bracketed together with the `q … cm` before it and the `Q` after it**, and everything
+// else at its own span. pdfcpu's content scan (`model/parseContent.go`, `lookupEI`) ends an inline image only
+// at an `EI` followed by white space and `Q`, or by the end of the stream; `EI`, a new line and `EMC` is to it
+// a corrupt image, and the write is refused. Measured when ADR-122 first committed a page with an inline
+// image: bracketed at its own span, as `/pending 514` wrote it, the commit failed whether the image was kept
+// or ignored. `q a b c d e f cm BI … EI Q` is how a producer draws one, and inside the bracket it is the image
+// and nothing else.
+//
+// **Declared gap**: an inline image drawn any other way — more between its `q` and `BI` than one `cm`, or no
+// `Q` straight after it — is bracketed at its own span as before, and pdfcpu refuses that page.
+type drawingBrackets struct {
+	src  []byte
+	toks []contentstream.Token
+}
+
+// around is the span a sequence about the drawing at sp is written around.
+func (b *drawingBrackets) around(sp opSpan) opSpan {
+	if b.toks == nil {
+		b.toks = contentstream.Tokenize(b.src)
+	}
+	i := sort.Search(len(b.toks), func(k int) bool { return b.toks[k].Start >= sp.start })
+	if i == len(b.toks) || b.toks[i].Kind != contentstream.InlineImage {
+		return sp
+	}
+	// step moves from k to the nearest token that is not white space, forward or back; -1 past either end.
+	step := func(k, by int) int {
+		for k += by; k >= 0 && k < len(b.toks); k += by {
+			if b.toks[k].Kind != contentstream.Whitespace {
+				return k
+			}
+		}
+		return -1
+	}
+	is := func(k int, op string) bool {
+		return k >= 0 && b.toks[k].Kind == contentstream.Operator && string(b.toks[k].Bytes(b.src)) == op
+	}
+	after, before := step(i, 1), step(i, -1)
+	if !is(after, "Q") || !is(before, "cm") {
+		return sp
+	}
+	k := before
+	for n := 0; n < 6; n++ {
+		if k = step(k, -1); k < 0 || b.toks[k].Kind != contentstream.Operand {
+			return sp
+		}
+	}
+	if k = step(k, -1); !is(k, "q") {
+		return sp
+	}
+	return opSpan{b.toks[k].Start, b.toks[after].End}
 }
 
 // drawnForm is one `Do` a stream makes on something that is not an image, and whether a marked-content

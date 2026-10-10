@@ -74,14 +74,41 @@ func (w *runWalker) markPath(p markBox, gs runGState, stroked bool) {
 	w.marks = append(w.marks, pageMark{kind: markPath, box: b})
 }
 
-// markImage records an image: it fills the unit square under the CTM (ISO 32000-1 §8.3.4).
-func (w *runWalker) markImage(kind markKind, gs runGState) {
+// markImage records an image: it fills the unit square under the CTM (ISO 32000-1 §8.3.4). span is the image's own
+// operator — `Do` with its operand, or the whole of `BI … EI` — and inForm says it is drawn by a form's stream.
+func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm bool) {
 	if !w.keepMarks {
 		return
 	}
 	var b markBox
 	b.add(gs.ctm, 0, 0, 1, 0, 0, 1, 1, 1)
 	w.marks = append(w.marks, pageMark{kind: kind, box: b.box})
+	if w.keepShapes {
+		w.images = append(w.images, drawnImage{box: b.box, span: span, inForm: inForm, artifact: w.inArtifact(),
+			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm)})
+	}
+}
+
+// drawnImage is one image a page draws, with what a proposer must know before it offers a Figure for it
+// (ADR-122) — kept with the painted paths' pieces, by the page map's reader alone (`readPageShapes`).
+type drawnImage struct {
+	// box is the image as drawn: the unit square under the CTM, in user space.
+	box [4]float64
+	// span is the image's own operator in the stream that draws it.
+	span opSpan
+	// inForm says a form XObject's stream draws it, not the page's own.
+	inForm bool
+	// artifact says an `/Artifact` sequence is open around it; marked that a sequence with an MCID is.
+	artifact, marked bool
+	// upright says box IS the image: the CTM turns it by a whole number of quarter turns, mirrored or not. Under
+	// any other matrix the image is a parallelogram and box only what bounds it.
+	upright bool
+}
+
+// uprightBox says whether the unit square under m is a rectangle with its sides along the axes.
+func uprightBox(m runMatrix) bool {
+	tol := 1e-6 * math.Max(math.Max(math.Abs(m[0]), math.Abs(m[1])), math.Max(math.Abs(m[2]), math.Abs(m[3])))
+	return (math.Abs(m[1]) <= tol && math.Abs(m[2]) <= tol) || (math.Abs(m[0]) <= tol && math.Abs(m[3]) <= tol)
 }
 
 // markShading records `sh`, which paints the whole of the current clip. The clip is not tracked, so its box is every

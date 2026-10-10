@@ -6,6 +6,7 @@ import (
 	"math"
 	"nib/internal/pdfread"
 	"sort"
+	"strings"
 )
 
 // The review doors — `PLAN-accessibility.md` P08.S06b.
@@ -16,6 +17,16 @@ import (
 // and requires the review to account for exactly those elements, text for text, before anything is
 // written. A document that changed between propose and commit is refused as stale rather than
 // tagged by a list that described something else.
+//
+// # Figures (ADR-122)
+//
+// A Figure is proposed for an image the page draws, and it is the one element a review must ADD something to:
+// kept, it needs a description of what the picture shows (`TagReview.Alt`), because a Figure with none fails
+// the clause it was written for (ua1 7.3 t1) and nothing here can look at a picture. Ignored, it is left the
+// artifact it would have been. **A Figure has no text, so the echo that catches a changed paragraph cannot see
+// a changed picture**: an image replaced by another in the same place, by the same operator, commits under the
+// description written for the first. What the commit does hold is where the image is — it proposes again, and
+// the figure's operator must be the one a fresh read of the page finds.
 
 // TagElement is one proposed element as a reviewer sees it.
 // The JSON tags are the proposal route's field names (`internal/server/tags.go`), held equal by a server
@@ -33,7 +44,7 @@ type TagElement struct {
 	// Rect is the element's extent on its page in PDF user space: left, bottom, right, top. The
 	// vertical extent is ESTIMATED from baselines and size (0.85 em up, 0.25 em down) — enough to
 	// point at an element, not a measurement of its glyph boxes. A table, a row and a cell carry the ruled
-	// grid's own box instead.
+	// grid's own box instead, and a Figure the box its image is drawn in (ADR-122).
 	Rect [4]float64 `json:"rect"`
 	// PageBox is the page's MediaBox — llx, lly, urx, ury — so a client can place Rect on the page it
 	// renders. Page rotation and CropBox are not applied.
@@ -61,6 +72,9 @@ type TagReview struct {
 	// Text is the element's text as it was proposed, echoed back, so a commit can tell the review
 	// still describes the document.
 	Text string
+	// Alt is the description of what a Figure shows, which a kept Figure must have and no other element may
+	// carry (ADR-122).
+	Alt string
 }
 
 // ErrTagsStale is a review that no longer describes the document it is committed to.
@@ -71,7 +85,7 @@ var ErrTagsStale = errCommitStale
 var ErrTagsReview = errors.New("pdfops: the review cannot be applied")
 
 // reviewRoles is what a reviewer may choose for an element that is not part of a table. A cell is a TH or a
-// TD (`cellRoles`); a Table and a TR keep their type.
+// TD (`cellRoles`); a Table, a TR and a Figure keep their type.
 var reviewRoles = map[string]bool{"H1": true, "H2": true, "H3": true, "H4": true, "H5": true, "H6": true, "P": true, "LI": true}
 
 // ProposeTags proposes a structure for pdf. It writes nothing.
@@ -146,6 +160,9 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 		if el.text != r.Text {
 			return nil, fmt.Errorf("%w (element %d)", errCommitStale, r.ID)
 		}
+		if el.role != figureRole && r.Alt != "" {
+			return nil, fmt.Errorf("%w: only a figure takes a description of what it shows, and element %d is not one", ErrTagsReview, r.ID)
+		}
 		inTable := el.parent >= 0
 		if inTable && last != r.ID-1 {
 			return nil, fmt.Errorf("%w: a table's rows and cells stay under it in the order they were proposed (element %d) — move the whole table", ErrTagsReview, r.ID)
@@ -175,6 +192,17 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 			continue
 		}
 		switch {
+		case el.role == figureRole:
+			// A picture is a Figure or it is ignored (ADR-122): nothing else it could be made has anything to hold.
+			if r.Role != figureRole {
+				return nil, fmt.Errorf("%w: a figure keeps its type — it cannot be made %q (element %d); ignore it if it is decoration", ErrTagsReview, r.Role, r.ID)
+			}
+			if strings.TrimSpace(r.Alt) == "" {
+				return nil, fmt.Errorf("%w: a figure needs a description of what it shows, or must be ignored (element %d, page %d)", ErrTagsReview, r.ID, el.page)
+			}
+			el.alt = r.Alt
+		case r.Role == figureRole:
+			return nil, fmt.Errorf("%w: only a picture the page draws can be a Figure, and element %d is text", ErrTagsReview, r.ID)
 		case cellRoles[el.role]:
 			if !cellRoles[r.Role] {
 				return nil, fmt.Errorf("%w: a table cell is a header cell (TH) or a data cell (TD), not %q (element %d)", ErrTagsReview, r.Role, r.ID)
