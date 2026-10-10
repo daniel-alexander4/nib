@@ -206,6 +206,17 @@ func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string
 		for i, a := range annots {
 			if ad, aerr := ctx.DereferenceDict(a); aerr == nil && ad != nil {
 				claim(ad["StructParent"], fmt.Sprintf("annotation %d on page %d", i+1, p))
+				// **An annotation's appearance stream is a form XObject and can claim a key too**
+				// (/pending 665). The carry's own enumeration, `eachParentTreeClaim`, has walked them since
+				// it was found dropping such a row; this one did not, so the gate called a row the carry had
+				// correctly kept "unowned" and the operation dropped the whole tree.
+				for _, ap := range []string{"N", "R", "D"} {
+					eachFormXObject(ctx, types.Dict{"XObject": apStates(ctx.XRefTable, ad, ap)}, seenForms, 0,
+						func(nr int, sd *types.StreamDict) {
+							claim(sd.Dict["StructParents"], fmt.Sprintf("form XObject %d", nr))
+							claim(sd.Dict["StructParent"], fmt.Sprintf("form XObject %d", nr))
+						})
+				}
 			}
 		}
 		if rec.res == nil {

@@ -399,9 +399,10 @@ func kidPage(xt *model.XRefTable, d types.Dict, inheritPg int) int {
 // order, handing each its key and a way to rewrite it (a negative key deletes the claim).
 //
 // It is the write-side twin of `parentTreeOwners`, which answers the same question for reading, and
-// the two walk the same three places for the reason that walk records: a page's `/StructParents`, an
+// the two walk the same places for the reason that walk records: a page's `/StructParents`, an
 // annotation's `/StructParent`, and a form XObject's — both spellings, because they differ by a
-// letter and mean different shapes. Measured over veraPDF's 294 tagged files, that enumeration finds
+// letter and mean different shapes — whether the form is in a page's resources or is an annotation's
+// appearance (the reader gained the appearances at /pending 665; until then the two disagreed). Measured over veraPDF's 294 tagged files, that enumeration finds
 // every claimant in every one of them: 299 pages, 51 `/Link`, 25 `/Widget`, 8 `/Highlight`, 5
 // `/FreeText`, 5 `/FileAttachment`, 5 `/Screen` and 2 form XObjects, with zero missed.
 func eachParentTreeClaim(ctx *model.Context, fn func(key int, set func(int))) {

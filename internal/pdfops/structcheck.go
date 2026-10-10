@@ -109,7 +109,28 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 		_ = arr
 	}
 
-	// Every MCID an element claims must be in range, and must map back to that element.
+	// Every MCID an element claims must be in range, and must map back to that element — in the row of
+	// whatever holds the content: the page's, or the stream's a marked-content reference names.
+	owned := func(e *structElem, mcid, key int, holder string) {
+		arr := nums[key]
+		if mcid < 0 || mcid >= len(arr) {
+			add(fmt.Sprintf("mcid-range obj=%d key=%d mcid=%d", e.objNr, key, mcid), "an element of type /%s claims /MCID %d, and the ParentTree array for its "+
+				"%s (key %d) has %d slot(s)", e.kind, mcid, holder, key, len(arr))
+			return
+		}
+		switch {
+		case e.objNr == 0:
+			// An element written inline has no object number, so no ParentTree slot can name it.
+		case arr[mcid] == 0:
+			// A null slot says no element owns the content while this one claims it — invariant 4 read
+			// from the ParentTree's side, and it passed until `/pending 503`.
+			add(fmt.Sprintf("mcid-unowned key=%d mcid=%d obj=%d", key, mcid, e.objNr), "/MCID %d on the %s with key %d maps to no element in the ParentTree (a null "+
+				"slot), but object %d is the element that claims it", mcid, holder, key, e.objNr)
+		case arr[mcid] != e.objNr:
+			add(fmt.Sprintf("mcid-owner key=%d mcid=%d obj=%d", key, mcid, e.objNr), "/MCID %d on the %s with key %d maps to object %d in the ParentTree, but "+
+				"object %d is the element that claims it", mcid, holder, key, arr[mcid], e.objNr)
+		}
+	}
 	for _, e := range tree.elems {
 		for _, k := range e.kids {
 			if k.kind != kidMCID && k.kind != kidMCR {
@@ -139,11 +160,18 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 						"an element of type /%s says its /MCID %d lives in the stream at object %d, "+
 							"and that object is not a stream — the content it describes cannot be found",
 						e.kind, k.mcid, k.stm)
-					// The page checks below resolve an MCID through the PAGE's /StructParents, which
-					// is already the wrong row for content in another stream; over a stream that does
-					// not exist they would say nothing at all.
 					continue
 				}
+				// **Content in another stream is found through THAT stream's row, never the page's**
+				// (/pending 665). An MCID is unique only within a content stream (ADR-038), so a page
+				// with its own /MCID 0 and a form with another was reported as "/MCID 0 … maps to
+				// object 9 … but object 12 is the element that claims it" — on a well-formed document,
+				// and the carry then dropped its whole tree, through `Collect(pdf, ["1"])` too. A
+				// stream that claims no row has nothing here to be compared with.
+				if key, has := parentTreeKeyValue(ctx.XRefTable, sd.Dict["StructParents"]); has {
+					owned(e, k.mcid, key, "stream")
+				}
+				continue
 			}
 			pg := k.pgObj
 			if pg == 0 {
@@ -156,24 +184,7 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 				// already reports the first; the second is this.
 				continue
 			}
-			arr := nums[key]
-			if k.mcid < 0 || k.mcid >= len(arr) {
-				add(fmt.Sprintf("mcid-range obj=%d key=%d mcid=%d", e.objNr, key, k.mcid), "an element of type /%s claims /MCID %d, and the ParentTree array for its "+
-					"page (key %d) has %d slot(s)", e.kind, k.mcid, key, len(arr))
-				continue
-			}
-			switch {
-			case e.objNr == 0:
-				// An element written inline has no object number, so no ParentTree slot can name it.
-			case arr[k.mcid] == 0:
-				// A null slot says no element owns the content while this one claims it — invariant 4 read
-				// from the ParentTree's side, and it passed until `/pending 503`.
-				add(fmt.Sprintf("mcid-unowned key=%d mcid=%d obj=%d", key, k.mcid, e.objNr), "/MCID %d on the page with key %d maps to no element in the ParentTree (a null "+
-					"slot), but object %d is the element that claims it", k.mcid, key, e.objNr)
-			case arr[k.mcid] != e.objNr:
-				add(fmt.Sprintf("mcid-owner key=%d mcid=%d obj=%d", key, k.mcid, e.objNr), "/MCID %d on the page with key %d maps to object %d in the ParentTree, but "+
-					"object %d is the element that claims it", k.mcid, key, arr[k.mcid], e.objNr)
-			}
+			owned(e, k.mcid, key, "page")
 		}
 	}
 
