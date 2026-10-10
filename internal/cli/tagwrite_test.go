@@ -327,8 +327,95 @@ func TestTagEditCreatesATagMovesIntoItAndDeletesIt(t *testing.T) {
 			t.Fatalf("%s: wrote %s", tc.edits, refused)
 		}
 	}
-	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "create, delete or region") || !strings.Contains(errOut, "keeps what it held") {
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "create, delete, region, promote or rolemap") || !strings.Contains(errOut, "keeps what it held") {
 		t.Errorf("nib tag edit -h exited %d and does not describe create and delete:\n%s", code, errOut)
+	}
+}
+
+// TestTagEditPromotesInlineTagsAndEditsTheRoleMap — ADR-126 and ADR-127 on the command line. The tree prints
+// the role map after the tags and says, on stderr, how an inline tag gets a number; a promote edit then
+// gives it one and the tree prints the same lines with the id filled in; a rolemap edit changes what a
+// custom type is read as; and a refusal is the door's sentence and exit 2.
+func TestTagEditPromotesInlineTagsAndEditsTheRoleMap(t *testing.T) {
+	dir := t.TempDir()
+	body := "/P <</MCID 0>> BDC\nBT /F1 12 Tf 72 700 Td (Title) Tj ET\nEMC\n/P <</MCID 1>> BDC\nBT /F1 12 Tf 72 680 Td (Inside) Tj ET\nEMC\n"
+	in := writeFile(t, dir, "tree.pdf", string(testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+		4:  "<< /Length " + itoa(len(body)) + " >>\nstream\n" + body + "\nendstream",
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /RoleMap << /Heading#201 /H1 /Unused /Note >> >>",
+		8:  "<< /Type /StructElem /S /Document /P 7 0 R /K [20 0 R << /S /Sect /Pg 3 0 R /K [1] >>] >>",
+		9:  "<< /Nums [0 [20 0 R null]] >>",
+		20: "<< /Type /StructElem /S /Heading#201 /P 8 0 R /Pg 3 0 R /K [0] >>",
+	})))
+	stdout, errOut, code := runTag(t, "tree", in)
+	if code != 0 {
+		t.Fatalf("tree exited %d: %s", code, errOut)
+	}
+	if !strings.Contains(stdout, "role map:\n  Heading 1 → H1  1 tag(s)\n  Unused → Note  0 tag(s)\n") {
+		t.Errorf("the tree prints\n%s\nwant the role map after the tags: each name, what it means, how many tags carry it", stdout)
+	}
+	if !strings.Contains(stdout, "\n0      ") || !strings.Contains(errOut, "1 element(s) are written inline") || !strings.Contains(errOut, `"promote"`) {
+		t.Errorf("the tree prints\n%s\nand says %q — want the inline tag at id 0 and the edit that numbers it named", stdout, errOut)
+	}
+	var js pdfops.StructureTree
+	jsonOut, _, _ := runTag(t, "tree", in, "--json")
+	if err := json.Unmarshal([]byte(jsonOut), &js); err != nil || len(js.RoleMap) != 2 || js.RoleMap[0] != (pdfops.RoleMapping{Name: "Heading 1", To: "H1", Standard: "H1", Elements: 1}) {
+		t.Errorf("tree --json carries the role map %+v (%v)", js.RoleMap, err)
+	}
+
+	numbered := filepath.Join(dir, "numbered.pdf")
+	promote := writeFile(t, dir, "promote.json", `{"edits":[{"kind":"promote"}]}`)
+	if _, errOut, code := runTag(t, "edit", in, "-o", numbered, "--edits", promote); code != 0 {
+		t.Fatalf("edit (promote) exited %d: %s", code, errOut)
+	}
+	after, errOut, _ := runTag(t, "tree", numbered)
+	tree, err := pdfops.ReadStructure(readPDF(t, numbered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sect := tree.Elements[2].ID
+	if tree.Unaddressable != 0 || sect <= 0 || strings.Contains(errOut, "inline") {
+		t.Fatalf("after the promote the tree has %d inline tag(s), the Sect is %d, and stderr says %q", tree.Unaddressable, sect, errOut)
+	}
+	// The same lines, but for the id the Sect now has.
+	if want := strings.Replace(stdout, "\n0      ", "\n"+fmt.Sprintf("%-6d ", sect), 1); after != want {
+		t.Errorf("after the promote the tree prints\n%s\nwant\n%s", after, want)
+	}
+	if _, errOut, code := runTag(t, "edit", numbered, "-o", filepath.Join(dir, "again.pdf"), "--edits", promote); code != 2 || !strings.Contains(errOut, "no tag in this document is written inline") {
+		t.Errorf("a second promote exited %d saying %q, want 2 and the door's sentence", code, errOut)
+	}
+
+	mapped := filepath.Join(dir, "mapped.pdf")
+	roles := writeFile(t, dir, "roles.json", `{"edits":[{"kind":"rolemap","role":"Heading 1","value":"H2"},{"kind":"rolemap","role":"Unused","value":""},{"kind":"rolemap","role":"Side Bar","value":"Sect"}]}`)
+	if _, errOut, code := runTag(t, "edit", numbered, "-o", mapped, "--edits", roles); code != 0 {
+		t.Fatalf("edit (rolemap) exited %d: %s", code, errOut)
+	}
+	stdout, _, _ = runTag(t, "tree", mapped)
+	if !strings.Contains(stdout, "H2 (Heading 1)") || !strings.Contains(stdout, "role map:\n  Heading 1 → H2  1 tag(s)\n  Side Bar → Sect  0 tag(s)\n") || strings.Contains(stdout, "Unused") {
+		t.Errorf("after the role map edits the tree prints\n%s\nwant the heading read as H2 and the map as edited", stdout)
+	}
+	for request, says := range map[string]string{
+		`{"edits":[{"kind":"rolemap","role":"H1","value":"H2"}]}`:         "H1 is a standard structure type",
+		`{"edits":[{"kind":"rolemap","role":"Heading 1","value":""}]}`:    "1 tag(s) are still of type Heading 1",
+		`{"edits":[{"kind":"rolemap","role":"Heading 1","value":"Zed"}]}`: "is not a standard structure type",
+	} {
+		bad := writeFile(t, dir, "bad.json", request)
+		refused := filepath.Join(dir, "refused.pdf")
+		if _, errOut, code := runTag(t, "edit", mapped, "-o", refused, "--edits", bad); code != 2 || !strings.Contains(errOut, says) {
+			t.Errorf("%s exited %d saying %q, want 2 saying %q", request, code, errOut, says)
+		}
+		if _, err := os.Stat(refused); err == nil {
+			t.Errorf("%s: a refused edit wrote a file", request)
+		}
+	}
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "promote takes nothing else") || !strings.Contains(errOut, "\"role\" the name") {
+		t.Errorf("nib tag edit -h exited %d and does not describe promote and rolemap:\n%s", code, errOut)
+	}
+	if _, errOut, code := runTag(t, "tree", "-h"); code != 0 || !strings.Contains(errOut, "then the role map") {
+		t.Errorf("nib tag tree -h exited %d and does not say it prints the role map:\n%s", code, errOut)
 	}
 }
 
@@ -471,7 +558,7 @@ func TestTagUntaggedListsWhatNoTagOwnsAndARegionTagsIt(t *testing.T) {
 		t.Errorf("with --page the empty answer says %q", errOut)
 	}
 
-	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "delete or region") || !strings.Contains(errOut, "nib tag untagged --json") {
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "delete, region, promote or rolemap") || !strings.Contains(errOut, "nib tag untagged --json") {
 		t.Errorf("nib tag edit -h exited %d and does not describe a region:\n%s", code, errOut)
 	}
 	var help string

@@ -34,6 +34,8 @@ type structureView struct {
 	elements []viewElement
 	// unaddressable counts the elements written inline, which an edit cannot name.
 	unaddressable int
+	// roles is the document's role map, sorted by name (ADR-127).
+	roles []viewRole
 }
 
 // viewElement is one structure element as a reviewer sees it.
@@ -171,7 +173,7 @@ func readStructureView(pdf []byte) (structureView, error) {
 			}
 		}
 	}
-	view := structureView{elements: make([]viewElement, len(tree.elems))}
+	view := structureView{elements: make([]viewElement, len(tree.elems)), roles: roleMapView(tree)}
 	// The model lists a parent before its kids, so walking it backwards finds every kid's text already
 	// read — one pass, not a re-walk of each subtree.
 	for i := len(tree.elems) - 1; i >= 0; i-- {
@@ -436,12 +438,25 @@ type StructureElement struct {
 	PageBox [4]float64 `json:"pageBox"`
 }
 
+// RoleMapping is one entry of a document's role map (ADR-127): a custom structure type and what it means.
+type RoleMapping struct {
+	// Name is the custom type; To is the type the role map sends it to, as written; Standard is the standard
+	// type that leads to — Name itself where the map leads it in a circle.
+	Name     string `json:"name"`
+	To       string `json:"to"`
+	Standard string `json:"standard"`
+	// Elements is how many elements are typed with Name. A mapping cannot be removed while any is.
+	Elements int `json:"elements"`
+}
+
 // StructureTree is a document's existing structure tree as reviewable values.
 type StructureTree struct {
 	// Tagged is false for a document with no structure tree, and Elements is then empty.
 	Tagged        bool               `json:"tagged"`
 	Unaddressable int                `json:"unaddressable"`
 	Elements      []StructureElement `json:"elements"`
+	// RoleMap is the document's role map, sorted by name; empty, never nil.
+	RoleMap []RoleMapping `json:"roleMap"`
 }
 
 // ReadStructure reads pdf's existing structure tree. It writes nothing, and a document with no tree is
@@ -449,12 +464,16 @@ type StructureTree struct {
 func ReadStructure(pdf []byte) (StructureTree, error) {
 	v, err := readStructureView(pdf)
 	if errors.Is(err, errNoStructTree) {
-		return StructureTree{Elements: []StructureElement{}}, nil
+		return StructureTree{Elements: []StructureElement{}, RoleMap: []RoleMapping{}}, nil
 	}
 	if err != nil {
 		return StructureTree{}, err
 	}
-	out := StructureTree{Tagged: true, Unaddressable: v.unaddressable, Elements: make([]StructureElement, len(v.elements))}
+	out := StructureTree{Tagged: true, Unaddressable: v.unaddressable, Elements: make([]StructureElement, len(v.elements)),
+		RoleMap: make([]RoleMapping, len(v.roles))}
+	for i, r := range v.roles {
+		out.RoleMap[i] = RoleMapping{Name: r.name, To: r.to, Standard: r.standard, Elements: r.elements}
+	}
 	for i, e := range v.elements {
 		out.Elements[i] = StructureElement{
 			ID: e.id, Parent: e.parent, Kids: append([]int{}, e.kids...), Kind: e.kind, Standard: e.standard,

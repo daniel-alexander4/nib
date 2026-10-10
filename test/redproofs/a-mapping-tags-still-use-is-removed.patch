@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structrolemap.go b/internal/pdfops/structrolemap.go
+--- a/internal/pdfops/structrolemap.go
++++ b/internal/pdfops/structrolemap.go
+@@ -95,7 +95,7 @@
+ 				used++
+ 			}
+ 		}
+-		if used > 0 {
++		if false {
+ 			return fmt.Errorf("%w: %d tag(s) are still of type %s, and without its mapping nothing would say what that type means — change their type first, then remove the mapping", ErrTagsReview, used, role)
+ 		}
+ 		delete(rm, role)

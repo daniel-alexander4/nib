@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structrolemap.go b/internal/pdfops/structrolemap.go
+--- a/internal/pdfops/structrolemap.go
++++ b/internal/pdfops/structrolemap.go
+@@ -71,7 +71,7 @@
+ 	if role == "" {
+ 		return fmt.Errorf("%w: a role map edit needs the name of the custom type it maps", ErrTagsReview)
+ 	}
+-	if standardStructTypes[role] {
++	if false {
+ 		return fmt.Errorf("%w: %s is a standard structure type, and a standard type cannot be mapped to another (PDF/UA-1 §7.1: the standard types shall not be remapped)", ErrTagsReview, role)
+ 	}
+ 	var rm types.Dict

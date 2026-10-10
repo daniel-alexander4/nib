@@ -169,7 +169,10 @@ echo "$Nib_out"
 # the status a window boots on can carry that list.
 # 105 since ADR-125 (taguntagged.test.mjs): tagging what no tag owns from the tree panel — its own boot, because its
 # document has nine pages and its routes answer the untagged reader, which no other file stubs.
-Nib_expect_files=105
+# 107 since ADR-126 and ADR-127 (tagpromote.test.mjs, tagrolemap.test.mjs): an inline tag's one button and where
+# the selection lands after it, and the role map's rows — each its own boot, because each needs a tree of its own
+# shape and the other tag files' trees are asserted on by position.
+Nib_expect_files=107
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

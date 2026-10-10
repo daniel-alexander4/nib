@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/structpromote.go b/internal/pdfops/structpromote.go
+--- a/internal/pdfops/structpromote.go
++++ b/internal/pdfops/structpromote.go
+@@ -172,9 +172,6 @@
+ 		return nil
+ 	}
+ 	if mcid < len(row) {
+-		if row[mcid] != nil {
+-			return nil
+-		}
+ 	} else if mcid > promoteMaxSlot {
+ 		return nil
+ 	}

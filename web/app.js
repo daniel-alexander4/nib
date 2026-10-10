@@ -6245,6 +6245,7 @@ async function loadTagTree() {
     $('tagEditBar').hidden = true;
     $('tagNewBar').hidden = true;
     $('tagUntaggedBar').hidden = true;
+    $('tagRoleMap').hidden = true;
     clearUntagged();
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
@@ -6268,6 +6269,7 @@ async function loadTagTree() {
     $('tagEditBar').hidden = true;
     $('tagNewBar').hidden = true;
     $('tagUntaggedBar').hidden = true;
+    $('tagRoleMap').hidden = true;
     clearUntagged();
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
@@ -6304,13 +6306,14 @@ function renderTagTree(tree, owner) {
   // it is put away, and read again below when the edit that caused this read was a region.
   $('tagUntaggedBar').hidden = !tree.tagged;
   clearUntagged();
+  renderRoleMap(tree);
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
   }
   const elements = tree.elements || [];
   summary.textContent = `${elements.length} element(s).` +
-    (tree.unaddressable ? ` ${tree.unaddressable} written inline cannot be edited.` : '');
+    (tree.unaddressable ? ` ${tree.unaddressable} written inline cannot be changed yet — select one for Make inline tags editable.` : '');
   const level = (i) => {
     let d = 1;
     for (let p = elements[i].parent; p >= 0 && d < 64; p = elements[p].parent) d++;
@@ -6337,7 +6340,28 @@ function renderTagTree(tree, owner) {
   if (tagEditRestore) {
     const r = tagEditRestore;
     tagEditRestore = null;
-    if (r.created) {
+    if (r.roleMap) {
+      // A role map edit (ADR-127): the tag that was selected stays selected — its line now reads the type the
+      // map gives it — and focus returns to the row that was used, or to the name field when the row is gone.
+      const at = r.id > 0 ? elements.findIndex((x) => x.id === r.id) : -1;
+      if (at >= 0) selectTagTreeItem(at, elements, owner);
+      const row = [...$('tagRoleList').children].find((li) => li.dataset.role === r.roleMap.role);
+      const control = row && row.querySelector(`.${r.roleMap.control}`);
+      if (r.roleMap.added && row) $('tagRoleNewName').value = '';
+      if (control && !control.disabled) control.focus();
+      else if (row) row.querySelector('select').focus();
+      else $('tagRoleNewName').focus();
+      $('tagRoleStatus').textContent = `${r.roleMap.said} — Ctrl+Z takes it back.`;
+    } else if (r.promoted) {
+      // Inline tags given numbers (ADR-126): the order of the tree does not change, so the tag that was
+      // selected is the one at the same place — and it, now live, takes the selection and the focus.
+      const at = Math.min(r.index, elements.length - 1);
+      if (at >= 0) {
+        list.children[at].focus();
+        selectTagTreeItem(at, elements, owner);
+        $('tagEditStatus').textContent = 'Every tag can now be changed. Making inline tags editable is one step — Ctrl+Z takes it back.';
+      }
+    } else if (r.created) {
       // A new tag (ADR-124) has no id the page could know beforehand: it is found where it was asked for —
       // that place among its parent's tags, or last — and it, not the button, takes the selection and focus.
       const p = r.created.parent > 0 ? elements.findIndex((x) => x.id === r.created.parent) : -1;
@@ -6411,6 +6435,9 @@ function onTagTreeKey(ev, elements) {
 // that is not standard, a scope on a cell that is not a header, a span that is not a number, an element the
 // document no longer has — and its sentence is shown here rather than replaced with a second opinion.
 
+// TAG_INLINE_FIX is how every reason about a tag written inline ends: where the button that ends it is (ADR-126).
+const TAG_INLINE_FIX = 'Select that tag and use Make inline tags editable first.';
+
 // tagSiblings is the element's parent's element kids, or the top-level elements, as indices.
 function tagSiblings(i, elements) {
   const p = elements[i].parent;
@@ -6438,22 +6465,23 @@ function tagHeaderCells(i, elements) {
 // tagMoveIn and tagMoveOut are the two moves that change an element's parent (ADR-124), each as the edit
 // to send or the reason it cannot be made. Into the tag above: the last kid of the previous sibling. Out
 // one level: the next sibling after its parent — under the grandparent, or at the top of the tree (-1).
-// An element written inline has no id, so nothing can be moved into one or named as a parent.
+// An element written inline has no id, so nothing can be moved into one or named as a parent — until
+// Make inline tags editable (ADR-126), which each reason points at (`TAG_INLINE_FIX`).
 function tagMoveIn(i, elements) {
   const siblings = tagSiblings(i, elements);
   const pos = siblings.indexOf(i);
   if (pos <= 0) return { why: 'There is no tag above this one at the same level to move it into.' };
   const into = elements[siblings[pos - 1]];
-  if (!(into.id > 0)) return { why: 'The tag above is written inline, so nothing can be moved into it here.' };
+  if (!(into.id > 0)) return { why: `The tag above is written inline, so nothing can be moved into it yet. ${TAG_INLINE_FIX}` };
   return { edit: { kind: 'move', parent: into.id } };
 }
 
 function tagMoveOut(i, elements) {
   const p = elements[i].parent;
   if (p < 0) return { why: 'This tag is already at the top level.' };
-  if (!(elements[p].id > 0)) return { why: 'This tag is inside one written inline, so it cannot be moved out here.' };
+  if (!(elements[p].id > 0)) return { why: `This tag is inside one written inline, so it cannot be moved out yet. ${TAG_INLINE_FIX}` };
   const g = elements[p].parent;
-  if (g >= 0 && !(elements[g].id > 0)) return { why: 'The level above is a tag written inline, so nothing can be moved into it here.' };
+  if (g >= 0 && !(elements[g].id > 0)) return { why: `The level above is a tag written inline, so nothing can be moved into it yet. ${TAG_INLINE_FIX}` };
   return { edit: { kind: 'move', parent: g >= 0 ? elements[g].id : -1, index: tagSiblings(p, elements).indexOf(p) + 1 } };
 }
 
@@ -6511,8 +6539,123 @@ function showTagEditBar(e, i, elements) {
   }
   $('tagEditUp').disabled = !editable || pos <= 0;
   $('tagEditDown').disabled = !editable || pos < 0 || pos >= siblings.length - 1;
-  $('tagEditStatus').textContent = editable ? '' : 'This element is written inline in its parent, so it cannot be edited here.';
+  // An inline tag (ADR-126): the line that says why nothing above can be used, and the button that ends it.
+  for (const id of ['tagEditInlineWhy', 'tagEditPromote', 'tagEditPromoteHelp']) $(id).hidden = editable;
+  $('tagEditStatus').textContent = '';
 }
+
+// promoteInlineTags gives every tag written inline a number of its own (ADR-126) — one edit that names no
+// element, for the whole document, and one undo step. The tree's order does not change, so the place of the
+// selected tag is what it is found by afterwards.
+async function promoteInlineTags() {
+  if (tagTreeSelected < 0) return;
+  await sendTagEdits([{ kind: 'promote' }], { promoted: true, index: tagTreeSelected }, $('tagEditStatus'));
+}
+
+// ── The role map — ADR-127 ───────────────────────────────────────────────────────────────────────────
+//
+// What each of the document's own tag types means: one row per mapping, and a row to add one. Every change is
+// one `rolemap` edit through `sendTagEdits`, applied by a button and taken back by Ctrl+Z. The server
+// refuses what cannot be — a standard type as the name, a mapping removed while tags still use it — and its
+// sentence is shown under the list.
+
+function roleTypeOptions(select, value) {
+  select.textContent = '';
+  for (const t of STRUCT_TYPES) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = TAG_ROLE_NAMES[t] ? `${TAG_ROLE_NAMES[t]} (${t})` : t;
+    select.appendChild(o);
+  }
+  if (value && !STRUCT_TYPES.includes(value)) {
+    // Mapped onto another custom type: shown as it is written, so the picker never claims a target the
+    // document does not have.
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = `${value} (not a standard type)`;
+    select.appendChild(o);
+  }
+  if (value) select.value = value;
+}
+
+function sendRoleMapEdit(role, value, control, said, added = false) {
+  const e = tagTreeElements[tagTreeSelected];
+  return sendTagEdits([{ kind: 'rolemap', role, value }],
+    { roleMap: { role, control, said, added }, id: e ? e.id : 0 }, $('tagRoleStatus'));
+}
+
+function renderRoleMap(tree) {
+  const box = $('tagRoleMap');
+  box.hidden = !tree.tagged;
+  const list = $('tagRoleList');
+  list.textContent = '';
+  $('tagRoleStatus').textContent = '';
+  if (!tree.tagged) return;
+  const roles = tree.roleMap || [];
+  $('tagRoleSummary').textContent = roles.length
+    ? `Role map — ${roles.length} custom type${roles.length === 1 ? '' : 's'} mapped`
+    : 'Role map — no custom types mapped';
+  roles.forEach((m, i) => {
+    const li = document.createElement('li');
+    li.dataset.role = m.name;
+    const name = document.createElement('span');
+    name.className = 'tagrolename';
+    name.textContent = m.name;
+    const label = document.createElement('label');
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `${m.name} means`);
+    roleTypeOptions(select, m.to);
+    label.append('means ', select);
+    const change = document.createElement('button');
+    change.className = 'tagRoleChange';
+    change.textContent = 'Change';
+    change.setAttribute('aria-label', `Change what ${m.name} means`);
+    change.onclick = () => sendRoleMapEdit(m.name, select.value, 'tagRoleChange', `${m.name} now means ${select.value}`);
+    const remove = document.createElement('button');
+    remove.className = 'tagRoleRemove';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove the mapping of ${m.name}`);
+    const note = document.createElement('p');
+    note.className = 'libhint';
+    note.id = `tagRoleNote${i}`;
+    const used = m.elements === 1 ? '1 tag is of this type' : `${m.elements} tags are of this type`;
+    const reads = m.standard !== m.to ? ` It is read as ${m.standard === m.name ? 'nothing — its mapping leads in a circle' : m.standard}.` : '';
+    if (m.elements > 0) {
+      // Removing it would leave those tags with a type nothing explains.
+      remove.disabled = true;
+      note.textContent = `${used}, so its mapping cannot be removed — change their type first.${reads}`;
+    } else {
+      note.textContent = `No tag is of this type.${reads}`;
+      remove.onclick = () => sendRoleMapEdit(m.name, '', 'tagRoleRemove', `The mapping of ${m.name} is removed`);
+    }
+    remove.setAttribute('aria-describedby', note.id);
+    li.append(name, label, change, remove, note);
+    list.appendChild(li);
+  });
+}
+
+function wireRoleMap() {
+  roleTypeOptions($('tagRoleNewType'), 'P');
+  const add = () => {
+    const role = $('tagRoleNewName').value.trim();
+    const value = $('tagRoleNewType').value;
+    if (!role) {
+      $('tagRoleStatus').textContent = 'Type the name of the custom type to map.';
+      $('tagRoleNewName').focus();
+      return;
+    }
+    // The row the new mapping gets takes the focus afterwards, and the name field is emptied once that row
+    // exists (`renderTagTree`) — a refusal leaves what was typed.
+    sendRoleMapEdit(role, value, 'tagRoleChange', `${role} now means ${value}`, true);
+  };
+  $('tagRoleAdd').onclick = add;
+  $('tagRoleNewName').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    add();
+  });
+}
+wireRoleMap();
 
 // applyTagEdit sends the edits — one, or several as one batch that one Ctrl+Z takes back — for the
 // element selected.
@@ -6562,7 +6705,7 @@ async function addTag() {
   }
   const parent = e.parent >= 0 ? elements[e.parent].id : -1;
   if (e.parent >= 0 && !(parent > 0)) {
-    $('tagEditStatus').textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it. Select a different tag first.';
+    $('tagEditStatus').textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it yet. Select the tag it is inside and use Make inline tags editable first.';
     return;
   }
   const index = tagSiblings(i, elements).indexOf(i) + 1;
@@ -6643,6 +6786,8 @@ function wireTagEditBar() {
   }
   fresh.value = 'Sect'; // a new tag is a container until something is moved into it
   $('tagNewAdd').onclick = addTag;
+  // The one control an inline tag has (ADR-126).
+  $('tagEditPromote').onclick = promoteInlineTags;
 }
 wireTagEditBar();
 
@@ -6774,7 +6919,7 @@ async function tagUntagged() {
   if (e) {
     parent = e.parent >= 0 ? elements[e.parent].id : -1;
     if (e.parent >= 0 && !(parent > 0)) {
-      status.textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it. Select a different tag first.';
+      status.textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it yet. Select the tag it is inside and use Make inline tags editable first.';
       return;
     }
     index = tagSiblings(tagTreeSelected, elements).indexOf(tagTreeSelected) + 1;

@@ -19,6 +19,9 @@ import (
 // same batch and lives in `structartifact.go` (S03). Creating an element and deleting one are applied
 // through the same batch too and live in `structcreate.go` (ADR-124). Tagging a region of a page is the
 // other edit that rewrites page content — it brackets what it takes — and lives in `structregion.go` (ADR-125).
+// Two edits name no element at all: `promote` gives every element written inline an object number
+// (`structpromote.go`, ADR-126), and `rolemap` sets or removes one entry of the root's `/RoleMap`
+// (`structrolemap.go`, ADR-127).
 //
 // # Why the dictionary edits never touch the ParentTree
 //
@@ -56,6 +59,8 @@ const (
 	editCreate
 	editDelete
 	editRegion
+	editPromote
+	editRoleMap
 )
 
 // structEdit is one correction to an existing tree.
@@ -82,6 +87,9 @@ type structEdit struct {
 	rect   [4]float64
 	pieces [][4]float64
 	alt    string
+	// role is editRoleMap's custom structure type name (ADR-127); value is the standard type it maps to, ""
+	// to remove the mapping.
+	role string
 }
 
 // standardStructTypes are the standard structure types of ISO 32000-1 §14.8.4, the types a retype may
@@ -122,9 +130,10 @@ var tableScopes = map[string]bool{"Row": true, "Column": true, "Both": true}
 // StructureEdit is one correction to an existing structure tree, as a reviewer sends it —
 // `PLAN-accessibility.md` P09.S04.
 type StructureEdit struct {
-	// Kind is retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete or region.
+	// Kind is retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete, region, promote
+	// or rolemap.
 	Kind string
-	// Element is the edited element's object number. A create and a region name none: 0.
+	// Element is the edited element's object number. A create, a region, a promote and a rolemap name none: 0.
 	Element int
 	// Value is the new type (retype, create), the alternate description (alt; "" removes it), the scope
 	// (scope: Row, Column, Both; "" removes it), or how many columns or rows a cell spans (colspan,
@@ -146,6 +155,10 @@ type StructureEdit struct {
 	Rect   [4]float64
 	Pieces [][4]float64
 	Alt    string
+	// Role is a rolemap edit's custom structure type name (ADR-127): Value, a standard type, is what the
+	// document's `/RoleMap` then maps it to, and an empty Value removes the mapping. A promote (ADR-126)
+	// takes nothing at all: it gives every element written inline an object number.
+	Role string
 }
 
 // structEditKinds maps a StructureEdit's Kind onto the edit it names.
@@ -153,6 +166,7 @@ var structEditKinds = map[string]editKind{
 	"retype": editRetype, "move": editMove, "alt": editAlt, "scope": editScope, "artifact": editArtifact,
 	"colspan": editColSpan, "rowspan": editRowSpan, "headers": editHeaders,
 	"create": editCreate, "delete": editDelete, "region": editRegion,
+	"promote": editPromote, "rolemap": editRoleMap,
 }
 
 // EditStructure applies edits, in order and as one batch, to pdf's existing structure tree. An element
@@ -163,10 +177,10 @@ func EditStructure(pdf []byte, edits []StructureEdit) ([]byte, error) {
 	for i, e := range edits {
 		k, ok := structEditKinds[e.Kind]
 		if !ok {
-			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete or region", ErrTagsReview, e.Kind)
+			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete, region, promote or rolemap", ErrTagsReview, e.Kind)
 		}
 		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index, headers: e.Headers,
-			page: e.Page, rect: e.Rect, pieces: e.Pieces, alt: e.Alt}
+			page: e.Page, rect: e.Rect, pieces: e.Pieces, alt: e.Alt, role: e.Role}
 	}
 	out, err := applyStructEdits(pdf, internal)
 	if errors.Is(err, errNoStructTree) {
@@ -198,6 +212,19 @@ func applyStructEdits(pdf []byte, edits []structEdit) ([]byte, error) {
 			if tree, err = readStructTree(ctx, live); err != nil {
 				return err
 			}
+			if ed.kind == editPromote {
+				// The one edit that changes what a defect is CALLED: a defect about an inline element was keyed
+				// by object 0, or could not be asked at all (ADR-126).
+				promoted, err := promoteInline(ctx, tree, ed)
+				if err != nil {
+					return err
+				}
+				if tree, err = readStructTree(ctx, live); err != nil {
+					return err
+				}
+				defectsAPromotionUncovers(already, promoted, checkStructConsistency(ctx, tree))
+				continue
+			}
 			if err := applyStructEdit(ctx, tree, ed); err != nil {
 				return err
 			}
@@ -222,8 +249,11 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 	if ed.kind == editRegion {
 		return regionElement(ctx, tree, ed)
 	}
+	if ed.kind == editRoleMap {
+		return setRoleMapping(ctx, tree, ed)
+	}
 	if ed.elem <= 0 {
-		return fmt.Errorf("%w: an element written inline has no object number, so an edit cannot name it", ErrTagsReview)
+		return fmt.Errorf("%w: an element written inline has no object number, so an edit cannot name it — make inline tags editable first (the promote edit)", ErrTagsReview)
 	}
 	e := tree.byObj[ed.elem]
 	if e == nil {

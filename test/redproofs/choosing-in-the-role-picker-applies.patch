@@ -1,0 +1,11 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6605,6 +6605,7 @@
+     const select = document.createElement('select');
+     select.setAttribute('aria-label', `${m.name} means`);
+     roleTypeOptions(select, m.to);
++    select.onchange = () => sendRoleMapEdit(m.name, select.value, 'tagRoleChange', 'x');
+     label.append('means ', select);
+     const change = document.createElement('button');
+     change.className = 'tagRoleChange';

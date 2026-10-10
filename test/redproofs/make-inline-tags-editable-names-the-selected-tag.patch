@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6549,7 +6549,7 @@
+ // selected tag is what it is found by afterwards.
+ async function promoteInlineTags() {
+   if (tagTreeSelected < 0) return;
+-  await sendTagEdits([{ kind: 'promote' }], { promoted: true, index: tagTreeSelected }, $('tagEditStatus'));
++  await sendTagEdits([{ kind: 'promote', element: tagTreeElements[tagTreeSelected].id }], { promoted: true, index: tagTreeSelected }, $('tagEditStatus'));
+ }
+ 
+ // ── The role map — ADR-127 ───────────────────────────────────────────────────────────────────────────

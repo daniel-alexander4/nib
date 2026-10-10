@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structpromote.go b/internal/pdfops/structpromote.go
+--- a/internal/pdfops/structpromote.go
++++ b/internal/pdfops/structpromote.go
+@@ -148,7 +148,7 @@
+ 			}
+ 		}
+ 	}
+-	if len(promoted) == 0 {
++	if false {
+ 		return nil, fmt.Errorf("%w: no tag in this document is written inline, so every tag can already be changed", ErrTagsReview)
+ 	}
+ 	return promoted, nil

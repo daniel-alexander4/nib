@@ -148,6 +148,23 @@ func TestDecodingReadsTheRequestShapes(t *testing.T) {
 	}
 }
 
+// TestDecodingReadsAPromoteAndARoleMapEdit — ADR-126 and ADR-127: a promote carries nothing but its kind, and
+// a rolemap its custom name in "role" — a name with a space as it is, never escaped — and its target, or the
+// empty value that removes a mapping.
+func TestDecodingReadsAPromoteAndARoleMapEdit(t *testing.T) {
+	edits, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"promote"},{"kind":"rolemap","role":"Heading 1","value":"H1"},{"kind":"rolemap","role":"Unused","value":""}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []pdfops.StructureEdit{{Kind: "promote", Index: -1}, {Kind: "rolemap", Role: "Heading 1", Value: "H1", Index: -1}, {Kind: "rolemap", Role: "Unused", Index: -1}}
+	if !reflect.DeepEqual(edits, want) {
+		t.Errorf("decoded\n%+v\nwant\n%+v", edits, want)
+	}
+	if _, err := DecodeEdits(strings.NewReader(`{"edits":[{"kind":"rolemap","role":7}]}`)); !errors.Is(err, ErrMalformed) {
+		t.Errorf("a role that is not a string: err = %v, want ErrMalformed", err)
+	}
+}
+
 // TestDecodingReadsARegion — ADR-125: a region's page, rectangle, pieces and description reach the edit as
 // written; a rectangle that is not four numbers is ErrMalformed, never padded or cut to four.
 func TestDecodingReadsARegion(t *testing.T) {
