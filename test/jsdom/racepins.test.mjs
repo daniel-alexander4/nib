@@ -289,6 +289,72 @@ test('every listed site captures its document before awaiting and never reads th
   assert.deepEqual(failures, [], `a document-switch race: the operation acts on whichever document is active when its await returns\n  ${failures.join('\n  ')}`);
 });
 
+// ── The census (/pending 671) ──────────────────────────────────────────────────────────────
+//
+// SITES above is a list somebody keeps, so a new async handler that awaits and then reads the live view
+// was checked by nothing: two such sites were live when this was written, neither listed. This walks
+// EVERY `async` body in app.js instead — any line that opens one, nested or not — and a body that reads
+// the live view on a line after its first await must be named here with the reason that read is right.
+// A read on the first await's own line is not counted: `await bakedForm()` and
+// `await pageOp(…, { page: view.viewer.currentPageNumber })` evaluate it before anything is awaited.
+//
+// Weaker than SITES on purpose: it does not ask for `const owner = view;`, because most async bodies
+// never touch a document. What it cannot see: a live read reached through a helper not in LIVE_READS,
+// and a body whose header line does not end in `{` (none today — the floor below would not notice one).
+const LIVE_BY_DESIGN = {
+  'async function openSessionInit() {': 'opens a dialog whose Go acts on the ACTIVE document, and words it for that one — "the document that is open NOW"',
+  'async function reconcileWithServer() {': 'a session question, not a document operation: it compares the server\'s tab set with whatever is on screen when it answers',
+  'async function openURL(url) {': 'reads the view only after installOpened succeeded, which made the opened document the active one',
+  'async function ensureAlignment() {': 'every await is followed by `if (seq !== cmpSeq) return;`, and a switch closes Compare, which bumps cmpSeq',
+  'async function renderCompareVisual(mode) {': 'as ensureAlignment — the cmpSeq token is its pin',
+  'async function save() {': 'captures `owner`; the two later reads are the check itself (`view.docMeta.id !== doc.id`) and one made only once that check has passed',
+  'async function loadImages() {': 'the read is inside a card\'s click handler, which runs at the click — placing an image on the document then in front is the intent',
+};
+function asyncBodies(src) {
+  const out = [];
+  let off = 0;
+  for (const line of src.split('\n')) {
+    if (/\basync\b.*\{\s*$/.test(line) && !/^\s*\/\//.test(line)) {
+      let d = 0;
+      for (let j = off + line.lastIndexOf('{'); j < src.length; j++) {
+        if (src[j] === '{') d++;
+        else if (src[j] === '}' && --d === 0) { out.push([line.trim(), src.slice(off + line.lastIndexOf('{'), j + 1)]); break; }
+      }
+    }
+    off += line.length + 1;
+  }
+  return out;
+}
+function lateLiveReads(body) {
+  const lines = stripComments(body).split('\n');
+  const first = lines.findIndex((l) => /\bawait\b/.test(l));
+  if (first === -1) return [];
+  return lines.slice(first + 1).filter((l) => LIVE_READS.some((re) => re.test(l))).map((l) => l.trim());
+}
+test('the census detects a late live read in a body nobody listed — its own stimulus', () => {
+  const src = 'function a() {}\nels.x.onclick = async () => {\n  const r = await thing(view.id);\n  view.marks.push(r);\n};\n'
+    + 'async function fine() {\n  const owner = view;\n  await thing();\n  owner.x = 1;\n}\n';
+  const found = asyncBodies(src).map(([h, b]) => [h, lateLiveReads(b)]);
+  assert.deepEqual(found, [['els.x.onclick = async () => {', ['view.marks.push(r);']], ['async function fine() {', []]]);
+});
+test('no async body reads the live view after awaiting, unless it is named with its reason', () => {
+  const bodies = asyncBodies(APP);
+  assert.ok(bodies.length >= 200, `the census found ${bodies.length} async bodies in app.js, where there were 231 — it has stopped seeing them`);
+  const failures = [];
+  const hit = new Set();
+  for (const [header, body] of bodies) {
+    const late = lateLiveReads(body);
+    if (!late.length) continue;
+    hit.add(header);
+    if (!LIVE_BY_DESIGN[header]) failures.push(`${header} — ${late[0]}`);
+  }
+  for (const header of Object.keys(LIVE_BY_DESIGN)) {
+    if (!hit.has(header)) failures.push(`${header} — named as reading the live view by design, and it no longer does (or was renamed): drop the row`);
+  }
+  assert.deepEqual(failures, [],
+    `an operation acts on whichever document is active when its await returns — capture \`const owner = view;\` first, or name the body in LIVE_BY_DESIGN with why the live read is right\n  ${failures.join('\n  ')}`);
+});
+
 // A dialog opener reads nothing of the live view after its await — and is still wrong if it opens:
 // the dialog it unhides acts on the ACTIVE document (a switch closes doc-bound dialogs, so the one
 // open at the click is the active one). So each must check the switch between its last await and
