@@ -172,6 +172,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(*Socket).Describe":  "test-only — the multicast interface selection rendered for a human. Read by the discovery tests and by nothing on a running path.",
 		"(*Socket).LocalPort": "test-only — the bound port, which only a harness needs to know.",
 
+		"ReadAttestations":      "test-only — `Attestations` over a document nobody has verified yet. Its one production caller, `confirmCoSigned`, now verifies once and reads the attestations and the coverage verdict off the same Status (/pending 629); the p2p and server tests still read through it.",
 		"ExchangeBudget":        "test-only — D16's Stage 6 nesting pin is a PROPERTY, and the only thing that can read a property is the guard that asserts it. Exported so internal/server's own deadline tests can ask this package rather than keeping a second copy of the number.",
 		"MaxRemoteDecisionWait": "test-only — as ExchangeBudget: the consent window fitting inside the dialer's budget is asserted, not computed.",
 		"ReceiveArrivalLag":     "test-only — as ExchangeBudget. Its own doc names the test that asserts the population it sums.",

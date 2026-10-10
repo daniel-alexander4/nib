@@ -827,7 +827,9 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	// later parties get *"a byte-prefix relationship rather than a recomputable commitment"*, and
 	// that the mechanism intended to replace it — byte prefix plus `AddedAfter == false` — *"was
 	// measured at this slice's grill to PASS on a document whose first page had been blacked out
-	// by the last signer"*. Nothing on the signing path reads `AddedAfter` at all. So from the
+	// by the last signer"*. Nothing on the ARRIVAL path reads `AddedAfter` at all; a RETURN is asked
+	// it (`p2p.nothingAfterTheLastSignature`, /pending 629), which is content after the last
+	// signature and says nothing about content under one. So from the
 	// first signature onward a party still has no content anchor. **That is a decided limitation,
 	// not an open question: ADR-013.** The digest keeps its annots, so `DocHash` is a hop-1 anchor
 	// and the signatures are what bind a party to bytes afterwards; the signature-stable digest

@@ -10,6 +10,6 @@ index 0ee453d..23dfbff 100644
 -		return nil, errors.New("the carried document is not the one that was handed over")
 -	}
 +
+ 	// Verified once, for the order and for the coverage verdict after it.
+ 	st := sign.Verify(final)
  	// The chain advanced by exactly the party this hop was for. `NextContributor` re-walks the
- 	// whole prefix, so this also establishes that nothing earlier was disturbed.
- 	next, nerr := NextContributor(final, roster)
