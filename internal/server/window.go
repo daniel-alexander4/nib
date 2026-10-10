@@ -178,6 +178,10 @@ type idleExitTimer struct {
 	// outside tests; it lets a test observe that the two share one lock hold, which no schedule can
 	// show. A field rather than a package var so a test setting it races nothing else.
 	arrivedHook func()
+	// countedHook runs in windowArrived once the window is counted and `mu` is released, before its
+	// stream reads anything. Nil outside tests, on arrivedHook's footing: it is where a hand-off that
+	// SEES the window lands. Read and written under `mu`.
+	countedHook func()
 }
 
 // Exit causes, for the log line that says WHY this process is going.
@@ -321,23 +325,34 @@ func (s *Server) idleGraceElapsed(gen uint64) {
 const idleExitStoodDownMsg = "idle-exit grace ended with a window open; not exiting"
 
 // windowArrived is a window connecting: cancel any grace and count the window, under ONE hold of
-// `idle.mu`. Returns the new count.
+// `idle.mu`. Returns the new count, and the hand-off sequence the window's stream starts from.
 //
 // **The cancel still happens BEFORE the count moves, and the order is an observable property.**
 // Incrementing first leaves a window in which the count says a window is here and the grace is still
 // running — so anything that reads the count and then the grace sees a state the server is never
 // actually in. A test caught it at one run in three.
-func (s *Server) windowArrived() int64 {
+//
+// **The sequence is taken BEFORE the count moves (/pending 856).** `windowHas` answers a launch
+// "a window has it" on the count alone, so a window is owed every hand-off announced from the moment
+// it is counted. The stream used to take its starting sequence after this returned: a hand-off landing
+// in between was counted as taken by this window and was already behind it — the launch opened no
+// window and this one never showed the document, or never said the refusal.
+func (s *Server) windowArrived() (n int64, heardFrom uint64) {
 	s.idle.mu.Lock()
 	t, at := s.stopIdleExitLocked(idleExitCauseWindow)
 	if s.idle.arrivedHook != nil {
 		s.idle.arrivedHook()
 	}
-	n := s.windows.n.Add(1)
+	heardFrom = s.push.current()
+	n = s.windows.n.Add(1)
+	counted := s.idle.countedHook
 	s.idle.mu.Unlock()
+	if counted != nil {
+		counted()
+	}
 	s.push.arrived()
 	logIdleCancel(t, at, idleExitCauseWindow)
-	return n
+	return n, heardFrom
 }
 
 // keepAliveForHandoff is the hand-off's cancel: it stops a running grace exactly as
@@ -461,7 +476,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("retry: " + strconv.Itoa(int(sseRetry/time.Millisecond)) + "\n\n"))
 	flusher.Flush()
 	// Cancel then count, under one hold of `idle.mu` — see windowArrived for why both halves.
-	n := s.windowArrived()
+	n, lastHandoff := s.windowArrived()
 	log.Printf("%s (%d open)", windowConnectedMsg, n)
 	defer func() {
 		left := s.windows.n.Add(-1)
@@ -498,8 +513,8 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// connection, never shared: a window that arrives mid-download must receive the current state
 	// on its first pass, which a server-wide "last sent" would skip.
 	var lastArmed, lastDownload string
-	// A window hears the hand-offs that arrive while it is open, never the ones before it (ADR-086).
-	lastHandoff := s.push.current()
+	// A window hears the hand-offs that arrive while it is open, never the ones before it (ADR-086):
+	// `lastHandoff` is windowArrived's, taken as the window was counted.
 	for {
 		// **SUBSCRIBE BEFORE READING, and the other order was a lost wakeup (/pending 464).**
 		//

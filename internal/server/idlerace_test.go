@@ -62,7 +62,7 @@ func TestAWindowsCancelAndCountShareOneLockHold(t *testing.T) {
 			t.Errorf("the count moved before the cancel (%d); the cancel must come first", got)
 		}
 	}
-	if n := s.windowArrived(); n != 1 {
+	if n, _ := s.windowArrived(); n != 1 {
 		t.Errorf("windowArrived returned %d, want 1", n)
 	}
 	if !ran {
