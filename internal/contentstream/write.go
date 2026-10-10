@@ -3,6 +3,7 @@ package contentstream
 import (
 	"bytes"
 	"fmt"
+	"sort"
 )
 
 // WriteTokens emits the tokens back as bytes.
@@ -96,6 +97,7 @@ func (e *Edit) InsertBefore(at int, text []byte) *Edit {
 // same bytes is a caller that has miscomputed its spans, and picking a winner would produce a
 // stream that is plausible and wrong. An insertion may sit at a replacement's start or end — that
 // is a caller bracketing what it is replacing, which is legitimate and ordered by call sequence.
+// An insertion strictly INSIDE a replacement is refused with the overlaps: the byte it names is gone.
 func (e *Edit) Replace(start, end int, text []byte) *Edit {
 	e.inserts = append(e.inserts, insertion{at: start, end: end, text: append([]byte(nil), text...), seq: len(e.inserts)})
 	return e
@@ -120,19 +122,25 @@ func (e *Edit) Apply() ([]byte, error) {
 				"%d-byte stream", in.at, in.end, len(e.src))
 		}
 	}
-	// Stable sort by offset, then by call order. Written as an insertion sort over what is always a
-	// handful of entries rather than pulling in sort.SliceStable for two elements.
+	// Sort by offset, then by call order. It was an insertion sort "over what is always a handful of
+	// entries", and a page is not a handful: a tag commit queues two per piece, in reading order
+	// rather than stream order, and 40,000 queued back to front took 4.9 s (`/pending 795`).
 	ins := append([]insertion(nil), e.inserts...)
-	for i := 1; i < len(ins); i++ {
-		for j := i; j > 0 && (ins[j-1].at > ins[j].at ||
-			(ins[j-1].at == ins[j].at && ins[j-1].seq > ins[j].seq)); j-- {
-			ins[j-1], ins[j] = ins[j], ins[j-1]
+	sort.Slice(ins, func(i, j int) bool {
+		if ins[i].at != ins[j].at {
+			return ins[i].at < ins[j].at
 		}
-	}
+		return ins[i].seq < ins[j].seq
+	})
 	// Overlap check, over the sorted list: a replacement may not start before the previous
 	// replacement ended. Checked here rather than at Replace() because the caller computes every
 	// span against the original stream and may queue them in any order.
-	lastEnd := 0
+	//
+	// **And an insertion may not land strictly inside one** (`/pending 774`). Its offset names a byte
+	// the replacement removes, so there is nowhere to put it; it used to be written after the
+	// replacement's text, which is a stream spliced at an offset the caller never gave. The
+	// replacement's own start and end stay legitimate — see Replace.
+	lastStart, lastEnd := 0, 0
 	for _, in := range ins {
 		if in.end > in.at {
 			if in.at < lastEnd {
@@ -141,7 +149,12 @@ func (e *Edit) Apply() ([]byte, error) {
 					"its spans, and choosing between them would produce a plausible wrong stream",
 					in.at, in.end, lastEnd)
 			}
-			lastEnd = in.end
+			lastStart, lastEnd = in.at, in.end
+		} else if in.at > lastStart && in.at < lastEnd {
+			return nil, fmt.Errorf("contentstream: insertion at %d is inside the replacement "+
+				"[%d,%d) — the byte it was to stand before is one the replacement removes, and "+
+				"writing it anywhere else would produce a plausible wrong stream",
+				in.at, lastStart, lastEnd)
 		}
 	}
 	var buf bytes.Buffer
