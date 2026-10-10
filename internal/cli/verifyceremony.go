@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"nib/internal/ceremony"
@@ -197,13 +196,9 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport 
 	for _, party := range rec.Roster {
 		p := ceremonyParty{label: party.Label, fp: party.Fingerprint, signs: party.Signs}
 		for _, a := range atts {
-			// **An empty fingerprint on either side matches nothing** (ADR-051). `EqualFold` is
-			// true for two empty strings, and since the signer's identity stopped being assumed
-			// from the bag's first certificate, a signature nib cannot attribute reports "" —
-			// which would otherwise tick off a roster party whose fingerprint is also missing.
-			// `p2p.Completeness` carries the same guard; this is the CLI's own copy of the join.
-			if a.Valid && a.Fingerprint != "" && party.Fingerprint != "" &&
-				strings.EqualFold(a.Fingerprint, party.Fingerprint) {
+			// An empty fingerprint on either side matches nothing (ADR-051): `p2p.SameParty`, the
+			// door `p2p.Completeness` counts through, so the tick and the count cannot disagree.
+			if a.Valid && p2p.SameParty(a.Fingerprint, party.Fingerprint) {
 				p.didSign = true
 				break
 			}

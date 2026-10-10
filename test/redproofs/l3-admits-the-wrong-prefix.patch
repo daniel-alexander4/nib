@@ -1,10 +1,10 @@
 --- a/internal/p2p/l3.go
 +++ b/internal/p2p/l3.go
-@@ -296,7 +296,7 @@
+@@ -332,7 +332,7 @@
  			return Progress{}, fmt.Errorf("%w: signature %d (%s) does not verify",
  				ErrPrefixUnproven, i+1, shortFP(a.Fingerprint))
  		}
--		if !strings.EqualFold(a.Fingerprint, signing[i].Fingerprint) {
+-		if !SameParty(a.Fingerprint, signing[i].Fingerprint) {
 +		if false {
  			return Progress{}, fmt.Errorf("%w: signature %d is %s and the roster's %s signer "+
  				"is %s", ErrPrefixMismatch, i+1, shortFP(a.Fingerprint), ordinal(i+1),

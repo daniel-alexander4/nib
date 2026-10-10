@@ -332,7 +332,7 @@ func progressFrom(st sign.Status, r Roster) (Progress, error) {
 			return Progress{}, fmt.Errorf("%w: signature %d (%s) does not verify",
 				ErrPrefixUnproven, i+1, shortFP(a.Fingerprint))
 		}
-		if !strings.EqualFold(a.Fingerprint, signing[i].Fingerprint) {
+		if !SameParty(a.Fingerprint, signing[i].Fingerprint) {
 			return Progress{}, fmt.Errorf("%w: signature %d is %s and the roster's %s signer "+
 				"is %s", ErrPrefixMismatch, i+1, shortFP(a.Fingerprint), ordinal(i+1),
 				shortFP(signing[i].Fingerprint))
@@ -368,7 +368,7 @@ func progressFrom(st sign.Status, r Roster) (Progress, error) {
 		// gate admits rather than only of what Nib's own `StampCommitment` writes. Only a rostered
 		// signer signing outside Nib can produce the shape. `signing[i-1]` is already proven to be
 		// signature i-1's own signer by the identity check above on the previous pass.
-		if i > 0 && !strings.EqualFold(a.AcceptedPeer, signing[i-1].Fingerprint) {
+		if i > 0 && !SameParty(a.AcceptedPeer, signing[i-1].Fingerprint) {
 			return Progress{}, fmt.Errorf("%w: signature %d (%s) accepts %s, and the signer "+
 				"before it is %s", ErrPrefixUnproven, i+1, shortFP(a.Fingerprint),
 				shortFP(a.AcceptedPeer), shortFP(signing[i-1].Fingerprint))
@@ -437,7 +437,7 @@ func SigningOrder(r Roster) []RosterEntry {
 // the ceremony; a count of signatures on a file is a fact about the file.
 func SigningPositionOf(r Roster, fp string) (int, bool) {
 	for i, e := range SigningOrder(r) {
-		if strings.EqualFold(e.Fingerprint, fp) {
+		if SameParty(e.Fingerprint, fp) {
 			return i, true
 		}
 	}
@@ -453,7 +453,7 @@ func SigningPositionOf(r Roster, fp string) (int, bool) {
 // what this adds is that the two belong to the same ceremony.
 func InRoster(r Roster, fp string) bool {
 	for _, e := range r.Entries {
-		if strings.EqualFold(e.Fingerprint, fp) {
+		if SameParty(e.Fingerprint, fp) {
 			return true
 		}
 	}
@@ -475,13 +475,13 @@ func admitContributionFrom(st sign.Status, r Roster, me string) error {
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(next.Fingerprint, me) {
+	if SameParty(next.Fingerprint, me) {
 		return nil
 	}
 	// In the roster but not next, versus not in it at all: two different facts about the user,
 	// and only one of them is answered by waiting.
 	for _, e := range r.Entries {
-		if strings.EqualFold(e.Fingerprint, me) {
+		if SameParty(e.Fingerprint, me) {
 			if !e.Signs {
 				return fmt.Errorf("%w: %s is in this ceremony's roster as a non-signing party",
 					ErrNotInRoster, shortFP(me))
