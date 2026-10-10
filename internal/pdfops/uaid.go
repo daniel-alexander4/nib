@@ -11,7 +11,6 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -351,11 +350,11 @@ func withoutUAClaimOrOrphanedForm(pdf []byte) ([]byte, error) {
 	if !had && !pruned {
 		return pdf, nil // the common case: nothing to correct, and no write
 	}
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // rewriteOrDropClaim is the tail for a best-effort correction of bytes pdfcpu has just written — a stamp's
@@ -429,9 +428,9 @@ func dropUAIdentificationBytes(pdf []byte) ([]byte, bool, error) {
 	if err != nil || !had {
 		return pdf, had, err
 	}
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, true, err
 	}
-	return out.Bytes(), true, nil
+	return out, true, nil
 }

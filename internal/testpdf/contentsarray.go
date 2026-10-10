@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -85,11 +84,11 @@ func SplitContents(s string, shape JoinShape) (pdf, meant []byte, err error) {
 		arr = append(arr, *ref)
 	}
 	page["Contents"] = arr
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, nil, err
 	}
-	return out.Bytes(), content, nil
+	return out, content, nil
 }
 
 // WithContent is a one-page document drawing content, with the font resource /F1 given by fontDict — for tests that need

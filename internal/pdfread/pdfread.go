@@ -62,7 +62,11 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	if aside != nil {
 		putBack = aside(ctx)
 	}
+	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
 	err = api.ValidateContext(ctx)
+	if err == nil {
+		rememberValidatorLosses(ctx, pdf)
+	}
 	putBack()
 	restore()
 	if err != nil {

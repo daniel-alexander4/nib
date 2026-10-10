@@ -1,10 +1,8 @@
 package pdfops
 
 import (
-	"bytes"
 	"nib/internal/pdfread"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -355,9 +353,9 @@ func dropTaggingClaim(pdf []byte) ([]byte, error) {
 	}
 	delete(cat, "StructTreeRoot")
 	delete(cat, "MarkInfo")
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }

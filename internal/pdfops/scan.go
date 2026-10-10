@@ -1050,7 +1050,7 @@ func residue(rep ScanReport, refused error, remit func(Finding) bool) error {
 	return fmt.Errorf("%w: %s", refused, strings.Join(left, "; "))
 }
 
-// writeMutated reads pdf into a validated, optimized context (so WriteContext
+// writeMutated reads pdf into a validated, optimized context (so pdfcpu's writer
 // has the consolidated structures it expects and the attachment/annotation
 // caches are populated), applies fn, and writes the result back. The optimize
 // pass is skipped where it would be unbounded (`pdfread.ReadOptimized`, `/pending 706`). It is the
@@ -1087,11 +1087,11 @@ func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Contex
 	if err := fn(ctx); err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // removeAllAttachments deletes every embedded file by taking the embedded-files name tree off the catalog's

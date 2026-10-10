@@ -1064,7 +1064,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 
 // nUpSeparated is `api.NUp` (api/nup.go:95, v0.13.0) for a PDF source, step for step — the same read
 // (`ReadAndValidate`, as `pdfread.Validated`, which puts the reference door inside it as `pdfread.Reader` did in
-// front of it), every page selected, `NUpFromPDF`, the same `api.Write` — with one step added before the
+// front of it), every page selected, `NUpFromPDF`, the same write (`pdfread.Write`) — with one step added before the
 // composition: `pdfread.SeparateContents`. `NUpFromPDF` builds each sheet's forms from
 // pdfcpu's bare join of the page's `/Contents` (nup.go:328), so a divided page came out fused (`/pending 728`,
 // ADR-084). The carries read the source through `pdfread.PageContent` and match these forms because of this step.
@@ -1082,14 +1082,17 @@ func nUpSeparated(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []
 	if err := pdfread.SeparateContents(ctx, nil); err != nil {
 		return nil, err
 	}
+	// `NUpFromPDF` copies each page's resources into the form it builds: a font pdfcpu's validator took out goes
+	// back before the copy (`pdfread.Write`, ADR-129).
+	pdfread.PutBackValidatorLosses(ctx)
 	if err := pdfcpu.NUpFromPDF(ctx, pages, nup); err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if err := api.Write(ctx, &buf, conf); err != nil {
+	buf, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return buf, nil
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
@@ -1140,8 +1143,8 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tilesBuf bytes.Buffer
-	if err := api.WriteContext(ctxDest, &tilesBuf); err != nil {
+	tilesBuf, err := pdfread.Write(ctxDest)
+	if err != nil {
 		return nil, err
 	}
 	// CutPage prepends a full-size outline/preview page; drop it, keep the tiles.
@@ -1150,7 +1153,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	// `/StructTreeRoot` for a carry to find, so today the carrying door would be a no-op here — but
 	// that is a fact about pdfcpu rather than a decision anyone made, and an unnamed site becomes a
 	// live carry the day it changes. P02.S06 owns what a tile should say.
-	tiles, err := collectWithoutStructure(tilesBuf.Bytes(), []string{"2-"}, keepUnreadable)
+	tiles, err := collectWithoutStructure(tilesBuf, []string{"2-"}, keepUnreadable)
 	if err != nil {
 		return nil, err
 	}
@@ -1489,6 +1492,9 @@ func cutSeparated(ctx *model.Context, page int, cut *model.Cut) (*model.Context,
 	if err := pdfread.SeparateContents(ctx, []int{page}); err != nil {
 		return nil, err
 	}
+	// `CutPage` copies the page into a context of its own, which no read remembered anything about: a font
+	// pdfcpu's validator took out of this one goes back before the copy (`pdfread.Write`, ADR-129).
+	pdfread.PutBackValidatorLosses(ctx)
 	return pdfcpu.CutPage(ctx, page, cut)
 }
 
@@ -1506,12 +1512,12 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if err := api.WriteContext(ctxDest, &buf); err != nil {
+	buf, err := pdfread.Write(ctxDest)
+	if err != nil {
 		return nil, err
 	}
 	// Non-carrying: `CutPage` has just rebuilt these pages and the tree went with them.
-	return collectWithoutStructure(buf.Bytes(), []string{"2-"}, keepUnreadable) // drop CutPage's outline page
+	return collectWithoutStructure(buf, []string{"2-"}, keepUnreadable) // drop CutPage's outline page
 }
 
 // cropToRects returns a PDF of one page per rect, in order: normPage cropped to
@@ -1588,11 +1594,11 @@ func cropToRects(normPage []byte, rects [][4]float64, pageW, pageH float64) ([]b
 	pagesNode["Kids"] = kids
 	pagesNode["Count"] = types.Integer(len(kids))
 	ctx.PageCount = len(kids)
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // wrapPageToBox rewrites page pageNr in ctx so it becomes a pageW×pageH page
@@ -1657,11 +1663,11 @@ func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 			return nil, err
 		}
 	}
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // Field is a filled overlay field to stamp onto the page: the text (already "X"

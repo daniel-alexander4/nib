@@ -5,7 +5,6 @@ import (
 	"nib/internal/pdfread"
 	"sort"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -452,11 +451,11 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		}
 	}
 
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, false
 	}
-	return out.Bytes(), true
+	return out, true
 }
 
 // repointSheetResource points ONE named `/Resources /XObject` entry of a sheet at newRef.

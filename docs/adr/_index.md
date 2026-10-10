@@ -866,3 +866,7 @@ home today.
   — the instance probe is a challenge and a response: a nonce and an HMAC proof each way, never the token on
   the wire; anything else on the port is gone and is handed nothing. A record without `challenge` is probed
   the old way, for the length of an upgrade.
+- **[ADR-129 — a font the validator takes out is put back for the write](129-a-font-the-validator-takes-out-is-put-back-for-the-write.md)**
+  — pdfcpu's relaxed validator empties or re-points a `/Font` entry it cannot validate and every rewrite then
+  dropped the font; `pdfread.Write` is the one door to pdfcpu's writer and restores the entry first, for the
+  write only. `ContentDigestVersion` does not move, and such a font still hashes as `#nil`.

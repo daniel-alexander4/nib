@@ -13,7 +13,7 @@ package pdfops
 // placed beside. Nothing cross-checks one against page content: `reconstructFlags` in the client clamps to
 // `[0,1]` and to the page count and validates nothing else.
 //
-// It survives every rewrite because `writeMutated` and `api.WriteContext` carry `ctx.Info` through unchanged,
+// It survives every rewrite because `writeMutated` and pdfcpu's writer carry `ctx.Info` through unchanged,
 // so a flag placed on "sign here" points at whatever occupies that fraction of the page afterwards. That is
 // correct exactly when the rewrite moves nothing the page draws, or moves the flag with what it moves.
 //

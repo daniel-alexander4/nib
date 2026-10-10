@@ -150,11 +150,11 @@ func normalizePDF(pdf []byte) ([]byte, error) {
 		return nil, err
 	}
 	ctx.EnsureVersionForWriting()
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // catchPanic converts a panic into an error. pdfcpu wraps its entry points

@@ -48,14 +48,6 @@ func apiConf(conf *model.Configuration, cmd model.CommandMode) *model.Configurat
 	return c
 }
 
-func write(ctx *model.Context) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
 // PageDims is `api.PageDims` (page.go:240).
 func PageDims(pdf []byte, conf *model.Configuration) (pd []types.Dim, err error) {
 	defer fault.Catch(&err)
@@ -213,6 +205,7 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 		if dest.XRefTable.Version() < model.V20 && src.XRefTable.Version() == model.V20 {
 			return nil, pdfcpu.ErrUnsupportedVersion
 		}
+		PutBackValidatorLosses(src) // before the merge renumbers its references (`write.go`)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, err
 		}
@@ -222,5 +215,5 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 			return nil, err
 		}
 	}
-	return write(dest)
+	return Write(dest)
 }
