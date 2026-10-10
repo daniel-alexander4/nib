@@ -690,11 +690,45 @@ type cidRead struct {
 	why   string
 }
 
+// fontFile3SubtypeThrows is a CIDFont whose `/FontFile3` carries a `/Subtype` that is not a name (`/pending 683`).
+// veraPDF casts it to a name outside the `try` around the program's parse, so the cast throws an exception nothing
+// handles and the job ends with no report. Measured on 1.30.2, a CIDFontType0 and a CIDFontType2 alike: a number, a
+// string, a boolean and an array each give NO report; `null` and an absent key give a report (the program is simply
+// not one veraPDF opens). Only where `/FontFile3` is the program veraPDF reaches — a CIDFontType2 with a `/FontFile2`
+// stream takes that first. A simple font is not this: veraPDF reports on a TrueType font so written, and pdfcpu
+// refuses the Type 1 one before any rule runs.
+func (d *Document) fontFile3SubtypeThrows(cid types.Dict) string {
+	desc := d.dict(cid["FontDescriptor"])
+	if d.name(cid["Subtype"]) == "CIDFontType2" {
+		if sd, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile2"]); err == nil && sd != nil {
+			return ""
+		}
+	}
+	sd, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile3"])
+	if err != nil || sd == nil {
+		return ""
+	}
+	sub := sd.Dict["Subtype"]
+	if d.resolve(sub) == nil {
+		return ""
+	}
+	if _, isName := d.nameOf(sub); isName {
+		return ""
+	}
+	return "its /FontFile3 carries a /Subtype that is not a name, where veraPDF throws an exception it does not handle"
+}
+
 // cidFontThrows is where veraPDF throws reading a Type 0 font's CFF program when it builds the FONT, whatever is drawn
 // (a subset font's widths are all read then): it reports nothing on the document.
 func (d *Document) cidFontThrows(font types.Dict) string {
 	cid := d.descendantOf(font)
-	if cid == nil || d.cidProgram(cid) != "CFF" {
+	if cid == nil {
+		return ""
+	}
+	if throws := d.fontFile3SubtypeThrows(cid); throws != "" {
+		return throws
+	}
+	if d.cidProgram(cid) != "CFF" {
 		return ""
 	}
 	_, _, _, throws := d.cidCFFOf(cid)

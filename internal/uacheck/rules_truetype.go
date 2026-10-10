@@ -45,6 +45,8 @@ type ttNames struct {
 	state ttState // ttParsed: table; ttFailed: every code null; ttUnknown: why
 	table []string
 	why   string
+	// nothing is that building this table is where veraPDF throws and reports nothing for the document.
+	nothing bool
 	// symbolic is the program's " " answer — a symbolic font, or one with no /Encoding: null to 7.21.7 (no list holds
 	// " "), but NOT `.notdef` to 7.21.8, where a null name asks whether the program holds the code (P07.S04).
 	symbolic bool
@@ -78,6 +80,9 @@ type ttFont struct {
 	// names is what the program answers for a code the font's encoding leaves unnamed, the group applied.
 	names ttNames
 	why   string // why embedded or subject is not ttParsed
+	// nothing is why veraPDF reports nothing on a document holding this font — its program's table lies past the end
+	// of a program veraPDF streams, or its own /Differences names a negative code. Empty otherwise.
+	nothing string
 }
 
 // trueTypeFonts is the one door every 7.21.6 clause, 7.21.4.1 t1 and the glyph fallback read a TrueType font
@@ -278,7 +283,7 @@ func (d *Document) ownNames(f *ttFont) (ttNames, ttState) {
 			if code < 0 {
 				why := "its /Differences names a negative code, where veraPDF throws an exception it does not handle " +
 					"and reports nothing for the document"
-				return ttNames{state: ttUnknown, why: why}, ttUnknown
+				return ttNames{state: ttUnknown, why: why, nothing: true}, ttUnknown
 			}
 			if code < 256 {
 				table[code] = name
@@ -304,6 +309,12 @@ func (d *Document) resolveShareGroup(members []*ttFont) {
 	allThrow, noneThrow, unknown := true, true, ""
 	for i, f := range members {
 		own[i], f.throws = d.ownNames(f)
+		switch {
+		case f.program.nothing:
+			f.nothing = f.program.why
+		case own[i].nothing:
+			f.nothing = own[i].why
+		}
 		switch f.throws {
 		case ttUnknown:
 			unknown = own[i].why

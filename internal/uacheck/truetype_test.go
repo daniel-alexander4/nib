@@ -533,6 +533,8 @@ func TestWhereVeraPDFReportsNothingNibRefuses(t *testing.T) {
 	big := sfnt(ttTable{"cmap", ttCmap(sub31, sub10)}, ttTable{"head", ttHead()}, ttTable{"hhea", ttHhea(ttGlyphs)},
 		ttTable{"hmtx", ttHmtx(ttGlyphs)}, ttTable{"glyf", make([]byte, 12000)})
 	bigPast := withTableField(big, "hhea", 8, func(uint32) uint32 { return 900000 })
+	var docs [][]byte
+	var names []string
 	for _, c := range []struct {
 		name    string
 		pdf     []byte
@@ -547,9 +549,27 @@ func TestWhereVeraPDFReportsNothingNibRefuses(t *testing.T) {
 		{"a negative Differences code", ttDoc("/Flags 32", "/Encoding << /BaseEncoding /WinAnsiEncoding /Differences [-5 /A] >>", "(A) Tj", ttProgram(sub31, sub10)),
 			[]string{"7.21.6 t1", "7.21.6 t2", "7.21.6 t4", "7.21.4.1 t1"}},
 	} {
+		// **Every clause, not the three or four that read the program** (`/pending 682`): veraPDF gives no report for
+		// the document, so nothing nib answers about it can be compared. `c.clauses` are the ones that refused before
+		// the throws were routed through `reportsNothing`, kept as the stimulus that the fixture still reaches them.
 		for _, clause := range c.clauses {
 			if got := verdictOf(t, c.pdf, clause); got.Verdict != CannotCheck || !strings.Contains(got.Why, "reports nothing") {
 				t.Errorf("%s: %s reports %v (%s), want CannotCheck saying veraPDF reports nothing", c.name, clause, got.Verdict, got.Why)
+			}
+		}
+		for _, clause := range Clauses() {
+			if got := verdictOf(t, c.pdf, clause); got.Verdict != CannotCheck || !strings.Contains(got.Why, "reports nothing") {
+				t.Errorf("%s: %s answers %v (%s) about a document veraPDF gives no report for", c.name, clause, got.Verdict, got.Why)
+			}
+		}
+		docs = append(docs, c.pdf)
+		names = append(names, c.name)
+	}
+	// And veraPDF does give none, asked whenever it is present: an empty report, not a clause that failed.
+	if vera := veraAsk(t, docs); vera != nil {
+		for i, v := range vera {
+			if v != nil {
+				t.Errorf("%s: veraPDF now reports on this document (%d clauses) — it no longer throws, so the refusal is stale", names[i], len(v))
 			}
 		}
 	}

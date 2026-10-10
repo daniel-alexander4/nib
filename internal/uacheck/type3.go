@@ -122,8 +122,8 @@ func (d *Document) missingWidth(font types.Dict) float64 {
 // is not a dictionary, and a code its CMap maps to a negative CID; P07.S05a adds a Type1C program veraPDF throws reading
 // (asked per FONT, since the program is read when the font object is built) or reading one glyph's width; P07.S05b the
 // same for a CIDFontType0C program (`cidFontThrows`, and a full font's width per glyph), and a CID-keyed program under a
-// simple font — an unnamed code drawn, or a subset name with a /CharSet (`cidUnderSimpleFontThrows`). (P07.S03's two
-// TrueType throws still refuse only the font clauses that read them — /pending 682.)
+// simple font — an unnamed code drawn, or a subset name with a /CharSet (`cidUnderSimpleFontThrows`). P07.S03's two
+// TrueType throws — a table past the end of a streamed program, a negative /Differences code — joined at /pending 682.
 //
 // A document whose CFF or Type 1 programs spent a document budget is refused here too, since the programs refused past
 // it were never asked whether veraPDF throws on them (RR1-6).
@@ -159,6 +159,16 @@ func (d *Document) reportsNothing() (why string) {
 				if throws := d.cidFontThrows(f.dict); throws != "" {
 					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
 				}
+			}
+		}
+	}
+	// The two TrueType throws P07.S03 measured (`/pending 682`): they refused only the clauses that read the program,
+	// and the other hundred answered a document veraPDF gives no report for. A read that could not finish is not an
+	// answer here — the clauses that read TrueType fonts refuse on their own, as for the walk above.
+	if tts, why := d.trueTypeFonts(); why == "" {
+		for _, f := range tts {
+			if f.nothing != "" {
+				return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), f.nothing)
 			}
 		}
 	}

@@ -75,6 +75,7 @@ const (
 type trueTypeProgram struct {
 	state   ttState
 	why     string          // for ttFailed and ttUnknown
+	nothing bool            // veraPDF throws reading it and reports nothing for the document (`ttReader.nothing`)
 	nrCmaps int             // the cmap table's subtable count, duplicates included; 0 with no cmap table
 	pairs   map[[2]int]bool // the (platform, encoding) pairs present
 	reads   int             // what reading it cost, charged to the document's budget
@@ -100,6 +101,9 @@ type ttReader struct {
 	limit int
 	state ttState
 	why   string
+	// nothing is that the stop is one veraPDF THROWS on and does not handle, so it reports nothing for the whole
+	// document (`reportsNothing`, `/pending 682`) — not merely a program nib could not settle.
+	nothing bool
 }
 
 func (r *ttReader) ok() bool { return r.state == ttParsed }
@@ -118,6 +122,7 @@ func (r *ttReader) seek(off int64, what string) {
 	case off < 0:
 		r.stop(ttFailed, what+" lies before the program's start")
 	case off > int64(len(r.b)) && len(r.b) >= veraPDFMemoryLimit:
+		r.nothing = r.ok() // the stop that is kept is the first, and so is this
 		r.stop(ttUnknown, what+" lies past the end of a program of "+fmt.Sprint(len(r.b))+" bytes, where veraPDF's "+
 			"reader throws an exception it does not handle and reports nothing for the document")
 	case off > int64(len(r.b)):
@@ -235,7 +240,7 @@ func readTrueType(prog []byte, budget int) trueTypeProgram {
 		p.hasPost = true
 		p.post = r.readPost(post.off, post.length, p.numGlyphs)
 	}
-	p.state, p.why, p.reads = r.state, r.why, r.reads
+	p.state, p.why, p.reads, p.nothing = r.state, r.why, r.reads, r.nothing
 	if p.state != ttParsed {
 		p.advances, p.subtables, p.post = nil, nil, nil // nothing reads them, and a stopped walk may hold a great deal
 	}
