@@ -64,8 +64,8 @@ func SetOutline(pdf []byte, items []OutlineItem) ([]byte, error) {
 			return nil, fmt.Errorf("bookmark titles must be unique: %q appears more than once", title)
 		}
 		seen[title] = true
-		if it.Page < 1 || it.Page > n {
-			return nil, fmt.Errorf("bookmark %q points to page %d, out of range (1-%d)", title, it.Page, n)
+		if err := pageInDocument(it.Page, n); err != nil {
+			return nil, &pageRefusedAs{fmt.Sprintf("bookmark %q points to page %d, out of range (1-%d)", title, it.Page, n), err}
 		}
 		if it.Level < 0 || it.Level > prevLevel+1 {
 			return nil, fmt.Errorf("bookmark %q is nested too deep for its position", title)

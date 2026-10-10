@@ -44,6 +44,17 @@ func pageInDocument(page, pages int) error {
 	return nil
 }
 
+// pageRefusedAs is the door's refusal in the words of the operation that met it — a bookmark, a split
+// range — for the two inputs a user types and reads the answer to as it is (`/pending 834`). It is still
+// the door's: errors.Is and errors.As find the PageRangeError under it.
+type pageRefusedAs struct {
+	words string
+	err   error
+}
+
+func (e *pageRefusedAs) Error() string { return e.words }
+func (e *pageRefusedAs) Unwrap() error { return e.err }
+
 // selectionInDocument refuses a page selection that names a page the document does not have.
 //
 // **The unit is the TERM, not the page.** pdfcpu clips a range at the document's end, and that is kept: `3-`

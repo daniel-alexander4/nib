@@ -60,8 +60,15 @@ func parseSpan(tok string, n int) (from, thru int, err error) {
 			return 0, 0, fmt.Errorf("bad page range %q", tok)
 		}
 	}
-	if from < 1 || thru < from || thru > n {
+	if thru < from {
 		return 0, 0, fmt.Errorf("page range %q is outside 1-%d", tok, n)
+	}
+	// Both ends through the package's one page-range door. A range is NOT clipped at the document's end
+	// here, as a selection is: each range is a file the user asked for by its pages.
+	for _, p := range []int{from, thru} {
+		if err := pageInDocument(p, n); err != nil {
+			return 0, 0, &pageRefusedAs{fmt.Sprintf("page range %q is outside 1-%d", tok, n), err}
+		}
 	}
 	return from, thru, nil
 }
