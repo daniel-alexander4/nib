@@ -993,7 +993,8 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 // no longer owns the record, and the other showing a locked first-run screen. The failure
 // is silent and it costs exactly the state the phase exists to preserve.
 //
-// It answers only whether the token matches, and the running version. No document, no
+// It answers only whether the token matches, the running version, and — to a caller that sent
+// a challenge — proof that this instance holds the token too. No document, no
 // path, no vault state — a probe is an identity question and the answer should not be a
 // place to learn anything else.
 func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
@@ -1001,7 +1002,24 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 	// No token means this server published no record. Refusing is the honest answer
 	// rather than a friendly one: something IS listening here, but it is not the
 	// instance any record names, so a caller must not treat it as one.
-	if tok == "" || !instance.TokenMatches(r.Header.Get(instance.HeaderToken), tok) {
+	if tok == "" {
+		httpError(w, http.StatusForbidden, "not this instance")
+		return
+	}
+	// A challenged probe (/pending 827): the caller proves the token over its own nonce and
+	// is answered with this instance's proof over the same nonce — which is what tells a
+	// launch that the thing on this port is the Nib its record names, before it sends that
+	// thing a document path. Nothing is computed back for a caller that did not prove itself.
+	if nonce := r.Header.Get(instance.HeaderNonce); nonce != "" {
+		if !instance.TokenMatches(r.Header.Get(instance.HeaderToken), instance.AskProof(tok, nonce)) {
+			httpError(w, http.StatusForbidden, "not this instance")
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "version": s.version, "proof": instance.AnswerProof(tok, nonce)})
+		return
+	}
+	// No nonce: a launch from a build that predates the challenge, which sends the token itself.
+	if !instance.TokenMatches(r.Header.Get(instance.HeaderToken), tok) {
 		httpError(w, http.StatusForbidden, "not this instance")
 		return
 	}

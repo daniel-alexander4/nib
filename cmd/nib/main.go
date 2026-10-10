@@ -129,7 +129,7 @@ func run() int {
 		probeToken = ""
 	}
 	if probeToken != "" {
-		rec := instance.Record{Addr: addr, Token: probeToken, Handoff: handoffSecret, Version: version}
+		rec := instance.Record{Addr: addr, Token: probeToken, Challenge: true, Handoff: handoffSecret, Version: version}
 		switch err := instance.Create(cfgDir, rec); {
 		case err == nil:
 			// Deferred, and that only works because run() RETURNS rather than
