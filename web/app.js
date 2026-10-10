@@ -5309,7 +5309,9 @@ function updateBadge(sig, inCeremony, unverified) {
   const signers = sig?.signers || [];
   const map = {
     valid:    ['badge-valid', '✓ Untampered'],
-    invalid:  ['badge-invalid', '⚠ Modified since signing'],
+    // Not "modified since signing" (/pending 832): a signature that fails is what Nib measured, not why it fails —
+    // the signer rows' word (SIGNATURE_FAILS_WORD), said of the document.
+    invalid:  ['badge-invalid', '⚠ A signature does not verify'],
     unsigned: ['badge-unsigned', 'Unsigned'],
   };
   let [cls, label] = map[sig?.state] || ['badge-none', 'no document'];

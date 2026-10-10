@@ -101,7 +101,7 @@ test('a document whose only signature was refused still offers the panel', async
   assert.match(badge().className, /badge-invalid/, `the fixture did not open as invalid: ${badge().className}`);
   // P01.S03: with no signer, "modified since signing" claims a signature Nib never found to check.
   assert.match(badge().textContent, /No signature Nib could check/, `the badge claims a signature it never checked: ${badge().textContent}`);
-  assert.doesNotMatch(badge().textContent, /Modified since signing/, 'the badge says modified with no signer to have been modified');
+  assert.doesNotMatch(badge().textContent, /Modified since signing|does not verify/, 'the badge gives a verdict on a signer with no signer to give it on');
   assert.equal(doc.getElementById('sigDetailsBtn').hidden, false,
     'the details button is hidden, so the refused signature has no surface');
   const txt = await openDetails();
@@ -151,11 +151,16 @@ test('a document timestamp is named in the panel, and a timestamp alone is no ch
   assert.match(txt, /Object 3\. Nib does not check timestamps/, `the panel does not name it: ${txt.slice(0, 300)}`);
 });
 
-test('a failed signer beside a refusal is still "modified since signing"', async () => {
-  // A signer is present and fails: the document WAS modified, so the no-signer wording must not
-  // replace it just because something was also refused.
+test('a failed signer beside a refusal keeps its own verdict, and it is not "modified since signing"', async () => {
+  // A signer is present and fails, so the no-signer wording must not replace its verdict just because something was
+  // also refused. The verdict is what Nib measured — the signature does not verify — and never a modification, which
+  // is one cause of a failing signature and not one Nib established (/pending 832, ADR-058/060).
   await openWith({ state: 'invalid', signers: [{ ...alice[0], valid: false }], refused: [decoy] });
-  assert.match(badge().textContent, /Modified since signing/, `a failed signer lost its verdict: ${badge().textContent}`);
+  // STIMULUS: the document opened as invalid, so the words below are the invalid badge's.
+  assert.match(badge().className, /badge-invalid/, `the fixture did not open as invalid: ${badge().className}`);
+  assert.match(badge().textContent, /^⚠ A signature does not verify/, `a failed signer lost its verdict: ${badge().textContent}`);
+  assert.doesNotMatch(badge().textContent, /modified/i, `the badge claims a modification nobody measured: ${badge().textContent}`);
+  assert.equal(badge().title, badge().textContent, 'the badge\'s tooltip says something its text does not');
   assert.match(badge().textContent, /a signature Nib refused is present/, `the refusal is gone: ${badge().textContent}`);
   // The details panel's ROW for that signer says what Nib measured — the check failed — in the returned-document
   // sheet's word, through signerRow's one wording (/pending 813): a failed signature is not a modification.
@@ -175,7 +180,7 @@ test('a signature Nib could not check beside one it did is named, not "modified"
   });
   assert.match(badge().className, /badge-invalid/, `the fixture did not open as invalid: ${badge().className}`);
   assert.match(badge().textContent, /A signature Nib could not check/, `the badge hides the unchecked signature: ${badge().textContent}`);
-  assert.doesNotMatch(badge().textContent, /Modified since signing/, 'the badge claims a modification nobody measured');
+  assert.doesNotMatch(badge().textContent, /Modified since signing|does not verify/, 'the badge claims a failed check nobody made');
   const txt = await openDetails();
   assert.match(txt, /A signature is present that Nib could not check — /, `the panel does not say why: ${txt.slice(0, 400)}`);
 });
