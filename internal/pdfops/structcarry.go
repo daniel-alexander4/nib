@@ -561,30 +561,27 @@ func renumberParentTree(ctx *model.Context, tree *structTree) error {
 	if pt == nil {
 		return fmt.Errorf("pdfops: the structure tree's /ParentTree stopped resolving mid-carry")
 	}
-	rows := map[int]types.Object{}
-	nums := derefArray(xt, pt["Nums"])
-	for i := 0; i+1 < len(nums); i += 2 {
-		n, isInt := nums[i].(types.Integer)
-		if !isInt {
-			continue
-		}
-		// The rows were cleaned of removed elements before the clones ran, so this only re-keys.
-		if nums[i+1] != nil {
-			rows[n.Value()] = nums[i+1]
-		}
-	}
+	// **A row is the one a reader finds** (`parentTreeLookup`, ADR-009; /pending 836). This read the root's `/Nums`
+	// for itself — direct integer keys only, and past the root's `/Limits` — so a row under an indirect key was
+	// dropped with its claim, and a row no reader reaches was carried and made reachable. The rows were cleaned of
+	// removed elements before the clones ran, so this only re-keys.
+	reader := &parentTreeReader{ctx: ctx}
+	ptObj := tree.root["ParentTree"]
 
 	out := types.Array{}
 	assigned := map[int]int{}
 	next := 0
 	eachParentTreeClaim(ctx, func(key int, set func(int)) {
-		row, has := rows[key]
-		if !has {
-			set(-1)
-			return
-		}
 		if n, done := assigned[key]; done {
 			set(n) // two claimants of one source key stay sharing it, which condition 5 reports
+			return
+		}
+		var row types.Object
+		if holder, at := reader.lookup(ptObj, key); holder != nil {
+			row = derefArray(xt, holder["Nums"])[at]
+		}
+		if row == nil {
+			set(-1)
 			return
 		}
 		assigned[key] = next
@@ -593,6 +590,8 @@ func renumberParentTree(ctx *model.Context, tree *structTree) error {
 		next++
 	})
 	pt["Nums"] = out
+	// The keys are new, so bounds written for the old ones would hide them — and a root has none (§7.9.6).
+	delete(pt, "Limits")
 	tree.root["ParentTreeNextKey"] = types.Integer(next)
 	return nil
 }
