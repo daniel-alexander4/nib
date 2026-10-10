@@ -695,6 +695,13 @@ func TestCarryRefusesAHostileHop(t *testing.T) {
 			want:  "does not follow this ceremony's order",
 		},
 		{
+			// The honest reply with content after the party's signature (/pending 629): grown from
+			// mine, signed by the right party, in order — and it does not stop there.
+			name:  "content after the party's signature",
+			reply: append(append([]byte{}, honest...), "\n% content added after signing\n"...),
+			want:  "content added after the last signature",
+		},
+		{
 			// The control, last so a failure above cannot be blamed on the fixture: the honest
 			// reply goes through the same verb over the same wire.
 			name:  "the honest reply",
