@@ -185,7 +185,7 @@ func setInfoTitle(ctx *model.Context, title string) error {
 }
 
 // TitleFromFilename derives a document title from a file name: the base name with its extension
-// stripped. It is the ONE derivation, shared by the three call sites that have a file name and no
+// stripped. It is the ONE derivation, shared by every call site that has a file name and no
 // better title — a per-package copy is how the same rule comes to mean three things (ADR-009).
 //
 // **It returns "" rather than inventing a fallback.** A document whose name yields nothing has no

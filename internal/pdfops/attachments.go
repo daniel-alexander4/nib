@@ -117,7 +117,10 @@ func treeFiles(xt *model.XRefTable) ([]embeddedFile, error) {
 			name = attachmentName(e.key)
 		}
 		if name == "" {
-			name = e.key
+			// Never the raw key (/pending 653): the cleaner refuses exactly the names that must not be shown as
+			// a file name — "..", ".", a key that is all path — so falling back to the key handed those very
+			// names to the Content-Disposition. The entry is still reached by its ID, which is the key.
+			name = fmt.Sprintf("attachment-%d", i+1)
 		}
 		desc := ""
 		if fs != nil {

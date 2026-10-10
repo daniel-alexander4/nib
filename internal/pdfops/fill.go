@@ -76,7 +76,8 @@ func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lb
 		if v == "" || len(options) == 0 || types.MemberOf(v, options) {
 			return false, nil
 		}
-		if i, aerr := strconv.Atoi(v); aerr == nil && i < len(options) {
+		// An index, as pdfcpu reads one — from 0. A negative number names no option (/pending 653).
+		if i, aerr := strconv.Atoi(v); aerr == nil && i >= 0 && i < len(options) {
 			return true, nil
 		}
 		return true, fmt.Errorf("pdfcpu: fill field name: \"%s\" unknown value: \"%s\" - options: [%v]\n", name, v, strings.Join(options, ", "))

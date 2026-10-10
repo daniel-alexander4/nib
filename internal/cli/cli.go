@@ -84,14 +84,19 @@ func Run(args []string, version string) (handled bool, code int) {
 // `initialFile` returned a path to a file named "splt". The batch was silently discarded —
 // exactly the outcome this guard's own comment says it exists to prevent, for the three
 // subcommands that produce the MOST files.
+//
+// **`--do` is in the list for the same reason** (/pending 653): it is `watch`'s required flag and no
+// other command's, so `nib wach ~/inbox --do sanitize` — the verb that runs unattended over a
+// directory — opened a window on a file named "wach".
 func hasTransformFlag(args []string) bool {
 	for _, a := range args {
 		switch a {
-		case "-o", "--out", "-w", "--in-place", "--out-dir", "--data":
+		case "-o", "--out", "-w", "--in-place", "--out-dir", "--data", "--do", "-do":
 			return true
 		}
 		if strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--out=") ||
-			strings.HasPrefix(a, "--out-dir=") || strings.HasPrefix(a, "--data=") {
+			strings.HasPrefix(a, "--out-dir=") || strings.HasPrefix(a, "--data=") ||
+			strings.HasPrefix(a, "--do=") || strings.HasPrefix(a, "-do=") {
 			return true
 		}
 	}
