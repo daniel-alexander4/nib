@@ -62,7 +62,7 @@ var alternateTextKeys = []alternateTextKey{
 // which returns null for a NAME, and `/ActualText` through `getKey(…).getString()`, which does not — so a
 // name-typed `/ActualText` is a subject there and fails. **It arrives here since `/pending 612`**: pdfcpu's
 // validator refuses a name-, number-, boolean-, array- or dictionary-typed value on all three keys, and the checker
-// now sets those aside for the validation and reads them itself (`setAsideMistypedText`). So `/Alt` and `/E` are read
+// now sets those aside for the validation and reads them itself (`setAsideForValidator`). So `/Alt` and `/E` are read
 // through `d.text` — a string or nothing — and `/ActualText` through `d.actualText`, which also answers for a name.
 // An EMPTY string is a subject (`/Alt ()` fails with no language), unlike 7.3 t1, which wants a non-empty one.
 func checkAlternateTextLanguage(d *Document, key, what string) Result {

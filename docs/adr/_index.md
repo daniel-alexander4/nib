@@ -802,3 +802,7 @@ home today.
   — extends ADR-052. A non-string `/Lang` (catalog), or `/Lang`, `/Alt`, `/ActualText`, `/E` (structure element), is
   removed for `api.ValidateContext` and put back (`pdfread.validated`'s `aside`; `setAsideMistypedText`), checker only.
   `/ActualText` is a string OR a name (`d.actualText`); the other three a string only. 62 documents agree with veraPDF.
+- **[ADR-116 — the checker carries two fonts across pdfcpu's validator](116-the-checker-carries-two-fonts-across-the-validator.md)**
+  — extends ADR-115, whose `setAsideMistypedText` is now `setAsideForValidator`. An inline Type 3 font (dropped) and
+  a `/FontFile3` with a non-name `/Subtype` (font dropped, or document refused) are set aside for the validation and
+  put back (`fontsTheValidatorLoses`). An inline font answers as its indirect twin does.

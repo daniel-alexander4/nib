@@ -286,8 +286,8 @@ func open(pdf []byte) (*Document, error) {
 	// on it and kills the process) and its optimize budget, refusing rather than skipping the pass
 	// (`/pending 714`: the rules were measured against the optimized reading — see ReadOptimizedOrRefuse).
 	// …and with the four text entries veraPDF reads whatever their type set aside for the validator, which refuses
-	// the whole document over one (`setAsideMistypedText`, `/pending 612`).
-	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, setAsideMistypedText)
+	// the whole document over one (`setAsideForValidator`, `/pending 612`).
+	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, setAsideForValidator)
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
