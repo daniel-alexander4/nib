@@ -106,7 +106,7 @@ func TestDroppingATaggingClaimIsRecordedOnTheDocument(t *testing.T) {
 			"record and this test is about the wrong thing. Every page-set operation that still " +
 			"drops a tree is listed in `tagFates`; pick one that measures `dropped`")
 	}
-	if err := srv.commitMutation(doc, postedBase(src), out, false); err != nil {
+	if err := srv.commitMutation(doc, postedBase(src, 0), out, false); err != nil {
 		t.Fatal(err)
 	}
 	if !doc.taggingDropped {
@@ -137,7 +137,7 @@ func TestAnUntaggedDocumentNeverRaisesTheNotice(t *testing.T) {
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	if err := srv.commitMutation(doc, postedBase(src), out, false); err != nil {
+	if err := srv.commitMutation(doc, postedBase(src, 0), out, false); err != nil {
 		t.Fatal(err)
 	}
 	if doc.taggingDropped {
@@ -160,7 +160,7 @@ func TestTheNoticeIsStickyAcrossLaterEdits(t *testing.T) {
 
 	// Redaction, for the reason the first test records: a subset and a crop both carry the tree now.
 	dropped := redactedPage(t, src)
-	if err := srv.commitMutation(doc, postedBase(src), dropped, false); err != nil {
+	if err := srv.commitMutation(doc, postedBase(src, 0), dropped, false); err != nil {
 		t.Fatal(err)
 	}
 	if !doc.taggingDropped {
@@ -171,7 +171,7 @@ func TestTheNoticeIsStickyAcrossLaterEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.commitMutation(doc, postedBase(dropped), again, false); err != nil {
+	if err := srv.commitMutation(doc, postedBase(dropped, 0), again, false); err != nil {
 		t.Fatal(err)
 	}
 	if !doc.taggingDropped {
