@@ -457,6 +457,10 @@ type walker struct {
 	stream int
 	// page is the page this walk is reached from, carried into every walk it enters (`contentEvent.page`).
 	page int
+	// quiet is a walk that records no content event, no marked-content subject, no /Lang and no font use — while
+	// charging every budget as usual, the event and subject budgets included (`quietEvents`, `quietSubjects`): a form veraPDF has already traversed, and everything it draws
+	// (`doXObject`, `/pending 659`).
+	quiet bool
 	// langOnly walks a stream for 7.2 t29's `/Lang` values and NOTHING else: no drawing event, no
 	// marked-content subject. It is how the tiling patterns and Type 3 glyph procedures veraPDF reads
 	// `CosLang` in are read without putting their content in front of the rules that must not see it
@@ -573,7 +577,7 @@ func (d *Document) overBudget() bool {
 		why = fmt.Sprintf("the page content enters nested streams — form XObjects, and the tiling patterns and "+
 			"Type 3 glyph procedures read for their /Lang — more than %d times (a form drawn inside forms fans "+
 			"out); nib stops reading there, so what lies beyond was never read", maxFormWalks)
-	case len(d.mcSubjects) > maxContentEvents:
+	case len(d.mcSubjects)+d.quietSubjects > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, opens more than %d marked-content "+
 			"sequences; nib stops reading there, so what lies beyond was never read", maxContentEvents)
 	case d.charProcAsks > maxCharProcAsks:
@@ -586,7 +590,7 @@ func (d *Document) overBudget() bool {
 	case d.glyphCodes > maxGlyphCodes:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, shows more than %d character codes; nib "+
 			"stops reading there, so the glyphs beyond were never read", maxGlyphCodes)
-	case len(d.content) > maxContentEvents:
+	case len(d.content)+d.quietEvents > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, holds more than %d drawing operators; "+
 			"nib stops reading there, so what lies beyond was never read", maxContentEvents)
 	default:
@@ -650,7 +654,11 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			// A sequence becomes a subject only where it CLOSES, and only inside its own stream — the
 			// guard is what keeps an `EMC` in a form from closing the sequence that drew it.
 			if len(stack) > len(inherited) {
-				if !w.appearance && !w.langOnly {
+				switch {
+				case w.appearance || w.langOnly:
+				case w.quiet:
+					w.d.quietSubjects++
+				default:
 					w.d.mcSubjects = append(w.d.mcSubjects, w.subject(stack))
 				}
 				stack = stack[:len(stack)-1]
@@ -721,6 +729,8 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			if text {
 				// **Glyphs are read in the lang-only streams too**: veraPDF judges the glyphs a tiling pattern or a
 				// Type 3 procedure draws like any other (`GFPDTilingPattern`, `GFPDType3Font.getCharProcStreams`).
+				// Glyphs are still read in a quiet walk: what a repeated form shows under ANOTHER inherited font is
+				// outside what `/pending 659` measured, and the glyph population is left as it was.
 				w.showGlyphs(src, operands, font, fontObj, ts.fontName, where, ts.renderMode != 3)
 				if w.d.contentOver {
 					return
@@ -739,7 +749,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 				// `Tf` before it, so text it shows with no `Tf` of its own selects NO font — veraPDF builds none and
 				// its font clauses have nothing to judge there (measured, the oracle's "a pattern selected on the
 				// page starts from the page's state" document). A name that does not resolve is still a use.
-				if text && (font != nil || ts.fontName != "") {
+				if text && !w.quiet && (font != nil || ts.fontName != "") {
 					// The font is USED here, and veraPDF builds a font object for it as for any other (measured,
 					// `/pending 678`). `at` is where the use falls among the content events, so that "the first
 					// use" can be told across the two lists.
@@ -749,6 +759,10 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 						font: font, fontObj: fontObj,
 					}})
 				}
+				break
+			}
+			if w.quiet {
+				w.d.quietEvents++
 				break
 			}
 			ev := w.event(stack, text, where)
@@ -865,6 +879,16 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
 		inner.spKey = sp
 	}
+	// **A form veraPDF does not traverse again is not graded again** (`/pending 659`). Its validator visits an object
+	// with an id once, so a form drawn twice is judged in the context of its FIRST drawing only — measured: a form of
+	// untagged text drawn inside `/Artifact` and then bare PASSES 7.1 t3, and the reverse fails. nib recorded it at
+	// every `Do` and failed the first.
+	//
+	// **It is still WALKED, quietly — nothing it draws is recorded, and everything it costs is charged.** Skipping the
+	// walk would make a fan-out of forms cheap for nib and answerable, where veraPDF itself produces no report at all
+	// (measured: ten-way fan-out seven deep, nine minutes and no report). The budgets are what refuse that document,
+	// so they must still be spent.
+	inner.quiet = w.quiet || inner.repeat
 	next := withLink(chain, objNr)
 	inner.walkWithState(src, formRes, stack, next, depth+1, ts)
 }
@@ -875,7 +899,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 // kept: measured, veraPDF 1.30.2 passes 7.2-29 on `/Span << /Lang (en_US) >> DP` although its source lists DP as
 // marked content — the oracle's answer, not its source's, is the one nib agrees with.
 func (w walker) recordLang(value string, ok bool, opIndex int, op string) {
-	if !ok {
+	if !ok || w.quiet {
 		return
 	}
 	w.d.mcLangCount++
@@ -1050,6 +1074,10 @@ func (d *Document) inheritedLangOf(stack []frame, stream int, ownCounts bool) (b
 // that nothing in those streams is a content item.
 func (w walker) emit(stack []frame, text bool, where string) {
 	if w.langOnly {
+		return
+	}
+	if w.quiet {
+		w.d.quietEvents++
 		return
 	}
 	w.d.content = append(w.d.content, w.event(stack, text, where))
@@ -1272,7 +1300,7 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	// Once per stream already (`langWalked` above), which is veraPDF's own once-per-key for a pattern
 	// and a glyph procedure: measured, a pattern used twice PASSES `7.20 t2` and one whose content draws
 	// the form twice FAILS. So the stream inherits only whether its invoker was traversed.
-	inner := walker{d: w.d, where: label, page: w.page, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form}
+	inner := walker{d: w.d, where: label, page: w.page, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form, quiet: w.quiet}
 	next := withLink(chain, objNr)
 	streamRes := w.d.dict(sd.Dict["Resources"])
 	if streamRes == nil {

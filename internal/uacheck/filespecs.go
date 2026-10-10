@@ -318,8 +318,9 @@ func (d *Document) formXObjects() ([]formXObject, string) {
 // two pages sharing one content stream are passed where two sharing it through a `/Contents` ARRAY,
 // which has no key, are failed.
 //
-// nib's walk still walks a repeated stream — the other content rules read what it draws, and changing
-// that is not this clause's to do — so `repeat` gates the tally and nothing else.
+// nib's walk still walks a repeated form, to charge what it costs, but since `/pending 659` records nothing it draws:
+// what veraPDF does not traverse again is not graded again (`walker.quiet`, set in `doXObject`). A page content
+// stream two pages share is still recorded for each page; `repeat` gates this clause's tally there.
 func (d *Document) retraversal(objNr int, underRepeat bool) bool {
 	if underRepeat {
 		return true
