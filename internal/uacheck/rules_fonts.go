@@ -54,6 +54,36 @@ type usedFont struct {
 	modes     map[int]bool
 	offPage   bool // selected somewhere other than a page's own content stream
 	unresolve bool // a text operator named a font resource that does not resolve
+	// firstVisible is whether the font's FIRST use, in veraPDF's traversal order, is visible — what 7.21.4.1 t1
+	// is judged by (`firstUseOrder`). `visible` and `hidden` say whether ANY use is; the two differ exactly where a
+	// font is drawn both ways.
+	firstVisible bool
+	firstWhere   string
+	first        [2]int // the traversal position of that first use
+	seen         bool
+}
+
+// firstUseOrder is where an event falls in veraPDF's traversal: the page it is reached from, then its own index.
+//
+// **Measured on veraPDF 1.30.2, sixteen documents (`/pending 679`).** veraPDF builds one font object per (font,
+// render mode) and evaluates 7.21.4.1 t1 on ONE of them per font: the first it reaches. A non-embedded Helvetica drawn
+// `3 Tr` and then `0 Tr` PASSES and the reverse FAILS — within one stream, across the streams of a `/Contents` array,
+// across two pages, across a form (reached where its `Do` is, not where it is defined), and between a page and its
+// annotations (the page first). And an annotation on page 1 is reached BEFORE page 2's content: invisible there and
+// visible on page 2 passes.
+//
+// **The page is what the index lacks.** nib's walk emits every page's content and then every appearance, so within
+// one page the index already puts content before annotations, and across pages it puts page 2 before page 1's
+// annotations — which is the one thing wrong with it.
+func firstUseOrder(ev contentEvent, index int) [2]int { return [2]int{ev.page, index} }
+
+func earlier(a, b [2]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
 }
 
 // usedFonts groups text events by font object, so a font used on forty pages is reported once.
@@ -64,7 +94,7 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 	}
 	byKey := map[string]*usedFont{}
 	var order []*usedFont
-	for _, ev := range events {
+	for index, ev := range events {
 		if !ev.text {
 			continue
 		}
@@ -82,6 +112,9 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 			uf.modes = map[int]bool{}
 		}
 		uf.modes[ev.mode] = true
+		if at := firstUseOrder(ev, index); !uf.seen || earlier(at, uf.first) {
+			uf.seen, uf.first, uf.firstVisible, uf.firstWhere = true, at, !ev.invisible, ev.where
+		}
 		uf.offPage = uf.offPage || ev.offPage
 		if ev.invisible {
 			uf.hidden = true
@@ -143,9 +176,12 @@ func checkFontsEmbedded(d *Document) Result {
 	visible := 0
 	var unsure *Result
 	for _, f := range fonts {
-		if !f.visible {
+		// The font's FIRST use decides, not any use (`firstUseOrder`): judging by any visible use failed a font
+		// drawn invisibly first, which veraPDF passes.
+		if !f.firstVisible {
 			continue
 		}
+		f.where = f.firstWhere
 		visible++
 		if f.unresolve {
 			// Keep reading: a later font that definitely fails outranks this refusal (the P07.S02 re-review).

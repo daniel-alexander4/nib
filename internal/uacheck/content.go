@@ -53,6 +53,10 @@ type contentEvent struct {
 	invisible bool
 	// mode is the render mode in force (P07.S04: a font drawn in two modes is two font objects to veraPDF).
 	mode int
+	// page is the page this event's stream is reached from — the page itself for its content and the forms it
+	// draws, and the annotation's page for an appearance. It places the event in veraPDF's traversal order,
+	// which nib's own walk order is not (`firstUseOrder`, `/pending 679`).
+	page int
 	// offPage is drawing inside a form XObject or an annotation appearance, not a page's own content.
 	offPage bool
 	// covered is 7.1 t3's disjunction, `isTaggedContent == true || parentsTags.contains('Artifact')`:
@@ -293,7 +297,7 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if ir, ok := page["Contents"].(types.IndirectRef); ok { //pagecontent:key its object number only; the content is read above
 			contentsNr = ir.ObjectNumber.Value()
 		}
-		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream(),
+		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream(), page: p,
 			repeat: d.retraversal(contentsNr, false)}
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
@@ -388,7 +392,7 @@ func (d *Document) walkAppearances() {
 				// else. Recorded here rather than at the `Do` operator, because nothing draws it —
 				// the annotation is what puts it on the page.
 				d.recordDrawnForm(sd.Dict, apNr, label, firstVisit)
-				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream(),
+				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream(), page: p,
 					repeat: d.retraversal(apNr, !firstVisit), form: apNr}
 				w.walk(src, res, nil, map[int]bool{}, 0)
 			}
@@ -444,6 +448,8 @@ type walker struct {
 	appearance bool
 	// stream is this stream's number, taken from `d.streams` when the walk starts.
 	stream int
+	// page is the page this walk is reached from, carried into every walk it enters (`contentEvent.page`).
+	page int
 	// langOnly walks a stream for 7.2 t29's `/Lang` values and NOTHING else: no drawing event, no
 	// marked-content subject. It is how the tiling patterns and Type 3 glyph procedures veraPDF reads
 	// `CosLang` in are read without putting their content in front of the rules that must not see it
@@ -833,7 +839,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	// `langOnly` travels INTO the form: veraPDF's semantic branch requires the invoking stream to be
 	// semantic (`GFPDXForm.java:205-211`), so a form drawn from a tiling pattern or a glyph procedure is a
 	// plain content stream too, and nothing it draws is a content item or a marked-content subject.
-	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly,
+	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), page: w.page, spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly,
 		repeat: w.d.retraversal(objNr, w.repeat), form: objNr}
 	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
 		inner.spKey = sp
@@ -1030,7 +1036,7 @@ func (w walker) emit(stack []frame, text bool, where string) {
 
 // event builds one event, deriving its coverage from the open sequences.
 func (w walker) event(stack []frame, text bool, where string) contentEvent {
-	ev := contentEvent{where: where, text: text, appearance: w.appearance, mcid: -1, spKey: -1}
+	ev := contentEvent{where: where, text: text, appearance: w.appearance, page: w.page, mcid: -1, spKey: -1}
 	// Read off the top frame's aggregates (`pushFrame`, R3-2): the innermost MCID in THIS stream, and whether any
 	// enclosing sequence, in any stream, is an `/Artifact`.
 	artifact := false
@@ -1245,7 +1251,7 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	// Once per stream already (`langWalked` above), which is veraPDF's own once-per-key for a pattern
 	// and a glyph procedure: measured, a pattern used twice PASSES `7.20 t2` and one whose content draws
 	// the form twice FAILS. So the stream inherits only whether its invoker was traversed.
-	inner := walker{d: w.d, where: label, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form}
+	inner := walker{d: w.d, where: label, page: w.page, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form}
 	next := withLink(chain, objNr)
 	streamRes := w.d.dict(sd.Dict["Resources"])
 	if streamRes == nil {
