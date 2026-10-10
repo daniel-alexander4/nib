@@ -126,7 +126,7 @@ func glyphFixtures() []glyphFixture {
 		{"an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Identity)", glyphDoc(embeddedNamedIdentity, "<0022> Tj",
 			map[int]string{11: adobeIdentity, 12: cidDescriptor, 21: namedIdentityCMap("Japan1")}), "fail", "pass", ""},
 		{"an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Japan1)", glyphDoc(embeddedNamedIdentity, "<0022> Tj",
-			map[int]string{11: strings.Replace(adobeIdentity, "(Identity)", "(Japan1)", 1), 12: cidDescriptor, 21: namedIdentityCMap("Identity")}), "pass", "pass", "Adobe-Japan1-UCS2"},
+			map[int]string{11: strings.Replace(adobeIdentity, "(Identity)", "(Japan1)", 1), 12: cidDescriptor, 21: namedIdentityCMap("Identity")}), "pass", "pass", ""},
 		{"usecmap Identity-H before a one-byte range drops the range", glyphDoc(type0Embedded, "(AB) Tj",
 			map[int]string{11: adobeIdentity, 12: cidDescriptor, 20: toUni("1 beginbfchar <4142> <0041> endbfchar"), 21: identityThenOneByte}), "pass", "pass", ""},
 		{"a four-byte range at or above 0x80000000 maps nothing", glyphDoc(type0Embedded, "<81308131> Tj",

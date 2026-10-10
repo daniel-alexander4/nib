@@ -67,6 +67,10 @@ type glyphFont struct {
 	chain     []cmapRef
 	chainWhy  string
 	chainRead bool
+	// cids is a Type 0 font's code-to-CID mapping (`cidMapOf`), read on the first glyph that falls back to a UCS2 CMap.
+	cids     fontcode.CIDChain
+	cidsWhy  string
+	cidsRead bool
 }
 
 // chainOf is gf's CMap chain, read once per font.
@@ -213,7 +217,9 @@ func (d *Document) glyphFontFor(font types.Dict, obj int, name string) *glyphFon
 }
 
 // ucs2WithEntries are the CMaps veraPDF-parser carries that hold `bfchar`/`bfrange` entries — the five Adobe UCS2
-// maps — so a `usecmap` naming one changes a ToUnicode's answers, and naming any other changes nothing.
+// maps — so a `usecmap` naming one changes a ToUnicode's answers, and naming any other changes nothing. nib refuses
+// such a /ToUnicode: the four it carries are another version (ADR-117), good for whether a CID HAS text and not for
+// the text a merged entry would answer with.
 var ucs2WithEntries = map[string]bool{"Adobe-CNS1-UCS2": true, "Adobe-GB1-UCS2": true, "Adobe-Japan1-UCS2": true,
 	"Adobe-Korea1-UCS2": true, "Adobe-KR-UCS2": true}
 
@@ -308,12 +314,12 @@ func (d *Document) readToUnicodeLink(sd *types.StreamDict, hop int, open map[uin
 	}
 	for _, n := range tu.UseCMapNames {
 		if ucs2WithEntries[n] {
-			return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)}, true
+			return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges there — and the version of it nib carries is not veraPDF's, so nib does not merge it", n)}, true
 		}
 	}
 	switch n, isName := d.nameOf(sd.Dict["UseCMap"]); {
 	case isName && ucs2WithEntries[n]:
-		return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)}, true
+		return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges there — and the version of it nib carries is not veraPDF's, so nib does not merge it", n)}, true
 	case isName:
 	default:
 		if used, _, err := d.Ctx.DereferenceStreamDict(sd.Dict["UseCMap"]); err == nil && used != nil {
@@ -378,7 +384,12 @@ func (d *Document) cmapCodespace(c cmapRef) (*fontcode.Codespace, string) {
 		case c.name == "Identity-H" || c.name == "Identity-V":
 			return fontcode.Identity(), ""
 		case isPredefinedCMapName(c.name):
-			return nil, fmt.Sprintf("the font's CMap %s is one of ISO 32000-1's predefined CMaps, whose codespace nib does not carry", c.name)
+			// A predefined CMap is cut by the table nib carries for it (ADR-117) — and ten of the 59 it carries none
+			// for, because the version it could carry is not the one veraPDF reads.
+			if cs, _, ok := fontcode.Predefined(c.name); ok {
+				return cs, ""
+			}
+			return nil, fmt.Sprintf("the font's CMap %s is one of ISO 32000-1's predefined CMaps, and nib carries no table for it that reads as veraPDF's does", c.name)
 		}
 		return nil, fmt.Sprintf("the font's CMap %q is neither embedded nor a predefined name", c.name)
 	}
@@ -389,11 +400,11 @@ func (d *Document) cmapCodespace(c cmapRef) (*fontcode.Codespace, string) {
 	if cs.Malformed {
 		return nil, "the font's embedded CMap holds an entry of the wrong kind, where veraPDF discards it whole"
 	}
-	// Identity is merged inside the parse, where veraPDF merges it; a predefined CMap veraPDF would load and nib
-	// does not carry refuses, and any other name loads nothing there either.
+	// Identity and every predefined CMap nib carries are merged inside the parse, where veraPDF merges them; a
+	// predefined CMap veraPDF would load and nib does not carry refuses, and any other name loads nothing there either.
 	for _, u := range cs.UsesCMaps {
 		if isPredefinedCMapName(u) {
-			return nil, fmt.Sprintf("the font's embedded CMap uses the CMap %s, whose codespace nib does not carry", u)
+			return nil, fmt.Sprintf("the font's embedded CMap uses the CMap %s, and nib carries no table for it that reads as veraPDF's does", u)
 		}
 	}
 	return cs, ""
@@ -438,7 +449,7 @@ func (d *Document) toUnicode(g glyph) (string, uniState, string) {
 		return s, uniMapped, ""
 	}
 	if d.name(f.dict["Subtype"]) == "Type0" {
-		return d.type0Fallback(f)
+		return d.type0Fallback(f, g.code)
 	}
 	return d.simpleFallback(f, g.code)
 }
@@ -450,7 +461,12 @@ var ucs2Orderings = map[string]bool{"Japan1": true, "CNS1": true, "GB1": true, "
 // type0Fallback is `PDType0Font.toUnicode` past the /ToUnicode: an Identity CMap falls back to the descendant's
 // `Adobe-<ordering>-UCS2`, any other CMap to its OWN collection's `<registry>-<ordering>-UCS2` — and where
 // veraPDF carries no such CMap, the answer is null.
-func (d *Document) type0Fallback(f *glyphFont) (string, uniState, string) {
+//
+// **The UCS2 CMap is asked the glyph's CID, not its code** (ADR-117, measured: under 90ms-RKSJ-H the code 82A0 is
+// CID 843, which has text, and 82A0 itself is past the CMap's end): the code goes through the font's own CMap chain
+// first, as the width rules' does. nib carries four of the five UCS2 CMaps, in another version than veraPDF's — so
+// Adobe-KR refuses, and so does a CID the two versions judge differently (`fontcode.UCS2Map`).
+func (d *Document) type0Fallback(f *glyphFont, code int) (string, uniState, string) {
 	chain, _ := d.chainOf(f)
 	var info types.Dict
 	// Identity is `PDType0Font`'s NAME comparison, and an embedded Encoding stream's name is its `/CMapName`: such a
@@ -464,9 +480,36 @@ func (d *Document) type0Fallback(f *glyphFont) (string, uniState, string) {
 	}
 	reg, _ := d.stringKey(info, "Registry")
 	ord, _ := d.stringKey(info, "Ordering")
-	if reg == "Adobe" && ucs2Orderings[ord] {
+	if reg != "Adobe" || !ucs2Orderings[ord] {
+		return "", uniNull, ""
+	}
+	ucs2 := fontcode.UCS2(reg, ord)
+	if ucs2 == nil {
 		return "", uniUnknown, fmt.Sprintf("it has no /ToUnicode entry for this code, and veraPDF then reads Adobe-%s-UCS2, "+
 			"which nib does not carry", ord)
 	}
-	return "", uniNull, ""
+	if !f.cidsRead {
+		f.cidsRead = true
+		f.cids, f.cidsWhy = d.cidMapOf(f.dict)
+	}
+	if f.cidsWhy != "" {
+		return "", uniUnknown, f.cidsWhy
+	}
+	cid, _, asked, complete := f.cids.Lookup(code, maxCIDAsks-d.cidAsks)
+	d.cidAsks += asked
+	switch {
+	case !complete:
+		return "", uniUnknown, fmt.Sprintf("the document's CMaps cost more than %d lookups, where nib stops", maxCIDAsks)
+	case cid < 0:
+		return "", uniUnknown, fmt.Sprintf("its CMap maps code %#x to the negative CID %d, which nib has not measured veraPDF's Adobe-%s-UCS2 lookup on", code, cid, ord)
+	}
+	s, mapped, known := ucs2.Lookup(cid)
+	switch {
+	case !known:
+		return "", uniUnknown, fmt.Sprintf("it has no /ToUnicode entry for this code, and veraPDF then reads CID %d in Adobe-%s-UCS2, "+
+			"where the version nib carries and veraPDF's own differ on whether the CID has text", cid, ord)
+	case !mapped:
+		return "", uniNull, ""
+	}
+	return s, uniMapped, ""
 }

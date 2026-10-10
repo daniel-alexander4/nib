@@ -20,7 +20,8 @@
 // # What it does not do
 //
 // It resolves nothing: callers hand it bytes (a decoded stream, a string token's span) and it never sees
-// a pdfcpu object. It carries no predefined CMap and no Unicode table — a caller that needs one says so.
+// a pdfcpu object. The predefined CMaps and Adobe's UCS2 CMaps it reads are `internal/cmapres`'s (`carried.go`,
+// ADR-117); it carries no other Unicode table — a caller that needs one says so.
 package fontcode
 
 import "nib/internal/contentstream"

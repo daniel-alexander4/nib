@@ -280,8 +280,9 @@ func TestCodesAreCutTheWayVeraPDFCutsThem(t *testing.T) {
 	if bad := ParseCodespace([]byte("1 begincodespacerange <80> <00> endcodespacerange")); !bad.Invalid {
 		t.Error("a range whose begin is above its end was not flagged")
 	}
-	// Every used name is kept, in order: a CMap using a predefined CMap and then another name still uses the first.
-	if use := ParseCodespace([]byte("/GB-EUC-H usecmap /Nope usecmap")); strings.Join(use.UsesCMaps, " ") != "GB-EUC-H Nope" {
+	// Every used name nib does not carry is kept, in order: a CMap using a predefined CMap nib has no table for and
+	// then another name still uses the first. One it carries is merged, and is nobody's to resolve (ADR-117).
+	if use := ParseCodespace([]byte("/UniJIS-UTF16-H usecmap /GB-EUC-H usecmap /Nope usecmap")); strings.Join(use.UsesCMaps, " ") != "UniJIS-UTF16-H Nope" {
 		t.Errorf("usecmap read as %q", use.UsesCMaps)
 	}
 	// The P07.S02 review: Identity merged AT the operator drops the program's later one-byte range, so `41 42` is
@@ -337,6 +338,9 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 		// A WRITER of test documents, not a reader: the fixture CMaps /pending 675's loop tests hand to pdfcpu.
 		// Named in ADR-055, which added it.
 		"testpdf.cmap": "writes the fixture CMaps /pending 675's /UseCMap loop and chain are built from (ADR-055)",
+		// A WRITER too: the carried CMaps' packed tables written out as programs, which this package then reads
+		// like any embedded CMap. Named in ADR-117, which added it.
+		"cmapres.write": "writes a carried CMap's packed table out as the program fontcode reads (ADR-117)",
 	}
 	// Case-sensitive, as a CMap program spells them — `/UseCMap`, the dictionary key, is not the `usecmap` operator.
 	listWords := []string{"bfchar", "bfrange", "codespacerange", "cidrange", "cidchar", "notdefrange", "notdefchar", "usecmap"}

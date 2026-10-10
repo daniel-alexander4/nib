@@ -352,7 +352,7 @@ func TestAnUnreadFontDrawsNoGlyphWithAnEmptyString(t *testing.T) {
 		{"() Tj <21> Tj", 1},
 		{"[() (\\041)] TJ", 1},
 	} {
-		objs := type0Doc("/GB-EUC-H", gb, map[int]string{4: spStream("", "/P <</MCID 0>> BDC BT /F0 12 Tf 10 10 Td "+c.show+" ET EMC")})
+		objs := type0Doc("/GBK2K-H", gb, map[int]string{4: spStream("", "/P <</MCID 0>> BDC BT /F0 12 Tf 10 10 Td "+c.show+" ET EMC")})
 		d, err := open(buildPDF(objs))
 		if err != nil {
 			t.Fatal(err)

@@ -381,16 +381,17 @@ func TestCIDLookupsPastTheBudgetRefuseTheClause(t *testing.T) {
 	}
 }
 
-// TestAnEmbeddedCMapUsingAPredefinedOneRefuses — an embedded CMap whose program says `/GB-EUC-H usecmap` merges a CMap
-// nib does not carry, so its codes cannot be cut as veraPDF cuts them; the metric clauses refuse naming it. A later
+// TestAnEmbeddedCMapUsingAPredefinedOneNibDoesNotCarryRefuses — an embedded CMap whose program says
+// `/UniGB-UTF16-H usecmap` merges a CMap nib carries no table for (ADR-117: the version it could carry is not the one
+// veraPDF reads), so its codes cannot be cut as veraPDF cuts them; the metric clauses refuse naming it. A later
 // `usecmap` of a name veraPDF does not carry must not hide it (the P07.S04b review's multi-name finding; the red-proof
-// found no document reaching this refusal).
-func TestAnEmbeddedCMapUsingAPredefinedOneRefuses(t *testing.T) {
-	pdf := cidCMapDoc(cidCMap("", "/GB-EUC-H usecmap /Nope usecmap 1 begincidchar <0021> 5 endcidchar"),
+// found no document reaching this refusal), and neither must one nib DOES carry, which is merged and not left to refuse.
+func TestAnEmbeddedCMapUsingAPredefinedOneNibDoesNotCarryRefuses(t *testing.T) {
+	pdf := cidCMapDoc(cidCMap("", "/UniGB-UTF16-H usecmap /GB-EUC-H usecmap /Nope usecmap 1 begincidchar <0021> 5 endcidchar"),
 		"/DW 500 /CIDToGIDMap /Identity", "BT /F0 12 Tf 10 10 Td <0021> Tj ET", ttProgram(sub31, sub10), nil)
 	for _, clause := range metricClauses {
-		if got := verdictOf(t, pdf, clause); got.Verdict != CannotCheck || !strings.Contains(got.Why, "GB-EUC-H") {
-			t.Errorf("%s reports %v (%s), want CannotCheck naming GB-EUC-H", clause, got.Verdict, got.Why)
+		if got := verdictOf(t, pdf, clause); got.Verdict != CannotCheck || !strings.Contains(got.Why, "UniGB-UTF16-H") {
+			t.Errorf("%s reports %v (%s), want CannotCheck naming UniGB-UTF16-H", clause, got.Verdict, got.Why)
 		}
 	}
 }

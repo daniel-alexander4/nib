@@ -806,3 +806,9 @@ home today.
   — extends ADR-115, whose `setAsideMistypedText` is now `setAsideForValidator`. An inline Type 3 font (dropped) and
   a `/FontFile3` with a non-name `/Subtype` (font dropped, or document refused) are set aside for the validation and
   put back (`fontsTheValidatorLoses`). An inline font answers as its indirect twin does.
+- **[ADR-117 — the checker reads a Type 0 font with the CMaps pdf.js ships, where they read as veraPDF's do](117-the-checker-reads-a-type-0-font-with-the-cmaps-pdfjs-ships.md)**
+  — extends ADR-052. `internal/cmapres` carries byte-identical copies of 53 of pdf.js's `.bcmap` tables and writes each
+  out as a CMap program `fontcode` reads like an embedded one: 49 predefined CMaps (codespace and CIDs) and four
+  `Adobe-<ordering>-UCS2` CMaps (a CID's text, where the font has no `/ToUnicode` entry). They are another version
+  than veraPDF's own files, so a table is carried only where it reads as veraPDF's does: ten predefined CMaps are
+  not, 95 CIDs in three runs (`ucs2Gaps`) refuse, and `Adobe-KR-UCS2` is not among them.

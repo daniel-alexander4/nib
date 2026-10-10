@@ -3137,7 +3137,9 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 
 Vendored under `web/vendor/pdfjs/cmaps/` (the `.bcmap` character-map tables
 distributed with pdf.js, required to read documents that name a predefined
-Adobe CMap encoding). Copyright 1990-2009 Adobe Systems Incorporated. All
+Adobe CMap encoding), and 53 of them again, byte for byte, under
+`internal/cmapres/bcmap/` for the PDF/UA checker (ADR-117).
+Copyright 1990-2009 Adobe Systems Incorporated. All
 rights reserved. Redistributed under the following three-clause BSD licence,
 reproduced from `web/vendor/pdfjs/cmaps/LICENSE`:
 
