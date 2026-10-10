@@ -711,20 +711,23 @@ func parseSequences(c *cursor) ([]sequence, error) {
 			if err != nil {
 				return nil, err
 			}
-			ab := &cursor{b: payload}
 			var in instr
 			in.isAtt = true
 			switch {
 			case bytes.Equal(magic, pendingMagic):
-				u, err := ab.varbytes()
+				u, err := pendingURI(payload)
 				if err != nil {
 					return nil, err
 				}
 				in.calURL = string(u)
 			case bytes.Equal(magic, bitcoinMagic):
+				ab := &cursor{b: payload}
 				h, err := ab.varuint()
 				if err != nil {
 					return nil, err
+				}
+				if !ab.atEnd() { // the height and nothing after it — see pendingURI
+					return nil, errAttestationTrailing
 				}
 				in.height = h
 			default:
