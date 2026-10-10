@@ -534,22 +534,31 @@ type Proceeding struct {
 func Completeness(ats []SignerAttestation, p Proceeding) (signed, obliged int) {
 	obliged = len(p.Signing)
 	for _, want := range p.Signing {
-		// **An empty fingerprint discharges no obligation, on either side of the comparison**
-		// (ADR-051). `EqualFold("", "")` is true, so a roster entry with no fingerprint would be
-		// satisfied by a signer nib could not identify — two absences agreeing. That became
-		// reachable when the signer's identity stopped being assumed from the bag's first
-		// certificate: an unidentifiable signer now reports "" rather than a wrong name.
-		if want == "" {
-			continue
-		}
 		for _, a := range ats {
-			if a.Valid && a.Fingerprint != "" && strings.EqualFold(a.Fingerprint, want) {
+			// An empty fingerprint discharges no obligation, on either side: `SameParty`.
+			if a.Valid && SameParty(a.Fingerprint, want) {
 				signed++
 				break
 			}
 		}
 	}
 	return signed, obliged
+}
+
+// SameParty reports whether two hex fingerprints identify the same party. It is the ONE door for
+// that question wherever a fingerprint read from a SIGNATURE is on either side (ADR-009,
+// /pending 636): `Completeness`, `markUnrostered`, `crossBind`, the L3 prefix gate and the co-sign
+// confirmations here, `nib verify`'s roster join, and the server's `signerKin`.
+//
+// **An empty fingerprint matches nothing, on either side** (ADR-051, ADR-058). `EqualFold("", "")`
+// is true, and "" is what nib reports for a signer it could not identify, a signature that did not
+// verify, and an attestation that accepts nobody — so two absences would otherwise agree, and a
+// roster line with no fingerprint would be discharged by a signer nobody could name.
+//
+// Case-folded (/pending 648): a roster fingerprint reaches here from JSON un-normalised, and the
+// library's is lowercase. `TestEveryFingerprintComparisonIsTheSamePartyDoor` holds the routing.
+func SameParty(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
 }
 
 // Attestations reads each signer's attestation from an ALREADY VERIFIED document.
@@ -624,17 +633,19 @@ func markUnrostered(atts []SignerAttestation, members []string) {
 	if len(members) == 0 {
 		return // no record: say nothing rather than accuse everyone
 	}
-	on := make(map[string]bool, len(members))
-	for _, m := range members {
-		on[strings.ToLower(m)] = true
-	}
 	for i := range atts {
 		a := &atts[i]
 		if !a.Valid || (a.RosterHash == "" && !a.UnreadTag()) {
 			continue
 		}
-		if !on[strings.ToLower(a.Fingerprint)] {
-			a.Unrostered = true
+		// A signer nib could not identify is on no roster line by the rule, not by a map miss:
+		// `SameParty` refuses an empty fingerprint (/pending 636).
+		a.Unrostered = true
+		for _, m := range members {
+			if SameParty(a.Fingerprint, m) {
+				a.Unrostered = false
+				break
+			}
 		}
 	}
 }
@@ -678,7 +689,7 @@ func crossBind(atts []SignerAttestation) {
 			continue
 		}
 		for j := range atts {
-			if j != i && atts[j].Valid && strings.EqualFold(atts[j].Fingerprint, atts[i].AcceptedPeer) {
+			if j != i && atts[j].Valid && SameParty(atts[j].Fingerprint, atts[i].AcceptedPeer) {
 				atts[i].Matched = true
 				break
 			}

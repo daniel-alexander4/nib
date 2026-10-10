@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 	"time"
 
 	"nib/internal/sign"
@@ -355,7 +354,7 @@ func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]
 		// The last signer has signed. Nothing follows, and that is the end of the relay.
 	case nerr != nil:
 		return nil, fmt.Errorf("the carried document does not follow this ceremony's order: %w", nerr)
-	case strings.EqualFold(next.Fingerprint, want.Fingerprint):
+	case SameParty(next.Fingerprint, want.Fingerprint):
 		return nil, fmt.Errorf("%w: the document came back still waiting for %s, so nothing was "+
 			"contributed", ErrPrefixMismatch, shortFP(want.Fingerprint))
 	}
@@ -1081,10 +1080,10 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		// Outside a ceremony there is no roster and no ordering, so the pairwise binding is all
 		// there is: the document's signer must be the very identity the TLS handshake pinned —
 		// not just any valid signature — and that signer must have accepted *this* user.
-		if !strings.EqualFold(peer.Fingerprint, hex.EncodeToString(peerFP)) {
+		if !SameParty(peer.Fingerprint, hex.EncodeToString(peerFP)) {
 			return nil, ErrNotTheConnectedPeer
 		}
-		if !strings.EqualFold(peer.AcceptedPeer, hex.EncodeToString(myFP)) {
+		if !SameParty(peer.AcceptedPeer, hex.EncodeToString(myFP)) {
 			return nil, ErrPeerDoesNotAcceptYou
 		}
 	}
@@ -1232,19 +1231,19 @@ func confirmCoSigned(final, peerFP, myFP []byte, inCeremony bool) error {
 	var gotPeer, gotMe bool
 	for _, a := range ReadAttestations(final) {
 		switch {
-		case strings.EqualFold(a.Fingerprint, peer):
+		case SameParty(a.Fingerprint, peer):
 			if !a.Valid {
 				return errors.New("peer's returned signature does not verify")
 			}
-			if !strings.EqualFold(a.AcceptedPeer, me) {
+			if !SameParty(a.AcceptedPeer, me) {
 				return errors.New("peer's signature does not accept you")
 			}
 			gotPeer = true
-		case strings.EqualFold(a.Fingerprint, me):
+		case SameParty(a.Fingerprint, me):
 			if !a.Valid {
 				return errors.New("your own signature is missing or altered in the returned document")
 			}
-			if !inCeremony && !strings.EqualFold(a.AcceptedPeer, peer) {
+			if !inCeremony && !SameParty(a.AcceptedPeer, peer) {
 				return errors.New("your signature in the returned document does not accept the peer")
 			}
 			gotMe = true

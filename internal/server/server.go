@@ -20,12 +20,14 @@ import (
 	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"nib/internal/instance"
+	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/vault"
@@ -1923,13 +1925,15 @@ func signerKin(v *vault.Vault, st sign.Status) (*int, []string) {
 	if len(st.Signers) == 0 || v == nil {
 		return nil, nil // not asked: nothing signed it, or the vault is locked and cannot say
 	}
-	whose := map[string]string{}
+	// Two short lists, read through `p2p.SameParty` — the one door for "is this signer that party"
+	// (/pending 636) — rather than a map keyed by a lowercased copy of the rule.
+	var known, own []string
 	for _, p := range v.PinnedPeers() {
-		whose[strings.ToLower(hex.EncodeToString(p.Fingerprint))] = "known"
+		known = append(known, hex.EncodeToString(p.Fingerprint))
 	}
 	mine := func(certPEM []byte) {
 		if fp, err := sign.Fingerprint(certPEM); err == nil {
-			whose[strings.ToLower(hex.EncodeToString(fp))] = "you" // over "known": a pinned self is still you
+			own = append(own, hex.EncodeToString(fp))
 		}
 	}
 	if cert, _, ok := v.Identity(); ok {
@@ -1941,9 +1945,14 @@ func signerKin(v *vault.Vault, st sign.Status) (*int, []string) {
 	n, out := 0, make([]string, len(st.Signers))
 	for i, sg := range st.Signers {
 		// A signer with no fingerprint at all cannot be recognised, and counting it as known
-		// would make an unparseable identity the quiet way past this.
-		if sg.Fingerprint != "" {
-			out[i] = whose[strings.ToLower(sg.Fingerprint)]
+		// would make an unparseable identity the quiet way past this: `SameParty` matches no
+		// empty fingerprint. "you" over "known": a pinned self is still you.
+		same := func(fp string) bool { return p2p.SameParty(sg.Fingerprint, fp) }
+		switch {
+		case slices.ContainsFunc(own, same):
+			out[i] = "you"
+		case slices.ContainsFunc(known, same):
+			out[i] = "known"
 		}
 		if out[i] == "" {
 			n++
