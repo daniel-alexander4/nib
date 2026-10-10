@@ -959,30 +959,60 @@ func nameIn(pdf []byte, name string) bool {
 
 // nameAt reports whether b, the bytes after a name's `/`, begin with name once `#xx` escapes are
 // decoded (as the library's `readName` decodes them).
-func nameAt(b []byte, name string) bool {
+func nameAt(b []byte, name string) bool { return nameLen(b, name) >= 0 }
+
+// nameLen is how many bytes of b, the bytes after a name's `/`, spell name once `#xx` escapes are
+// decoded, or -1 when b does not begin with it.
+func nameLen[S string | []byte](b []byte, name S) int {
 	i := 0
 	for k := 0; k < len(name); k++ {
 		if i >= len(b) {
-			return false
+			return -1
 		}
 		c := b[i]
 		i++
 		if c == '#' {
 			if i+2 > len(b) {
-				return false
+				return -1
 			}
 			hi, lo := unhexDigit(b[i]), unhexDigit(b[i+1])
 			if hi < 0 || lo < 0 {
-				return false
+				return -1
 			}
 			c = byte(hi<<4 | lo)
 			i += 2
 		}
 		if c != name[k] {
-			return false
+			return -1
 		}
 	}
-	return true
+	return i
+}
+
+// nextName is where the name slashName (`/ByteRange`, its `/` included) next begins in pdf at or after
+// from, in either spelling, and how many bytes it is written in; at is -1 when there is none. It is
+// `nameIn` for a scan that needs the place (/pending 862: the returned-document walk's two raw
+// searches). escapes is whether pdf holds a `#` at all, asked once by the caller: without one there is
+// no other spelling and this is the plain search it replaced; with one every `/` is read, once, so a
+// scan stays one pass over the file whichever it is.
+func nextName(pdf []byte, from int, slashName []byte, escapes bool) (at, n int) {
+	if !escapes {
+		j := bytes.Index(pdf[from:], slashName)
+		if j < 0 {
+			return -1, 0
+		}
+		return from + j, len(slashName)
+	}
+	for i := from; ; {
+		j := bytes.IndexByte(pdf[i:], '/')
+		if j < 0 {
+			return -1, 0
+		}
+		i += j + 1
+		if n := nameLen(pdf[i:], slashName[1:]); n >= 0 {
+			return i - 1, n + 1
+		}
+	}
 }
 
 // unhexDigit is the value of one hexadecimal digit, or -1.
