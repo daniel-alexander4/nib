@@ -862,3 +862,7 @@ home today.
   chain or loop can be written; a standard type is never the name; a mapping is not removed while tags use it.
   Names are stored as pdfcpu reads them — never escaped by hand. A *Role map* section in the panel, a native
   details, a button per change.
+- **[ADR-128 — a launch believes only an instance that proves the token](128-a-launch-believes-only-an-instance-that-proves-the-token.md)**
+  — the instance probe is a challenge and a response: a nonce and an HMAC proof each way, never the token on
+  the wire; anything else on the port is gone and is handed nothing. A record without `challenge` is probed
+  the old way, for the length of an upgrade.

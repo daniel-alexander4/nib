@@ -1616,6 +1616,10 @@ lease.pdf: valid (5 signer(s))
   ✗ Frank Director               HAS NOT SIGNED
 ```
 
+Under its first line `verify` also names the key behind each signature — `signer 1: key <fingerprint> — valid` —
+and says what that leaves unanswered: a valid signature shows its key signed those bytes, not whose key it is,
+so compare each key with one you were given.
+
 `--json` carries the same facts as fields (`obliged`, `signed`, `complete`,
 `oneProceeding`, `missing`), so a script never has to parse the sentence. A document
 with no ceremony gets no ceremony section and no `ceremony` key — most signed PDFs
