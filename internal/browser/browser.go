@@ -141,7 +141,13 @@ func findChromium() (string, bool) {
 
 // chromiumCandidates lists browser binaries to try, per OS.
 func chromiumCandidates() []string {
-	switch runtime.GOOS {
+	return chromiumCandidatesFor(runtime.GOOS, os.Getenv("LOCALAPPDATA"))
+}
+
+// chromiumCandidatesFor is the list for one OS. The OS and the Windows user's local
+// application-data directory are parameters so every list can be checked from any platform.
+func chromiumCandidatesFor(goos, localAppData string) []string {
+	switch goos {
 	case "darwin":
 		return []string{
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -150,7 +156,7 @@ func chromiumCandidates() []string {
 			"/Applications/Chromium.app/Contents/MacOS/Chromium",
 		}
 	case "windows":
-		return []string{
+		c := []string{
 			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
 			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
 			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
@@ -162,8 +168,9 @@ func chromiumCandidates() []string {
 			// Edge path was missing too; only the x86 one was listed.
 			`C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe`,
 			`C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe`,
-			"chrome.exe", "msedge.exe", "brave.exe", "chromium.exe",
 		}
+		c = append(c, windowsPerUserCandidates(localAppData)...)
+		return append(c, "chrome.exe", "msedge.exe", "brave.exe", "chromium.exe")
 	default: // linux and friends
 		return []string{
 			"google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
@@ -181,5 +188,26 @@ func tabOpener(url string) (string, []string) {
 		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
 	default:
 		return "xdg-open", []string{url}
+	}
+}
+
+// windowsPerUserCandidates lists where a browser installed for ONE Windows user lives, under
+// that user's %LOCALAPPDATA% (/pending 610). An installer run without administrator rights puts
+// the browser there and nowhere under Program Files, and it is not on PATH either — so that user
+// had a Chromium-family browser and was given the plain-tab fallback.
+//
+// The directory is a parameter, and the paths are joined by hand rather than with
+// filepath.Join, so the list can be checked on a machine that is not Windows. With no
+// directory there are no candidates: a path starting at `\Google` would name the root of
+// whatever drive Nib was started from.
+func windowsPerUserCandidates(localAppData string) []string {
+	if localAppData == "" {
+		return nil
+	}
+	return []string{
+		localAppData + `\Google\Chrome\Application\chrome.exe`,
+		localAppData + `\Microsoft\Edge\Application\msedge.exe`,
+		localAppData + `\BraveSoftware\Brave-Browser\Application\brave.exe`,
+		localAppData + `\Chromium\Application\chrome.exe`,
 	}
 }
