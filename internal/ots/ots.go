@@ -204,8 +204,8 @@ func validatePendingSequence(b []byte) error {
 			if err != nil {
 				return err
 			}
-			if _, err := (&cursor{b: payload}).varbytes(); err != nil {
-				return errors.New("malformed calendar reference")
+			if _, err := pendingURI(payload); err != nil {
+				return err
 			}
 			if !c.atEnd() {
 				return errors.New("unexpected trailing data after attestation")
@@ -229,6 +229,34 @@ func validatePendingSequence(b []byte) error {
 		}
 		msgLen = n
 	}
+}
+
+// errAttestationTrailing refuses an attestation whose payload runs on past the one
+// value its type defines.
+var errAttestationTrailing = errors.New("an attestation's payload has bytes after its value")
+
+// pendingURI reads a pending attestation's payload: one varbytes, the calendar's
+// URI, and nothing after it. It is the one reader of that payload — Stamp's check of
+// a calendar's answer and the proof parser both call it — and the Bitcoin payload in
+// parseSequences holds the same rule for its varuint.
+//
+// Both readers stopped at the value, so a payload with bytes after it was accepted
+// (/pending 837), and Stamp wrote such a calendar answer into a .ots verbatim. The
+// payload's own length prefix says where it ends and the format defines one field
+// in it, so a serializer following the format never writes more: refusing the rest
+// rejects no proof one of them made. python-opentimestamps is recalled as asserting
+// end-of-payload in TimeAttestation.deserialize; that was NOT re-read when this was
+// written (no network), so the refusal rests on the format, not on that recollection.
+func pendingURI(payload []byte) ([]byte, error) {
+	c := &cursor{b: payload}
+	u, err := c.varbytes()
+	if err != nil {
+		return nil, errors.New("malformed calendar reference")
+	}
+	if !c.atEnd() {
+		return nil, errAttestationTrailing
+	}
+	return u, nil
 }
 
 // cursor reads the .ots byte encoding: bytes and LEB128-style varuints/varbytes.
