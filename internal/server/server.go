@@ -452,12 +452,15 @@ func (s *Server) Handler() http.Handler {
 	// request executed, and since P08.S06 that request runs a close-out sweep: a GET with a
 	// state-changing side effect, reachable cross-origin. Since ADR-054 `requireSession` asks every
 	// method for the token, so that request is refused there; `requireSession` still origin-checks
-	// writes only, and `requirePublicLoopback` stays as the origin check on this GET — it is
-	// `originIsLoopback` and nothing else, and refuses `Sec-Fetch-Site: cross-site` outright.
+	// writes only, and `requirePublicLoopback` stays as the origin check on this GET. (The patches
+	// under test/redproofs anchor on the three lines below, so they are kept as written.) It
+	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
+	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
+	// reads.
 	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.requireSession(s.handleCeremonies)))
 	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
 	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin
-	// check `requireSession` does not apply to GET. It is a pure read and must stay one.
+	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.
 	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.requireSession(s.handleCeremonyNext)))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))
