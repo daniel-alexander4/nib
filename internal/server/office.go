@@ -42,6 +42,13 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Asked before the conversion, which is seconds of LibreOffice for a document that would
+	// then be refused at the install below.
+	if cerr := s.roomToOpen(); cerr != nil {
+		httpError(w, http.StatusConflict, cerr.Error())
+		return
+	}
+
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err == nil {
 		// The converted document's title is the source document's name — the one thing here that

@@ -79,9 +79,7 @@ func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request)
 	}
 	// Through parseMultipart, not a bare FormValue. The client posts a FormData
 	// here, so FormValue would trigger ParseMultipartForm implicitly — with no size
-	// cap on the body, and with the parts it spills to temp files never removed,
-	// which is exactly the leak parseMultipart's doc comment says it exists to
-	// prevent ("skipping the cleanup leaks disk until the process exits").
+	// cap on the body, which is what parseMultipart is for.
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
