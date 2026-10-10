@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -92,7 +93,9 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: refusal})
 		return
 	}
-	if pdfops.Validate(result) != nil {
+	if err := pdfops.Validate(result); err != nil {
+		// Nib has no telemetry, so this line is the only record of WHY the rewrite did not check out.
+		log.Printf("reflow: page %d paragraph %d: the rewritten page did not validate: %v", page, index, err)
 		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: pdfops.Refusal{Cause: pdfops.ReflowCauseInvalidOutput}})
 		return
 	}

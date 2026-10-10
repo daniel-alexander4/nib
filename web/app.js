@@ -7886,12 +7886,16 @@ function reflowCauseSentence(cause, below) {
   return which + why + ' Use Edit text to cover and replace it instead.';
 }
 let reflowParas = [];
+// True from the Reflow press until the server answers. One request at a time is the dialog's rule, and the button alone
+// could not hold it: picking another paragraph re-enabled it mid-request, and the two edits — both built from the page
+// as it was before either — committed last-write-wins (/pending 792).
+let reflowBusy = false;
 function reflowPicked() {
   const p = reflowParas[Number(els.reflowPick.value)];
   els.reflowText.value = p ? p.text : '';
   els.reflowWhy.hidden = !(p && p.refusal);
   els.reflowWhy.textContent = p && p.refusal ? reflowCauseSentence(p.refusal) : '';
-  els.reflowGo.disabled = !p || !!p.refusal;
+  els.reflowGo.disabled = reflowBusy || !p || !!p.refusal;
 }
 async function reflowOpen() {
   const owner = view;
@@ -7938,25 +7942,33 @@ els.reflowCancel.onclick = () => { els.reflowModal.hidden = true; };
 async function reflowSubmit() {
   const owner = view;
   const p = reflowParas[Number(els.reflowPick.value)];
-  if (!p || !owner.docMeta || owner.docMeta.id !== els.reflowModal.dataset.doc) return;
+  if (reflowBusy || !p || !owner.docMeta || owner.docMeta.id !== els.reflowModal.dataset.doc) return;
   const fd = new FormData();
   fd.append('page', els.reflowModal.dataset.page);
   fd.append('paragraph', String(p.index));
   fd.append('original', p.text);
   fd.append('text', els.reflowText.value);
   // One request at a time: a second click would commit the edit twice, or be told the paragraph it just changed has
-  // changed.
+  // changed. The paragraph picker is held with the button: it is the control that would start a second edit.
+  reflowBusy = true;
   els.reflowGo.disabled = true;
+  els.reflowPick.disabled = true;
   let res;
   try {
     res = await apiFetch('/api/reflow', { method: 'POST', body: fd, docId: owner.docMeta.id });
   } finally {
+    reflowBusy = false;
     els.reflowGo.disabled = false;
+    els.reflowPick.disabled = false;
   }
   // A 409 is the server's to word — the paragraph changed, the document is frozen for a ceremony, or it would pass the
   // size cap — so its own sentence is shown, and the dialog stays open with what the user typed.
+  // One 409 is not: the document was signed while the dialog was open, and the commit door's sentence ends by asking
+  // the user to confirm losing the signature — which nothing here offers and the server refuses for a reflow anyway.
+  // That one is said as the signed refusal is everywhere else in this dialog (/pending 792).
   if (res.status === 409) {
-    els.reflowWhy.textContent = await errText(res, 'The document changed — open Reflow again');
+    const said = await errText(res, 'The document changed — open Reflow again');
+    els.reflowWhy.textContent = said.includes(SIGNATURE_ERASURE_TOKEN) ? reflowCauseSentence('signed') : said;
     els.reflowWhy.hidden = false;
     return;
   }
@@ -9398,6 +9410,14 @@ async function flattenPages(pages, paint, docId = view.docMeta && view.docMeta.i
   }
   return res;
 }
+// flattenRefusal words a refused flatten for both of its callers: the server's own sentence where it sent one (a 422
+// names the page that is not in the document; a 409 the freeze or the size cap), else the caller's fallback
+// (/pending 834). One refusal keeps the fallback — the signature-loss question the user has just answered No to, whose
+// sentence ends by asking them to confirm it.
+async function flattenRefusal(res, fallback) {
+  const said = await errText(res, fallback);
+  return said.includes(SIGNATURE_ERASURE_TOKEN) ? fallback : said;
+}
 
 // assembleBlob rasterises every (filled, stamped) page and packages it server-
 // side into a flattened image-PDF or a ZIP of PNGs. Returns the blob, or null on
@@ -10776,7 +10796,7 @@ els.applyRedactBtn.onclick = async () => {
     ctx.fillStyle = '#000';
     for (const m of byPage[n]) ctx.fillRect(m.fx * cv.width, m.fy * cv.height, m.fw * cv.width, m.fh * cv.height);
   });
-  if (!res.ok) return toast('redaction failed');
+  if (!res.ok) return toast(await flattenRefusal(res, 'redaction failed'));
   owner.redactMarks = [];
   owner.redactMode = false;
   reflectRedact();
@@ -12007,7 +12027,7 @@ els.removeOriginalsBtn.onclick = async () => {
   if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.' + signatureWarning())) return;
 
   const res = await flattenPages(pages);
-  if (!res.ok) return toast('could not flatten edits');
+  if (!res.ok) return toast(await flattenRefusal(res, 'could not flatten edits'));
   owner.overlayFields = owner.overlayFields.filter((f) => { if (f.kind === 'edit' && pages.includes(f.page)) { f.el.remove(); return false; } return true; });
   owner.editMode = false; if (owner === view) reflectEdit();
   if (owner === view) els.viewerWrap.style.cursor = '';
@@ -18588,6 +18608,16 @@ function resumeCeremonySheet() {
   // session: bar stuck on, sheet never returning, Convene dead. Raising the sheet first cannot be
   // undone by the switch, because `syncSidebarForMode` stands the sheet down only for a tab that is
   // NOT collaborate, and collaborate is the tab being switched to.
+  // **Unless the user has switched the Signing tab off** (ADR-036; /pending 671). `setMode` turns a hidden mode aside
+  // to the first one showing, and that mode's `syncSidebarForMode` parked the sheet again in the same click — under a
+  // toast saying the user was back. Asked FIRST, so the setup stays parked exactly as it was, and the user is taken to
+  // the switch that brings Signing back: turning it on is theirs to do (ADR-106).
+  const signing = document.querySelector('.modetab[data-tab="collaborate"]');
+  if (signing && signing.hidden) {
+    goFeature('featuresMenuCard');
+    toast('Signing is switched off in the main menu. Tick it here, then go back to the ceremony setup.');
+    return;
+  }
   bindCeremonySetupDoc(); // no-op unless the sheet was opened with nothing loaded — see above
   showCeremonyForm('convene'); // clears the park, through the one door
   if (document.body.dataset.tab !== 'collaborate') setMode('collaborate');
