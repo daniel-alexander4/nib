@@ -218,11 +218,21 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// Up to maxPDFBytes of file I/O, deliberately outside s.mu — a syscall under the global
 	// server mutex serializes every route behind it, and on a network mount a hung read
 	// becomes a hung process.
-	// A reload re-reads the same path, so an image is converted again — the bytes on disk are
-	// still the image and the document in memory is still a PDF built from them.
-	data, _, ref := readInstallablePDF(path)
+	data, converted, ref := readInstallablePDF(path)
 	if ref != nil {
 		httpError(w, ref.status, ref.msg)
+		return
+	}
+	// **A file that has BECOME an image is refused, not converted** (/pending 627). A document
+	// keeps a path only when the file was a PDF at the open — an image is installed pathless
+	// (`readInstallablePDF`, `openHandedOff`) — so `converted` here means the file was replaced
+	// by an image since. Committing the conversion would leave a PDF in memory over a path that
+	// holds an image, with a baseline stamped from that image: Save would see no change on disk
+	// and write the PDF over it. This route cannot drop the path as the opens do, because the
+	// document keeps its id and its path is written once.
+	if converted {
+		httpError(w, http.StatusUnsupportedMediaType,
+			"that file is now an image, not a PDF, so Nib has not reloaded it — open the image to work on a copy of it")
 		return
 	}
 	// The baseline is stamped from the bytes this reload just read, and stamped BEFORE the
@@ -245,6 +255,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// the commit door and write no predicate of its own, and an automatic reload silently replacing
 	// a signed copy with an unsigned file is exactly the loss the door exists to ask about. The
 	// client's automatic path stays silent on the refusal; the button asks.
+	capFields(w, r)
 	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
 	if err := s.commitMutation(doc, snapshotBase(before), data, acceptLoss); wroteCommitFailure(w, err) {
 		return
