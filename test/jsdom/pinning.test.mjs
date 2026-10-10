@@ -624,10 +624,10 @@ const NO_OVERLAY_DOOR = {
   'els.applyRedactBtn.onclick': 'applies the boxes, bakes the rest, and asks its own question',
   sessionInit: 'bakes before it signs; a redaction box not yet applied still goes (residue, in the ceremony)',
 };
-// Owed, not exempt: the tag editor's three senders lose the same edits and were left alone the night the
-// door was built (another change was in those functions). Each needs `if (!confirmOverlayLoss(owner)) return;`
-// before its request; when one has it, this test says to take its name out.
-const OVERLAY_DOOR_OWED = ['commitTags', 'sendTagEdits', 'removeAllTags'];
+// Owed, not exempt: a sender known to lose the same edits and not yet given the door. Empty — the tag
+// editor's three senders (commitTags, sendTagEdits, removeAllTags) were the last, and have it. A name put
+// here is a debt with a date on it, never an exemption; when the site gains the door this test says so.
+const OVERLAY_DOOR_OWED = [];
 
 function reloadSites(src) {
   const code = src.split('\n').map((l) => (l.trim().startsWith('//') ? '' : l.replace(/\s\/\/ .*$/, ''))).join('\n');

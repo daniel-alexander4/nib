@@ -6230,6 +6230,7 @@ async function commitTags() {
   if (!tagsReview) return;
   const owner = tagsOwner || view;
   const doc = owner.docMeta;
+  if (!confirmOverlayLoss(owner)) return; // the tagged document is loaded back (/pending 791)
   els.tagsCommit.disabled = true;
   try {
     const res = await apiFetch('/api/tags/commit', {
@@ -6725,6 +6726,7 @@ async function applyTagEdit(...edits) {
 async function sendTagEdits(edits, restore, status) {
   const owner = view;
   if (!owner.docMeta || !owner.docMeta.id) return;
+  if (!confirmOverlayLoss(owner)) return; // the edited document is loaded back (/pending 791)
   status.textContent = 'Changing the structure…';
   tagEditRestore = restore;
   try {
@@ -6771,6 +6773,7 @@ async function addTag() {
 async function removeAllTags() {
   const owner = view;
   if (!owner.docMeta || !owner.docMeta.id) return;
+  if (!confirmOverlayLoss(owner)) return; // the untagged document is loaded back (/pending 791)
   if (!confirm('Remove every tag from this document?\n\nIts headings, lists, tables and alternative text will no longer be '
     + 'announced until it is tagged again (Tag structure…). What is marked as decoration stays marked. Ctrl+Z brings the tags back.')) return;
   const summary = $('tagTreeSummary');
