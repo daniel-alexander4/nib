@@ -245,7 +245,10 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 					}
 				default:
 					// A run that continues the word — in its font or another (P08.S06: each glyph keeps its own look).
-					joinGap = gap
+					// The previous run's width ends past a `TJ` adjustment after its last glyph, which no glyph's
+					// kern carries (`kernAfter`), so the gap is measured from the glyph, not from the run's end
+					// (/pending 798): the rest of the word was re-set that adjustment early.
+					joinGap = gap + prev.kernAfter
 				}
 			}
 			pos := r.x
