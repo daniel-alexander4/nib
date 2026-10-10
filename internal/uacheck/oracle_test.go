@@ -658,13 +658,11 @@ var knownCannotCheck = map[string]string{
 
 	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
 	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.
-	"Markdown + title + lang, one element on a role-map loop / 7.7 t1": "the role map loops, so no element can be typed and any of them might be the Formula",
 	// `/pending 548`: the tree rules over the document whose role map loops. They KEEP answering `CannotCheck`
 	// and that is right — the cycle is reported by 7.1 t6, which is the clause about the cycle, and they still
 	// cannot type the element their own subject might be. (7.5 t1 was a third row until P03.S04 ported
 	// veraPDF's table algorithm, which never takes an untyped element for a cell; the oracle agrees with it.
 	// 7.4.2 t1 was a fourth until the P07 phase close measured veraPDF typing a looped element as no heading.)
-	"Markdown + title + lang, one element on a role-map loop / 7.3 t1": "an element on a role-map loop may be the Figure",
 }
 
 // cardinalityBroken breaks every P03.S03 clause at once: two THeads and two TFoots with no TBody, a Caption

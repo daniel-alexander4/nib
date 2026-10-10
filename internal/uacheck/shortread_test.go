@@ -71,15 +71,18 @@ func TestACyclicRoleMapIsCannotCheckNeverAPass(t *testing.T) {
 		t.Errorf("with /Alpha role-mapped around a loop, 7.4.2 t1 reports %v (%s), want NotApplicable — veraPDF's "+
 			"verdict on this document", got.Verdict, got.Why)
 	}
-	// 7.3 t1 keeps `/pending 507`'s refusal.
-	for _, clause := range []string{"7.3 t1"} {
-		got := verdictOf(t, roleMapDoc(cyclicRoleMap), clause)
-		if got.Verdict != CannotCheck {
-			t.Errorf("with /Alpha role-mapped around a loop, %s reports %v (%s) over an element nib cannot type, want CannotCheck", clause, got.Verdict, got.Why)
-			continue
-		}
-		if !strings.Contains(got.Why, "loop") {
-			t.Errorf("%s: the reason %q does not say the role map loops", clause, got.Why)
+	// 7.3 t1 left it last, at `/pending 634`: the looped element is no Figure either (measured on eleven documents,
+	// `TestAnElementOnARoleMapLoopIsNotAFigureOrAFormula`), so the clause judges the Figure this document does hold.
+	// veraPDF is asked about this very document whenever it is present, as it was for the two before it.
+	want := map[string]string{"7.4.2 t1": "none", "7.3 t1": "passed"}
+	if got := verdictOf(t, roleMapDoc(cyclicRoleMap), "7.3 t1"); got.Verdict != Pass {
+		t.Errorf("with /Alpha role-mapped around a loop, 7.3 t1 reports %v (%s), want Pass — veraPDF's verdict on this document", got.Verdict, got.Why)
+	}
+	if vera := veraAsk(t, [][]byte{roleMapDoc(cyclicRoleMap)}); vera != nil {
+		for clause, said := range want {
+			if vera[0][clause] != said {
+				t.Errorf("veraPDF now says %q for %s on the loop document, where %q was measured", vera[0][clause], clause, said)
+			}
 		}
 	}
 }

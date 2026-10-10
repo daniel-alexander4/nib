@@ -496,24 +496,6 @@ func (d *Document) roleMapCircular(elem types.Dict) bool {
 	return circular
 }
 
-// standardTypes resolves every node's standard type in one call, indexed like nodes, with the first
-// element whose role map could not be followed as the second result.
-//
-// It is the shape `structNodes` and `parentTreeEntry` already have — one call, two results, one guard at the
-// top of the rule — so a rule that walks the tree cannot answer over an element it could not type.
-func (d *Document) standardTypes(nodes []structNode) ([]string, string) {
-	out := make([]string, len(nodes))
-	unresolved := ""
-	for i, n := range nodes {
-		std, why := d.standardType(n.dict)
-		out[i] = std
-		if why != "" && unresolved == "" {
-			unresolved = why
-		}
-	}
-	return out, unresolved
-}
-
 // resourcesOf returns a page's `/Resources`, climbing `/Parent` for the inherited case.
 //
 // Resources are inheritable through the page tree, and a document whose pages share one resource

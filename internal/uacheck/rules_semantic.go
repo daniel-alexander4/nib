@@ -82,13 +82,17 @@ func checkFigureAlt(d *Document) Result {
 // **A definite failure beats a refusal** (the package's convention, `checkEmbeddedFileNames`): the scan
 // runs over the elements nib DID read and type before either refusal is considered. Until the P06 phase
 // close both clauses refused first — so a Formula with no alternate text that nib had already read went
-// unreported whenever the tree ran past its bound, or some OTHER element could not be typed.
+// unreported whenever the tree ran past its bound, or some OTHER element could not be typed. (That second
+// refusal is gone since `/pending 634`: an element that cannot be typed is simply not of this type.)
 func checkAlternateTextOn(d *Document, typ, failWhy string) Result {
 	nodes, unread := d.structNodes()
-	std, untyped := d.standardTypes(nodes)
 	found := 0
-	for i, n := range nodes {
-		if std[i] != typ {
+	for _, n := range nodes {
+		// **An element on a role-map loop has no type, and so is not one of these** (`typedAs`; `/pending 634`).
+		// Measured on veraPDF 1.30.2 over eleven documents: beside a loop a Figure with its `/Alt` PASSES 7.3 t1, one
+		// without FAILS, and a document whose only element is on the loop has no subject. This rule used to refuse
+		// the whole document there, on every file where 7.1 t6 already fails.
+		if d.typedAs(n.dict) != typ {
 			continue
 		}
 		found++
@@ -99,10 +103,6 @@ func checkAlternateTextOn(d *Document, typ, failWhy string) Result {
 	}
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
-	}
-	if untyped != "" {
-		// An element nib cannot type may be one of these, so "the document has none" is not nib's to say.
-		return Result{Verdict: CannotCheck, Why: untyped}
 	}
 	if found == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document has no " + typ + " structure elements"}

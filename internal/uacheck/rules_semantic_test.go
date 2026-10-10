@@ -298,13 +298,9 @@ func TestAFormulaNeedsAlternateTextAndTheEmptyCasesDiffer(t *testing.T) {
 			if unread != "" {
 				t.Fatalf("the structure walk was short: %s", unread)
 			}
-			std, untyped := d.standardTypes(nodes)
-			if untyped != "" {
-				t.Fatalf("an element could not be typed: %s", untyped)
-			}
 			set := 0
-			for i, n := range nodes {
-				if std[i] == "Formula" {
+			for _, n := range nodes {
+				if d.typedAs(n.dict) == "Formula" {
 					n.dict[c.key] = c.to
 					set++
 				}
@@ -343,13 +339,9 @@ func TestADanglingAlternateTextReferenceIsAbsent(t *testing.T) {
 			if unread != "" {
 				t.Fatalf("the structure walk was short: %s", unread)
 			}
-			std, untyped := d.standardTypes(nodes)
-			if untyped != "" {
-				t.Fatalf("an element could not be typed: %s", untyped)
-			}
 			set := 0
-			for i, n := range nodes {
-				if std[i] == "Formula" {
+			for _, n := range nodes {
+				if d.typedAs(n.dict) == "Formula" {
 					delete(n.dict, "Alt")
 					delete(n.dict, "ActualText")
 					n.dict[key] = types.IndirectRef{ObjectNumber: types.Integer(9999)}
@@ -386,9 +378,10 @@ func TestAFormulaWithoutAlternateTextFailsBesideAnUntypableElement(t *testing.T)
 		t.Fatal(err)
 	}
 	doc := withRoleMapCycle(t, withFormulaParagraph(t, mdl, ""), true)
-	// Stimulus before response: some element really is untypable, or the refusal never had a chance.
-	if got := verdictOf(t, doc, "7.3 t1"); got.Verdict != CannotCheck {
-		t.Fatalf("setup: 7.3 t1 reports %v (%s); the fixture must hold an element nib cannot type", got.Verdict, got.Why)
+	// Stimulus before response: some element really is on a loop — 7.1 t6 fails on exactly that. (7.3 t1 refused
+	// here and was this check until `/pending 634`; it now answers, the looped element being no Figure.)
+	if got := verdictOf(t, doc, "7.1 t6"); got.Verdict != Fail {
+		t.Fatalf("setup: 7.1 t6 reports %v (%s); the fixture must hold an element on a role-map loop", got.Verdict, got.Why)
 	}
 	if got := verdictOf(t, doc, "7.7 t1"); got.Verdict != Fail {
 		t.Errorf("7.7 t1 reports %v (%s), want Fail — the Formula nib read has no alternate text, and an "+
