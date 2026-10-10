@@ -488,8 +488,11 @@ func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, vi
 			if !budget.enterForm(len(body)) {
 				return n
 			}
-			var inner types.Dict
-			if r, rerr := ctx.DereferenceDict(sd.Dict["Resources"]); rerr == nil {
+			// A form with no `/Resources` of its own draws with its caller's, as the run reader has it
+			// (`formRes`, textrun.go). Read as having none, an image it drew by the page's name was
+			// never counted, and the two halves of the 7.1 t3 guard disagreed (`/pending 771`).
+			inner := res
+			if r, rerr := ctx.DereferenceDict(sd.Dict["Resources"]); rerr == nil && r != nil {
 				inner = r
 			}
 			n += countDrawings(ctx, body, inner, depth+1, visiting, budget)

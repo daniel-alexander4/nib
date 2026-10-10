@@ -202,14 +202,21 @@ func advanceAt(glyph, size float64) float64 {
 	return glyph / 1000 * size
 }
 
+// maxWWork bounds how many widths one `/W` may set, over all its entries. `maxCID` bounds ONE range and
+// not their number: measured, a thousand `0 65535 w` entries — fifteen kilobytes — took 1.06 s, a
+// millisecond an entry (`/pending 771`). A real array sets each CID once; four times over is still read.
+const maxWWork = 4 * (maxCID + 1)
+
 // readW parses a CID font's `/W`: `c [w1 w2 …]` and `cfirst clast w`, in any mix. A malformed entry
-// stops the parse; CIDs after it fall to `/DW`, whose source says so.
+// stops the parse, and so does an entry that would take the whole past `maxWWork`; CIDs after it fall to
+// `/DW`, whose source says so.
 func readW(xt *model.XRefTable, o types.Object) map[int]float64 {
 	out := map[int]float64{}
 	arr, err := xt.DereferenceArray(o)
 	if err != nil || arr == nil {
 		return out
 	}
+	work := 0
 	for i := 0; i+1 < len(arr); {
 		first, ok := pdfNumber(xt, arr[i])
 		if !ok || first < 0 || first > maxCID {
@@ -220,6 +227,9 @@ func readW(xt *model.XRefTable, o types.Object) map[int]float64 {
 			return out
 		}
 		if ws, isArr := next.(types.Array); isArr {
+			if work += len(ws); work > maxWWork {
+				return out
+			}
 			for j, wo := range ws {
 				cid := int(first) + j
 				if cid > maxCID {
@@ -238,6 +248,9 @@ func readW(xt *model.XRefTable, o types.Object) map[int]float64 {
 		}
 		w, wok := pdfNumber(xt, arr[i+2])
 		if !wok || last < first {
+			return out
+		}
+		if work += int(math.Min(last, maxCID)) - int(first) + 1; work > maxWWork {
 			return out
 		}
 		for cid := int(first); cid <= int(math.Min(last, maxCID)); cid++ {

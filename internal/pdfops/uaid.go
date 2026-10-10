@@ -214,10 +214,13 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 		return false, nil
 	}
 	if err := sd.Decode(); err != nil {
-		// Not a silent retention, measured (`/pending 503`): both callers reach here only after
-		// `api.ReadValidateAndOptimize`, which decodes the catalog's `/Metadata` itself and refuses the whole
-		// document when it cannot — `/Filter /Crypt` fails the read with "Invalid filter", a stream that is not
-		// the Flate it declares with "zlib: invalid header". So no edit reaches a packet this line would skip.
+		// Not a silent retention, measured (`/pending 503`): a caller reaches here only after a read that
+		// decodes the catalog's `/Metadata` itself and refuses the whole document when it cannot — `/Filter
+		// /Crypt` fails the read with "Invalid filter", a stream that is not the Flate it declares with
+		// "zlib: invalid header". There were two callers when that was measured and there are five; measured
+		// again for the reads they come through (`/pending 771`): `pdfread.ReadOptimized`, `inspectionRead`
+		// and the merge door's `pdfread.Validated` each refuse it. So no edit reaches a packet this line
+		// would skip.
 		return false, nil
 	}
 	if !bytes.Contains(sd.Content, []byte(pdfuaidNS)) && !bytes.Contains(sd.Content, []byte(pdfaidNS)) {

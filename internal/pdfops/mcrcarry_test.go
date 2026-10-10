@@ -901,8 +901,9 @@ func TestTheCarryRepointsAnOBJRAndLeavesItNoStm(t *testing.T) {
 	}
 	root, derr := ctx.DereferenceDict(cat["StructTreeRoot"])
 	if derr != nil || root == nil {
-		t.Skip("the carry was abandoned for this document, so there is no tree to inspect — that is " +
-			"a legitimate outcome and TestEveryDeclaredFateIsTheMEASUREDFate owns the fate")
+		// The fixture is built for this arm, so an abandoned carry leaves the arm unreached — which is
+		// the state this test was written to end, not one to skip over (`/pending 771`).
+		t.Fatalf("the carry was abandoned for the OBJR fixture, so there is no tree to inspect (%v)", derr)
 	}
 	seen := 0
 	eachStructDict(t, ctx, root["K"], map[int]bool{}, func(ty string, d types.Dict) {

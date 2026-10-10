@@ -208,6 +208,29 @@ func TestAMalformedWEntryStopsTheParseAndIsNotExpanded(t *testing.T) {
 	}
 }
 
+// TestAWArrayIsReadOnlyToItsWorkBound — `/pending 771`. Each `cfirst clast w` was bounded and their
+// number was not, so a short array of full ranges cost a millisecond an entry. The bound is observed by
+// what the parse does NOT read: an entry behind more work than `maxWWork` is left to `/DW`.
+func TestAWArrayIsReadOnlyToItsWorkBound(t *testing.T) {
+	xt := widthXRef(t)
+	full := func(n int) types.Array {
+		var a types.Array
+		for i := 0; i < n; i++ {
+			a = append(a, types.Integer(0), types.Integer(maxCID), types.Integer(500))
+		}
+		return a
+	}
+	within := readW(xt, append(full(maxWWork/(maxCID+1)-1), types.Integer(7), nums(123)))
+	if within[7] != 123 {
+		t.Fatalf("control: an entry inside the bound read CID 7 as %v, want 123", within[7])
+	}
+	past := readW(xt, append(full(maxWWork/(maxCID+1)+1), types.Integer(7), nums(123)))
+	if past[7] != 500 || len(past) != maxCID+1 {
+		t.Errorf("an entry behind %d widths of work was read: CID 7 is %v over %d CIDs, want the 500 the "+
+			"ranges inside the bound set", maxWWork+maxCID+1, past[7], len(past))
+	}
+}
+
 // TestTheWidthCensusOverTheCorpus — S01's census clause, and a guard: every font the generated corpus
 // carries is measured over the codes it can draw, per source, and `none` over those codes is red.
 //
