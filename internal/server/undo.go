@@ -131,7 +131,7 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 	s.trimHistoryLocked(doc)
 	doc.data = result
 	doc.sig = sig
-	noteTaggingFate(doc, input, result)
+	noteTaggingFate(doc, input, result, base.broughtAnnots)
 	return nil
 }
 
@@ -140,6 +140,9 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 type mutationBase struct {
 	data     []byte
 	snapshot bool
+	// broughtAnnots is how many annotations the operation brought in from ANOTHER document (an
+	// append, an insert), counted by the caller before the commit. See noteTaggingFate.
+	broughtAnnots int
 }
 
 // snapshotBase is bytes this operation read from the document with `docBytes`.
@@ -291,7 +294,7 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	before := doc.data
 	doc.data = result
 	doc.sig = sig
-	noteTaggingFate(doc, before, result)
+	noteTaggingFate(doc, before, result, 0) // a barrier brings nothing in
 	return nil
 }
 
@@ -767,7 +770,15 @@ func ceremonyFreeze(docBytes []byte) error {
 // **An unreadable side is NOT a loss.** `Readable` false means this package could not parse those
 // bytes, and reading "0 annotations" off them would turn every unparseable input into a report that
 // the user lost everything.
-func noteTaggingFate(doc *document, input, result []byte) {
+//
+// **What an operation BROUGHT IN is added to the before side (/pending 582).** An append or an
+// insert carries the other document's annotations, so the totals alone are a NET figure: three
+// links dropped and three notes brought in read as nothing lost. `broughtAnnots` is the other
+// document's count, taken by the route before the commit and outside `s.mu`; with it the
+// comparison is what the result should hold against what it does. Form fields are still compared
+// net: appending a form to itself leaves 3 fields of 4 (measured), and whether a merged field is a
+// lost one is not this door's to say.
+func noteTaggingFate(doc *document, input, result []byte, broughtAnnots int) {
 	if doc == nil {
 		return
 	}
@@ -778,7 +789,7 @@ func noteTaggingFate(doc *document, input, result []byte) {
 	if before.Tagged && !after.Tagged {
 		doc.taggingDropped = true
 	}
-	if n := before.Annotations - after.Annotations; n > 0 {
+	if n := before.Annotations + broughtAnnots - after.Annotations; n > 0 {
 		doc.lostAnnots += n
 	}
 	if n := before.FormFields - after.FormFields; n > 0 {
