@@ -60,10 +60,11 @@ var alternateTextKeys = []alternateTextKey{
 //
 // **In a document nib can read, the key is a string.** veraPDF reads `/Alt` and `/E` through `getStringKey`,
 // which returns null for a NAME, and `/ActualText` through `getKey(…).getString()`, which does not — so a
-// name-typed `/ActualText` is a subject there and fails. It cannot arrive here: pdfcpu's validator refuses a
-// name-, number-, boolean-, array- or dictionary-typed value on all three keys (33 combinations measured), which
-// leaves the string literal, the hex string, the indirect string and `null` — exactly `d.text`. An EMPTY string
-// is a subject (`/Alt ()` fails with no language), unlike 7.3 t1, which wants a non-empty one.
+// name-typed `/ActualText` is a subject there and fails. **It arrives here since `/pending 612`**: pdfcpu's
+// validator refuses a name-, number-, boolean-, array- or dictionary-typed value on all three keys, and the checker
+// now sets those aside for the validation and reads them itself (`setAsideMistypedText`). So `/Alt` and `/E` are read
+// through `d.text` — a string or nothing — and `/ActualText` through `d.actualText`, which also answers for a name.
+// An EMPTY string is a subject (`/Alt ()` fails with no language), unlike 7.3 t1, which wants a non-empty one.
 func checkAlternateTextLanguage(d *Document, key, what string) Result {
 	nodes, unread := d.structNodes()
 	// **The catalog settles the clause without reading an element.** Its `/Lang` satisfies the predicate for
@@ -81,7 +82,12 @@ func checkAlternateTextLanguage(d *Document, key, what string) Result {
 	}
 	cannot := ""
 	for _, n := range nodes {
-		if _, ok := d.text(n.dict[key]); !ok {
+		// `/ActualText` alone is read through the door that accepts a name (`d.actualText`).
+		read := d.text
+		if key == "ActualText" {
+			read = d.actualText
+		}
+		if _, ok := read(n.dict[key]); !ok {
 			continue
 		}
 		if _, own := d.text(n.dict["Lang"]); own {

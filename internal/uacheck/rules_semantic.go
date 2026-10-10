@@ -57,11 +57,12 @@ func nodeWhere(n structNode, kind string) string {
 // went through `d.text`. One half of this door had been corrected at P04.S02 (`document.go` records
 // the measurement) and the other had not; extracting the predicate is what put them side by side.
 //
-// **`/ActualText` of a non-string type is still accepted here, and that is `/pending 633`** — a
-// different question, about what veraPDF does with a value that is present but is not a string. It is
-// not the dangling-reference case above, which is an ABSENT value.
+// **`/ActualText` is a string OR A NAME, and nothing else** (`d.actualText`; `/pending 633`, measured): `/ActualText
+// /a` passes and so does the empty name, while a number, a boolean, an array, a dictionary and `null` each FAIL as an
+// absent key does. It counted as present whatever it held until those documents could be opened at all
+// (`/pending 612`).
 func hasAlternateText(d *Document, n structNode) bool {
-	if v, ok := n.dict["ActualText"]; ok && d.resolve(v) != nil {
+	if _, ok := d.actualText(n.dict["ActualText"]); ok {
 		return true
 	}
 	s, ok := d.text(n.dict["Alt"])

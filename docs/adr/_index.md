@@ -798,3 +798,7 @@ home today.
   — a non-test Go file that names a veraPDF `.java` file or says it transcribes/ports one starts with
   `// SPDX-License-Identifier: MPL-2.0 OR AGPL-3.0-only`; measured behaviour earns no header. The notices' `## veraPDF`
   section lists the headed files from the generator's own grep. `TestEveryFileDerivedFromVeraPDFSaysSo`, both directions.
+- **[ADR-115 — the checker reads a mistyped text entry itself, set aside for pdfcpu's validator only](115-the-checker-reads-a-mistyped-text-entry-itself.md)**
+  — extends ADR-052. A non-string `/Lang` (catalog), or `/Lang`, `/Alt`, `/ActualText`, `/E` (structure element), is
+  removed for `api.ValidateContext` and put back (`pdfread.validated`'s `aside`; `setAsideMistypedText`), checker only.
+  `/ActualText` is a string OR a name (`d.actualText`); the other three a string only. 62 documents agree with veraPDF.

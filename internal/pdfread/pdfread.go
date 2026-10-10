@@ -41,7 +41,15 @@ import (
 // Validated is `api.ReadAndValidate` (pkg/api/api.go:171, v0.13.0) with the reference door between
 // the read and the validation. Everything after the check is pdfcpu's own sequence, restated because the
 // check must sit inside it.
-func Validated(pdf []byte, conf *model.Configuration) (ctx *model.Context, err error) {
+func Validated(pdf []byte, conf *model.Configuration) (*model.Context, error) {
+	return validated(pdf, conf, nil)
+}
+
+// validated is Validated with one more step a caller may put between the read and the validation: aside takes
+// out of the context what pdfcpu's validator would refuse the whole document over and the caller can read for
+// itself, and returns what puts it back. It runs for the validator only, exactly as `escapeInfoKeys` does — the
+// context every reader sees afterwards is the document as parsed (`ReadOptimizedOrRefuseSettingAside`).
+func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context) (restore func())) (ctx *model.Context, err error) {
 	defer fault.Catch(&err)
 	if ctx, err = api.ReadContext(bytes.NewReader(pdf), conf); err != nil {
 		return nil, err
@@ -50,7 +58,12 @@ func Validated(pdf []byte, conf *model.Configuration) (ctx *model.Context, err e
 		return nil, err
 	}
 	restore := escapeInfoKeys(ctx)
+	putBack := func() {}
+	if aside != nil {
+		putBack = aside(ctx)
+	}
 	err = api.ValidateContext(ctx)
+	putBack()
 	restore()
 	if err != nil {
 		return nil, err

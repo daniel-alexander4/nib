@@ -285,7 +285,9 @@ func open(pdf []byte) (*Document, error) {
 	// Through nib's one read door (`/pending 675`: a /UseCMap loop is refused before pdfcpu's validator recurses
 	// on it and kills the process) and its optimize budget, refusing rather than skipping the pass
 	// (`/pending 714`: the rules were measured against the optimized reading — see ReadOptimizedOrRefuse).
-	ctx, err := pdfread.ReadOptimizedOrRefuse(pdf, conf)
+	// …and with the four text entries veraPDF reads whatever their type set aside for the validator, which refuses
+	// the whole document over one (`setAsideMistypedText`, `/pending 612`).
+	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, setAsideMistypedText)
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
