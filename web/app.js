@@ -5674,9 +5674,10 @@ async function augmentSigDetails(rows, owner = view, seq = sigDetailsSeq) {
   // everybody signed correctly, that it "was not produced by a single agreed proceeding": an
   // accusation about the parties, caused by an upgrade.
   //
-  // Said FIRST and instead, on the same reasoning as the roster-version branch below: where the
-  // reader cannot interpret the evidence, the honest report is that it cannot, not a verdict
-  // drawn from evidence it could not read.
+  // Said FIRST, on the same reasoning as the roster-version branch below: where the reader cannot
+  // interpret the evidence, the honest report is that it cannot, not a verdict drawn from evidence
+  // it could not read. No longer INSTEAD (/pending 826): it excuses the signatures it describes,
+  // and the ones this build could read are still held to the proceeding line below.
   const unreadable = atts.filter((a) => a.tagVersion && a.tagVersion > ATTESTATION_TAG_VERSION);
   if (unreadable.length) {
     const p = document.createElement('div');
@@ -5748,9 +5749,32 @@ async function augmentSigDetails(rows, owner = view, seq = sigDetailsSeq) {
   // `oneProceeding` is false — identical to the disagreement case if read naively. So the
   // discriminator is whether ANY signature claims a ceremony; only then is agreement a
   // question that has been asked.
-  if (claimed.length && !unreadable.length) {
+  //
+  // **An unreadable signature excuses ITSELF, never the document** (/pending 826, the window's half
+  // of /pending 809). This block was skipped whenever any signature carried a newer tag — text the
+  // signer typed — so one such signature silenced the check for every other one, and a stranger's
+  // plain signature beside it read "✓ Complete" with no proceeding line at all. `commits` is the
+  // server's per-signature answer (`Proceeding.Commits`); `oneProceeding` cannot serve, because
+  // one unread signature turns it false on every row. With a signature unread the question is
+  // asked wherever the document carries a ceremony record (`obliged`), since the unread signature
+  // may be the only one that names it.
+  const readable = atts.filter((a) => a.valid && !unreadable.includes(a));
+  const asked = unreadable.length
+    ? readable.length > 0 && (claimed.length > 0 || Number(body.obliged || 0) > 0)
+    : claimed.length > 0;
+  if (asked) {
     const p = document.createElement('div');
-    if (attested.every((a) => a.oneProceeding)) {
+    if (unreadable.length && readable.every((a) => a.commits)) {
+      // Only what was read can be vouched for, and the line says so rather than "every".
+      p.className = 'sigmutual';
+      p.textContent = '✓ Every signature this version of Nib could read commits to this document’s ceremony.';
+    } else if (unreadable.length && new Set(claimed.map((a) => a.rosterVersion || 0)).size <= 1) {
+      const off = readable.filter((a) => !a.commits).length;
+      p.className = 'sigatt-warn';
+      p.textContent = '⚠ Not one proceeding — ' + off + ' of the ' + readable.length
+        + ' signature(s) this version of Nib could read do not commit to this document’s '
+        + 'ceremony. That is not the version difference above: these signatures were read.';
+    } else if (!unreadable.length && attested.every((a) => a.oneProceeding)) {
       p.className = 'sigmutual';
       p.textContent = '✓ One proceeding — every signature on this document commits to the same ceremony.';
     } else {

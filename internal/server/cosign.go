@@ -188,6 +188,23 @@ func pinnedLabel(v *vault.Vault, fp []byte) (string, bool) {
 type attestationView struct {
 	p2p.SignerAttestation
 	Pinned bool `json:"pinned"`
+	// Commits is true when THIS signature is valid and commits to the ceremony record the document
+	// carries — `Proceeding.Commits`, the per-signature test behind `OneProceeding` (/pending 826).
+	//
+	// `OneProceeding` is a verdict on the whole document, so one signature this build cannot read
+	// turns it false on every row, and the window could then say nothing about the signatures it
+	// could read. This is the fact that lets it excuse the unread signature alone, as `nib verify`
+	// does (/pending 809). Local to this route: it is not part of what a peer is sent.
+	Commits bool `json:"commits,omitempty"`
+}
+
+// attestationViewOf is one signature's row for the verify-side display.
+func attestationViewOf(v *vault.Vault, a p2p.SignerAttestation, proc p2p.Proceeding) attestationView {
+	view := attestationView{SignerAttestation: a, Commits: proc.Commits(a)}
+	if fp, err := hex.DecodeString(a.Fingerprint); err == nil && len(fp) == 32 {
+		_, view.Pinned = pinnedLabel(v, fp)
+	}
+	return view
 }
 
 type attestationsResponse struct {
@@ -272,11 +289,7 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	atts := p2p.Attestations(sig, proc)
 	views := make([]attestationView, 0, len(atts))
 	for _, a := range atts {
-		view := attestationView{SignerAttestation: a}
-		if fp, err := hex.DecodeString(a.Fingerprint); err == nil && len(fp) == 32 {
-			_, view.Pinned = pinnedLabel(v, fp)
-		}
-		views = append(views, view)
+		views = append(views, attestationViewOf(v, a, proc))
 	}
 	signed, obliged := p2p.Completeness(atts, proc)
 	writeJSON(w, attestationsResponse{Attestations: views, Signed: signed, Obliged: obliged})

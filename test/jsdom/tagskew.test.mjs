@@ -32,7 +32,7 @@ const att = (fp, peer, over = {}) => ({
   signer: 'S-' + fp.slice(0, 2), fingerprint: fp, acceptedPeer: peer,
   reason: '[NibCoSign:1] Accepts [SPKI:' + peer + ']', when: '2026-08-21T10:00:00Z',
   valid: true, matched: true, pinned: false, rosterHash: ROSTER, rosterVersion: 4,
-  oneProceeding: true, tagVersion: 1,
+  oneProceeding: true, commits: true, tagVersion: 1,
   ...over,
 });
 
@@ -46,9 +46,11 @@ const fromNewerNib = (fp) => ({
 });
 
 let attestations = [];
+// What rides beside the list: `obliged`/`signed`, the ceremony record's counts.
+let beside = {};
 const { document: doc, settle } = await boot({
   routes: {
-    '/api/attestations': () => ({ attestations }),
+    '/api/attestations': () => ({ attestations, ...beside }),
     '/api/open': {
       id: 'test-epoch:1', name: 'deed.pdf', path: '/tmp/nib-harness/deed.pdf',
       canSave: false, canUndo: false, canRedo: false,
@@ -68,8 +70,9 @@ doc.getElementById('pathInput').value = '/tmp/nib-harness/deed.pdf';
 doc.getElementById('openGo').click();
 await settle();
 
-async function panelText(next) {
+async function panelText(next, counts = {}) {
   attestations = next;
+  beside = counts;
   const body = doc.getElementById('sigDetailsBody');
   body.innerHTML = '';
   doc.getElementById('sigDetailsBtn').click();
@@ -129,6 +132,44 @@ test('a genuine disagreement is still reported when every signature is readable'
   const txt = await panelText([att(A, B), att(B, A, { rosterHash: other, oneProceeding: false })]);
   assert.match(txt, /⚠ Not one proceeding/,
     `two signatures naming DIFFERENT ceremonies were no longer reported: ${txt}`);
+});
+
+// ── /pending 826: an unreadable signature excuses ITSELF, never the document ──────────────
+// The proceeding line was skipped whenever ANY signature carried a newer tag, and the tag is text
+// the signer typed. `commits` is the server's per-signature answer; `oneProceeding` is false on
+// every row here, as Go really sends it, so nothing below can pass by reading that.
+
+// A valid signature that names no ceremony at all: an ordinary signature appended by anybody.
+const plain = (fp) => ({
+  signer: 'S-' + fp.slice(0, 2), fingerprint: fp, acceptedPeer: '', reason: 'I approve',
+  when: '2026-08-21T10:03:00Z', valid: true, matched: false, pinned: false,
+  rosterHash: '', rosterVersion: 0, oneProceeding: false, commits: false, tagVersion: 0,
+});
+
+test('a newer tag beside a signature that commits to nothing does not hide that it commits to nothing', async () => {
+  const txt = await panelText([fromNewerNib(A), plain(B)], { obliged: 2, signed: 2 });
+  assert.match(txt, /newer version of Nib and this one cannot read them/,
+    `STIMULUS: the fixture's skew was not reported, so this is not the case under test: ${txt}`);
+  assert.match(txt, /⚠ Not one proceeding — 1 of the 1 signature\(s\) this version of Nib could read do not commit/,
+    `one signature this build could not read silenced the proceeding check for the one it could — ` +
+    `a plain signature naming no ceremony, on a ceremony document, drew no proceeding line: ${txt}`);
+});
+
+test('the signatures this build could read still get their verdict beside an unreadable one', async () => {
+  const txt = await panelText([att(A, B, { oneProceeding: false }), fromNewerNib(B)], { obliged: 2, signed: 1 });
+  assert.match(txt, /✓ Every signature this version of Nib could read commits to this document’s ceremony/,
+    `a readable signature that commits to the record was given no line because another was unreadable: ${txt}`);
+  assert.ok(!/✓ One proceeding — every signature/.test(txt),
+    `"every signature" was said over a document carrying one nobody read: ${txt}`);
+  assert.ok(!/Not one proceeding/.test(txt), `a version difference was reported as a disagreement: ${txt}`);
+});
+
+test('an ordinary co-sign with no ceremony record is not asked about a proceeding', async () => {
+  // The control for the widened gate: no record (`obliged` absent), nothing claims a ceremony.
+  const txt = await panelText([fromNewerNib(A), plain(B)]);
+  assert.match(txt, /newer version of Nib/, `STIMULUS: the panel did not draw the skew line: ${txt}`);
+  assert.ok(!/proceeding —|commits to this document/.test(txt),
+    `a document with no ceremony record was given a proceeding verdict: ${txt}`);
 });
 
 // TestTheClientAndGoAgreeOnTheTagVersion — the cross-language constant.
