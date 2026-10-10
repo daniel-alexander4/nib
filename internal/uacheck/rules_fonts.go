@@ -94,10 +94,31 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 	}
 	byKey := map[string]*usedFont{}
 	var order []*usedFont
-	for index, ev := range events {
-		if !ev.text {
-			continue
+	// **A font used only inside a tiling pattern or a Type 3 glyph procedure is a font the document uses**
+	// (`/pending 678`). The content walk reads those streams for `/Lang` and glyphs and records no content event
+	// there, so this population never saw such a font: measured on veraPDF 1.30.2, a non-embedded Helvetica drawn
+	// only in a glyph procedure FAILS 7.21.4.1 t1 and nib PASSED it, and drawn only in a pattern it fails where nib
+	// had no subject. The uses are kept in their own list (`Document.fontUses`) and merged here in walk order: a
+	// content event at index i sits at 2i+1, and a use met when i events had been recorded at 2i — before the next.
+	type placed struct {
+		pos int
+		ev  contentEvent
+	}
+	uses := make([]placed, 0, len(events)+len(d.fontUses))
+	u := 0
+	for i, ev := range events {
+		for ; u < len(d.fontUses) && d.fontUses[u].at <= i; u++ {
+			uses = append(uses, placed{2 * d.fontUses[u].at, d.fontUses[u].ev})
 		}
+		if ev.text {
+			uses = append(uses, placed{2*i + 1, ev})
+		}
+	}
+	for ; u < len(d.fontUses); u++ {
+		uses = append(uses, placed{2 * d.fontUses[u].at, d.fontUses[u].ev})
+	}
+	for _, pl := range uses {
+		index, ev := pl.pos, pl.ev
 		key := fmt.Sprintf("obj:%d", ev.fontObj)
 		if ev.fontObj == 0 {
 			key = "name:" + ev.fontName + "@" + ev.where

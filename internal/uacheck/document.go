@@ -139,7 +139,11 @@ type Document struct {
 	openTypeCFF         map[uintptr]openTypeRead
 	// drawnUnrecorded is every font a pattern or Type 3 procedure draws — glyphs recorded, font events not.
 	drawnUnrecorded map[uintptr]bool
-	glyphCodes      int
+	// fontUses is every text-showing operator inside a tiling pattern or a Type 3 glyph procedure, for the FONT
+	// population only (`usedFonts`, `/pending 678`). They are kept out of `content` on purpose: nothing a pattern or
+	// a glyph procedure draws is a content item or a marked-content subject, and 7.1 t3 must not see it.
+	fontUses   []fontUse
+	glyphCodes int
 	// nothing is `reportsNothing`'s answer, computed once; t3Widths each Type 3 glyph procedure's width, read once.
 	nothing     string
 	nothingDone bool
