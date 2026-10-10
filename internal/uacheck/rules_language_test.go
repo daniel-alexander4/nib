@@ -177,9 +177,9 @@ func patternDoc(mode, bad string) []byte {
 // is read once any glyph is shown in it, while a font selected with `Tf` and never shown reads none. The walk
 // now enters exactly those, in lang-only mode, and the verdicts below are veraPDF's own.
 //
-// `type3-direct` keeps its CannotCheck for a different reason, and it is the one that is genuinely unreadable:
-// pdfcpu's validator DROPS a Type 3 font written directly inside `/Resources`, so the glyphs are not there to
-// walk.
+// `type3-direct` kept a CannotCheck until ADR-116: pdfcpu's validator DROPS a Type 3 font written directly inside
+// `/Resources`, so the glyphs were not there to walk. The checker now carries the font across the validation, and
+// veraPDF is asked about that document at the end of this test whenever it is present.
 func TestALanguageInADrawnPatternOrGlyphIsSettled(t *testing.T) {
 	for _, tc := range []struct {
 		mode string
@@ -191,22 +191,24 @@ func TestALanguageInADrawnPatternOrGlyphIsSettled(t *testing.T) {
 		// Defined and never selected: veraPDF evaluates 7.2 t29 with ZERO checks, so the document's only
 		// /Lang is the catalog's and nib must not reach into the stream at all.
 		{"unused", Pass},
-		{"type3-direct", CannotCheck},
+		// Written directly in /Resources: pdfcpu's validator drops such a font, and this row was CannotCheck until
+		// the checker carried it across the validation (ADR-116). It answers as the indirect font does.
+		{"type3-direct", Fail},
 	} {
 		got := verdictOf(t, patternDoc(tc.mode, "(en_US)"), "7.2 t29")
 		if got.Verdict != tc.bad {
 			t.Errorf("%s: a bad /Lang reports 7.2 t29 = %v (%s), want %v", tc.mode, got.Verdict, got.Why, tc.bad)
 		}
-		if tc.mode == "type3-direct" {
-			if !strings.Contains(got.Why, "validator drops") {
-				t.Errorf("type3-direct: the reason %q does not say the validator dropped the font", got.Why)
-			}
-			continue // a valid /Lang there is just as unreadable, so it has no Pass control
-		}
 		// The control, per mode: the SAME stream with a valid /Lang passes. Without it a rule that failed
 		// every pattern it was shown would score perfectly on the rows above.
 		if got := verdictOf(t, patternDoc(tc.mode, "(en-GB)"), "7.2 t29"); got.Verdict != Pass {
 			t.Errorf("%s control: a valid /Lang reports %v (%s), want Pass", tc.mode, got.Verdict, got.Why)
+		}
+	}
+	if vera := veraAsk(t, [][]byte{patternDoc("type3-direct", "(en_US)"), patternDoc("type3-direct", "(en-US)")}); vera != nil {
+		if vera[0]["7.2 t29"] != "failed" || vera[1]["7.2 t29"] != "passed" {
+			t.Errorf("veraPDF says %q and %q for a bad and a good /Lang in a directly-written Type 3 font's glyph, want failed and passed",
+				vera[0]["7.2 t29"], vera[1]["7.2 t29"])
 		}
 	}
 }

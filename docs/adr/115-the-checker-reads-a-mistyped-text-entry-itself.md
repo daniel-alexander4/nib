@@ -9,6 +9,7 @@ could not be read"* about files veraPDF reads and grades — and one of them is 
 `/ActualText` with no language. Extends ADR-052 (the checker reads as veraPDF does). `internal/pdfread/pdfread.go`
 (`validated`), `internal/pdfread/optimize.go` (`ReadOptimizedOrRefuseSettingAside`), `internal/uacheck/mistyped.go`.
 **Applies:** the PDF/UA checker's read, and any later reader with the same need.
+**Superseded in part by [ADR-116](116-the-checker-carries-two-fonts-across-the-validator.md)** (the dropped Type 3 font is carried across too; `setAsideMistypedText` is `setAsideForValidator`).
 
 ## Decision
 
