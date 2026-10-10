@@ -210,7 +210,7 @@ func TestTheMediaDoorRewritesAnAnnotsArrayNamedByReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := removeMediaAnnots(xt, root); err != nil {
+	if err := removeMediaAnnots(ctx, root); err != nil {
 		t.Fatal(err)
 	}
 	if err := eachPage(xt, root, func(page types.Dict, nr int) {

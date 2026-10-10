@@ -187,6 +187,10 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := names.Find("EmbeddedFiles"); ok {
 			add("attachment", "medium", "Embedded files attached to the document", 0)
 		}
+		// The document's named media clips (`/pending 824`): media no annotation need name. See removeMedia.
+		if _, ok := names.Find("Renditions"); ok {
+			add("media", "medium", "Media clips the document can play (renditions)", 0)
+		}
 	}
 
 	// XFA forms can carry their own scripts.
@@ -484,7 +488,7 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// the annotations whose whole purpose is to play something. The hierarchy has to
 		// hold in the direction users are told it does. Through the one door both tiers
 		// share (removeMediaAnnots, `/pending 815`).
-		if err := removeMediaAnnots(xt, root); err != nil {
+		if err := removeMedia(ctx, root); err != nil {
 			return err
 		}
 		if err := eachPage(xt, root, func(page types.Dict, _ int) {
@@ -543,7 +547,7 @@ func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		return removeMediaAnnots(ctx.XRefTable, root)
+		return removeMedia(ctx, root)
 	})
 	if err != nil {
 		return nil, err
@@ -599,13 +603,21 @@ var mediaAnnots = map[string]mediaAnnot{
 //
 // The walk is the page-annotation door's (eachPageAnnots, ADR-009): a page the tree names twice, and an /Annots array
 // several pages share, are each filtered once, under eachPage's visit budget.
-func removeMediaAnnots(xt *model.XRefTable, root types.Dict) error {
+//
+// **And the structure tree stops naming what was removed** (`/pending 824`): see unnameInStructure.
+func removeMediaAnnots(ctx *model.Context, root types.Dict) error {
+	xt := ctx.XRefTable
+	gone := map[int]types.Dict{}
+	defer func() { unnameInStructure(ctx, root, gone) }()
 	return eachPageAnnots(xt, root, func(page types.Dict, raw types.Object, _ int) {
 		annots := derefArray(xt, raw)
 		kept := make(types.Array, 0, len(annots))
 		for _, a := range annots {
 			if annot := derefDict(xt, a); annot != nil {
 				if _, media := mediaAnnots[nameVal(annot, "Subtype")]; media {
+					if ir, ok := a.(types.IndirectRef); ok {
+						gone[ir.ObjectNumber.Value()] = annot
+					}
 					continue
 				}
 			}
@@ -626,6 +638,94 @@ func removeMediaAnnots(xt *model.XRefTable, root types.Dict) error {
 		}
 		page["Annots"] = kept
 	})
+}
+
+// unnameInStructure takes the annotations in gone — object number to dict, each just unlinked from its page — out of
+// the structure tree: every OBJR naming one leaves the `/K` that holds it, and the annotation's own `/ParentTree`
+// row, under its `/StructParent`, goes with it (`/pending 824`).
+//
+// **Without it the removal did not remove.** "An object nothing names is not written" is how an unlinked annotation
+// leaves the file, and in a tagged document the element describing it still names it through an OBJR — so a Screen
+// annotation taken off its page by either tier was written out all the same, media and actions with it, under an
+// element describing an annotation no page shows. Measured on a tagged conversion carrying one: one Screen object
+// and one OBJR naming it in the output of both tiers, and a parent-tree row no object claimed.
+//
+// Every dictionary with a `/K` is asked, rather than only the element the annotation's `/StructParent` leads to: that
+// key is the annotation's own claim, and a file that omits or misstates it would keep its OBJR. Nothing is written
+// to a `/K` that names none of them. The element is left, with one kid fewer — which may be none: taking an element
+// out is the tag editor's act, not a removal's. A row whose leaf would be left empty under its `/Limits` is left too.
+func unnameInStructure(ctx *model.Context, root types.Dict, gone map[int]types.Dict) {
+	xt := ctx.XRefTable
+	st := derefDict(xt, root["StructTreeRoot"])
+	if st == nil || len(gone) == 0 {
+		return
+	}
+	for _, e := range xt.Table {
+		if e == nil || e.Free {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok || d["K"] == nil {
+			continue
+		}
+		kids, set := kidsArray(ctx, d)
+		kept := make(types.Array, 0, len(kids))
+		for _, k := range kids {
+			if objr := derefDict(xt, k); objr != nil && nameVal(objr, "Type") == "OBJR" {
+				if ir, isRef := objr["Obj"].(types.IndirectRef); isRef && gone[ir.ObjectNumber.Value()] != nil {
+					continue
+				}
+			}
+			kept = append(kept, k)
+		}
+		if len(kept) != len(kids) {
+			set(kept)
+		}
+	}
+	for _, annot := range gone {
+		key, ok := parentTreeKeyValue(xt, annot["StructParent"])
+		if !ok {
+			continue
+		}
+		holder, at := parentTreeLookup(ctx, st["ParentTree"], key)
+		if holder == nil {
+			continue
+		}
+		nums := derefArray(xt, holder["Nums"])
+		if at < 1 || at >= len(nums) || derefArray(xt, nums[at]) != nil {
+			continue // a page's row of elements, not an annotation's single entry
+		}
+		_, limited := holder["Limits"]
+		if limited && len(nums) == 2 {
+			continue
+		}
+		rest := append(append(types.Array{}, nums[:at-1]...), nums[at+1:]...)
+		if ir, isRef := holder["Nums"].(types.IndirectRef); isRef {
+			if en, found := xt.FindTableEntryForIndRef(&ir); found && en != nil {
+				en.Object = rest
+			}
+		} else {
+			holder["Nums"] = rest
+		}
+		if limited {
+			holder["Limits"] = types.Array{rest[0], rest[len(rest)-2]}
+		}
+	}
+}
+
+// removeMedia is the ONE removal of media both tiers make (ADR-009): the media annotations, and the catalog's
+// /Names /Renditions tree (`/pending 824`) — the document's named media clips, which no page's /Annots is the road
+// to and which neither tier, nor the scan each verifies itself by, had ever opened. A rendition plays only when an
+// action or a script asks for it, so the tree alone starts nothing; it is removed because "media removed" is a
+// claim about what the file carries, and a clip's embedded stream is carried here. The parsed copy goes too, for
+// removeAllAttachments' reason: pdfcpu's writer binds it back.
+func removeMedia(ctx *model.Context, root types.Dict) error {
+	xt := ctx.XRefTable
+	if names := derefDict(xt, root["Names"]); names != nil {
+		dropKey(xt, names, "Renditions")
+	}
+	delete(xt.Names, "Renditions")
+	return removeMediaAnnots(ctx, root)
 }
 
 // StripMetadata removes the document's identifying metadata: it drops the whole
