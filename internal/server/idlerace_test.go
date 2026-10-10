@@ -19,7 +19,7 @@ func TestAGraceThatEndsWithAWindowOpenDoesNotExit(t *testing.T) {
 	}
 	s.windows.n.Add(1) // B: its count moves
 
-	s.idleGraceElapsed() // the grace's end, now rather than ten seconds from now
+	s.fireGrace() // the grace's end, now rather than ten seconds from now
 	select {
 	case <-s.IdleExit():
 		t.Fatal("the grace ended with a window open and the process exited anyway. The timer " +
@@ -34,7 +34,7 @@ func TestAGraceThatEndsWithAWindowOpenDoesNotExit(t *testing.T) {
 	// And with no window the same body exits, or the re-check has become 'never exit'.
 	s.windows.n.Store(0)
 	s.armIdleExitGrace()
-	s.idleGraceElapsed()
+	s.fireGrace()
 	select {
 	case <-s.IdleExit():
 	default:
@@ -67,5 +67,59 @@ func TestAWindowsCancelAndCountShareOneLockHold(t *testing.T) {
 	}
 	if !ran {
 		t.Fatal("stimulus: the hook never ran, so nothing above was observed")
+	}
+}
+
+// fireGrace runs the body of the grace that is armed now, as its timer would.
+func (s *Server) fireGrace() {
+	s.idleGraceElapsed(s.armedGrace())
+}
+
+// armedGrace reads which grace is armed, under the lock that owns it.
+func (s *Server) armedGrace() uint64 {
+	s.idle.mu.Lock()
+	defer s.idle.mu.Unlock()
+	return s.idle.gen
+}
+
+// TestACancelledGraceDoesNotEndTheOneArmedAfterIt — /pending 784 part 2.
+//
+// The last window closes and a grace is armed. Its timer fires and its body waits for `idle.mu`
+// while a window arrives — cancelling it; `Stop` is too late for a body already running — and
+// leaves again, arming a second grace. The first body then takes the lock. It used to find a timer
+// set and no window, and exit: the second close got no grace, so a reload landing in that moment
+// came back to a process already going. Driven step by step, as the test above is.
+func TestACancelledGraceDoesNotEndTheOneArmedAfterIt(t *testing.T) {
+	s := gracedServer(t)
+	s.armIdleExitGrace() // the last window went
+	first := s.armedGrace()
+	s.windowArrived() // a window comes back: the first grace is cancelled
+	// STIMULUS: the cancel really took a running grace, or the body below is not a cancelled one.
+	if byWindow, _ := s.IdleExitCancels(); byWindow != 1 {
+		t.Fatalf("setup: %d graces were cancelled by a window, want 1", byWindow)
+	}
+	s.windows.n.Add(-1)
+	s.armIdleExitGrace() // and goes again: a second grace
+	if !s.idleGraceRunning() || s.armedGrace() == first {
+		t.Fatal("setup: no second grace was armed, so this test is not in the interleaving")
+	}
+
+	s.idleGraceElapsed(first) // the cancelled body, getting the lock only now
+	select {
+	case <-s.IdleExit():
+		t.Fatal("a grace a window had cancelled ended the grace armed after it: the process exits " +
+			"the moment the second window closes, with no grace for it to come back in")
+	default:
+	}
+	if !s.idleGraceRunning() {
+		t.Error("the cancelled body cleared the second grace, so nothing will ever exit this process")
+	}
+
+	// And the second grace's own body still exits, or the check has become 'never exit'.
+	s.fireGrace()
+	select {
+	case <-s.IdleExit():
+	default:
+		t.Error("the grace that IS armed ended with no window and did not exit")
 	}
 }
