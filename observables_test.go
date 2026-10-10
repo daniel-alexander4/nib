@@ -229,8 +229,13 @@ var published = map[string][]string{
 	// sites — `Order[Done]` is whose turn it is, and the index of a party against `Done` is its
 	// state — which is the point: "has party k signed" is already implemented three times in this
 	// tree with two different rules, so this type exists so that a fourth is never written.
-	"p2p.Progress":    {"internal/p2p/l3.go", "internal/server/ceremonynext.go"},
-	"ceremony.Record": {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
+	"p2p.Progress": {"internal/p2p/l3.go", "internal/server/ceremonynext.go"},
+	// Two readers named at /pending 575, each the file that reads the field by type and not by a
+	// word: `nib verify-ceremony` reads `Version`, `Intent` and `Roster` (`verifyceremony.go:181,138,
+	// 197`), and the co-sign arrival gate reads `DocHash` (`ceremonyid.go:856`). `ceremonynet.go`
+	// alone left all four satisfied only inside `internal/ceremony`.
+	"ceremony.Record": {"internal/ceremony/record.go", "internal/server/ceremonynet.go",
+		"internal/cli/verifyceremony.go", "internal/server/ceremonyid.go"},
 	// **Parked as "no reader yet" mid-slice, and the parking was STALE IN ITS OWN COMMIT.**
 	// The convene route landed in the same slice and reads every field of both shapes, so the
 	// honest entry is a reader rather than an exclusion. Found at the slice's diff review,
@@ -245,7 +250,14 @@ var published = map[string][]string{
 	// Worth recording that this scan is what noticed the type at all: it was added, wired and
 	// tested, and the guard failed the root package on the same commit — which is the shape the
 	// file exists for, arriving on its own subject rather than on a regression.
-	"ceremony.Stored": {"internal/ceremony/mirror.go", "internal/server/convene.go"},
+	//
+	// **The route carries the slice and reads none of it, so the readers are named** (/pending 575).
+	// The window draws every field from the JSON (`ceremonyCard`: `c.state`, `c.name`, `c.reason`,
+	// `c.ended`, `c.me`, `c.verification`; `cerWaiting`: `c.joined`), and the rail's worklist reads
+	// five of them as Go (`ceremonynext.go`: `Ended`, `Joined`, `Me`, `Reason`, `State`).
+	// `Verification` has the window alone: no Go outside `internal/ceremony` reads it.
+	"ceremony.Stored": {"internal/ceremony/mirror.go", "internal/server/convene.go",
+		"internal/server/ceremonynext.go", "web/app.js"},
 	// **`ceremony.Receipt` is the close-out's local record (P08.S06), and its reader is the same
 	// route.** All three fields are rendered: `Ceremony` identifies the entry, `State` is the word
 	// a user reads, and `ObservedAt` is what the list is ordered by and the date shown against it.
@@ -256,7 +268,13 @@ var published = map[string][]string{
 	// and wired to nothing — and the guard failed the root package on the commit that added it.
 	// The honest fix was a reader and not an exclusion: the receipt exists so a user can find the
 	// contribution the prune preserved, and a receipt no surface shows preserves it in secret.
-	"ceremony.Receipt": {"internal/ceremony/closeout.go", "internal/server/convene.go"},
+	//
+	// **And the reader that renders them is the window, named at /pending 575**:
+	// `renderEndedCeremonies` reads `r.state`, `r.name` and `r.observed_at`. `nib verify-ceremony`
+	// reads `State` as Go (`verifyceremony.go:414`); `Name` and `ObservedAt` have no Go reader
+	// outside `internal/ceremony` — `closeout.go` in `internal/server` only WRITES `ObservedAt`.
+	"ceremony.Receipt": {"internal/ceremony/closeout.go", "internal/server/convene.go",
+		"internal/cli/verifyceremony.go", "web/app.js"},
 	// **`ceremony.Anchor` is what a `Termination` is checked AGAINST** (P05.S02, D16): the roster
 	// commitment and the convener's fingerprint, and nothing else — those are the only two values
 	// `Verify` ever read out of a record. It exists so an INVITATION can supply them, because a
@@ -289,7 +307,11 @@ var published = map[string][]string{
 	"ceremony.Termination":     {"internal/ceremony/mirror.go", "internal/server/delivery.go"},
 	"vault.CeremonySecret":     {"internal/server/convene.go", "internal/vault/vault.go"},
 	"ceremony.CandidateRecord": {"internal/ceremony/candidate.go", "internal/server/ceremonynet.go"},
-	"ceremony.Invitation":      {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go"},
+	// Three readers named at /pending 575, one per field `ceremonyid.go` never read: the acceptance
+	// reads `ConvenerFingerprint` (`accept.go:134`), convening reads `Secret` (`convene.go:183`), and
+	// `nib rendezvous` reads `Seeds` (`rendezvous.go:551`).
+	"ceremony.Invitation": {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go",
+		"internal/server/accept.go", "internal/server/convene.go", "internal/cli/rendezvous.go"},
 	// `internal/server/convene.go` added /pending 558: the re-issue loop walks `rec.Roster` —
 	// `[]ceremony.Party` — and reads three of the four fields off it (`convene.go:503,506,509`
 	// and `:535-537`). It is named because the two entries before it are BOTH inside the defining
