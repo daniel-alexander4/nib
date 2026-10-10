@@ -9100,6 +9100,9 @@ function dropOCRWorker() {
 // exactly the pages to read, and where progress goes. For a command it asks nothing, replaces nothing
 // (ADR-101: replacing is asked for, never implied) and says nothing — the door has asked, and the door speaks.
 async function runOCR(cmd = null) {
+  // A document locked for signing is not read (/pending 830): the button is off with the other editing tools,
+  // and this is the check that does not depend on a list. A command's read was refused at its own door.
+  if (!cmd && view.signLocked) { toast('This document is locked for signing, and reading a scan changes it.'); return { outcome: 'refused' }; }
   if (!cmd && (!view.pdfDocument || !confirmSignatureLoss())) return { outcome: 'refused' };
   // CAPTURED before the first await (D7). OCR is the longest operation in the app —
   // loading the engine, then a recognition pass per page — so the window in which the
@@ -9242,7 +9245,7 @@ async function runOCR(cmd = null) {
     else if (worker) dropWorker(worker);
     else if (making) making.then(dropWorker, () => {});
     if (ocrRun === run) ocrRun = null;
-    btn.disabled = false; btn.textContent = label;
+    btn.disabled = !!view.signLocked; btn.textContent = label; // a document locked while it was read stays locked
   }
 }
 if (els.ocrBtn) els.ocrBtn.onclick = () => runOCR();
@@ -11427,6 +11430,10 @@ const EDITING_TOOLS = [
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn', 'checkboxBtn',
   'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
+  // OCR rewrites the document — it stamps a text layer — and was the one rewriting tool this list did not
+  // name, so a sign-locked recipient could run it (/pending 830). ADR-106's door (`ensureText`) already
+  // refuses a locked document; this is the button's half, and `runOCR` checks for itself.
+  'ocrBtn',
 ];
 function setEditingEnabled(on) {
   for (const id of EDITING_TOOLS) {

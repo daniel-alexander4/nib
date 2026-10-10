@@ -26,7 +26,8 @@ package pdfops
 //   - Measured 2026-10-03: the OCR layer, all three sanitize methods and an added attachment, over twelve
 //     documents (two government fillable forms, LaTeX, a scan, a tagged conversion), kept the boxes
 //     and rotation of the first three pages and rendered them pixel-identical at 40 dpi, annotations shown
-//     and hidden (StripMetadata drops the flag with the rest of the Info dictionary); a crop, a turn
+//     and hidden (StripMetadata dropped the flag with the rest of the Info dictionary then; since
+//     `/pending 830` it keeps the flags alone — `flagsOnlyInfo`); a crop, a turn
 //     and a visible stamp, run as controls, all differed.
 //   - The same census then found the one shape that DID move: a turned page whose box does not start at the
 //     origin. pdfcpu folds `/Rotate` into the content to stamp it and turned the drawing about the origin, so

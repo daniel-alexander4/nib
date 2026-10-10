@@ -154,6 +154,26 @@ test('every drawing tool is switched off by signing mode', () => {
     `${missing.join(', ')} draw content onto the page and are not in EDITING_TOOLS, so signing mode leaves them armable — while the app has just said the document "can no longer be edited"`);
 });
 
+test('OCR is switched off by signing mode, at the button and in the function', () => {
+  // /pending 830. OCR stamps a text layer — it rewrites the document — and was the one rewriting tool
+  // EDITING_TOOLS did not name, so a sign-locked recipient could run it from its button. Three places, because
+  // each was a way back in: the list that disables the button, the function a click reaches, and the line that
+  // re-enables the button when a read ends.
+  assert.ok(listNamed('EDITING_TOOLS').includes('ocrBtn'),
+    'ocrBtn is not in EDITING_TOOLS, so a document locked for signing leaves OCR clickable');
+  const m = APP.match(/async function runOCR\(cmd = null\) \{([\s\S]*?)\n\}\n/);
+  assert.ok(m, 'runOCR is not in web/app.js in the shape this reads — the guard is reading nothing');
+  const body = m[1].replace(/^\s*\/\/.*$/gm, '');
+  const lock = body.search(/if \(!cmd && view\.signLocked\) \{[^\n]*return \{ outcome: 'refused' \}; \}/);
+  const first = body.search(/confirmSignatureLoss\(\)|await /);
+  assert.ok(lock >= 0 && lock < first,
+    'runOCR does not refuse a sign-locked document before it asks or reads anything');
+  assert.doesNotMatch(body, /btn\.disabled = false/,
+    'runOCR re-enables its button unconditionally when a read ends, so a document locked meanwhile gets OCR back');
+  assert.match(body, /btn\.disabled = !!view\.signLocked;/,
+    'runOCR no longer restores its button by the lock');
+});
+
 test('EDITING_TOOLS stays a strict subset of DOC_REQUIRED', () => {
   // app.js:2372 states this as a fact and orders two calls by it. Nothing checked it, and
   // an id in EDITING_TOOLS but not DOC_REQUIRED would be re-enabled by the editing pass
