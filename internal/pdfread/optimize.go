@@ -66,7 +66,7 @@ const (
 // runs before pdfcpu's validator can recurse), exactly as pdfcpu does, then optimizes only
 // when `Unaffordable` says the pass is bounded.
 func ReadOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error) {
-	return readOptimized(pdf, conf, false)
+	return readOptimized(pdf, conf, false, nil)
 }
 
 // ReadOptimizedOrRefuse is `ReadOptimized` for a reader whose ANSWER depends on the pass having run, where a
@@ -80,7 +80,16 @@ func ReadOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error
 // other reading would be a confident answer about a document the checker was not calibrated to read; an
 // error says what happened.
 func ReadOptimizedOrRefuse(pdf []byte, conf *model.Configuration) (*model.Context, error) {
-	return readOptimized(pdf, conf, true)
+	return readOptimized(pdf, conf, true, nil)
+}
+
+// ReadOptimizedOrRefuseSettingAside is ReadOptimizedOrRefuse for a reader that can read for itself something
+// pdfcpu's validator refuses the whole document over (`validated`): aside removes it for the validation and returns
+// what restores it. The PDF/UA checker is the caller — a structure element's wrongly-typed `/Alt` is a value veraPDF
+// reads and nib's rules must too (`/pending 612`). Not for a reader that writes the context back out: nothing has
+// vouched for what was set aside.
+func ReadOptimizedOrRefuseSettingAside(pdf []byte, conf *model.Configuration, aside func(*model.Context) (restore func())) (*model.Context, error) {
+	return readOptimized(pdf, conf, true, aside)
 }
 
 // ReadForInspection is `ReadOptimized` without pdfcpu's per-page resource step, for a reader that NEVER writes the
@@ -124,8 +133,8 @@ func InheritResources(ctx *model.Context) {
 	}
 }
 
-func readOptimized(pdf []byte, conf *model.Configuration, strict bool) (*model.Context, error) {
-	ctx, err := Validated(pdf, conf)
+func readOptimized(pdf []byte, conf *model.Configuration, strict bool, aside func(*model.Context) (restore func())) (*model.Context, error) {
+	ctx, err := validated(pdf, conf, aside)
 	if err != nil {
 		return nil, err
 	}
