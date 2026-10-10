@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -218,23 +219,21 @@ func randomTree(r *rand.Rand) []byte {
 	return testpdf.Assemble(objs)
 }
 
-// The reviewer's cost: a flat tree with one odd leaf is walked in work linear in its pages. Counted in steps, not
-// timed, so a loaded machine cannot flake it; replaying from the root per page — the old fallback's shape — costs
-// about n²/2 steps.
+// The reviewer's cost: a flat tree with one odd leaf is walked in work linear in its pages. Counted in steps, so a
+// loaded machine cannot flake it; replaying from the root per page — the old fallback's shape — costs about n²/2
+// steps. The steps are the simulation's, so the door itself (`PagesWalked`) is timed as well — by SCALING, not
+// against a ceiling (/pending 841; it was 20 s, which measures the machine): four times the pages cost the tolerant
+// walk ×4 and the old page-by-page fallback ×16 (1m40-2m at 20,000 pages); ×8 is the midpoint on a log scale.
 func TestATolerantWalkIsLinear(t *testing.T) {
 	for _, extra := range []string{"/Count -1", "/Kids []"} {
+		ctxs := map[int]*model.Context{}
 		for _, n := range []int{5000, 20000} {
 			ctx, err := pdfread.Validated(flatWith(n, extra, n/2), model.NewDefaultConfiguration())
 			if err != nil {
 				t.Fatalf("%s n=%d: validation refused the reviewer's shape (%v) — the test no longer reaches it", extra, n, err)
 			}
-			// The door itself, timed against a ceiling far from both ends: the tolerant walk measured ~0.1 s at
-			// 20,000 pages, the old page-by-page fallback 1m40-2m.
-			t0 := time.Now()
+			ctxs[n] = ctx
 			pages, walked := pdfread.PagesWalked(ctx)
-			if el := time.Since(t0); el > 20*time.Second {
-				t.Fatalf("%s n=%d: Pages took %v — it is not taking the tolerant walk", extra, n, el)
-			}
 			if walked {
 				t.Fatalf("%s n=%d: the odd leaf took the one walk — this test no longer reaches the tolerant one", extra, n)
 			}
@@ -258,6 +257,9 @@ func TestATolerantWalkIsLinear(t *testing.T) {
 					extra, n, steps)
 			}
 		}
+		scaling.GrowsLinearly(t, extra+": Pages through the tolerant walk", 5000, 20000, 8, func(n int) time.Duration {
+			return scaling.TimeOnce(func() { pdfread.PagesWalked(ctxs[n]) })
+		})
 	}
 }
 

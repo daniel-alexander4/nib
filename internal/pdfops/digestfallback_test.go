@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -48,21 +49,24 @@ func TestTheDigestFallbackWalksThePageTreeOnce(t *testing.T) {
 	// Read through `Validated`, not `ReadOptimized`: the optimize pass is itself quadratic on ANY flat tree (pdfcpu's
 	// `optimizeResourceDicts` calls `PageDict(i, true)` per page — 4.1 s at 5,000 clean pages, measured), which is
 	// not this door's cost and would hide it.
-	const n = 20000
-	ctx, err := pdfread.Validated(flatWithKidsLeaf(n, n-1), model.NewDefaultConfiguration())
-	if err != nil {
-		t.Fatal(err)
-	}
-	st = &digestStats{}
-	t0 := time.Now()
-	_, err = digestReadContext(ctx, st)
-	el := time.Since(t0)
-	if st.fastPath || err == nil || !strings.Contains(err.Error(), "no page at that number") {
-		t.Fatalf("setup: the digest did not take its fallback to the last page (fast path %v, %v)", st.fastPath, err)
-	}
-	// A ceiling far from both ends: one walk measured well under a second here, PageDict per page about two minutes.
-	if el > 20*time.Second {
-		t.Fatalf("%d pages through the fallback took %v — it is asking PageDict page by page", n, el)
-	}
-	t.Logf("%d pages through the digest's fallback: %v", n, el)
+	//
+	// Bounded by SCALING, not by the clock (/pending 841): it was "20,000 pages within 20 s", which measures the
+	// machine. Four times the pages cost one walk ×4 and PageDict per page ×16; ×8 is the midpoint on a log scale.
+	ctxs := map[int]*model.Context{}
+	scaling.GrowsLinearly(t, "the digest's fallback to the last page", 3000, 12000, 8, func(n int) time.Duration {
+		ctx, ok := ctxs[n]
+		if !ok {
+			var err error
+			if ctx, err = pdfread.Validated(flatWithKidsLeaf(n, n-1), model.NewDefaultConfiguration()); err != nil {
+				t.Fatal(err)
+			}
+			ctxs[n] = ctx
+		}
+		st, err := &digestStats{}, error(nil)
+		took := scaling.TimeOnce(func() { _, err = digestReadContext(ctx, st) })
+		if st.fastPath || err == nil || !strings.Contains(err.Error(), "no page at that number") {
+			t.Fatalf("setup: the digest did not take its fallback to the last page (fast path %v, %v)", st.fastPath, err)
+		}
+		return took
+	})
 }

@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"nib/internal/pdfread"
 
@@ -65,6 +64,11 @@ func TestANestedStreamIsDecodedOnlyAsFarAsTheBudgetHasLeft(t *testing.T) {
 // **It was the optimize pass's refusal (`ErrUnaffordable`) until `/pending 782`**: the pass decoded page content
 // only for its per-page resource step, which the checker no longer runs (`checkerConfig`), so nothing in the read
 // decodes the stream and the refusal moved to where the decode is.
+//
+// No clock here (/pending 841). It carried "under 15 s (one decode, not six)", which measures the machine and could
+// not see six decodes either: with the door decoding at every naming the check took 1.9 s. Against the check of the
+// stream named once the two are ×3 and ×5.4, too close to hold a bound between, so the cost of a naming is held
+// where it is paid — `pdfread`'s `TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole`, at the door itself.
 func TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly(t *testing.T) {
 	z := flatedSpacesUA(100 << 20)
 	pdf := buildPDF(map[int]string{
@@ -75,7 +79,6 @@ func TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly(t *testing.T) {
 		4: fmt.Sprintf("<< /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream", len(z), z),
 		7: "<< /Type /StructTreeRoot >>",
 	})
-	start := time.Now()
 	rep, err := Check(pdf)
 	if err != nil {
 		t.Fatalf("one 100 MiB stream named six times: Check: %v", err)
@@ -89,8 +92,5 @@ func TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly(t *testing.T) {
 	if got.Verdict != CannotCheck || got.Why == "" {
 		t.Errorf("one 100 MiB stream named six times reports 7.1 t3 %v (%s), want CannotCheck saying the content was "+
 			"not read in full", got.Verdict, got.Why)
-	}
-	if el := time.Since(start); el > 15*time.Second {
-		t.Errorf("the check took %v to refuse it, want well under 15 s (one decode, not six)", el)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 )
 
@@ -1016,15 +1017,27 @@ func TestAnAnnotationSharedAcrossPagesIsWalkedOnce(t *testing.T) {
 	if !foundKind(t, sharedAnnotsDoc(1, 1, 30, true), "action") {
 		t.Fatal("stimulus: the JavaScript at the chain's end is not found even unshared, so this tests nothing")
 	}
-	doc := sharedAnnotsDoc(200, 200, 30, true)
-	start := time.Now()
-	rep, err := Scan(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if took := time.Since(start); took > time.Second {
-		t.Fatalf("Scan took %v over %d bytes: the shared annotation was walked per page per slot", took, len(doc))
-	}
+	// The cost is held against the same pages and the same chain with the annotation in ONE slot a page, in the same
+	// rounds (/pending 841; it was "within a second", which measures the machine): walked once, 200 slots a page cost
+	// about what one does (×2.0, measured), and walked per page per slot ×160 to ×210.
+	doc, flat := sharedAnnotsDoc(200, 200, 30, true), sharedAnnotsDoc(200, 1, 30, true)
+	var rep ScanReport
+	var err error
+	scaling.WithinFactor(t, "Scan over an annotation in 200 slots on each of 200 pages, against one slot a page", 20,
+		func() time.Duration {
+			return scaling.TimeOnce(func() {
+				if _, err := Scan(flat); err != nil {
+					t.Fatal(err)
+				}
+			})
+		},
+		func() time.Duration {
+			return scaling.TimeOnce(func() {
+				if rep, err = Scan(doc); err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
 	var actions int
 	for _, f := range rep.Findings {
 		if f.Kind == "action" {
@@ -1036,14 +1049,23 @@ func TestAnAnnotationSharedAcrossPagesIsWalkedOnce(t *testing.T) {
 	}
 	// StripActive's validated read is pdfcpu's validator, which walks the chain once per page per slot — 1,240,260
 	// paths here, 5.4 s before /pending 800 counted a page's /Annots whether or not it has /Resources. It is now
-	// refused at the reference door, at once.
-	start = time.Now()
-	if _, err := StripActive(doc); !errors.Is(err, pdfread.ErrReferencePaths) {
-		t.Fatalf("StripActive on 200 pages × 200 slots × a 30-action chain: want ErrReferencePaths, got %v", err)
-	}
-	if took := time.Since(start); took > time.Second {
-		t.Fatalf("refusing the shared-slot shape took %v", took)
-	}
+	// refused at the reference door, at once: against stripping the one-slot document, which the door admits and the
+	// validator walks (×0.17, measured; the 5.4 s was ×100 of it).
+	scaling.WithinFactor(t, "StripActive refusing 200 slots on each of 200 pages, against stripping one slot a page", 2,
+		func() time.Duration {
+			return scaling.TimeOnce(func() {
+				if _, err := StripActive(flat); err != nil {
+					t.Fatalf("the base, one slot a page, was not stripped: %v", err)
+				}
+			})
+		},
+		func() time.Duration {
+			return scaling.TimeOnce(func() {
+				if _, err := StripActive(doc); !errors.Is(err, pdfread.ErrReferencePaths) {
+					t.Fatalf("StripActive on 200 pages × 200 slots × a 30-action chain: want ErrReferencePaths, got %v", err)
+				}
+			})
+		})
 	// A shared shape the door admits (20 pages × 20 slots — 12,420 paths) is still stripped of its JavaScript.
 	out, err := StripActive(sharedAnnotsDoc(20, 20, 30, true))
 	if err != nil {
@@ -1127,13 +1149,12 @@ func TestManyAnnotationsNamingOneWideActionGraphAreRefused(t *testing.T) {
 	}
 	objs[10] = "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Join(next, " ") + "] >>"
 	doc := testpdf.Assemble(objs)
-	start := time.Now()
+	// No clock on this refusal (/pending 841). It carried "within 2 s", and at this size the walk the budget stops
+	// is too small for a clock to see: with the budget taken out the scan cost ×1.5 one annotation's, as it does
+	// with it in (25 ms, measured). The refusal is the assertion.
 	_, err := Scan(doc)
 	if !errors.Is(err, errActionWalkTooLarge) {
 		t.Fatalf("%d annotations naming one %d-action graph: want errActionWalkTooLarge, got %v", k, n, err)
-	}
-	if took := time.Since(start); took > 2*time.Second {
-		t.Fatalf("refusing took %v", took)
 	}
 	if _, err := StripActive(doc); !errors.Is(err, errActionWalkTooLarge) {
 		t.Fatalf("StripActive: want errActionWalkTooLarge, got %v", err)
@@ -1168,12 +1189,20 @@ func TestManyAnnotationsNamingOneWideActionGraphAreRefused(t *testing.T) {
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(shared, " ") + "] >>",
 		4: "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Repeat("0 ", 2000) + "] >>",
 	})
-	start = time.Now()
-	if _, err := Scan(zeros); !errors.Is(err, errActionWalkTooLarge) {
+	// Refused at about what ONE annotation over the same action costs — it is refused too, the array alone being
+	// past this file's budget — in the same rounds (/pending 841; it was "within 2 s", which measures the machine):
+	// ×2.3 to ×5 measured, and ×174 with the array's length uncharged.
+	one := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + shared[0] + "] >>",
+		4: "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Repeat("0 ", 2000) + "] >>",
+	})
+	scaling.WithinFactor(t, "refusing 200 annotations over one action whose /Next names 2,000 nothings, against one annotation over it", 30,
+		func() time.Duration { return scaling.TimeOnce(func() { Scan(one) }) },
+		func() time.Duration { return scaling.TimeOnce(func() { _, err = Scan(zeros) }) })
+	if !errors.Is(err, errActionWalkTooLarge) {
 		t.Fatalf("200 annotations over one action whose /Next names 2,000 nothings: want errActionWalkTooLarge, got %v", err)
-	}
-	if took := time.Since(start); took > 2*time.Second {
-		t.Fatalf("refusing took %v", took)
 	}
 	// And one annotation over the same chain is read whole: the budget is per file, not per chain.
 	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + annots[0] + "] >>"

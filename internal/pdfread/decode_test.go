@@ -12,6 +12,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 )
 
@@ -69,19 +70,32 @@ func allocatedBy(f func()) uint64 {
 // TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole is the item's own case at both page-content doors: one
 // 100 MiB stream named six times is a 600 MiB page, past `MaxPageContentBytes`, and both joins refuse it rather
 // than return it. On the old code both returned all 600 MiB.
+//
+// The refusal's cost is held against reading the same stream named ONCE, in the same rounds (/pending 841; it was
+// "under 20 s", which measures the machine): the stream is decoded once however often it is named, so refusing six
+// namings is one decode and five appends — ×3.6 to ×4.8 the one naming, measured — where a decode at every naming measured
+// ×8.0; the bound is between them. (The 20 s could not see that regression at all: it took 2.95 s.)
 func TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole(t *testing.T) {
 	ctx, page := namedRepeatedly(t, 100<<20, 6)
+	once, opage := namedRepeatedly(t, 100<<20, 1)
 	for name, read := range map[string]func(*model.Context, types.Dict, int) ([]byte, error){
 		"PageContent": pdfread.PageContent, "PageContentAsPdfcpu": pdfread.PageContentAsPdfcpu,
 	} {
-		start := time.Now()
-		b, err := read(ctx, page, 1)
-		if !errors.Is(err, pdfread.ErrDecodeLimit) {
-			t.Errorf("%s: one 100 MiB stream named six times read as %d MiB (err %v), want ErrDecodeLimit", name, len(b)>>20, err)
-		}
-		if el := time.Since(start); el > 20*time.Second {
-			t.Errorf("%s took %v to refuse, want well under 20 s", name, el)
-		}
+		scaling.WithinFactor(t, name+": refusing one 100 MiB stream named six times, against reading it named once", 5.5,
+			func() time.Duration {
+				return scaling.TimeOnce(func() {
+					if b, err := read(once, opage, 1); err != nil || len(b) != 100<<20 {
+						t.Fatalf("%s: the base, one 100 MiB stream named once, read as %d bytes (%v)", name, len(b), err)
+					}
+				})
+			},
+			func() time.Duration {
+				return scaling.TimeOnce(func() {
+					if b, err := read(ctx, page, 1); !errors.Is(err, pdfread.ErrDecodeLimit) {
+						t.Fatalf("%s: one 100 MiB stream named six times read as %d MiB (err %v), want ErrDecodeLimit", name, len(b)>>20, err)
+					}
+				})
+			})
 	}
 	// The control: under the bound, the page is read whole, and the two joins agree on these bytes.
 	small, spage := namedRepeatedly(t, 1<<20, 6)

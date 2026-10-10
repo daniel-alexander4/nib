@@ -11,6 +11,7 @@ import (
 
 	"nib/internal/contentstream"
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 )
 
@@ -152,24 +153,37 @@ func dividedPage(t *testing.T, n int, chunk []byte) (*model.Context, types.Dict)
 // TestTheJoinIsLinearInThePage — the P05.S01 review's critical: the separator test was handed the whole join so far,
 // so every join whose prefix held a `%` re-tokenized the page — 13.8 s for 1,000 streams, ~3 minutes for 4,000,
 // against pdfcpu's 10 ms. Each chunk ends in a space and holds `%` inside a string, which is the shape that reaches
-// the tokenize at every join. The bound is generous (linear is ~20 ms here); quadratic misses it by two orders.
+// the tokenize at every join.
+//
+// Bounded by SCALING, not by the clock (/pending 841): it was "1,000 streams within 2 s", which measures the machine.
+// Four times the streams cost a linear join ×4 and the quadratic one ×16; ×8 is the midpoint on a log scale, and the
+// sizes are interleaved through `scaling`.
 func TestTheJoinIsLinearInThePage(t *testing.T) {
 	chunk := []byte(strings.Repeat("(5%) Tj ", 100))
-	ctx, page := dividedPage(t, 1000, chunk)
-	start := time.Now()
-	out, err := pdfread.PageContent(ctx, page, 1)
-	took := time.Since(start)
-	if err != nil {
-		t.Fatal(err)
+	type fixture struct {
+		ctx  *model.Context
+		page types.Dict
 	}
-	// The stimulus: every chunk holds a `%` and ends in a space, so every join reaches the tokenize — and none is
-	// due a separator, which the length confirms.
-	if want := 1000 * len(chunk); len(out) != want {
-		t.Fatalf("the join is %d bytes, want %d — no separator was due, so the fixture is not what it claims", len(out), want)
-	}
-	if took > 2*time.Second {
-		t.Errorf("1,000 streams took %v to join; the join is not linear in the page", took)
-	}
+	built := map[int]fixture{}
+	scaling.GrowsLinearly(t, "joining a page's streams", 250, 1000, 8, func(n int) time.Duration {
+		f, ok := built[n]
+		if !ok {
+			f.ctx, f.page = dividedPage(t, n, chunk)
+			built[n] = f
+		}
+		var out []byte
+		var err error
+		took := scaling.TimeOnce(func() { out, err = pdfread.PageContent(f.ctx, f.page, 1) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The stimulus: every chunk holds a `%` and ends in a space, so every join reaches the tokenize — and none
+		// is due a separator, which the length confirms.
+		if want := n * len(chunk); len(out) != want {
+			t.Fatalf("the join is %d bytes, want %d — no separator was due, so the fixture is not what it claims", len(out), want)
+		}
+		return took
+	})
 }
 
 // TestAnArrayElementThatIsNotAStreamIsRefused — the door's errors are pdfcpu's: an element pdfcpu cannot read as a
