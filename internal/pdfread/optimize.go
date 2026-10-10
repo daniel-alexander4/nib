@@ -207,68 +207,85 @@ var freeReferencePass = fixFreeReferences
 // (:953) before its only other reader (:911) — and it ends holding what pdfcpu's walk would have left in it.
 //
 // It restates pdfcpu's pass exactly, including what it does not fix: only the FIRST reference met to a free object is
-// replaced, because a later one finds the object in the cache.
+// replaced, because a later one finds the object in the cache. "First" is pdfcpu's order — depth first, an array's
+// elements in order, an object's whole graph before its next sibling — so the walk keeps a frame per container rather
+// than a list of containers to do later: which of two references to one free object is replaced is the same one.
+// (A dictionary's entries come in Go's map order here as there.)
 func fixFreeReferences(ctx *model.Context) {
 	if ctx.PageCount == 0 || ctx.Optimize == nil || ctx.Optimize.Cache == nil {
 		return // pdfcpu's pass does nothing for a document with no pages (:1636)
 	}
-	stack := []types.Object{ctx.RootDict}
-	enter := func(ir types.IndirectRef) types.IndirectRef {
+	type frame struct {
+		dict types.Dict
+		keys []string
+		arr  types.Array
+		next int
+	}
+	open := func(o types.Object) (frame, bool) {
+		switch o := o.(type) {
+		case types.Dict:
+			keys := make([]string, 0, len(o))
+			for k := range o {
+				keys = append(keys, k)
+			}
+			return frame{dict: o, keys: keys}, true
+		case types.Array:
+			return frame{arr: o}, true
+		}
+		return frame{}, false
+	}
+	root, _ := open(ctx.RootDict)
+	stack := []frame{root}
+	for len(stack) > 0 {
+		f := &stack[len(stack)-1]
+		var v types.Object
+		var put func(types.IndirectRef)
+		switch {
+		case f.dict != nil && f.next < len(f.keys):
+			d, k := f.dict, f.keys[f.next]
+			v, put = d[k], func(ir types.IndirectRef) { d[k] = ir }
+		case f.dict == nil && f.next < len(f.arr):
+			a, i := f.arr, f.next
+			v, put = a[i], func(ir types.IndirectRef) { a[i] = ir }
+		default:
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		f.next++
+		ir, isRef := v.(types.IndirectRef)
+		if !isRef {
+			if inner, ok := open(v); ok {
+				stack = append(stack, inner)
+			}
+			continue
+		}
 		nr := ir.ObjectNumber.Value()
 		if ctx.Optimize.Cache[nr] {
-			return ir
+			continue
 		}
 		ctx.Optimize.Cache[nr] = true
 		e, found := ctx.Find(nr)
 		if !found {
-			return ir
+			continue
 		}
 		if e.Free {
 			if ctx.Optimize.NullObjNr == nil {
 				null, err := ctx.InsertObject(nil)
 				if err != nil {
-					return ir
+					return
 				}
 				ctx.Optimize.NullObjNr = &null
 			}
 			ir.ObjectNumber = types.Integer(*ctx.Optimize.NullObjNr)
-			return ir
+			put(ir)
+			continue
 		}
-		switch o := e.Object.(type) {
-		case types.Dict:
-			stack = append(stack, o)
-		case types.StreamDict:
-			stack = append(stack, o.Dict)
-		case types.Array:
-			stack = append(stack, o)
+		o := e.Object
+		if sd, ok := o.(types.StreamDict); ok {
+			o = sd.Dict
 		}
-		return ir
-	}
-	visit := func(v types.Object) (types.Object, bool) {
-		switch v := v.(type) {
-		case types.IndirectRef:
-			return enter(v), true
-		case types.Dict, types.Array:
-			stack = append(stack, v)
-		}
-		return nil, false
-	}
-	for len(stack) > 0 {
-		o := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		switch o := o.(type) {
-		case types.Dict:
-			for k, v := range o {
-				if ir, ok := visit(v); ok {
-					o[k] = ir
-				}
-			}
-		case types.Array:
-			for i, v := range o {
-				if ir, ok := visit(v); ok {
-					o[i] = ir
-				}
-			}
+		if inner, ok := open(o); ok {
+			stack = append(stack, inner)
 		}
 	}
 }
