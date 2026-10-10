@@ -3470,6 +3470,57 @@ function confirmSignatureLoss() {
     + 'signature, and it cannot be restored. Continue?');
 }
 
+// unbakedEdits names, in the words the question uses, what a reload of `owner` would discard — nothing
+// when it would discard nothing. `baked` and the unsaved test are `confirmOverlayLoss`'s, below.
+function unbakedEdits(owner, baked) {
+  const lost = [];
+  const count = (n, one, many) => (n === 1 ? '1 ' + one : n + ' ' + many);
+  if (!baked) {
+    if (owner.overlayFields.length) {
+      lost.push(count(owner.overlayFields.length, 'item', 'items')
+        + ' you placed on the pages (text, a signature, a stamp, a note or a field)');
+    }
+    if (owner.dirty && owner.pdfDocument && owner.pdfDocument.annotationStorage.size > 0) {
+      lost.push('what you typed into the form or drew on the pages');
+    }
+  }
+  if (owner.redactMarks.length) {
+    lost.push(count(owner.redactMarks.length, 'redaction box', 'redaction boxes') + ' not applied yet');
+  }
+  return lost;
+}
+// confirmOverlayLoss is the ONE door (ADR-009) in front of every operation whose answer is loaded back
+// from the server (/pending 791). That load is `setDocumentFromServer` → `clearOverlays`: it removes what
+// has been placed on the pages and not yet made part of the document, every redaction box not yet applied,
+// and — with the old pdf.js document — what was typed into the form or drawn with the pen and highlighter.
+// Server Undo brings back the server's bytes and none of this. Reflow, the OCR read, the three removals,
+// both unlocks and attaching a file sent nothing of it and said nothing; so the user is told what would go,
+// in the browser's own question as `confirmSignatureLoss` asks, and chooses.
+//
+// `baked` is for an operation that sends `bakedBytes` first (the page operations, the outline, Flatten,
+// Remove originals): what is placed, typed and drawn is IN the bytes it sends, so only the redaction boxes
+// are lost, and it is asked about those alone.
+//
+// What was typed is counted only while the document has unsaved changes: Save posts the values and keeps
+// the pdf.js document, so after it the storage still holds them and the server does too.
+//
+// Asking, and not applying the edits first: the routes behind these operations take no document bytes —
+// they act on the server's copy, and a paragraph number, a tag's id and the pages a read was planned for
+// all name THAT copy — so there is nothing to send the edits in. Save is the way to keep them, and the
+// question says so. `test/jsdom/pinning.test.mjs` holds every reload to this door or to a named exemption.
+function confirmOverlayLoss(owner = view, baked = false) {
+  const lost = unbakedEdits(owner, baked);
+  if (!lost.length) return true;
+  // How to keep each kind: Save bakes what is placed, typed and drawn; a redaction box is kept only by applying it.
+  const marks = owner.redactMarks.length > 0;
+  const how = [];
+  if (lost.length > (marks ? 1 : 0)) how.push(owner.docMeta && owner.docMeta.canSave ? 'save the document' : 'save a copy');
+  if (marks) how.push('apply the redactions');
+  return confirm('This will discard edits that are not part of the document yet:\n\n'
+    + lost.map((l) => '  •  ' + l).join('\n') + '\n\nTo keep them, choose Cancel, then '
+    + how.join(' and ') + ' first. Continue and discard them?');
+}
+
 // SIGNATURE_ERASURE_TOKEN is the phrase the server's refusal carries, and the two copies are held
 // together by a tier-1 test rather than by care (/pending 455).
 //
@@ -7011,6 +7062,7 @@ async function runSanitize(method, stepDown) {
   const opDoc = owner.docMeta;
   if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
+  if (!confirmOverlayLoss(owner)) return;
   const res = await apiFetch('/api/sanitize?method=' + method, { method: 'POST', docId: opDoc && opDoc.id });
   if (!res.ok) return toast(await errText(res, 'removal failed'));
   const out = await res.json();
@@ -7046,6 +7098,7 @@ els.decryptBtn.onclick = async () => {
   const owner = view;
   if (!owner.pdfDocument) return toast('Open a PDF first');
   if (!confirmSignatureLoss()) return;
+  if (!confirmOverlayLoss(owner)) return;
   const out = await postDecrypt('', owner); // an open doc decrypts with the empty user password
   if (!out) return;
   if (out.reason === 'plain') return toast('This document isn’t password-protected');
@@ -7068,6 +7121,9 @@ els.decryptGo.onclick = async () => {
   // otherwise be applied to the document they are looking at), so entry is the right
   // capture point — and the reload on the far side of the round-trip still needs it.
   const owner = view;
+  // Nothing to lose where the prompt is raised for a document that would not open; asked all the same, because
+  // the prompt can also follow the Secure-tab button (the `password` answer above) on a document that did.
+  if (!confirmOverlayLoss(owner)) return;
   const out = await postDecrypt(els.decryptPw.value, owner);
   if (!out) return;
   if (out.reason === 'password') {
@@ -7152,6 +7208,7 @@ els.scanFlattenBtn.onclick = async () => {
   const opDoc = owner.docMeta;
   if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
+  if (!confirmOverlayLoss(owner, true)) return; // the pictures are of the baked pages; a redaction box is not on them
   const pages = await renderFilledPages(2, undefined, undefined, undefined, owner);
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -7268,6 +7325,7 @@ els.attachInput.onchange = async () => {
   els.attachInput.value = '';
   if (!file) return;
   if (!confirmSignatureLoss()) return;
+  if (!confirmOverlayLoss(owner)) return;
   const form = new FormData();
   form.append('file', file, file.name);
   form.append('name', file.name);
@@ -7318,6 +7376,14 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     canvas.onclick = (e) => onThumbClick(owner, e, n);
+    // The keyboard's way in (/pending 778, WCAG 2.1.1): the click was the only path into `selectedPages`, so the
+    // selection bar's rotate, move and delete — real buttons — could not be reached without a pointer.
+    canvas.tabIndex = 0;
+    canvas.setAttribute('role', 'button');
+    canvas.setAttribute('aria-label', 'Page ' + n);
+    canvas.setAttribute('aria-pressed', 'false');
+    canvas.title = 'Enter goes to this page. Space selects it; Shift+Space selects from the last one chosen.';
+    canvas.onkeydown = (e) => onThumbKey(owner, e, n);
 
     const acts = document.createElement('div');
     acts.className = 'thumbacts';
@@ -7395,6 +7461,28 @@ function onThumbClick(owner, e, n) {
   markSelectedThumbs(owner);
 }
 
+// onThumbKey is the same three gestures from the keyboard, through the same function: Enter is the plain
+// click (go to the page, selection cleared), Space the Ctrl-click (this page in or out of the selection),
+// Shift+Space the Shift-click (everything from the last page chosen to this one — and with none chosen yet,
+// this page). The arrow keys, Home and End move between thumbnails; each is also a tab stop.
+function onThumbKey(owner, e, n) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    onThumbClick(owner, {}, n);
+  } else if (e.key === ' ') {
+    e.preventDefault(); // or the panel scrolls
+    onThumbClick(owner, e.shiftKey && owner.selAnchor != null ? { shiftKey: true } : { ctrlKey: true }, n);
+  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+    const thumbs = [...owner.thumbGrid.querySelectorAll('.thumb')];
+    const i = thumbs.indexOf(e.currentTarget);
+    const to = e.key === 'Home' ? 0 : e.key === 'End' ? thumbs.length - 1 : i + (e.key === 'ArrowDown' ? 1 : -1);
+    if (!thumbs[to]) return;
+    e.preventDefault();
+    thumbs[to].focus();
+  }
+}
+
 function clearSelection(owner = view) {
   owner.selectedPages.clear();
   owner.selAnchor = null;
@@ -7403,7 +7491,10 @@ function clearSelection(owner = view) {
 
 function markSelectedThumbs(owner = view) {
   owner.thumbGrid.querySelectorAll('.thumbwrap').forEach((c) => {
-    c.classList.toggle('selected', owner.selectedPages.has(Number(c.dataset.page)));
+    const on = owner.selectedPages.has(Number(c.dataset.page));
+    c.classList.toggle('selected', on);
+    const thumb = c.querySelector('.thumb');
+    if (thumb) thumb.setAttribute('aria-pressed', String(on)); // said, not only coloured
   });
   // The selection BAR is one element for N documents — shared chrome. A background view
   // records its own selection on its own thumbnails and paints nothing here, or a document
@@ -7555,6 +7646,7 @@ async function pageOp(op, extra = {}) {
   const opDoc = owner.docMeta;
   if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
+  if (!confirmOverlayLoss(owner, true)) return; // baked below: only the redaction boxes go with the reload
   const form = await bakedForm(owner);
   form.append('op', op);
   if (extra.pages) form.append('pages', extra.pages);
@@ -7943,6 +8035,8 @@ async function reflowSubmit() {
   const owner = view;
   const p = reflowParas[Number(els.reflowPick.value)];
   if (reflowBusy || !p || !owner.docMeta || owner.docMeta.id !== els.reflowModal.dataset.doc) return;
+  // Asked here, where the edit is sent: a No leaves the dialog open with what was typed.
+  if (!confirmOverlayLoss(owner)) return;
   const fd = new FormData();
   fd.append('page', els.reflowModal.dataset.page);
   fd.append('paragraph', String(p.index));
@@ -8239,6 +8333,7 @@ els.outlineSave.onclick = async () => {
     if (titles.has(t)) return toast(`Bookmark titles must be unique: “${t}”`);
     titles.add(t);
   }
+  if (!confirmOverlayLoss(owner, true)) return; // baked below: only the redaction boxes go with the reload
   const form = await bakedForm(owner);
   form.append('outline', JSON.stringify(owner.outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
   const res = await apiFetch('/api/outline', { method: 'POST', body: form, docId: opDoc && opDoc.id });
@@ -9104,6 +9199,9 @@ async function runOCR(cmd = null) {
   // and this is the check that does not depend on a list. A command's read was refused at its own door.
   if (!cmd && view.signLocked) { toast('This document is locked for signing, and reading a scan changes it.'); return { outcome: 'refused' }; }
   if (!cmd && (!view.pdfDocument || !confirmSignatureLoss())) return { outcome: 'refused' };
+  // The words are stamped on the server's copy and the document is loaded back (/pending 791). A command's
+  // read was asked about at its own door, in `ensureText`.
+  if (!cmd && !confirmOverlayLoss(view)) return { outcome: 'refused' };
   // CAPTURED before the first await (D7). OCR is the longest operation in the app —
   // loading the engine, then a recognition pass per page — so the window in which the
   // open document can change is measured in tens of seconds. The text layer is stamped
@@ -9314,6 +9412,10 @@ async function ensureText(owner, pages = null, opts = {}) {
   if (ocrRun) return stop('refused', todo, 'Nib is already reading a scan — try again when it has finished.');
   if (!confirmSignatureLoss()) {
     return stop('refused', todo, `${which} and ${one || todo.length === 1 ? 'was' : 'were'} not read, so the signature stands.`);
+  }
+  // A read loads the document back, and what is not yet part of it goes with the load (/pending 791).
+  if (!confirmOverlayLoss(owner)) {
+    return stop('refused', todo, `${which} and ${one || todo.length === 1 ? 'was' : 'were'} not read, so your edits are kept.`);
   }
   status(one ? 'Reading this page first…' : (todo.length === 1 ? 'Reading 1 scanned page first…' : `Reading ${todo.length} scanned pages first…`));
   let got;
@@ -12032,6 +12134,7 @@ els.removeOriginalsBtn.onclick = async () => {
   const pages = [...new Set(owner.overlayFields.filter((f) => f.kind === 'edit').map((f) => f.page))];
   if (!pages.length) return toast('No text edits to flatten');
   if (!confirm('Make the text edits permanent? The edited page(s) become flat images and the original text underneath is removed. This cannot be undone.' + signatureWarning())) return;
+  if (!confirmOverlayLoss(owner, true)) return; // flattenPages bakes; only the redaction boxes go with the reload
 
   const res = await flattenPages(pages);
   if (!res.ok) return toast(await flattenRefusal(res, 'could not flatten edits'));

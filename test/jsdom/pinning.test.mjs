@@ -604,6 +604,77 @@ test('every reload names the view it lands in', () => {
     `a reload with no target: it installs the response into whatever view is active when the round-trip returns, wiping that view's overlays, redact marks and undo stack — ${found.map((f) => `${f.route} at app.js:${f.line}`).join(', ')}`);
 });
 
+// ── /pending 791 — every reload is behind the overlay-loss door, or is named ──────────────────────
+// `setDocumentFromServer` empties the view's placed items, its redaction boxes and (with the old pdf.js
+// document) what was typed into the form. Nine operations did that with no question. The rule is ONE door,
+// `confirmOverlayLoss`, and this checks ROUTING (ADR-009): the function a reload sits in calls the door
+// before it reloads, or is in the list below with its reason. A tenth operation added without the door is
+// a name this test has not been told about.
+//
+// It cannot see: whether the door is called on the right view, or early enough to stop the REQUEST (a call
+// after the request would pass). The behaviour is held in autoprereq.test.mjs.
+const NO_OVERLAY_DOOR = {
+  openInNewView: 'a new view: nothing was there to lose',
+  installOpened: 'the first document into an empty view',
+  reloadFromDisk: 'its one caller is the automatic reload, taken only when hasUnsavedWork is false',
+  save: 'bakes everything and writes it: nothing placed or typed is lost',
+  doUndo: 'declined #47: Undo discarding overlay edits is deliberate',
+  doRedo: 'declined #47, as Undo',
+  'els.staleRetry.onclick': 'loads again a document that failed to load',
+  'els.applyRedactBtn.onclick': 'applies the boxes, bakes the rest, and asks its own question',
+  sessionInit: 'bakes before it signs; a redaction box not yet applied still goes (residue, in the ceremony)',
+};
+// Owed, not exempt: the tag editor's three senders lose the same edits and were left alone the night the
+// door was built (another change was in those functions). Each needs `if (!confirmOverlayLoss(owner)) return;`
+// before its request; when one has it, this test says to take its name out.
+const OVERLAY_DOOR_OWED = ['commitTags', 'sendTagEdits', 'removeAllTags'];
+
+function reloadSites(src) {
+  const code = src.split('\n').map((l) => (l.trim().startsWith('//') ? '' : l.replace(/\s\/\/ .*$/, ''))).join('\n');
+  const heads = [...code.matchAll(/^(?:async function|function|els\.|const |let )[^\n]*/gm)];
+  const out = [];
+  const call = /(?<![.\w$])setDocumentFromServer\(/g;
+  let m;
+  while ((m = call.exec(code)) !== null) {
+    if (/function\s+$/.test(code.slice(Math.max(0, m.index - 24), m.index))) continue; // the declaration
+    const head = heads.filter((h) => h.index <= m.index).pop();
+    const line = head ? head[0] : '';
+    const named = /function\s+(\w+)/.exec(line) || /^(els\.\w+\.\w+)/.exec(line) || /^(?:const|let)\s+(\w+)/.exec(line);
+    out.push({
+      name: named ? named[1] : '(top level)',
+      door: /(?<![.\w$])confirmOverlayLoss\(/.test(code.slice(head ? head.index : 0, m.index)),
+      line: code.slice(0, m.index).split('\n').length,
+    });
+  }
+  return out;
+}
+
+test('the overlay-door scan reports a reload with no door, and not one behind it — its own stimulus', () => {
+  const tenth = 'async function runTenth() {\n  const owner = view;\n  const res = await apiFetch(\'/api/tenth\', { method: \'POST\' });\n  await setDocumentFromServer(await res.json(), owner);\n}\n';
+  assert.deepEqual(reloadSites(tenth).map((s) => [s.name, s.door]), [['runTenth', false]]);
+  const behind = tenth.replace('const res', 'if (!confirmOverlayLoss(owner)) return;\n  const res');
+  assert.deepEqual(reloadSites(behind).map((s) => [s.name, s.door]), [['runTenth', true]]);
+  // A door named only in a comment is not a door, and the function ABOVE having one does not excuse this one.
+  const said = tenth.replace('const res', '// confirmOverlayLoss(owner) belongs here\n  const res');
+  assert.equal(reloadSites(behind + said)[1].door, false);
+});
+
+test('every reload is behind confirmOverlayLoss, or is named with its reason', () => {
+  const sites = reloadSites(APP);
+  assert.ok(sites.length >= 15, `only ${sites.length} reload sites found — the scan is not reading app.js properly`);
+  const bare = sites.filter((s) => !s.door && !(s.name in NO_OVERLAY_DOOR) && !OVERLAY_DOOR_OWED.includes(s.name));
+  assert.deepEqual(bare.map((s) => `${s.name} at app.js:${s.line}`), [],
+    'an operation loads the document back without asking: what is placed on the pages, typed into the form or marked for redaction is discarded with no question. Call confirmOverlayLoss(owner) before the request (pass true if it sends bakedBytes), or name it in NO_OVERLAY_DOOR with the reason');
+  const names = new Set(sites.map((s) => s.name));
+  for (const name of [...Object.keys(NO_OVERLAY_DOOR), ...OVERLAY_DOOR_OWED]) {
+    assert.ok(names.has(name), `${name} is excused from the overlay-loss door and no longer reloads a document — the list has drifted`);
+  }
+  for (const s of sites) {
+    assert.ok(!(s.door && (s.name in NO_OVERLAY_DOOR || OVERLAY_DOOR_OWED.includes(s.name))),
+      `${s.name} now calls confirmOverlayLoss and is still listed as not doing so — take its name out`);
+  }
+});
+
 // The idiom changed in P05.S01/S02: `docMeta` became `view.docMeta` when document state
 // moved onto the view record. This guard was RE-DERIVED to the new idiom rather than
 // loosened until it passed — the distinction P03.S02 had to make when the registry

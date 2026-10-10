@@ -41,6 +41,8 @@ let paragraphsNow = null; // a page that has paragraphs without being read first
 const reflows = []; // the paragraph each reflow request named
 let reflowGate = null;
 let reflowStatus = 200, reflowError = '';
+let reflowDone = false; // a reflow that is applied, so the document is loaded back
+const sent = []; // each sanitize, page operation and save the server was sent
 let docsNow = null;
 let redactAnswer = { status: 200, body: {} };
 let profile = {};
@@ -67,8 +69,12 @@ const h = await boot({
       reflows.push(opts.body.get('paragraph'));
       if (reflowGate) await reflowGate;
       if (reflowStatus !== 200) return new Response(JSON.stringify({ error: reflowError }), { status: reflowStatus, headers: { 'Content-Type': 'application/json' } });
-      return { ...nextOpen, ok: false, cause: 'page-full' };
+      return reflowDone ? { ...nextOpen, ok: true, canUndo: true } : { ...nextOpen, ok: false, cause: 'page-full' };
     },
+    // /pending 791: the operations that load the document back, counted.
+    '/api/sanitize': () => { sent.push('sanitize'); return { ...nextOpen, ok: true, canUndo: true, residual: { findings: [] } }; },
+    '/api/pages': () => { sent.push('pages'); return { ...nextOpen, canUndo: true }; },
+    '/api/save': () => { sent.push('save'); return nextOpen; },
     // Every 409 makes the window reconcile its tabs with the server; a test that answers one says what is open.
     '/api/docs': () => docsNow || { docs: [], activeId: '' },
     // /pending 834: the flatten route refusing in its own words.
@@ -707,4 +713,158 @@ test('a redaction the server refuses is told in the server\'s words; a declined 
   redactAnswer = { status: 200, body: {} };
   globalThis.Blob = nodeBlob;
   win.HTMLCanvasElement.prototype.toBlob = stubToBlob;
+});
+
+// ── /pending 791 — an operation that loads the document back asks before it discards an edit ──
+// Reflow, the OCR read, the removals, both unlocks and attaching a file act on the SERVER's copy and load
+// it back: what was typed into the form, placed on the pages or marked for redaction went with the old
+// document, and nothing was said. `confirmOverlayLoss` is the one door; the routing — that every reload is
+// behind it — is pinning.test.mjs's. Here: that it asks, that No sends nothing and keeps the edit, that it
+// says what is at stake and how to keep it, and that it stays silent when nothing is.
+//
+// Cannot be driven here: an item PLACED on a page (it needs layout). A typed form value and a redaction
+// box are the two kinds jsdom can make; the placed kind is counted by the same function and is tier 3's.
+const typeIntoForm = () => pdfjs.lastDocument.annotationStorage.set('field-1', { value: 'typed' }); // pdf.js tells the app, as for a real fill
+
+test('a reflow asks before it discards what was typed into the form: No sends nothing and keeps it, Yes sends it', async () => {
+  await open('ov.pdf', ['one two'], []);
+  paragraphsNow = [{ index: 0, text: 'first paragraph' }];
+  const typedIn = pdfjs.lastDocument;
+  typeIntoForm();
+  $('reflowBtn').click();
+  await settle(40);
+  assert.equal($('reflowModal').hidden, false, 'setup: the reflow dialog did not open');
+  reflows.length = 0; reflowDone = true;
+  $('reflowText').value = 'first paragraph, edited';
+  h.confirms.length = 0; h.setConfirmAnswer(false);
+  $('reflowGo').click();
+  await settle(40);
+  assert.equal(h.confirms.length, 1, 'the reflow was sent with a typed form value unsaved, and nothing was asked: the value goes with the document that is replaced');
+  assert.match(h.confirms[0], /what you typed into the form/, 'the question does not say what would be lost');
+  assert.match(h.confirms[0], /choose Cancel, then save the document first/, 'the question does not say how to keep it');
+  assert.deepEqual(reflows, [], 'the user said No and the reflow was sent');
+  assert.equal(pdfjs.lastDocument, typedIn, 'the user said No and the document was loaded again');
+  assert.equal(typedIn.annotationStorage.size, 1);
+  assert.equal($('reflowModal').hidden, false, 'a No closed the dialog: what the user typed there is gone');
+  assert.equal($('reflowText').value, 'first paragraph, edited');
+  h.setConfirmAnswer(true);
+  $('reflowGo').click();
+  await settle(40);
+  assert.deepEqual(reflows, ['0'], 'the user said Yes and the reflow was not sent');
+  assert.notEqual(pdfjs.lastDocument, typedIn, 'setup: an applied reflow did not load the document back');
+  reflowDone = false; paragraphsNow = null;
+});
+
+test('with nothing unsaved the removal asks nothing; after a Save the typed values are the document\'s and it still asks nothing', async () => {
+  await open('ov2.pdf', ['one two'], []);
+  sent.length = 0;
+  $('scanStripBtn').click();
+  await settle(40);
+  assert.deepEqual(h.confirms, [], 'an unedited document was asked about edits it does not have');
+  assert.deepEqual(sent, ['sanitize']);
+  // Typed, then saved: Save posts the values and keeps the pdf.js document, so its storage still holds them.
+  typeIntoForm();
+  $('saveBtn').click();
+  await settle(40);
+  assert.deepEqual(sent, ['sanitize', 'save'], 'setup: the save was not sent');
+  assert.equal(pdfjs.lastDocument.annotationStorage.size, 1, 'setup: the storage was emptied by the save, so this proves nothing');
+  $('scanStripBtn').click();
+  await settle(40);
+  assert.deepEqual(h.confirms, [], 'saved values were called edits that would be discarded');
+  assert.deepEqual(sent, ['sanitize', 'save', 'sanitize']);
+});
+
+test('a redaction box not yet applied is asked about by a removal, and by a page operation — which is asked about nothing else', async () => {
+  await open('ov3.pdf', ['a secret here'], []);
+  await search('secret');
+  assert.match(toastText(), /^1 match\(es\) marked/, 'setup: nothing is marked');
+  typeIntoForm();
+  sent.length = 0; h.confirms.length = 0; h.setConfirmAnswer(false);
+  $('scanStripBtn').click();
+  await settle(40);
+  assert.equal(h.confirms.length, 1, 'a removal with a redaction box pending asked nothing');
+  assert.match(h.confirms[0], /1 redaction box not applied yet/);
+  assert.match(h.confirms[0], /what you typed into the form/);
+  assert.match(h.confirms[0], /then save the document and apply the redactions first/);
+  assert.deepEqual(sent, [], 'the user said No and the removal was sent');
+  // A page operation sends the baked document: what is typed is in it, and only the box is lost.
+  h.confirms.length = 0;
+  $('rotateRightBtn').click();
+  await settle(40);
+  assert.equal(h.confirms.length, 1, 'a page operation with a redaction box pending asked nothing');
+  assert.match(h.confirms[0], /1 redaction box not applied yet/);
+  assert.doesNotMatch(h.confirms[0], /typed|placed/, 'a page operation bakes what is typed and placed, and said it would be discarded');
+  assert.match(h.confirms[0], /choose Cancel, then apply the redactions first/);
+  assert.deepEqual(sent, [], 'the user said No and the page operation was sent');
+  // The box is still there to apply: Apply does not say there is nothing to redact.
+  h.confirms.length = 0;
+  $('applyRedactBtn').click();
+  await settle(20);
+  assert.match(h.confirms[0] || '', /^Permanently redact/, 'the redaction box did not survive the two refusals');
+});
+
+test('a command that would read a scan first asks before the read discards an edit, and No reads nothing and says so', async () => {
+  await open('ov4.pdf', [''], [1], ['now read']);
+  typeIntoForm();
+  h.confirms.length = 0; h.setConfirmAnswer(false);
+  $('readAloudBtn').click();
+  await settle(60);
+  assert.equal(h.confirms.length, 1, 'the scan was read for a command with a typed value unsaved, and nothing was asked');
+  assert.match(h.confirms[0], /what you typed into the form/);
+  assert.equal(posted, null, 'the user said No and the page was read');
+  assert.equal(toastText(), 'This page is a scan and was not read, so your edits are kept.');
+  // The OCR button asks the same question.
+  $('ocrBtn').click();
+  await settle(60);
+  assert.equal(h.confirms.length, 2, 'the OCR button read a scan with a typed value unsaved and asked nothing');
+  assert.equal(posted, null);
+  h.setConfirmAnswer(true);
+});
+
+// ── /pending 778 — a page is selected from the keyboard ──────────────────────
+// A thumbnail was a canvas with a click handler and nothing else, and the click was the only way into the
+// selection — so the selection bar's rotate, move and delete could not be reached without a pointer.
+// Cannot be seen here: the focus ring (tier 3 — it is CSS), and a screen reader's reading of the button.
+test('a thumbnail is a tab stop that says what it is; Enter goes to the page, Space selects, Shift+Space selects a range', async () => {
+  await open('th.pdf', ['a', 'b', 'c', 'd'], []);
+  const thumbs = [...doc.querySelectorAll('.thumbgrid:not([hidden]) .thumb')];
+  assert.equal(thumbs.length, 4, 'setup: the four thumbnails were not built');
+  const key = (el, k, extra = {}) => {
+    const e = new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra });
+    el.dispatchEvent(e);
+    return e;
+  };
+  const selected = () => thumbs.map((t, i) => (t.parentNode.classList.contains('selected') ? i + 1 : 0)).filter(Boolean);
+  for (const t of thumbs) {
+    assert.equal(t.tabIndex, 0, 'a thumbnail cannot be reached with Tab');
+    assert.equal(t.getAttribute('role'), 'button');
+  }
+  assert.equal(thumbs[2].getAttribute('aria-label'), 'Page 3');
+  // Space selects, and says so; the bar with the page actions appears.
+  const sp = key(thumbs[1], ' ');
+  assert.deepEqual(selected(), [2], 'Space on a thumbnail did not select its page');
+  assert.equal(sp.defaultPrevented, true, 'Space also scrolls the panel');
+  assert.equal(thumbs[1].getAttribute('aria-pressed'), 'true', 'the selection is shown by colour alone');
+  assert.equal($('thumbSelBar').hidden, false);
+  assert.equal($('thumbSelCount').textContent, '1 selected');
+  // Shift+Space: from the last page chosen to this one.
+  key(thumbs[3], ' ', { shiftKey: true });
+  assert.deepEqual(selected(), [2, 3, 4], 'Shift+Space did not select the range');
+  // Space again takes a page out.
+  key(thumbs[2], ' ');
+  assert.deepEqual(selected(), [2, 4]);
+  assert.equal(thumbs[2].getAttribute('aria-pressed'), 'false');
+  // The arrow keys move between thumbnails.
+  thumbs[0].focus();
+  key(thumbs[0], 'ArrowDown');
+  assert.equal(doc.activeElement, thumbs[1], 'ArrowDown did not move to the next thumbnail');
+  key(thumbs[1], 'End');
+  assert.equal(doc.activeElement, thumbs[3]);
+  key(thumbs[3], 'ArrowUp');
+  assert.equal(doc.activeElement, thumbs[2]);
+  // Enter is the plain click: the page, and the selection cleared.
+  key(thumbs[2], 'Enter');
+  assert.deepEqual(selected(), [], 'Enter did not clear the selection as a plain click does');
+  assert.equal(doc.querySelector('.pageNum').value, '3', 'Enter on a thumbnail did not go to its page');
+  assert.equal($('thumbSelBar').hidden, true);
 });

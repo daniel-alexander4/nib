@@ -415,6 +415,8 @@ input[type="search"] { width: 100%; }
 }
 .thumbwrap.current .thumb { border-color: var(--blue); }
 .thumbwrap.selected .thumb { border-color: var(--mauve); }
+/* A thumbnail is a tab stop (/pending 778); the ring is outside the border, which already says current/selected. */
+.thumb:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 /* Rotate / rotate / delete, revealed on hover — but NOT with `display: none`, which is
    what this was. A display:none button cannot be focused, so the only way to rotate or
    delete a page was to have a pointer: keyboard-only operation of these three actions was
