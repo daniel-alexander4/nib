@@ -27,9 +27,13 @@ type TagElement struct {
 	Text   string `json:"text"`
 	Marker string `json:"marker,omitempty"`
 	List   int    `json:"list"`
+	// Parent is the ID of the element this one sits under, or -1 at the top level. Only a table has children:
+	// Table, then each TR and its TH/TD cells directly after it, row by row (ADR-121).
+	Parent int `json:"parent"`
 	// Rect is the element's extent on its page in PDF user space: left, bottom, right, top. The
 	// vertical extent is ESTIMATED from baselines and size (0.85 em up, 0.25 em down) — enough to
-	// point at an element, not a measurement of its glyph boxes.
+	// point at an element, not a measurement of its glyph boxes. A table, a row and a cell carry the ruled
+	// grid's own box instead.
 	Rect [4]float64 `json:"rect"`
 	// PageBox is the page's MediaBox — llx, lly, urx, ury — so a client can place Rect on the page it
 	// renders. Page rotation and CropBox are not applied.
@@ -66,7 +70,8 @@ var ErrTagsStale = errCommitStale
 // a role nobody can choose, or nothing left to commit.
 var ErrTagsReview = errors.New("pdfops: the review cannot be applied")
 
-// reviewRoles is what a reviewer may choose.
+// reviewRoles is what a reviewer may choose for an element that is not part of a table. A cell is a TH or a
+// TD (`cellRoles`); a Table and a TR keep their type.
 var reviewRoles = map[string]bool{"H1": true, "H2": true, "H3": true, "H4": true, "H5": true, "H6": true, "P": true, "LI": true}
 
 // ProposeTags proposes a structure for pdf. It writes nothing.
@@ -92,7 +97,7 @@ func ProposeTags(pdf []byte) (TagProposal, error) {
 			boxes[el.page] = box
 		}
 		out.Elements = append(out.Elements, TagElement{
-			ID: i, Role: el.role, Page: el.page, Text: el.text, Marker: el.marker, List: el.list,
+			ID: i, Role: el.role, Page: el.page, Text: el.text, Marker: el.marker, List: el.list, Parent: el.parent,
 			Rect: elementRect(el), PageBox: box,
 		})
 	}
@@ -123,6 +128,15 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 	seen := map[int]bool{}
 	var ordered []proposedElement
 	var ignoredPages []int // a page whose elements are all ignored is still committed — see commitProposal
+	// A table is reviewed as one thing (ADR-121): its rows and cells stay under it, in the order proposed. They
+	// were proposed consecutively, so "each directly after the element proposed before it" is the whole rule —
+	// it holds the parent first, the subtree unbroken and every row and cell in place.
+	//
+	// **A table the reviewer says is not one is written as paragraphs** — the Table reviewed as `P`. A ruled form
+	// tiles as regularly as a table does, and without this the only answers to a grid that is not a table were to
+	// tag it as one or to ignore it, which marks its text as decoration. Each cell that has text becomes a
+	// paragraph, row by row, and the Table and its rows are not written.
+	last, ignoredTable, declined := -1, -1, false
 	for _, r := range reviewed {
 		if r.ID < 0 || r.ID >= len(p.elements) || seen[r.ID] {
 			return nil, fmt.Errorf("%w: element %d is unknown or listed twice", ErrTagsReview, r.ID)
@@ -132,11 +146,44 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 		if el.text != r.Text {
 			return nil, fmt.Errorf("%w (element %d)", errCommitStale, r.ID)
 		}
-		if r.Ignore {
+		inTable := el.parent >= 0
+		if inTable && last != r.ID-1 {
+			return nil, fmt.Errorf("%w: a table's rows and cells stay under it in the order they were proposed (element %d) — move the whole table", ErrTagsReview, r.ID)
+		}
+		last = r.ID
+		if inTable && r.Ignore {
+			return nil, fmt.Errorf("%w: a row or a cell cannot be ignored by itself (element %d) — ignore the whole table", ErrTagsReview, r.ID)
+		}
+		if el.role == "Table" {
+			ignoredTable, declined = -1, !r.Ignore && r.Role == "P"
+			if r.Ignore {
+				ignoredTable = r.ID
+			}
+			if declined {
+				continue
+			}
+		}
+		if r.Ignore || (inTable && ignoredTable >= 0) {
 			ignoredPages = append(ignoredPages, el.page)
 			continue
 		}
-		if !reviewRoles[r.Role] {
+		if inTable && declined {
+			if cellRoles[el.role] && len(el.lines) > 0 {
+				el.role, el.parent = "P", -1
+				ordered = append(ordered, el)
+			}
+			continue
+		}
+		switch {
+		case cellRoles[el.role]:
+			if !cellRoles[r.Role] {
+				return nil, fmt.Errorf("%w: a table cell is a header cell (TH) or a data cell (TD), not %q (element %d)", ErrTagsReview, r.Role, r.ID)
+			}
+		case tableRoles[el.role]:
+			if r.Role != el.role {
+				return nil, fmt.Errorf("%w: a table and its rows keep their type (a table that is not one is reviewed as P, and its cells are written as paragraphs) — %q cannot be made %q (element %d)", ErrTagsReview, el.role, r.Role, r.ID)
+			}
+		case !reviewRoles[r.Role]:
 			return nil, fmt.Errorf("%w: %q is not a role a reviewer can choose", ErrTagsReview, r.Role)
 		}
 		el.role = r.Role
@@ -174,6 +221,9 @@ func mediaBoxOf(pg pdfread.Page) [4]float64 {
 }
 
 func elementRect(el proposedElement) [4]float64 {
+	if el.boxed {
+		return el.box
+	}
 	if len(el.lines) == 0 {
 		return [4]float64{}
 	}

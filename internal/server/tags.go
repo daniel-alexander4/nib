@@ -20,12 +20,14 @@ import (
 
 // tagElementView is one proposed element on the wire.
 type tagElementView struct {
-	ID      int        `json:"id"`
-	Role    string     `json:"role"`
-	Page    int        `json:"page"`
-	Text    string     `json:"text"`
-	Marker  string     `json:"marker,omitempty"`
-	List    int        `json:"list"`
+	ID     int    `json:"id"`
+	Role   string `json:"role"`
+	Page   int    `json:"page"`
+	Text   string `json:"text"`
+	Marker string `json:"marker,omitempty"`
+	List   int    `json:"list"`
+	// Parent is the id of the element this one sits under, or -1: a table's rows and cells (ADR-121).
+	Parent  int        `json:"parent"`
 	Rect    [4]float64 `json:"rect"`
 	PageBox [4]float64 `json:"pageBox"`
 }
@@ -96,7 +98,7 @@ func (s *Server) handleTagsPropose(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, e := range prop.Elements {
 		out.Elements = append(out.Elements, tagElementView{
-			ID: e.ID, Role: e.Role, Page: e.Page, Text: e.Text, Marker: e.Marker, List: e.List,
+			ID: e.ID, Role: e.Role, Page: e.Page, Text: e.Text, Marker: e.Marker, List: e.List, Parent: e.Parent,
 			Rect: e.Rect, PageBox: e.PageBox,
 		})
 	}

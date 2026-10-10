@@ -239,9 +239,10 @@ func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keep bool, budget 
 }
 
 // readPageShapes is readPageGlyphRuns with every painted path's pieces kept as well (`pageRuns.shapes`) — the page
-// map's reader (ADR-088).
-func readPageShapes(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
-	return readPageRunsWith(ctx, pg, true, true, newFormWalkBudget(1))
+// map's reader (ADR-088). shared is a loop's one budget, as `readPageRuns` takes it: the proposer asks this reader for
+// every page of a document (ADR-121).
+func readPageShapes(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageRuns, error) {
+	return readPageRunsWith(ctx, pg, true, true, pageBudget(shared))
 }
 
 func readPageRunsWith(ctx *model.Context, pg pdfread.Page, keep, shapes bool, budget *formWalkBudget) (pageRuns, error) {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -120,6 +121,64 @@ func TestTheProposeRouteReadsAndChangesNothing(t *testing.T) {
 	}
 	if prop.Unsupported == nil || prop.NoText == nil {
 		t.Error("the response publishes null where the client expects a list")
+	}
+}
+
+// ruledTableContent draws a ruled grid of two rows and two columns with a word in each cell (ADR-121).
+const ruledTableContent = "100 700 m 400 700 l S 100 670 m 400 670 l S 100 640 m 400 640 l S " +
+	"100 640 m 100 700 l S 250 640 m 250 700 l S 400 640 m 400 700 l S " +
+	"BT /F1 12 Tf 106 680 Td (Name) Tj ET BT /F1 12 Tf 256 680 Td (Qty) Tj ET " +
+	"BT /F1 12 Tf 106 650 Td (Apple) Tj ET BT /F1 12 Tf 256 650 Td (3) Tj ET"
+
+// TestTheRoutesCarryATablesNesting — ADR-121 at the routes: the proposal publishes each element's parent as
+// the door answers it, the commit writes the table, and a review that parts the table is a 400 saying why.
+func TestTheRoutesCarryATablesNesting(t *testing.T) {
+	pdf := testpdf.WithContent(ruledTableContent, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+	want, err := pdfops.ProposeTags(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, c, csrf := openTagsFixture(t, pdf)
+	prop := proposeOpen(t, c, base)
+	var roles, parents []string
+	for i, e := range prop.Elements {
+		roles = append(roles, e.Role)
+		parents = append(parents, strconv.Itoa(e.Parent))
+		if e.Parent != want.Elements[i].Parent {
+			t.Errorf("element %d: the route says parent %d and the door %d", i, e.Parent, want.Elements[i].Parent)
+		}
+	}
+	if got := strings.Join(roles, " "); got != "Table TR TH TH TR TD TD" {
+		t.Fatalf("the route proposes %s", got)
+	}
+	if got := strings.Join(parents, " "); got != "-1 0 1 1 0 4 4" {
+		t.Errorf("the route publishes parents %s", got)
+	}
+	code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(prop, func(e []map[string]any) []map[string]any {
+		e[2], e[3] = e[3], e[2] // the header row's two cells exchanged
+		return e
+	}))
+	if code != http.StatusBadRequest || !strings.Contains(body, "move the whole table") {
+		t.Errorf("a parted table: %d %s — want 400 and the way out", code, body)
+	}
+	code, body = postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(prop, nil))
+	if code != http.StatusOK {
+		t.Fatalf("commit = %d: %s", code, body)
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range tree.Elements {
+		k := e.Kind
+		if e.Scope != "" {
+			k += "/" + e.Scope
+		}
+		kinds = append(kinds, k)
+	}
+	if got := strings.Join(kinds, " "); got != "Table TR TH/Column TH/Column TR TD TD" {
+		t.Errorf("the committed tree reads %s", got)
 	}
 }
 

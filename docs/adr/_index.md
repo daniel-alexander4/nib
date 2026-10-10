@@ -823,3 +823,7 @@ home today.
   — `RemoveStructure` behind `tagwrite.Remove`: every MCID bracket in pages and forms, the tree, `/MarkInfo` and every
   `/StructParents`/`/StructParent` go together; an artifact stays. Proposing never removes. An annotation's appearance
   stream is the declared gap.
+- **[ADR-121 — a table is proposed from the rules the page draws, regular grids only, nested in the proposal](121-a-table-is-proposed-from-the-rules-the-page-draws-regular-grids-only-nested-in-the-proposal.md)**
+  — `ruledGrids` over the page map's shapes: a regular ruled grid of two rows and two columns or more is `Table` → `TR` →
+  `TH`/`TD`, each element naming its `parent`; a grid with a merged cell is reported and left as paragraphs; text with no
+  rules is never a table. A table is reviewed whole, and a `TH`'s scope goes through `withTableAttribute`.

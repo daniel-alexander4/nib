@@ -58,7 +58,7 @@ How Nib's feature set lines up against the three best-known commercial PDF edito
 
 <sub>¶ [Reflow a paragraph](#reflow-a-paragraph) re-sets changed words in the document's own font, size, spacing and justification, removes the old words rather than covering them, and carries the text below — and what is anchored to it — down the page and onto the next. It changes only what it can set exactly: a paragraph it cannot rewrite faithfully is refused with the reason, and the older cover-and-replace [Edit text](#edit-existing-text) is there for those.</sub>
 
-<sub>◊ The three accessibility rows are summaries. Nib's checker covers 105 of the 106 PDF/UA-1 rules the reference validator veraPDF evaluates and never shows a clause it could not check as a pass; it has no WCAG check and offers no automatic fix. Its tagger proposes headings, paragraphs and list items for you to review before anything is written — no tables or figures — and tags an already-tagged document again once you remove its tags. Its tree editor changes an element's type, alt text, header scope, a table cell's spans and header cells, and its place, and marks decoration; it cannot add or delete a tag. For Acrobat Pro every one of these is laid out feature by feature in [docs/accessibility-parity.md](docs/accessibility-parity.md), each Acrobat claim quoted from Adobe's documentation, each Nib claim naming the test that shows it, and every gap listed. The Foxit and PDF-XChange columns are read from those vendors' own feature lists, not measured: PDF-XChange Editor Plus lists a tags pane, a reading-order pane and an accessibility check, and no automatic tagging.</sub>
+<sub>◊ The three accessibility rows are summaries. Nib's checker covers 105 of the 106 PDF/UA-1 rules the reference validator veraPDF evaluates and never shows a clause it could not check as a pass; it has no WCAG check and offers no automatic fix. Its tagger proposes headings, paragraphs, list items and tables drawn as a regular ruled grid for you to review before anything is written — no figures, no table with merged cells or without ruled lines — and tags an already-tagged document again once you remove its tags. Its tree editor changes an element's type, alt text, header scope, a table cell's spans and header cells, and its place, and marks decoration; it cannot add or delete a tag. For Acrobat Pro every one of these is laid out feature by feature in [docs/accessibility-parity.md](docs/accessibility-parity.md), each Acrobat claim quoted from Adobe's documentation, each Nib claim naming the test that shows it, and every gap listed. The Foxit and PDF-XChange columns are read from those vendors' own feature lists, not measured: PDF-XChange Editor Plus lists a tags pane, a reading-order pane and an accessibility check, and no automatic tagging.</sub>
 
 <sub>‖ The PDF24 Creator and PDFgear columns are read from those projects' own feature pages, help forum and changelog, not measured, and ❌ there means *not listed*. PDF24 Creator: redaction and compare are listed with no pattern search and no text diff described; signing takes a certificate but a timestamp authority is on its to-do list; it has a command-line tool (`pdf24-DocTool`). PDFgear: text editing, redaction, OCR and certificate signatures are listed, a compare tool is not; it works offline except for its cloud AI assistant, and batch work is conversion only.</sub>
 
@@ -183,16 +183,22 @@ the claim would break the signature, so it is left as it was.
 ### Tag an untagged document's structure
 **Accessibility → Tag structure…** reads the open document's pages and proposes its headings,
 paragraphs and list items from how they look — larger text as headings, drawn bullets and numbers as
-list items. Nothing is written while you review: each proposed element is outlined on its page, and
-you can change its type, ignore it, or move it earlier or later in the reading order, all from the
-keyboard. **Commit structure** writes it and records that it was inferred, so the accessibility report
+list items — and a table wherever the page draws one as a regular grid of ruled lines, at least two
+rows by two columns: a row for each row, a cell for each cell, the first row as header cells. Nothing
+is written while you review: each proposed element is outlined on its page, and you can change its
+type, ignore it, or move it earlier or later in the reading order, all from the keyboard. A table is
+shown with its rows and cells under it; a cell can be made a header or a data cell, the table is
+moved or ignored as a whole, and a grid that is not a table — a ruled form's boxes — can be marked
+**Not a table**, which writes its boxes as paragraphs instead. **Commit structure** writes it and records that it was inferred, so the accessibility report
 says so; **Undo** takes it back. It refuses a document that is already tagged (it will not write a
 second structure over the first — **Remove all tags…**, in Review Structure Tree, takes the first away
 so you can tag the document again), a signed document (tagging would break the signature), and a page
 whose text is drawn in a way it cannot mark without describing something else. Text on the page that
 you ignore is marked as decoration rather than left unaccounted for. The proposal is a starting point,
 not an answer — multi-column pages it cannot separate, and body paragraphs with no visible spacing
-between them, are the known weak spots.
+between them, are the known weak spots. A ruled table with merged cells is not read as a table (the
+review says so on its page and its text is proposed as paragraphs), a table with no ruled lines is
+never recognized, and no figures are proposed.
 
 ### Review and correct an existing structure tree
 **Accessibility → Review Structure Tree** shows the open document's tags as a tree — whoever wrote them,
@@ -1515,7 +1521,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (add `--gs` to convert through Ghostscript instead) (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
 | `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **105 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
 | `nib tag tree IN [--json]` | Print the document's existing structure tree in reading order: each element's id, type, page, missing alt text or header scope, a table cell's spans and header cells, and text. `--json` is the shape the app reads. |
-| `nib tag propose IN [--json]` | Print the headings, paragraphs and list items Nib would propose. Writes nothing. |
+| `nib tag propose IN [--json]` | Print the headings, paragraphs, list items and ruled tables Nib would propose, a table's rows and cells indented under it. Writes nothing. |
 | `nib tag commit IN -o OUT --review REVIEW.json` | Write a reviewed proposal (`nib tag propose --json` is a review that keeps every role). A signed document is refused. |
 | `nib tag edit IN -o OUT --edits EDITS.json` | Correct the existing tree as one batch — retype, move, alt, scope, colspan, rowspan, headers, artifact — by the ids `nib tag tree` prints. A signed document is refused. |
 | `nib tag remove IN -o OUT` | Take the structure tree and every marked-content id away, leaving the document untagged so it can be tagged again. What is marked as an artifact stays marked. A signed document is refused. |

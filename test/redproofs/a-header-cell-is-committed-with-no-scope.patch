@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagcommit.go b/internal/pdfops/tagcommit.go
+--- a/internal/pdfops/tagcommit.go
++++ b/internal/pdfops/tagcommit.go
+@@ -233,7 +233,7 @@
+ 					if derr != nil || d == nil {
+ 						return fmt.Errorf("pdfops: the header cell just written does not resolve: %v", derr)
+ 					}
+-					d["A"] = withTableAttribute(ctx, d["A"], "Scope", types.Name(headerScope(el)))
++					_ = d
+ 					return nil
+ 				}(); err != nil {
+ 					return err

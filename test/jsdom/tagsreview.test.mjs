@@ -32,6 +32,25 @@ const proposal = () => ({
   noText: [3],
 });
 
+// A proposal with a table in it (ADR-121): the Table, then each row and its cells directly after it, each
+// naming its parent. One cell is empty.
+const tableProposal = () => ({
+  elements: [
+    { id: 0, role: 'P', page: 1, text: 'Above the table', list: -1, parent: -1, rect: [72, 730, 300, 745], pageBox: BOX },
+    { id: 1, role: 'Table', page: 1, text: 'Name Qty Apple', list: -1, parent: -1, rect: [100, 640, 400, 700], pageBox: BOX },
+    { id: 2, role: 'TR', page: 1, text: 'Name Qty', list: -1, parent: 1, rect: [100, 670, 400, 700], pageBox: BOX },
+    { id: 3, role: 'TH', page: 1, text: 'Name', list: -1, parent: 2, rect: [100, 670, 250, 700], pageBox: BOX },
+    { id: 4, role: 'TH', page: 1, text: 'Qty', list: -1, parent: 2, rect: [250, 670, 400, 700], pageBox: BOX },
+    { id: 5, role: 'TR', page: 1, text: 'Apple', list: -1, parent: 1, rect: [100, 640, 400, 670], pageBox: BOX },
+    { id: 6, role: 'TD', page: 1, text: 'Apple', list: -1, parent: 5, rect: [100, 640, 250, 670], pageBox: BOX },
+    { id: 7, role: 'TD', page: 1, text: '', list: -1, parent: 5, rect: [250, 640, 400, 670], pageBox: BOX },
+    { id: 8, role: 'P', page: 1, text: 'Below the table', list: -1, parent: -1, rect: [72, 600, 300, 615], pageBox: BOX },
+  ],
+  unsupported: [],
+  noText: [],
+});
+let nextProposal = proposal;
+
 let commitBody = null;
 let commitReply = null;
 // What the server holds. Empty at boot — a boot that finds documents restores them as views — and set
@@ -44,7 +63,7 @@ const { document: doc, settle, calls } = await boot({
     '/api/docs': () => held,
     '/api/open': OPEN,
     '/api/scan': { hidden: [] },
-    '/api/tags/propose': proposal,
+    '/api/tags/propose': () => nextProposal(),
     '/api/tags/commit': (opts) => {
       commitBody = JSON.parse(opts.body);
       return commitReply ? commitReply() : { ...OPEN, canUndo: true };
@@ -148,4 +167,123 @@ test('a refused commit keeps the review open and says why', async () => {
   assert.equal(doc.getElementById('tagsCommit').disabled, false, 'after a refusal the commit cannot be tried again');
   assert.ok(doc.querySelectorAll('.viewerContainer').length >= 1, 'the reconcile after the 409 dropped a document the server still holds');
   commitReply = null;
+});
+
+// ── A proposed table (ADR-121) ───────────────────────────────────────────────
+// The server refuses a review that parts a table, retypes its rows or ignores one cell. This proves the
+// card cannot BUILD such a review: the controls that would are not there, and a move takes the table whole.
+test('a table is shown nested, and each of its rows offers only what a reviewer may do to it', async () => {
+  nextProposal = tableProposal;
+  await propose();
+  assert.equal(rows().length, 9, 'a row per proposed element, the table\'s rows and cells included');
+  const depth = (id) => (rowFor(id).classList.contains('tags-sub2') ? 2 : rowFor(id).classList.contains('tags-sub1') ? 1 : 0);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8].map(depth), [0, 0, 1, 2, 2, 1, 2, 2, 0], 'rows and cells are not indented under their table');
+
+  // The table has one choice — it is a table, or it is not one and its cells are paragraphs — and its rows
+  // say what they are and offer none.
+  assert.deepEqual([...rowFor(1).querySelectorAll('option')].map((o) => o.value), ['Table', 'P'], 'the table does not offer "not a table"');
+  assert.equal(rowFor(1).querySelector('select').value, 'Table', 'a proposed table does not start as a table');
+  for (const [id, name] of [[2, 'Table row'], [5, 'Table row']]) {
+    assert.equal(rowFor(id).querySelector('select'), null, `element ${id} offers a choice of type`);
+    assert.equal(rowFor(id).querySelector('.tags-kind').textContent, name, `element ${id} does not say what it is`);
+  }
+  // A cell is a header cell or a data cell and nothing else; everything else keeps the usual choices.
+  for (const id of [3, 4, 6, 7]) {
+    assert.deepEqual([...rowFor(id).querySelectorAll('option')].map((o) => o.value), ['TH', 'TD'], `cell ${id} offers other types`);
+  }
+  assert.deepEqual([3, 4, 6, 7].map((id) => rowFor(id).querySelector('select').value), ['TH', 'TH', 'TD', 'TD'], 'a cell does not show its proposed type');
+  assert.equal([...rowFor(0).querySelectorAll('option')].some((o) => o.value === 'TH' || o.value === 'Table'), false, 'a paragraph can be made part of a table');
+  assert.match(rowFor(7).querySelector('.tags-text').textContent, /empty cell/, 'an empty cell is a row with no words');
+
+  // Ignore and the moves are the table's, never a row's or a cell's.
+  for (const id of [2, 3, 4, 5, 6, 7]) {
+    assert.equal(rowFor(id).querySelector('input[type="checkbox"], .tags-up, .tags-down'), null, `element ${id} can be ignored or moved by itself`);
+    assert.ok(rowFor(id).querySelector('.tags-show'), `element ${id} cannot be shown on the page`);
+  }
+  assert.ok(rowFor(1).querySelector('input[type="checkbox"]') && rowFor(1).querySelector('.tags-up') && rowFor(1).querySelector('.tags-down'),
+    'the table cannot be ignored or moved');
+  for (const row of rows()) {
+    for (const c of row.querySelectorAll('select, input, button')) {
+      assert.notEqual(c.tabIndex, -1, `a ${c.tagName} in row ${row.dataset.id} is taken out of the tab order`);
+      assert.ok(c.getAttribute('aria-label') || c.closest('label'), `a ${c.tagName} in row ${row.dataset.id} has no accessible name`);
+    }
+  }
+});
+
+test('a table moves whole, and a neighbour moves past the whole of it', async () => {
+  rowFor(1).querySelector('.tags-down').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['0', '8', '1', '2', '3', '4', '5', '6', '7'], 'moving the table down did not take its rows and cells');
+  assert.equal(rowFor(1).querySelector('.tags-down').disabled, true, 'a table whose last cell is the last row can still move down');
+  rowFor(1).querySelector('.tags-up').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['0', '1', '2', '3', '4', '5', '6', '7', '8'], 'moving the table up one place did not pass the paragraph whole');
+  assert.equal(doc.activeElement, rowFor(1).querySelector('.tags-up'), 'the move lost the keyboard\'s place');
+  rowFor(1).querySelector('.tags-up').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['1', '2', '3', '4', '5', '6', '7', '0', '8'], 'moving the table up did not take its rows and cells');
+  assert.equal(rowFor(1).querySelector('.tags-up').disabled, true, 'the first element can move up');
+  // The paragraph after the table moves past all of it, not into it.
+  rowFor(0).querySelector('.tags-up').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['0', '1', '2', '3', '4', '5', '6', '7', '8'], 'a paragraph moved up into the table');
+  rowFor(0).querySelector('.tags-down').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['1', '2', '3', '4', '5', '6', '7', '0', '8'], 'a paragraph moved down into the table');
+});
+
+test('a table said not to be one shows its cells as paragraphs and sends the table as P', async () => {
+  const pick = rowFor(1).querySelector('select');
+  pick.value = 'P';
+  pick.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(doc.activeElement, rowFor(1).querySelector('select'), 'declining the table lost the keyboard\'s place');
+  assert.equal(rowFor(1).querySelector('select').value, 'P', 'the table\'s row no longer offers the choice it just took');
+  // Its cells offer nothing now: one with text will be a paragraph, the empty one and the rows nothing.
+  assert.deepEqual([2, 3, 4, 5, 6, 7].map((id) => rowFor(id).querySelector('select')), [null, null, null, null, null, null], 'a cell of a declined table still offers header or data');
+  assert.deepEqual([2, 3, 7].map((id) => rowFor(id).querySelector('.tags-kind').textContent), ['—', 'Paragraph', '—'], 'the rows do not say what a declined table\'s parts become');
+  commitBody = null;
+  commitReply = null;
+  doc.getElementById('tagsCommit').click();
+  await settle();
+  await settle();
+  const sentRole = Object.fromEntries(commitBody.elements.map((e) => [e.id, e.role]));
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8].map((id) => sentRole[id]), ['P', 'P', 'TR', 'TH', 'TH', 'TR', 'TD', 'TD', 'P'], 'the commit does not send the table as P with its rows and cells as proposed');
+  assert.deepEqual(commitBody.elements.map((e) => e.ignore), Array(9).fill(false), 'declining a table ignored something');
+  // And back: the choice is still there, and the cells get theirs again.
+  const again = rowFor(1).querySelector('select');
+  again.value = 'Table';
+  again.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual([...rowFor(3).querySelectorAll('option')].map((o) => o.value), ['TH', 'TD'], 'a table taken back does not give its cells their choice again');
+});
+
+test('a retyped cell and an ignored table are what the commit sends', async () => {
+  const select = rowFor(6).querySelector('select');
+  select.value = 'TH';
+  select.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(doc.activeElement, rowFor(6).querySelector('select'), 'retyping a cell lost the keyboard\'s place');
+  assert.match(doc.getElementById('tagsSummary').textContent, /9 element\(s\) proposed, 9 kept/, 'the summary miscounts a table');
+  rowFor(1).querySelector('input[type="checkbox"]').click();
+  await settle();
+  // Ignoring the table ignores what is under it: shown on every row of it, and counted.
+  for (const id of [1, 2, 3, 4, 5, 6, 7]) assert.ok(rowFor(id).classList.contains('tags-ignored'), `element ${id} of an ignored table is not shown as ignored`);
+  assert.equal(rowFor(0).classList.contains('tags-ignored'), false, 'ignoring the table ignored its neighbour');
+  assert.match(doc.getElementById('tagsSummary').textContent, /9 element\(s\) proposed, 2 kept/, 'an ignored table\'s rows and cells are counted as kept');
+
+  commitBody = null;
+  commitReply = null;
+  doc.getElementById('tagsCommit').click();
+  await settle();
+  await settle();
+  assert.ok(commitBody, 'the commit sent nothing');
+  const sent = commitBody.elements;
+  assert.deepEqual(sent.map((e) => e.id), [1, 2, 3, 4, 5, 6, 7, 0, 8], 'the commit does not carry the reviewed order');
+  assert.deepEqual(sent.map((e) => e.role), ['Table', 'TR', 'TH', 'TH', 'TR', 'TH', 'TD', 'P', 'P'], 'the commit does not carry the table\'s roles');
+  // Only the table carries the ignore: the server refuses a row or a cell ignored by itself.
+  assert.deepEqual(sent.map((e) => e.ignore), [true, false, false, false, false, false, false, false, false], 'the ignore is not the table\'s alone');
+  assert.deepEqual(Object.keys(sent[0]).sort(), ['id', 'ignore', 'role', 'text'], 'the review\'s shape changed');
+  assert.equal(sent[6].text, '', 'an empty cell does not echo its empty text');
+  nextProposal = proposal;
 });

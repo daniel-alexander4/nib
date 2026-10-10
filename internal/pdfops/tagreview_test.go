@@ -129,11 +129,13 @@ func TestAReviewThatDoesNotDescribeTheProposalIsRefused(t *testing.T) {
 
 // TestTheReviewDoorsRouteThroughTheProposer — S06's routing clause: both doors reach the page through
 // the proposer, and the proposer through the layout door, so the review surface's pages are read
-// exactly as the corpus measured them.
+// exactly as the corpus measured them. Since ADR-121 the proposer's door is the one that sets ruled tables
+// apart: it takes its rules from the page map's reader, and what is left of the page goes through the
+// same grouping every other consumer gets.
 func TestTheReviewDoorsRouteThroughTheProposer(t *testing.T) {
 	calls := map[string]map[string]bool{}
 	fset := token.NewFileSet()
-	for _, f := range []string{"tagreview.go", "proposer.go"} {
+	for _, f := range []string{"tagreview.go", "proposer.go", "grouping.go"} {
 		file, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatal(err)
@@ -156,9 +158,11 @@ func TestTheReviewDoorsRouteThroughTheProposer(t *testing.T) {
 		}
 	}
 	for fn, must := range map[string][]string{
-		"ProposeTags":      {"proposeStructure"},
-		"CommitTags":       {"proposeStructure", "commitProposal"},
-		"proposeStructure": {"readPageLayout"},
+		"ProposeTags":         {"proposeStructure"},
+		"CommitTags":          {"proposeStructure", "commitProposal"},
+		"proposeStructure":    {"readPageTableLayout"},
+		"readPageTableLayout": {"readPageShapes", "groupRunsAndTables"},
+		"groupRunsAndTables":  {"ruledGrids", "groupRuns", "lineSegments"},
 	} {
 		if calls[fn] == nil {
 			t.Errorf("%s is gone, so its route is unchecked", fn)

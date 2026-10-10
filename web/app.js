@@ -5938,6 +5938,11 @@ const TAG_ROLE_NAMES = {
   H1: 'Heading 1', H2: 'Heading 2', H3: 'Heading 3', H4: 'Heading 4', H5: 'Heading 5', H6: 'Heading 6',
   P: 'Paragraph', LI: 'List item',
 };
+// A proposed table is nested (ADR-121): a Table, a row for each of its rows, a cell for each column. A cell
+// is a header or a data cell and nothing else; the table and its rows keep their type; and the table is
+// moved or ignored whole — the rules `CommitTags` holds a review to.
+const TAG_CELL_ROLES = ['TH', 'TD'];
+const TAG_TABLE_NAMES = { Table: 'Table', TR: 'Table row', TH: 'Header cell', TD: 'Data cell' };
 // STRUCT_TYPES are the standard structure types the structure editor offers (P09.S06b) — the same set
 // `pdfops.standardStructTypes` accepts, which is the door that refuses anything else; tagedit.test.mjs
 // holds the two lists equal.
@@ -5948,7 +5953,7 @@ const STRUCT_TYPES = [
   'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link', 'Annot', 'Ruby', 'RB', 'RT', 'RP',
   'Warichu', 'WT', 'WP', 'Figure', 'Formula', 'Form',
 ];
-let tagsReview = null; // [{ id, role, ignore, text, page, rect, pageBox, marker, list }]
+let tagsReview = null; // [{ id, role, ignore, text, page, rect, pageBox, marker, list, parent }]
 let tagsProposal = null;
 // The document the review was opened for, pinned at entry (ADR-001): both requests name it.
 let tagsOwner = null;
@@ -5984,10 +5989,22 @@ function focusTagsControl(index, selector) {
   if (el) el.focus();
 }
 
+// tagsBlockEnd is the index after the element at i and everything under it. A table's rows and cells
+// follow it directly, so its block ends at the next element that sits under nothing.
+function tagsBlockEnd(i) {
+  let j = i + 1;
+  while (j < tagsReview.length && tagsReview[j].parent >= 0) j++;
+  return j;
+}
+
 function renderTagsReview() {
   const list = els.tagsList;
   list.innerHTML = '';
-  const kept = tagsReview.filter((r) => !r.ignore).length;
+  // A row or a cell is ignored when its table is, and only then.
+  const byId = new Map(tagsReview.map((r) => [r.id, r]));
+  const depthOf = (r) => { let d = 0; for (let p = byId.get(r.parent); p; p = byId.get(p.parent)) d++; return d; };
+  const ignored = (r) => { for (let p = r; p; p = byId.get(p.parent)) if (p.ignore) return true; return false; };
+  const kept = tagsReview.filter((r) => !ignored(r)).length;
   const notes = [];
   for (const u of tagsProposal.unsupported || []) notes.push(`Page ${u.page}: ${u.reason} — check its order carefully.`);
   if ((tagsProposal.noText || []).length) {
@@ -5998,27 +6015,69 @@ function renderTagsReview() {
   els.tagsCommit.disabled = kept === 0;
 
   tagsReview.forEach((r, i) => {
-    const words = r.text.length > 80 ? r.text.slice(0, 80) + '…' : r.text;
+    const inTable = r.parent >= 0;
+    const isCell = TAG_CELL_ROLES.includes(r.role);
+    const fixed = r.role === 'TR';
+    const depth = depthOf(r);
+    const words = r.text === '' ? '(empty cell)' : r.text.length > 80 ? r.text.slice(0, 80) + '…' : r.text;
     const li = document.createElement('li');
-    li.className = 'tags-row' + (r.ignore ? ' tags-ignored' : '') + (r.role === 'LI' ? ' tags-item' : '');
+    li.className = 'tags-row' + (ignored(r) ? ' tags-ignored' : '') + (r.role === 'LI' ? ' tags-item' : '') +
+      (depth ? ` tags-sub${Math.min(depth, 2)}` : '');
     li.dataset.id = String(r.id);
     if (r.list >= 0) li.dataset.list = String(r.list);
+    if (inTable) li.dataset.parent = String(r.parent);
 
     const text = document.createElement('span');
     text.className = 'tags-text';
     text.textContent = `Page ${r.page} — ${words}`;
     if (r.marker) text.dataset.marker = r.marker;
 
-    const role = document.createElement('select');
-    role.setAttribute('aria-label', `What this is: ${words}`);
-    for (const code of TAG_ROLES) {
-      const o = document.createElement('option');
-      o.value = code;
-      o.textContent = TAG_ROLE_NAMES[code];
-      role.appendChild(o);
+    // What the element is: a choice for a cell (header or data) and for anything outside a table; a table
+    // and its rows say their type and offer none.
+    // A table has one choice of its own: it is a table, or it is not one — a ruled form tiles like a table —
+    // and its cells are then written as paragraphs, row by row. Its rows and cells follow what it says.
+    const table = inTable ? byId.get(byId.get(r.parent).parent >= 0 ? byId.get(r.parent).parent : r.parent) : r;
+    const declined = inTable && table.role === 'P';
+    let role;
+    if (r.role === 'Table' || (r.role === 'P' && r.wasTable)) {
+      role = document.createElement('select');
+      role.setAttribute('aria-label', `Is this a table: ${words}`);
+      for (const [code, name] of [['Table', 'Table'], ['P', 'Not a table — paragraphs']]) {
+        const o = document.createElement('option');
+        o.value = code;
+        o.textContent = name;
+        role.appendChild(o);
+      }
+      role.value = r.role;
+      role.onchange = () => { r.role = role.value; r.wasTable = true; renderTagsReview(); focusTagsControl(i, 'select'); };
+    } else if (fixed || declined) {
+      role = document.createElement('span');
+      role.className = 'tags-kind';
+      role.textContent = declined ? (isCell && r.text !== '' ? 'Paragraph' : '—') : TAG_TABLE_NAMES[r.role];
+    } else {
+      role = document.createElement('select');
+      role.setAttribute('aria-label', `What this is: ${words}`);
+      for (const code of isCell ? TAG_CELL_ROLES : TAG_ROLES) {
+        const o = document.createElement('option');
+        o.value = code;
+        o.textContent = isCell ? TAG_TABLE_NAMES[code] : TAG_ROLE_NAMES[code];
+        role.appendChild(o);
+      }
+      role.value = r.role;
+      role.onchange = () => { r.role = role.value; renderTagsReview(); focusTagsControl(i, 'select'); };
     }
-    role.value = r.role;
-    role.onchange = () => { r.role = role.value; renderTagsReview(); focusTagsControl(i, 'select'); };
+    const show = document.createElement('button');
+    show.className = 'tags-show';
+    show.textContent = 'Show';
+    show.setAttribute('aria-label', `Show on the page: ${words}`);
+    show.onclick = () => showTagOutline(r);
+    li.addEventListener('focusin', () => showTagOutline(r));
+    if (inTable) {
+      // A row or a cell is not ignored or moved by itself: the table is, on its own row.
+      li.append(text, role, show);
+      list.appendChild(li);
+      return;
+    }
 
     const ignoreLabel = document.createElement('label');
     const ignore = document.createElement('input');
@@ -6027,31 +6086,29 @@ function renderTagsReview() {
     ignore.onchange = () => { r.ignore = ignore.checked; renderTagsReview(); focusTagsControl(i, 'input'); };
     ignoreLabel.append(ignore, document.createTextNode('Ignore'));
 
-    const move = (to) => {
-      const [moved] = tagsReview.splice(i, 1);
-      tagsReview.splice(to, 0, moved);
+    // A move takes the element and everything under it past the whole of its neighbour.
+    const end = tagsBlockEnd(i);
+    const move = (to, control) => {
+      const moved = tagsReview.splice(i, end - i);
+      tagsReview.splice(to, 0, ...moved);
       renderTagsReview();
-      focusTagsControl(to, to < i ? '.tags-up' : '.tags-down');
+      focusTagsControl(to, control);
     };
+    let prev = i - 1;
+    while (prev > 0 && tagsReview[prev].parent >= 0) prev--;
     const up = document.createElement('button');
     up.className = 'tags-up';
     up.textContent = 'Move up';
     up.setAttribute('aria-label', `Move up: ${words}`);
     up.disabled = i === 0;
-    up.onclick = () => move(i - 1);
+    up.onclick = () => move(prev, '.tags-up');
     const down = document.createElement('button');
     down.className = 'tags-down';
     down.textContent = 'Move down';
     down.setAttribute('aria-label', `Move down: ${words}`);
-    down.disabled = i === tagsReview.length - 1;
-    down.onclick = () => move(i + 1);
-    const show = document.createElement('button');
-    show.className = 'tags-show';
-    show.textContent = 'Show';
-    show.setAttribute('aria-label', `Show on the page: ${words}`);
-    show.onclick = () => showTagOutline(r);
+    down.disabled = end === tagsReview.length;
+    down.onclick = () => move(i + (tagsBlockEnd(end) - end), '.tags-down');
 
-    li.addEventListener('focusin', () => showTagOutline(r));
     li.append(text, role, ignoreLabel, up, down, show);
     list.appendChild(li);
   });
@@ -6079,7 +6136,7 @@ async function openTags() {
     tagsProposal = await res.json();
     tagsReview = (tagsProposal.elements || []).map((e) => ({
       id: e.id, role: e.role, ignore: false, text: e.text, page: e.page,
-      rect: e.rect, pageBox: e.pageBox, marker: e.marker || '', list: e.list,
+      rect: e.rect, pageBox: e.pageBox, marker: e.marker || '', list: e.list, parent: e.parent ?? -1,
     }));
     renderTagsReview();
   } catch (e) {

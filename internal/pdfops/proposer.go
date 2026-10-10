@@ -35,11 +35,28 @@ import (
 //   - **The grouping merges a list that has nothing wider beside it.** Two short numbered items alone
 //     in a column are one paragraph to S03, because the column's right edge IS their width and the
 //     short-line signal cannot fire. A label at the start of a line splits them here.
+//
+// # Tables (ADR-121)
+//
+// A table is proposed where the page RULES one and nowhere else: a regular grid of at least two rows and two
+// columns (`ruledGrids`). It is the one proposed element with children — `Table`, a `TR` for each row, a `TH`
+// or `TD` for each cell, the first row's cells as headers — so an element names its parent. A cell with no
+// text is still an element: the rows stay the same length, which is what makes it a table to a reader.
 
 // proposedElement is one element the autotagger proposes.
 type proposedElement struct {
-	// role is a standard structure type: H1–H6, P, or LI.
-	role   string
+	// role is a standard structure type: H1–H6, P or LI, or one of a table's — Table, TR, TH, TD.
+	role string
+	// parent is the index, in the proposal, of the element this one sits under, or -1 at the top level.
+	// Only a table has children: a TR's parent is its Table and a cell's its TR, each directly after its
+	// parent's last child, so a table's elements are consecutive and in row order (ADR-121).
+	parent int
+	// row and col are a cell's place in its table, from 0; a TR carries its row.
+	row, col int
+	// box is the extent of a table, a row or a cell — the grid's own, which an empty cell needs and which
+	// outlines a cell where its text alone would not. boxed says it is set.
+	box    [4]float64
+	boxed  bool
 	page   int
 	column int
 	// marker is a list item's label as drawn (`1.`, U+F095), and text includes it: the label is part
@@ -50,6 +67,12 @@ type proposedElement struct {
 	// list numbers the list a list item belongs to — consecutive items share one — or is -1.
 	list int
 }
+
+// tableRoles are the roles of a table's own elements; cellRoles the two a cell may have.
+var (
+	tableRoles = map[string]bool{"Table": true, "TR": true, "TH": true, "TD": true}
+	cellRoles  = map[string]bool{"TH": true, "TD": true}
+)
 
 // proposal is a document's proposed structure, in reading order.
 type proposal struct {
@@ -74,7 +97,7 @@ func proposeStructure(ctx *model.Context) (proposal, error) {
 	layouts := make([]pageLayout, 0, ctx.PageCount)
 	budget := newFormWalkBudget(ctx.PageCount) // one for the document (`readPageRuns`)
 	for _, pg := range pdfread.Pages(ctx) {
-		l, err := readPageLayout(ctx, pg, budget)
+		l, err := readPageTableLayout(ctx, pg, budget)
 		if err != nil {
 			return proposal{}, err
 		}
@@ -99,10 +122,15 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 		if l.unsupported != "" {
 			out.unsupported[page] = l.unsupported
 		}
-		for _, par := range l.paragraphs {
+		tables := l.tables
+		for pi, par := range l.paragraphs {
+			for len(tables) > 0 && tables[0].before <= pi {
+				out.elements = appendTable(out.elements, page, tables[0])
+				tables, inList = tables[1:], false
+			}
 			for _, piece := range splitAtListMarkers(par) {
 				first := piece.lines[0]
-				el := proposedElement{page: page, column: piece.column, text: piece.text(), lines: piece.lines, list: -1}
+				el := proposedElement{page: page, column: piece.column, text: piece.text(), lines: piece.lines, list: -1, parent: -1}
 				switch m := listMarker(first); {
 				case m != "":
 					if !inList {
@@ -120,8 +148,53 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 				out.elements = append(out.elements, el)
 			}
 		}
+		for _, t := range tables {
+			out.elements = appendTable(out.elements, page, t)
+			inList = false
+		}
 	}
 	return out
+}
+
+// appendTable adds a table to a proposal: the Table, then each row's TR and its cells, row by row. The first
+// row's cells are proposed as headers — where a ruled table has a header row it is the first, and a reviewer
+// who knows better retypes a cell. A Table and a TR draw nothing themselves; their text is their cells',
+// joined, so a table that changed after it was proposed no longer matches its review.
+func appendTable(elements []proposedElement, page int, t ruledTable) []proposedElement {
+	g := t.grid
+	table := len(elements)
+	elements = append(elements, proposedElement{role: "Table", parent: -1, page: page, list: -1, box: g.frame(), boxed: true})
+	var all []string
+	for r := 0; r < g.rows(); r++ {
+		tr := len(elements)
+		elements = append(elements, proposedElement{role: "TR", parent: table, row: r, page: page, list: -1, box: g.rowBox(r), boxed: true})
+		var rowText []string
+		for c := 0; c < g.cols(); c++ {
+			cell := proposedElement{role: "TD", parent: tr, row: r, col: c, page: page, list: -1,
+				lines: t.cells[r][c], box: g.cellBox(r, c), boxed: true}
+			if r == 0 {
+				cell.role = "TH"
+			}
+			cell.text = textParagraph{lines: cell.lines}.text()
+			if cell.text != "" {
+				rowText = append(rowText, cell.text)
+			}
+			elements = append(elements, cell)
+		}
+		elements[tr].text = strings.Join(rowText, " ")
+		all = append(all, rowText...)
+	}
+	elements[table].text = strings.Join(all, " ")
+	return elements
+}
+
+// headerScope is the `/Scope` a header cell is written with: a cell of the first row heads its column; any
+// other header in the first column heads its row; one anywhere else is read as heading its column.
+func headerScope(el proposedElement) string {
+	if el.row > 0 && el.col == 0 {
+		return "Row"
+	}
+	return "Column"
 }
 
 func roundHalf(x float64) float64 { return math.Round(x*2) / 2 }
@@ -130,10 +203,22 @@ func roundHalf(x float64) float64 { return math.Round(x*2) / 2 }
 func bodySizeOf(layouts []pageLayout) float64 {
 	chars := map[float64]int{}
 	for _, l := range layouts {
-		for _, par := range l.paragraphs {
-			for _, ln := range par.lines {
+		count := func(lines []textLine) {
+			for _, ln := range lines {
 				for _, r := range ln.runs {
 					chars[roundHalf(r.size)] += len([]rune(strings.Join(strings.Fields(r.text), "")))
+				}
+			}
+		}
+		for _, par := range l.paragraphs {
+			count(par.lines)
+		}
+		// A table's text counts as it did when it was proposed as paragraphs: a document that is mostly table
+		// has the table's size as its body, and its introduction is not a heading for being larger.
+		for _, t := range l.tables {
+			for _, row := range t.cells {
+				for _, cell := range row {
+					count(cell)
 				}
 			}
 		}
