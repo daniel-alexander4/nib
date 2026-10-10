@@ -371,13 +371,14 @@ func loadSecret(p *atomic.Pointer[string]) string {
 // it owns `~/nib/ceremonies/` (P08.S03). One door for the two readers that act on it.
 func (s *Server) isPrimary() bool { return loadSecret(&s.instanceToken) != "" }
 
-// Handler builds the HTTP routes. Status and key enrollment/migration are public
-// so the UI can run its first-run wizard; every document and vault route is gated
-// behind an unlocked vault. API patterns take precedence over the static files.
+// Handler builds the HTTP routes. Status and key enrollment/migration answer before the
+// vault is unlocked, so the UI can run its first-run wizard — they still need the session
+// (ADR-054); every document and vault route is gated behind an unlocked vault as well. API
+// patterns take precedence over the static files.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Public — reachable before the vault is unlocked.
+	// Reachable before the vault is unlocked — not public: each passes `requireSession` (ADR-054).
 	// requirePublicLoopback on a GET, which every other route reserves for writes — and
 	// deliberately, because this GET IS a write: handleStatus calls ensureUnlocked, which
 	// can run vault.AutoSetup and create a vault. The method-based guard let any web page
@@ -392,8 +393,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/launch", requirePublicLoopback(s.handleLaunchTrade))
 	mux.HandleFunc("POST /api/launch/key", s.requireSession(s.handleLaunchKey))
 	// A window declares itself and holds the stream for as long as it exists; the count is
-	// what P01.S04 will read to decide the process is done. Public, not requireUnlocked (D3):
-	// a window on the unlock screen is a real window.
+	// what P01.S04 will read to decide the process is done. Behind the session only, not
+	// requireUnlocked (D3): a window on the unlock screen is a real window.
 	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.requireSession(s.handleWindow)))
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
 	mux.HandleFunc("POST /api/quit", s.requireSession(s.handleQuit))
@@ -409,10 +410,12 @@ func (s *Server) Handler() http.Handler {
 	// Protected — require the vault unlocked (+ CSRF on writes).
 	//
 	// **The download is HERE and the check is above, and the split is the point (ADR-039).**
-	// `/api/update/check` is public because it only queries out; these two write bytes into the
-	// user's filesystem and cancel a transfer, which is the act `POST /api/write` performs and
-	// takes the same guard. Inheriting the check's `requirePublicLoopback` would have made a
-	// disk-writing route reachable without a CSRF token.
+	// `/api/update/check` answers with the vault locked because it only queries out; these two
+	// write bytes into the user's filesystem and cancel a transfer, which is the act
+	// `POST /api/write` performs and takes the same guard. (When this was written the check's
+	// `requirePublicLoopback` was its only guard, and inheriting it would have left a disk-writing
+	// route with no token; since ADR-054 every route here needs the token, and what
+	// `requireUnlocked` adds is the open vault.)
 	mux.HandleFunc("POST /api/update/download", s.requireUnlocked(s.handleUpdateDownload))
 	mux.HandleFunc("POST /api/update/download/cancel", s.requireUnlocked(s.handleUpdateDownloadCancel))
 	mux.HandleFunc("POST /api/update/reveal", s.requireUnlocked(s.handleUpdateReveal))
@@ -443,19 +446,18 @@ func (s *Server) Handler() http.Handler {
 	// `ListStored` and `ReadStored` read `record.json` and nothing else, and the only vault use in
 	// the handler is the close-out sweep, which returns on a nil one.
 	//
-	// **`requirePublicLoopback` and not "no guard at all", and the difference is a live defect this
-	// closes rather than a precaution.** `requireUnlocked` skips BOTH the CSRF check and the origin
-	// check for GET (see its own body), so today any cross-site page can reach this route — it
-	// cannot read the response, but the request executes, and since P08.S06 that request runs a
-	// close-out sweep. That is a GET with a state-changing side effect, reachable cross-origin,
-	// with no origin check. `requirePublicLoopback` is `originIsLoopback` and nothing else, and it
-	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
-	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
-	// reads.
+	// **`requirePublicLoopback` as well as the session, and it was put here for a live defect.**
+	// When the route moved, `requireUnlocked` skipped BOTH the CSRF check and the origin check for
+	// GET, so any cross-site page could reach this route — it could not read the response, but the
+	// request executed, and since P08.S06 that request runs a close-out sweep: a GET with a
+	// state-changing side effect, reachable cross-origin. Since ADR-054 `requireSession` asks every
+	// method for the token, so that request is refused there; `requireSession` still origin-checks
+	// writes only, and `requirePublicLoopback` stays as the origin check on this GET — it is
+	// `originIsLoopback` and nothing else, and refuses `Sec-Fetch-Site: cross-site` outright.
 	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.requireSession(s.handleCeremonies)))
 	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
 	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin
-	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.
+	// check `requireSession` does not apply to GET. It is a pure read and must stay one.
 	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.requireSession(s.handleCeremonyNext)))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))

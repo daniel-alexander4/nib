@@ -164,9 +164,12 @@ type armedEvent struct {
 // immediately, and the file is handed to a process that is already on its way out. Folding them
 // would make the rare one invisible inside the common one.
 type idleExitTimer struct {
-	mu        sync.Mutex
-	timer     *time.Timer
-	armedAt   time.Time
+	mu      sync.Mutex
+	timer   *time.Timer
+	armedAt time.Time
+	// gen numbers the graces armed, so a timer body can tell whether the grace in `timer` is its
+	// own (/pending 784). Written under `mu` at the arm.
+	gen       uint64
 	fired     chan struct{}
 	exited    bool // RequestExit is idempotent: two causes can race, and close() twice panics
 	byWindow  atomic.Uint64
@@ -263,7 +266,12 @@ func (s *Server) armIdleExitGrace() {
 	}
 	s.idle.armedAt = time.Now()
 	log.Printf("%s %s", idleExitGraceMsg, idleExitGrace)
-	s.idle.timer = time.AfterFunc(idleExitGrace, s.idleGraceElapsed)
+	s.idle.gen++
+	gen := s.idle.gen
+	s.idle.timer = time.AfterFunc(idleExitGrace, func() {
+		defer safe.Recover("idle exit")
+		s.idleGraceElapsed(gen)
+	})
 }
 
 // idleGraceElapsed is the grace's timer body: exit, unless a window is here after all.
@@ -277,13 +285,20 @@ func (s *Server) armIdleExitGrace() {
 // Two halves, and each needs the other. `windowArrived` moves B's cancel and count under ONE hold of
 // this lock, so a count read under it can never be between the two; and this re-check is where
 // that read happens, at the only moment the answer decides anything.
-func (s *Server) idleGraceElapsed() {
+//
+// `gen` is the grace this body was armed for.
+func (s *Server) idleGraceElapsed(gen uint64) {
 	defer safe.Recover("idle exit")
 	s.idle.mu.Lock()
 	// `AfterFunc` can already be running when `cancelIdleExit` takes the lock, and `Stop`
 	// returning false is exactly that case. Clearing the field is what the cancel observes, so a
 	// fire that finds it nil has been cancelled and must not close the channel.
-	if s.idle.timer == nil {
+	//
+	// **Nor one that finds ANOTHER grace there (/pending 784).** A body waiting for this lock while
+	// a window arrives (cancelling it) and leaves again (arming a new grace) finds a timer set — the
+	// new one — and with no window open it exited at once, giving that second close no grace at
+	// all. A cancelled body is cancelled whatever was armed after it.
+	if s.idle.timer == nil || s.idle.gen != gen {
 		s.idle.mu.Unlock()
 		return
 	}
