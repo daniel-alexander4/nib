@@ -108,7 +108,11 @@ func tokenize(src []byte) ([]Token, *imageScanner) {
 				i++
 			}
 			word := src[start:i]
-			if isNumberish(word) {
+			// `true`, `false` and `null` are OPERANDS (ISO 32000-1 §7.3.2, §7.3.9), as `Operand`'s own comment
+			// says. They were emitted as operators, so every walker that takes an operator as the end of an
+			// operand run cut one short at a boolean: `/P <</MCID 3 /X true>> BDC` read as a sequence with no
+			// MCID, and what it covers as uncovered (/pending 632, measured).
+			if isNumberish(word) || isKeywordOperand(word) {
 				out = append(out, Token{Operand, start, i})
 				break
 			}
@@ -131,6 +135,16 @@ func tokenize(src []byte) ([]Token, *imageScanner) {
 		}
 	}
 	return out, s
+}
+
+// isKeywordOperand reports whether a regular-character run is one of the three keywords that are objects
+// rather than operators: the booleans and null.
+func isKeywordOperand(word []byte) bool {
+	switch string(word) {
+	case "true", "false", "null":
+		return true
+	}
+	return false
 }
 
 // isNumberish reports whether a regular-character run is a number rather than a keyword.
