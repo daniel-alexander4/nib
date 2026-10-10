@@ -656,7 +656,7 @@ there, beside the document it works on: in *Signing* that is **Place Signing Fla
 **Send & Receive**. Entering *Signing* still lands on the flag tools and opens no tab.
 
 **Settings** is its own tab, and each thing in it opens a page of its own rather than unfolding in
-the sidebar: **Appearance** (the theme), **Colours**, **Read Aloud**, **Toggle Features** (which tabs the menu shows, the
+the sidebar: **Appearance** (the theme and the sidebar's colours), **Read Aloud**, **Toggle Features** (which tabs the menu shows, the
 advanced features, and updates — three cards on one page that open and shut), **Identity & Keys** (your identity and pinned peers, and the keys that unlock
 your vault), **Vault** (back up and restore) and **About** (the version, what a signature proves, and
 the licence and third-party notices, each shown on the page when you press its button). A page
@@ -665,7 +665,7 @@ opens where the document is shown, in a tab beside the document tabs marked *Set
 first one's place in that tab, rather than adding a tab for every entry you click. Click a
 document's tab to go back to the document — it is exactly where you left it — and the × on the
 page tab to close the page. A setting is saved as you change it, so there is
-nothing to save or cancel — a download folder you had typed is saved as its page is replaced. **Colours** sets the sidebar's card colours: leave it on *All colours*
+nothing to save or cancel — a download folder you had typed is saved as its page is replaced. **Appearance** also sets the sidebar's card colours: leave *Sidebar colours* on *All colours*
 for the six-accent rotation, or pick one hue and the cards become that colour in six steps.
 
 **Main menu**, the first card of *Toggle Features*, is where you cut the menu down to what you use. Untick a tab and it goes from the

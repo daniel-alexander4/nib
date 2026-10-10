@@ -14,6 +14,7 @@ checklist's off rows), `internal/server/advanced.go` (the refusal that names whe
 - ADR-107's Settings order (*Appearance, Colours, Main menu, Read Aloud, Updates, Advanced features, Identity &
   Keys, Vault, About*).
 **Applies:** the Settings menu, and anything that tells a user where one of these switches is.
+**Superseded in part by [ADR-118](118-colours-is-a-row-of-appearance.md)** (Settings is six entries: Colours is a row of Appearance).
 **Superseded in part by [ADR-111](111-toggle-features-is-three-collapsible-cards-in-an-order.md)** (§2's `h3.pagesection` and order: the sections are collapsible cards, Main menu first; a link to a switch opens its card).
 
 ## Decision

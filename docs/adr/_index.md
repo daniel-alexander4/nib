@@ -812,3 +812,6 @@ home today.
   `Adobe-<ordering>-UCS2` CMaps (a CID's text, where the font has no `/ToUnicode` entry). They are another version
   than veraPDF's own files, so a table is carried only where it reads as veraPDF's does: ten predefined CMaps are
   not, 95 CIDs in three runs (`ucs2Gaps`) refuse, and `Adobe-KR-UCS2` is not among them.
+- **[ADR-118 — Colours is a row of Appearance](118-colours-is-a-row-of-appearance.md)**
+  — supersedes ADR-109's seven entries only. Settings is six: Appearance, Read Aloud, Toggle Features, Identity & Keys,
+  Vault, About. Appearance holds *Theme* and *Sidebar colours* as two named rows; no cards.

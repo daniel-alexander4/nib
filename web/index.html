@@ -593,9 +593,6 @@
       <div class="tbgroup" data-label="Appearance" data-fold="4" data-entry>
 <button class="pageentry" data-apppage="settingsAppearancePage">Appearance…</button>
             </div>
-      <div class="tbgroup" data-label="Colours" data-fold="6" data-entry>
-<button class="pageentry" data-apppage="settingsColoursPage">Colours…</button>
-            </div>
       <div class="tbgroup" data-label="Read Aloud" data-fold="4" data-entry>
 <button class="pageentry" data-apppage="settingsReadAloudPage">Read Aloud…</button>
             </div>
@@ -998,13 +995,31 @@
         <div class="pagebody">
           <p class="pagekicker">Settings</p>
           <h2 id="settingsAppearancePageTitle" tabindex="-1">Appearance</h2>
-          <p class="pagelead">Nib has a light theme and a dark one.</p>
+          <p class="pagelead">How Nib looks: its theme, and the colours of the entries in the sidebar.</p>
           <!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. It is
                always offered here, because a Settings surface that omits the theme is a surface
                people will look at and not find it on. -->
           <div class="setrow">
+            <h3 class="rowtitle">Theme</h3>
             <button data-forward="themeToggle">Switch theme</button>
-            <p class="sethelp">The same switch as the sun and moon at the top of the window.</p>
+            <p class="sethelp">Nib has a light theme and a dark one. This is the same switch as the sun and moon at the
+              top of the window.</p>
+          </div>
+          <!-- The sidebar's card colours — the Colours page until ADR-118 (Dan, 2026-10-09: "combine colours into
+               the Appearance menu item"). `all` is the six-accent rotation ADR-019 measured; the six single hues are
+               that same hue at stepped tints, darkest step equal to the measured one. A radio list rather than the
+               toggle pattern: seven options is a choice, not a switch — which is the distinction ADR-021 drew when
+               it removed the four-flavour picker. -->
+          <div class="setrow setgroup" role="radiogroup" aria-labelledby="appearanceColoursTitle">
+            <h3 id="appearanceColoursTitle" class="rowtitle">Sidebar colours</h3>
+            <p class="sethelp">The colours of the entries in the sidebar: all six in turn, or one colour in six steps.</p>
+            <label class="check"><input type="radio" name="cardhue" value="all" /> All colours</label>
+            <label class="check"><input type="radio" name="cardhue" value="blue" /> Blue</label>
+            <label class="check"><input type="radio" name="cardhue" value="mauve" /> Mauve</label>
+            <label class="check"><input type="radio" name="cardhue" value="green" /> Green</label>
+            <label class="check"><input type="radio" name="cardhue" value="peach" /> Peach</label>
+            <label class="check"><input type="radio" name="cardhue" value="red" /> Red</label>
+            <label class="check"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
           </div>
         </div>
       </section>
@@ -1026,26 +1041,6 @@
             <select id="readAloudRateSel">
               <option value="0.75">Slower</option><option value="1">Normal</option><option value="1.25">Faster</option><option value="1.5">Fastest</option>
             </select>
-          </div>
-        </div>
-      </section>
-      <section id="settingsColoursPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Colours" role="region" aria-labelledby="settingsColoursPageTitle" hidden>
-        <div class="pagebody">
-          <p class="pagekicker">Settings</p>
-          <h2 id="settingsColoursPageTitle" tabindex="-1">Colours</h2>
-          <p class="pagelead">The colours of the entries in the sidebar: all six in turn, or one colour in six steps.</p>
-          <!-- The sidebar's card colours. `all` is the six-accent rotation ADR-019 measured; the six
-               single hues are that same hue at stepped tints, darkest step equal to the measured one.
-               A radio list rather than the toggle pattern: seven options is a choice, not a switch —
-               which is the distinction ADR-021 drew when it removed the four-flavour picker. -->
-          <div class="setrow setgroup" role="radiogroup" aria-labelledby="settingsColoursPageTitle">
-            <label class="check"><input type="radio" name="cardhue" value="all" /> All colours</label>
-            <label class="check"><input type="radio" name="cardhue" value="blue" /> Blue</label>
-            <label class="check"><input type="radio" name="cardhue" value="mauve" /> Mauve</label>
-            <label class="check"><input type="radio" name="cardhue" value="green" /> Green</label>
-            <label class="check"><input type="radio" name="cardhue" value="peach" /> Peach</label>
-            <label class="check"><input type="radio" name="cardhue" value="red" /> Red</label>
-            <label class="check"><input type="radio" name="cardhue" value="yellow" /> Yellow</label>
           </div>
         </div>
       </section>
