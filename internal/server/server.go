@@ -38,9 +38,12 @@ import (
 const maxPDFBytes = 200 << 20 // 200 MiB
 
 // parseMultipart caps the request body at max, parses the multipart form, and
-// hands back a cleanup that removes any parts the parser spilled to temp files —
-// net/http never removes those itself, so skipping the cleanup leaks disk until
-// the process exits. On failure it writes the 400 and returns ok=false.
+// hands back a cleanup that removes any parts the parser spilled to temp files as
+// soon as the handler is done with them. The CAP is what a caller must not skip: a
+// bare r.FormValue parses the same form with no limit on the body. (The cleanup is
+// not what stops a leak — net/http's finishRequest calls MultipartForm.RemoveAll
+// after every handler; this comment said otherwise until /pending 773.) On failure
+// it writes the 400 and returns ok=false.
 //
 //	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 //	if !ok {
@@ -1532,21 +1535,42 @@ func (s *Server) addDocCappedOrFocus(doc *document, path string) (installed *doc
 
 // addDocCappedLocked is addDocCapped's body. Caller holds s.mu.
 func (s *Server) addDocCappedLocked(doc *document) (*document, error) {
+	if err := s.roomForLocked(len(doc.data)); err != nil {
+		return nil, err
+	}
+	s.registerLocked(doc)
+	return doc, nil
+}
+
+// roomForLocked is the open-document cap itself: would one more document of `incoming` bytes be
+// refused. Caller holds s.mu.
+func (s *Server) roomForLocked(incoming int) error {
 	if len(s.docs) >= maxOpenDocs {
-		return nil, ErrTooManyOpen
+		return ErrTooManyOpen
 	}
 	// Whichever binds first (D9), and the caller is told WHICH. Summed under the same
 	// lock hold as the append, for the reason the count check is: a caller that measured
 	// first would leave a window for a concurrent open to land in between.
-	total := len(doc.data)
+	total := incoming
 	for _, d := range s.docs {
 		total += len(d.data)
 	}
 	if total > s.docBudget() {
-		return nil, ErrTooManyBytes
+		return ErrTooManyBytes
 	}
-	s.registerLocked(doc)
-	return doc, nil
+	return nil
+}
+
+// roomToOpen asks the cap BEFORE the work of producing a document, for a route whose document
+// is expensive to make — a conversion, a fetch — and would only be refused once made
+// (/pending 773). It passes no size, because there is none yet, so it is the count that binds.
+//
+// **Advisory.** A document can be opened while the work runs, so addDocCapped's test under its
+// own hold stays the one that decides; this only spares work that was never going to land.
+func (s *Server) roomToOpen() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.roomForLocked(0)
 }
 
 // addDoc opens doc ALONGSIDE whatever is already open and makes it active,
