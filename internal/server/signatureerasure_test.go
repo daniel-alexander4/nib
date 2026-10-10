@@ -81,7 +81,7 @@ func TestACommitThatErasesASignatureIsRefusedUnlessAccepted(t *testing.T) {
 		commit func(s *Server, doc *document, result []byte, accept bool) error
 	}{
 		{"commitMutation", func(s *Server, doc *document, result []byte, accept bool) error {
-			return s.commitMutation(doc, postedBase(signed), result, accept)
+			return s.commitMutation(doc, postedBase(signed, 0), result, accept)
 		}},
 		{"commitBarrier", func(s *Server, doc *document, result []byte, accept bool) error {
 			return s.commitBarrier(doc, result, accept)

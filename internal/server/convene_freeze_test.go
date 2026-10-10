@@ -82,7 +82,7 @@ func TestAConvenedDocumentRefusesMutation(t *testing.T) {
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	err = s.commitMutation(d, postedBase(doc), edited, false)
+	err = s.commitMutation(d, postedBase(doc, 0), edited, false)
 	if !errors.Is(err, ErrCeremonyFrozen) {
 		t.Fatalf("a mutation on a convened document reported %v, want ErrCeremonyFrozen — "+
 			"every other party was invited to sign these exact bytes", err)
@@ -106,7 +106,7 @@ func TestAConvenedDocumentRefusesMutation(t *testing.T) {
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
-	if err := s.commitMutation(p, postedBase(plain), grown, false); err != nil {
+	if err := s.commitMutation(p, postedBase(plain, 0), grown, false); err != nil {
 		t.Errorf("an ordinary document was refused (%v) — the freeze is refusing everything, "+
 			"which would break every edit in the product", err)
 	}

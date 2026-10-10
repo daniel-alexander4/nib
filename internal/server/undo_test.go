@@ -141,7 +141,7 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	// altered ordinary trimming.
 	doc := s.activeDoc()
 	for i := 0; i < maxUndoDepth+5; i++ {
-		s.commitMutation(doc, postedBase(pdf), pdf, false)
+		s.commitMutation(doc, postedBase(pdf, 0), pdf, false)
 	}
 	if len(doc.undo) != maxUndoDepth {
 		t.Errorf("undo depth = %d, want %d (oldest evicted)", len(doc.undo), maxUndoDepth)
@@ -195,7 +195,7 @@ func TestASecondOperationOnTheSameSnapshotIsRefused(t *testing.T) {
 		t.Errorf("an operation on the current bytes was refused: %v", err)
 	}
 	// And posted bytes keep last-writer-wins: the server cannot know what they were built on.
-	if err := s.commitMutation(doc, postedBase(before), first, false); err != nil {
+	if err := s.commitMutation(doc, postedBase(before, 0), first, false); err != nil {
 		t.Errorf("a posted-bytes commit was refused: %v", err)
 	}
 }

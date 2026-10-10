@@ -149,7 +149,10 @@ type mutationBase struct {
 func snapshotBase(b []byte) mutationBase { return mutationBase{data: b, snapshot: true} }
 
 // postedBase is bytes the client posted; the server cannot know what they were built on.
-func postedBase(b []byte) mutationBase { return mutationBase{data: b} }
+// broughtAnnots is the count an append or insert carried in from another document, 0 otherwise.
+func postedBase(b []byte, broughtAnnots int) mutationBase {
+	return mutationBase{data: b, broughtAnnots: broughtAnnots}
+}
 
 // sameSlice reports whether a and b are the same bytes in memory — not equal content, the SAME
 // slice. Every writer of `doc.data` assigns a new slice, so this is the document's revision. An
