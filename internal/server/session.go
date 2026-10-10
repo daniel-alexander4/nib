@@ -1098,20 +1098,32 @@ func (se *session) pendingNamed(id string) (*pendingReq, p2p.Roster, respondOutc
 	return p, roster, respondDelivered
 }
 
-// respondVerify resolves the spoken check. Returns false when nothing is waiting, so a
-// stray confirmation cannot be recorded against a session that has moved on.
-func (se *session) respondVerify(ok bool) bool {
+// respondVerify resolves the spoken check. Nothing waiting is its own outcome, so a stray
+// confirmation cannot be recorded against a session that has moved on.
+//
+// **`words` is the check the answer was given for, and an answer for other words is refused
+// (/pending 793).** The slot holds one check at a time, but checks follow one another: the first
+// times out with its words still on the page, a second parks, and the press meant for the first
+// landed on the second — a confirmation of words nobody compared. The words are what the user
+// compared, so they are what the answer names; `respond` does the same with the request's ID.
+//
+// nil means the caller named none: the repro harnesses and the Go tests, which answer a check
+// they never display. The window always sends them (`answerVerify`).
+func (se *session) respondVerify(words *string, ok bool) respondOutcome {
 	se.mu.Lock()
 	pv := se.verify
 	se.mu.Unlock()
 	if pv == nil {
-		return false
+		return respondNothingPending
+	}
+	if words != nil && *words != pv.words {
+		return respondNotThatRequest
 	}
 	select {
 	case pv.resp <- ok:
-		return true
+		return respondDelivered
 	default:
-		return false
+		return respondNothingPending
 	}
 }
 
@@ -2995,12 +3007,20 @@ func writePendingRefusal(w http.ResponseWriter, out respondOutcome, none int) bo
 func (s *Server) handleSessionVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Confirmed bool `json:"confirmed"`
+		// Words is the check this answers, as the page showed it — see `respondVerify`.
+		Words *string `json:"words"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if !s.sess.respondVerify(req.Confirmed) {
+	switch s.sess.respondVerify(req.Words, req.Confirmed) {
+	case respondDelivered:
+	case respondNotThatRequest:
+		httpError(w, http.StatusConflict, "those are not the words waiting to be checked — "+
+			"compare the words on screen now")
+		return
+	default:
 		httpError(w, http.StatusConflict, "no verification is waiting")
 		return
 	}

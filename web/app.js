@@ -1826,13 +1826,16 @@ function showVerify(words) {
   els.verifyModal.hidden = false;
 }
 
+// The answer names the words it was given for — the ones on screen at the press (/pending 793).
+// A check that replaced them while they were up is refused by the server and shown by the poller.
 async function answerVerify(confirmed) {
+  const words = els.verifyWords.textContent;
   els.verifyModal.hidden = true;
   try {
     await apiFetch('/api/session/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmed }),
+      body: JSON.stringify({ confirmed, words }),
     });
   } catch { /* the session will time out and say so; a toast here would be a second story */ }
   if (!confirmed) toast('Stopped — the words did not match');
@@ -1845,13 +1848,13 @@ els.verifyCancel.onclick = () => answerVerify(false);
 // leave a poller running against the next session.
 function startVerifyPoll() {
   const token = ++verifyPoll;
-  let shown = false;
+  let shown = null; // the words last put up: a check with OTHER words is a new one and is shown
   const tick = async () => {
     if (token !== verifyPoll) return;
     try {
       const st = await (await apiFetch('/api/session/status')).json();
       if (token !== verifyPoll) return;
-      if (st.verify && !shown) { shown = true; showVerify(st.verify.words); }
+      if (st.verify && st.verify.words !== shown) { shown = st.verify.words; showVerify(shown); }
     } catch { /* keep polling; the request in flight owns the error reporting */ }
     if (token === verifyPoll) setTimeout(tick, 800);
   };
@@ -1924,7 +1927,8 @@ async function pollRecv(token, fails = 0) {
   }
   // The spoken check comes BEFORE the document, so it is checked before `pending`.
   if (st.verify) {
-    if (els.verifyModal.hidden) showVerify(st.verify.words);
+    // Words that changed while the card was up are another check: the card shows what is waiting.
+    if (els.verifyModal.hidden || els.verifyWords.textContent !== st.verify.words) showVerify(st.verify.words);
   } else if (!els.verifyModal.hidden) {
     els.verifyModal.hidden = true; // the server moved on (answered elsewhere, or timed out)
   }

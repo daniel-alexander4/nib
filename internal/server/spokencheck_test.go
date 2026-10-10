@@ -197,7 +197,7 @@ func TestTheAnswerRecordedIsTheAnswerGiven(t *testing.T) {
 			// The gate has to be parked before it can be answered; `respondVerify` returns false
 			// when nothing is waiting, which is the signal to keep waiting rather than a failure.
 			deadline := time.Now().Add(3 * time.Second)
-			for !srv.sess.respondVerify(answer) {
+			for srv.sess.respondVerify(nil, answer) != respondDelivered {
 				if time.Now().After(deadline) {
 					t.Fatal("setup: the spoken check never parked, so no answer could be given")
 				}
