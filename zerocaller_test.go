@@ -328,9 +328,6 @@ func exprName(e ast.Expr) string {
 	return "?"
 }
 
-// gatedRow matches a `gated` exemption and captures the plan file and coordinate it names.
-var gatedRow = regexp.MustCompile(`^gated — (PLAN-[A-Za-z0-9-]+\.md) (P\d+(?:\.S\d+)?)\.`)
-
 // TestNoGatedExemptionOutlivesItsCoordinate — `PLAN-accessibility.md` P05.S01.
 //
 // A `gated` exemption in `zerocaller_test.go` says *production does not call this YET, and here is
