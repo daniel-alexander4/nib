@@ -2,10 +2,13 @@ package pdfops
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -729,7 +732,8 @@ func removeMedia(ctx *model.Context, root types.Dict) error {
 }
 
 // StripMetadata removes the document's identifying metadata: it drops the whole
-// /Info dictionary (Author, Creator, Title, Subject, Keywords, …), deletes every XMP
+// /Info dictionary (Author, Creator, Title, Subject, Keywords, …) — keeping only a
+// flagged document's signing flags, rebuilt (flagsOnlyInfo) — deletes every XMP
 // /Metadata stream — the catalog's, the pages', and any image's, form's or font's own — and regenerates the trailer
 // /ID so the original permanent identifier no longer travels with the file.
 //
@@ -741,8 +745,14 @@ func removeMedia(ctx *model.Context, root types.Dict) error {
 func StripMetadata(pdf []byte) ([]byte, error) {
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
-		ctx.Info = nil // ensureInfoDict re-adds only Producer/dates for <PDF2.0; nothing reads the cleared fields
-		ctx.ID = nil   // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
+		// The whole dictionary goes; ensureInfoDict re-adds only Producer/dates for <PDF2.0, and nothing reads
+		// the cleared fields. What comes back in its place is the signing flags alone, where there are any.
+		kept, err := flagsOnlyInfo(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.Info = kept
+		ctx.ID = nil // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
 		// EVERY holder, not only the catalog and the pages: ISO 32000-1 §14.3.2 lets any stream or dictionary
 		// carry its own /Metadata, and an image or form XObject's — a camera's, an authoring tool's — names its
 		// maker as the document's does (`/pending 595`). metadataHolders is the one enumeration and Scan reports
@@ -761,6 +771,69 @@ func StripMetadata(pdf []byte) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// flagType is a signing flag's type as nib writes one: a short lower-case word ("sign", "date", "initial", …).
+var flagType = regexp.MustCompile(`^[a-z]{1,16}$`)
+
+// flagsOnlyInfo is the Info dictionary StripMetadata leaves a flagged document: a new one holding `NibFlags` and
+// nothing else, or nil where the document carries no flags (`/pending 830`).
+//
+// **The flags are not what this removal is for, and dropping them broke the document they travel in.** They are
+// the "sign here" placeholders a sender placed — page, place and type, in the one property flags.go describes — and
+// they live in the Info dictionary only because that is where a property travels. Dropping the dictionary whole
+// took them with the author's name, silently: the window keeps this removal away from a document locked for
+// signing, but `POST /api/sanitize` and `nib sanitize` do not ask, so a recipient who cleaned a document before
+// signing it lost every placeholder.
+//
+// **They are re-written, not carried.** The blob is text a stranger wrote, kept by a removal whose claim is that
+// nothing identifying is left — so each flag is rebuilt from the three fields nib reads (page, frac, type) and
+// anything else in it, or beside it, is gone: a fourth field, a type that is not a short word, a frac that is not
+// four numbers. Each flag is judged on its own, as nibFlags reads them, and a blob that is not a list of flags is
+// no flags.
+func flagsOnlyInfo(ctx *model.Context) (*types.IndirectRef, error) {
+	xt := ctx.XRefTable
+	if xt.Info == nil {
+		return nil, nil
+	}
+	info := derefDict(xt, *xt.Info)
+	if info == nil {
+		return nil, nil
+	}
+	enc, ok := stringVal(xt, info[flagsKey])
+	if !ok {
+		return nil, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return nil, nil
+	}
+	var each []json.RawMessage
+	if json.Unmarshal(raw, &each) != nil {
+		return nil, nil
+	}
+	// json.Number, so a coordinate is written back digit for digit rather than through a float.
+	type flag struct {
+		Page json.Number   `json:"page"`
+		Frac []json.Number `json:"frac"`
+		Type string        `json:"type"`
+	}
+	flags := make([]flag, 0, len(each))
+	for _, e := range each {
+		var f flag
+		if json.Unmarshal(e, &f) != nil || f.Page == "" || len(f.Frac) != 4 || !flagType.MatchString(f.Type) {
+			continue
+		}
+		flags = append(flags, f)
+	}
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	clean, err := json.Marshal(flags)
+	if err != nil {
+		return nil, err
+	}
+	return xt.IndRefForNewObject(types.Dict{flagsKey: types.StringLiteral(base64.StdEncoding.EncodeToString(clean))})
 }
 
 // identifying is StripMetadata's remit as Scan reports it.
