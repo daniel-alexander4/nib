@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -244,5 +246,67 @@ func TestTagRemoveLeavesADocumentThatCanBeTaggedAgain(t *testing.T) {
 	}
 	if _, errOut, code := runTag(t, "remove", bare, "-o", filepath.Join(dir, "twice.pdf")); code != 1 || !strings.Contains(errOut, "no structure tree") {
 		t.Errorf("remove on an untagged document: exit %d, %q — want 1 saying it has no tree", code, errOut)
+	}
+}
+
+// picturedPDF is an untagged page with a line of text and one image XObject drawn 100 by 80 points (ADR-122).
+func picturedPDF() []byte {
+	content := "BT /F1 12 Tf 72 700 Td (Above the picture) Tj ET q 100 0 0 80 50 500 cm /Im0 Do Q"
+	return testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Lang (en-US) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R >> >> /Contents 4 0 R >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		6: "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\nabcd\nendstream",
+	})
+}
+
+// TestTagProposeNamesAFigureAndCommitWantsItsDescription — ADR-122 on the command line: `propose` prints a
+// Figure with its page and the box its picture fills; `propose --json` is a review of everything but what the
+// picture shows, so committing it as printed is refused (exit 2, with the reason), and with `"alt"` filled in
+// it writes a Figure that `tag tree` reads back.
+func TestTagProposeNamesAFigureAndCommitWantsItsDescription(t *testing.T) {
+	dir := t.TempDir()
+	in, out, review := filepath.Join(dir, "in.pdf"), filepath.Join(dir, "out.pdf"), filepath.Join(dir, "review.json")
+	if err := os.WriteFile(in, picturedPDF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runTag(t, "propose", in)
+	if code != 0 {
+		t.Fatalf("nib tag propose exited %d", code)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[1], "1    Figure p1   a picture at 50 500 150 580") || !strings.Contains(lines[1], `"alt"`) {
+		t.Errorf("printed\n%s\nwant a second line naming the Figure, its page and its box, and what it needs", stdout)
+	}
+	js, _, code := runTag(t, "propose", "--json", in)
+	if code != 0 {
+		t.Fatalf("nib tag propose --json exited %d", code)
+	}
+	if err := os.WriteFile(review, []byte(js), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := runTag(t, "commit", in, "-o", out, "--review", review); code != 2 || !strings.Contains(errOut, "a figure needs a description of what it shows, or must be ignored") {
+		t.Errorf("committing the proposal as printed exited %d saying %q, want 2 and the reason", code, errOut)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("a refused commit wrote its output")
+	}
+	var prop map[string]any
+	if err := json.Unmarshal([]byte(js), &prop); err != nil {
+		t.Fatal(err)
+	}
+	prop["elements"].([]any)[1].(map[string]any)["alt"] = "A grey square"
+	described, _ := json.Marshal(prop)
+	if err := os.WriteFile(review, described, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := runTag(t, "commit", in, "-o", out, "--review", review); code != 0 {
+		t.Fatalf("committing the described figure exited %d: %s", code, errOut)
+	}
+	tree, _, code := runTag(t, "tree", out)
+	if code != 0 || !strings.Contains(tree, "Figure") || !strings.Contains(tree, "A grey square") {
+		t.Errorf("nib tag tree exited %d and printed\n%s\nwant the Figure and its description", code, tree)
 	}
 }

@@ -685,6 +685,8 @@ body > div[id$="Modal"] {
 .tags-row.tags-sub1 { margin-left: 14px; }
 .tags-row.tags-sub2 { margin-left: 28px; }
 .tags-kind { font-size: 12px; font-weight: 600; }
+/* A figure's description (ADR-122): the one free-text control in a review row, so it takes the row's spare width. */
+.tags-alt { flex: 1 1 14em; min-width: 10em; font-size: 12px; }
 .tags-row.tags-ignored .tags-text { text-decoration: line-through; color: var(--subtext0); }
 .tags-text { flex: 1 1 100%; font-size: 12px; overflow-wrap: anywhere; }
 .tags-row label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }

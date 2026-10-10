@@ -138,7 +138,15 @@ func TestACommitDeclaresAPictureNoElementCoversAnArtifact(t *testing.T) {
 	if bs := pageStream(t, pictured, 1); !bytes.HasPrefix(bs, []byte("q 40 0 0 40 50 50 cm /NibPic Do Q\n")) {
 		t.Fatalf("setup: the host's page does not open by drawing the picture:\n%.400s", bs)
 	}
-	out, err := commitProposal(pictured, proposeFor(t, pictured).elements)
+	// No element covers the picture: since ADR-122 a Figure is proposed for it, and this is the review that
+	// ignores that figure — the elements without it.
+	var elements []proposedElement
+	for _, el := range proposeFor(t, pictured).elements {
+		if el.role != figureRole {
+			elements = append(elements, el)
+		}
+	}
+	out, err := commitProposal(pictured, elements)
 	if err != nil {
 		t.Fatal(err)
 	}

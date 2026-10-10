@@ -129,6 +129,14 @@ func TestDecodingReadsTheRequestShapes(t *testing.T) {
 	if len(reviews) != 2 || reviews[0] != (pdfops.TagReview{ID: 2, Role: "H1", Text: "T"}) || reviews[1] != (pdfops.TagReview{ID: 3, Role: "P", Ignore: true, Text: "U"}) {
 		t.Errorf("decoded %+v", reviews)
 	}
+	// A figure's description travels with its element, character for character (ADR-122).
+	figs, err := DecodeReview(strings.NewReader(`{"elements":[{"id":0,"role":"Figure","text":"","alt":"A chart (2024) \\ ü"},{"id":1,"role":"Figure","ignore":true,"alt":""}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(figs) != 2 || figs[0] != (pdfops.TagReview{ID: 0, Role: "Figure", Alt: `A chart (2024) \ ü`}) || figs[1] != (pdfops.TagReview{ID: 1, Role: "Figure", Ignore: true}) {
+		t.Errorf("decoded %+v", figs)
+	}
 	for _, bad := range []string{`not json`, `{"edits": 5}`} {
 		if _, err := DecodeEdits(strings.NewReader(bad)); !errors.Is(err, ErrMalformed) {
 			t.Errorf("DecodeEdits(%q) = %v, want ErrMalformed", bad, err)

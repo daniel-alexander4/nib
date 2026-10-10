@@ -198,6 +198,8 @@ type pageRuns struct {
 	marks []pageMark
 	// shapes are the pieces of every painted path, kept only by the page map's reader (ADR-088).
 	shapes []pageShape
+	// images are the images the page draws, kept with the shapes (ADR-122).
+	images []drawnImage
 	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
 	// those inside the forms it draws included — so a writer can find an element's content whether or
 	// not it is text (P09.S03).
@@ -271,7 +273,7 @@ func readPageRunsWith(ctx *model.Context, pg pdfread.Page, keep, shapes bool, bu
 		if err := w.budget.err(); err != nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
 		}
-		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes}, nil
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes, images: w.images}, nil
 	})
 }
 
@@ -514,6 +516,8 @@ type runWalker struct {
 	// one mark and forty shapes. The page map's reader, and only it (ADR-088).
 	keepShapes bool
 	shapes     []pageShape
+	// images are the images drawn, kept with the shapes (`drawnImage`, ADR-122).
+	images []drawnImage
 	// fonts holds every font the walk has loaded, keyed by its object number when the resource names an
 	// indirect font and by the dictionary's identity when it is a direct one (`/pending 723`): a direct
 	// font reloaded at every `Tf` re-parsed its `/ToUnicode` each time, 17.7 s for 14.4 KB of content.
@@ -906,7 +910,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		tok := toks[i]
 		switch tok.Kind {
 		case contentstream.InlineImage:
-			w.markImage(markInlineImage, gs)
+			w.markImage(markInlineImage, gs, opSpan{tok.Start, tok.End}, depth > 0)
 			continue
 		case contentstream.Whitespace:
 			continue
@@ -1181,7 +1185,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					if w.drawForm(res, name, gs, depth, visiting) {
 						w.markDrawsForm()
 					} else if w.drawsImage(res, name) {
-						w.markImage(markImage, gs)
+						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0)
 					}
 				}
 			}

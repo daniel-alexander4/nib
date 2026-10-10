@@ -217,7 +217,9 @@ func artifactUncoveredDrawings(ctx *model.Context, pg pdfread.Page) error {
 		return nil
 	}
 	edit := contentstream.NewEdit(src)
+	brackets := drawingBrackets{src: src}
 	for _, sp := range drawings {
+		sp = brackets.around(sp)
 		edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
 		edit.InsertBefore(sp.end, []byte("\nEMC"))
 	}

@@ -49,6 +49,17 @@ const tableProposal = () => ({
   unsupported: [],
   noText: [],
 });
+// A proposal with two figures in it (ADR-122): a Figure has no text, and its rect is its image's box.
+const figureProposal = () => ({
+  elements: [
+    { id: 0, role: 'P', page: 1, text: 'Above the picture', list: -1, parent: -1, rect: [72, 730, 300, 745], pageBox: BOX },
+    { id: 1, role: 'Figure', page: 1, text: '', list: -1, parent: -1, rect: [100, 500, 300, 700], pageBox: BOX },
+    { id: 2, role: 'P', page: 1, text: 'Between the pictures', list: -1, parent: -1, rect: [72, 470, 300, 485], pageBox: BOX },
+    { id: 3, role: 'Figure', page: 2, text: '', list: -1, parent: -1, rect: [100, 300, 300, 450], pageBox: BOX },
+  ],
+  unsupported: [],
+  noText: [],
+});
 let nextProposal = proposal;
 
 let commitBody = null;
@@ -283,7 +294,114 @@ test('a retyped cell and an ignored table are what the commit sends', async () =
   assert.deepEqual(sent.map((e) => e.role), ['Table', 'TR', 'TH', 'TH', 'TR', 'TH', 'TD', 'P', 'P'], 'the commit does not carry the table\'s roles');
   // Only the table carries the ignore: the server refuses a row or a cell ignored by itself.
   assert.deepEqual(sent.map((e) => e.ignore), [true, false, false, false, false, false, false, false, false], 'the ignore is not the table\'s alone');
-  assert.deepEqual(Object.keys(sent[0]).sort(), ['id', 'ignore', 'role', 'text'], 'the review\'s shape changed');
+  assert.deepEqual(Object.keys(sent[0]).sort(), ['alt', 'id', 'ignore', 'role', 'text'], 'the review\'s shape changed');
+  assert.deepEqual(sent.map((e) => e.alt), Array(9).fill(''), 'an element that is not a figure was sent with a description');
   assert.equal(sent[6].text, '', 'an empty cell does not echo its empty text');
+  nextProposal = proposal;
+});
+
+// ── A proposed figure (ADR-122) ──────────────────────────────────────────────
+// The server refuses a kept figure with no description, and a figure made anything else. This proves the
+// card asks for the description where the figure is, never offers another type, keeps what was typed through
+// every re-render, and sends it.
+const type = (input, value) => {
+  input.value = value;
+  input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+};
+
+test('a figure says its type, offers no other, and asks for a description by name', async () => {
+  nextProposal = figureProposal;
+  await propose();
+  assert.equal(rows().length, 4, 'a row per proposed element, the figures included');
+  for (const id of [1, 3]) {
+    const row = rowFor(id);
+    assert.equal(row.querySelector('select'), null, `figure ${id} offers a choice of type`);
+    assert.equal(row.querySelector('.tags-kind').textContent, 'Figure', `figure ${id} does not say what it is`);
+    const alt = row.querySelector('input.tags-alt');
+    assert.ok(alt, `figure ${id} has no field for its description`);
+    assert.equal(alt.type, 'text');
+    assert.match(alt.getAttribute('aria-label'), new RegExp(`Description of the picture on page ${id === 1 ? 1 : 2}`), `figure ${id}'s field does not name what it is for`);
+    assert.equal(alt.value, '', 'a proposed figure arrives with a description nobody wrote');
+    assert.ok(row.querySelector('input[type="checkbox"]') && row.querySelector('.tags-up') && row.querySelector('.tags-down') && row.querySelector('.tags-show'),
+      `figure ${id} cannot be ignored, moved or shown`);
+    assert.match(row.querySelector('.tags-text').textContent, /a picture/, 'a figure\'s row does not say it is a picture');
+    for (const c of row.querySelectorAll('select, input, button')) {
+      assert.notEqual(c.tabIndex, -1, `a ${c.tagName} in figure ${id}'s row is taken out of the tab order`);
+      assert.ok(c.getAttribute('aria-label') || c.closest('label'), `a ${c.tagName} in figure ${id}'s row has no accessible name`);
+    }
+  }
+  for (const id of [0, 2]) {
+    assert.equal(rowFor(id).querySelector('.tags-alt'), null, `paragraph ${id} asks for a description`);
+    assert.equal([...rowFor(id).querySelectorAll('option')].some((o) => o.value === 'Figure'), false, `paragraph ${id} can be made a figure`);
+  }
+  const summary = doc.getElementById('tagsSummary').textContent;
+  assert.match(summary, /2 figure\(s\) still need a description/, `the summary does not count the figures with no description: "${summary}"`);
+  assert.equal(doc.getElementById('tagsCommit').disabled, false, 'a figure with no description disables the commit, so the server\'s reason is never seen');
+});
+
+test('a description survives typing, a re-render and a move, and the count follows it', async () => {
+  const field = rowFor(1).querySelector('.tags-alt');
+  field.focus();
+  type(field, 'A bar chart of sales (2024)');
+  await settle();
+  assert.equal(rowFor(1).querySelector('.tags-alt'), field, 'typing rebuilt the field, which loses the caret');
+  assert.equal(doc.activeElement, field, 'typing lost the keyboard\'s place');
+  assert.match(doc.getElementById('tagsSummary').textContent, /1 figure\(s\) still need a description/, 'the count did not follow the description');
+  type(field, '   ');
+  await settle();
+  assert.match(doc.getElementById('tagsSummary').textContent, /2 figure\(s\) still need a description/, 'a description of spaces counts as one');
+  type(field, 'A bar chart of sales (2024)');
+  await settle();
+
+  // A re-render: retyping the paragraph above rebuilds every row.
+  const select = rowFor(0).querySelector('select');
+  select.value = 'H1';
+  select.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(rowFor(1).querySelector('.tags-alt').value, 'A bar chart of sales (2024)', 'a re-render lost the description');
+  // A move.
+  rowFor(1).querySelector('.tags-down').click();
+  await settle();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['0', '2', '1', '3'], 'the figure did not move');
+  assert.equal(rowFor(1).querySelector('.tags-alt').value, 'A bar chart of sales (2024)', 'a move lost the description');
+  assert.equal(doc.activeElement, rowFor(1).querySelector('.tags-down'), 'the move lost the keyboard\'s place');
+  assert.equal(rowFor(3).querySelector('.tags-alt').value, '', 'one figure\'s description appeared on the other');
+
+  // Ignoring the other figure: it no longer needs one, and the keyboard stays on its box.
+  rowFor(3).querySelector('input[type="checkbox"]').click();
+  await settle();
+  assert.equal(doc.activeElement, rowFor(3).querySelector('input[type="checkbox"]'), 'ignoring a figure moved the keyboard to its description');
+  assert.equal(rowFor(3).querySelector('.tags-alt').disabled, true, 'an ignored figure still asks for a description');
+  assert.doesNotMatch(doc.getElementById('tagsSummary').textContent, /still need a description/, 'an ignored figure is counted as needing a description');
+});
+
+test('the commit carries each figure\'s description, and a refusal for a missing one is shown', async () => {
+  commitBody = null;
+  commitReply = null;
+  rowFor(3).querySelector('input[type="checkbox"]').click(); // kept again, with no description
+  await settle();
+  held = { docs: [OPEN], activeId: OPEN.id };
+  commitReply = () => new Response(JSON.stringify({ error: 'a figure needs a description of what it shows, or must be ignored (element 3, page 2)' }),
+    { status: 400, headers: { 'Content-Type': 'application/json' } });
+  doc.getElementById('tagsCommit').click();
+  await settle();
+  await settle();
+  await settle();
+  assert.deepEqual(commitBody.elements.map((e) => [e.id, e.role, e.ignore, e.alt]),
+    [[0, 'H1', false, ''], [2, 'P', false, ''], [1, 'Figure', false, 'A bar chart of sales (2024)'], [3, 'Figure', false, '']],
+    'the commit does not carry the figures\' descriptions in the reviewed order');
+  assert.equal(doc.getElementById('tagsModal').hidden, false, 'a refusal closed the review and lost the descriptions');
+  assert.match(doc.getElementById('tagsSummary').textContent, /a figure needs a description of what it shows/, 'the refusal does not show the server\'s sentence');
+  assert.equal(rowFor(1).querySelector('.tags-alt').value, 'A bar chart of sales (2024)', 'a refusal lost the description already written');
+  assert.equal(doc.getElementById('tagsCommit').disabled, false, 'after a refusal the commit cannot be tried again');
+
+  type(rowFor(3).querySelector('.tags-alt'), 'Ünïcode \\ (parens)');
+  commitReply = null;
+  commitBody = null;
+  doc.getElementById('tagsCommit').click();
+  await settle();
+  await settle();
+  assert.equal(commitBody.elements.find((e) => e.id === 3).alt, 'Ünïcode \\ (parens)', 'the description sent is not the one typed');
+  assert.equal(doc.getElementById('tagsModal').hidden, true, 'a successful commit left the review open');
   nextProposal = proposal;
 });

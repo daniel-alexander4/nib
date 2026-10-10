@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -629,5 +630,56 @@ func TestTheRemoveRouteRefusesASignedDocumentAtTheDoor(t *testing.T) {
 	}
 	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
 		t.Error("a refused removal changed the signed document")
+	}
+}
+
+// picturedPDF is an untagged page with a line of text and one image XObject drawn 100 by 80 points (ADR-122).
+func picturedPDF() []byte {
+	content := "BT /F1 12 Tf 72 700 Td (Above the picture) Tj ET q 100 0 0 80 50 500 cm /Im0 Do Q"
+	return testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Lang (en-US) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R >> >> /Contents 4 0 R >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		6: "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\nabcd\nendstream",
+	})
+}
+
+// TestTheCommitRouteWritesAFigureOnlyWithItsDescription — ADR-122 at the route: the proposal names the picture
+// as a Figure, a review that keeps it with no `alt` is a malformed review (400) answered with the reason, and
+// with one the tree route reads the Figure and what was written for it.
+func TestTheCommitRouteWritesAFigureOnlyWithItsDescription(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, picturedPDF())
+	prop := proposeOpen(t, c, base)
+	if len(prop.Elements) != 2 || prop.Elements[1].Role != "Figure" || prop.Elements[1].Text != "" || prop.Elements[1].Rect != [4]float64{50, 500, 150, 580} {
+		t.Fatalf("proposed %+v, want a paragraph and a Figure at 50 500 150 580", prop.Elements)
+	}
+	before := getBytes(t, c, base+"/api/pdf")
+	code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(prop, nil))
+	if code != http.StatusBadRequest || !strings.Contains(body, "a figure needs a description of what it shows, or must be ignored") {
+		t.Errorf("a figure kept with no description: commit = %d %q, want 400 saying it needs one", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused commit changed the document")
+	}
+	const alt = `A chart (2024) \ ü`
+	code, body = postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(prop, func(e []map[string]any) []map[string]any {
+		e[1]["alt"] = alt
+		return e
+	}))
+	if code != http.StatusOK {
+		t.Fatalf("a described figure: commit = %d %q", code, body)
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range tree.Elements {
+		got = append(got, e.Kind+" "+e.Alt)
+	}
+	if !reflect.DeepEqual(got, []string{"P ", "Figure " + alt}) {
+		t.Errorf("the tree reads %q, want the paragraph and the Figure with its description", got)
 	}
 }

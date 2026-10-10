@@ -87,6 +87,9 @@ type pageLayout struct {
 	// tables are the page's ruled tables, top to bottom — set only by the proposer's reader
 	// (`readPageTableLayout`, ADR-121). Their text is in no paragraph.
 	tables []ruledTable
+	// figures are the images the page draws that a Figure is proposed for, in the order they are drawn — set only
+	// by the proposer's reader (`readPageTableLayout`, ADR-122).
+	figures []pageFigure
 	// annots are the boxes of the page's annotations, a popup's excepted (`pageAnchors` without what only moving text asks
 	// about) — kept only by reflow's reader, so a re-set line's measure stops short of a field or a note beside it as it
 	// stops short of text and drawings (`paragraphMeasures`, P07 phase-close review).
@@ -133,7 +136,73 @@ func readPageTableLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWal
 	if pr.noText {
 		return pageLayout{noText: true}, nil
 	}
-	return groupRunsAndTables(pr.runs, pr.shapes), nil
+	l := groupRunsAndTables(pr.runs, pr.shapes)
+	placeFigures(&l, pr.images)
+	return l, nil
+}
+
+// pageFigure is an image the page draws that a Figure is proposed for (ADR-122).
+type pageFigure struct {
+	// box is the image as drawn, in user space; span its own operator in the page's content.
+	box  [4]float64
+	span opSpan
+	// before is how many of the page's paragraphs come before the figure in reading order.
+	before int
+}
+
+// figureMinSide is the least an image measures, either way as drawn, to be proposed as a Figure. Under it the
+// image is a bullet, a rule's end or an ornament, and it stays the artifact every uncovered drawing is.
+const figureMinSide = 8.0
+
+// Why an image the page draws is not proposed as a Figure (ADR-122). Only the last is said on the page: the
+// others are what the commit already does with a drawing nothing covers, or what it cannot do at all.
+const (
+	figureInForm   = "drawn inside a form XObject"
+	figureArtifact = "already inside an artifact"
+	figureMarked   = "already inside marked content with an id"
+	figureSmall    = "smaller than a figure"
+	figureTurned   = "a picture drawn turned or slanted was not proposed as a figure, because the box it fills cannot be read from the page"
+)
+
+// figureRefusal is why no Figure is proposed for im, or "" when one is.
+//
+// **An image inside a form XObject is not proposed**: its operator is in the form's stream, the commit writes
+// the page's own, and the form may be drawn more than once — the reason text in a form is refused
+// (`errCommitInForm`). An image under an `/Artifact` has been called decoration by whoever wrote the page, and
+// one under an MCID already has an owner. A turned image is REPORTED and not guessed at: under any matrix but a
+// whole number of quarter turns it fills a parallelogram, and the box that bounds it is not where it is.
+func figureRefusal(im drawnImage) string {
+	switch {
+	case im.inForm:
+		return figureInForm
+	case im.artifact:
+		return figureArtifact
+	case im.marked:
+		return figureMarked
+	case im.box[2]-im.box[0] < figureMinSide || im.box[3]-im.box[1] < figureMinSide:
+		return figureSmall
+	case !im.upright:
+		return figureTurned
+	}
+	return ""
+}
+
+// placeFigures sets apart the images a Figure is proposed for, each where its top-left corner would be read
+// (`tablePlace`'s rule, over the paragraphs the page was grouped into — a figure moves no text and ends no
+// paragraph).
+//
+// **Declared limits** (ADR-122): an image standing inside a kept table's grid is proposed as a Figure of its
+// own, after the table, and not inside the cell that holds it; a painted path is never a Figure — a drawing
+// made of vectors stays an artifact, as before.
+func placeFigures(l *pageLayout, images []drawnImage) {
+	for _, im := range images {
+		switch why := figureRefusal(im); why {
+		case "":
+			l.figures = append(l.figures, pageFigure{box: im.box, span: im.span, before: tablePlace(l.paragraphs, im.box)})
+		case figureTurned:
+			noteUnsupported(l, why)
+		}
+	}
 }
 
 // groupRunsAndTables is groupRuns with the text inside each regular ruled grid set apart as a table.

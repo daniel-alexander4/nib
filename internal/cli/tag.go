@@ -67,8 +67,10 @@ func tagWrite(args []string, mode string) int {
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
 	requestFlag, usage := "review", "nib tag commit IN -o OUT --review REVIEW.json  |  nib tag commit -w IN --review REVIEW.json"
-	about := "Write a reviewed proposal as the document's structure. REVIEW.json is {\"elements\": [{\"id\", \"role\", \"ignore\", \"text\"}]};\n" +
-		"\"nib tag propose --json\" prints one that keeps every proposed role. A signed document is refused."
+	about := "Write a reviewed proposal as the document's structure. REVIEW.json is {\"elements\": [{\"id\", \"role\", \"ignore\", \"text\",\n" +
+		"\"alt\"}]}; \"nib tag propose --json\" prints one that keeps every proposed role. A proposed Figure is the one\n" +
+		"element it does not settle: give each its \"alt\" — what the picture shows — or \"ignore\": true, or the\n" +
+		"commit is refused. A signed document is refused."
 	if mode == "edit" {
 		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
 		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
@@ -255,8 +257,10 @@ func tagPropose(args []string) int {
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "print the proposal as JSON, in the shape the Tags card reads")
 	fs.Usage = usageFunc(fs, "nib tag propose IN [--json]",
-		"Print the headings, paragraphs, list items and ruled tables nib would propose for the document, in\n"+
-			"reading order; a table's rows and cells are indented under it.\n"+
+		"Print the headings, paragraphs, list items, ruled tables and figures nib would propose for the\n"+
+			"document, in reading order; a table's rows and cells are indented under it. A Figure is proposed for\n"+
+			"each picture the page draws and is printed with the box it fills (left, bottom, right, top, in points):\n"+
+			"to commit it, give it an \"alt\" in the review — what the picture shows — or \"ignore\": true.\n"+
 			"Writes nothing: a proposal is reviewed before it is committed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -284,7 +288,12 @@ func tagPropose(args []string) int {
 		if e.Parent >= 0 && e.Parent < i {
 			depth[i] = depth[e.Parent] + 1
 		}
-		fmt.Println(termText(fmt.Sprintf("%-4d %s%-5s p%-3d %s", e.ID, strings.Repeat("  ", depth[i]), e.Role, e.Page, clipRunes(strings.TrimSpace(e.Text), 70))))
+		// A Figure has no text: what says which picture it is, is where it is drawn (ADR-122).
+		words := clipRunes(strings.TrimSpace(e.Text), 70)
+		if e.Role == "Figure" {
+			words = fmt.Sprintf("a picture at %.0f %.0f %.0f %.0f — needs a description (\"alt\"), or \"ignore\"", e.Rect[0], e.Rect[1], e.Rect[2], e.Rect[3])
+		}
+		fmt.Println(termText(fmt.Sprintf("%-4d %s%-5s p%-3d %s", e.ID, strings.Repeat("  ", depth[i]), e.Role, e.Page, words)))
 	}
 	for _, u := range prop.Unsupported {
 		errf("page %d: %s — check its order carefully", u.Page, u.Reason)

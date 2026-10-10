@@ -88,9 +88,11 @@ func validated(out []byte) ([]byte, error) {
 	return out, nil
 }
 
-// DecodeReview reads a review: `{"elements": [{"id", "role", "ignore", "text"}]}`. The proposal's own JSON
+// DecodeReview reads a review: `{"elements": [{"id", "role", "ignore", "text", "alt"}]}`. The proposal's own JSON
 // (`nib tag propose --json`, the propose route) is a review that keeps every role it proposed — the fields
-// a review does not carry are ignored.
+// a review does not carry are ignored. **A proposed Figure is the one element it does not settle**: a
+// proposal cannot say what a picture shows, so each Figure needs its `"alt"` filled in or `"ignore": true`
+// before the review commits (ADR-122).
 func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 	var body struct {
 		Elements []struct {
@@ -98,6 +100,7 @@ func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 			Role   string `json:"role"`
 			Ignore bool   `json:"ignore"`
 			Text   string `json:"text"`
+			Alt    string `json:"alt"`
 		} `json:"elements"`
 	}
 	if err := json.NewDecoder(r).Decode(&body); err != nil {
@@ -105,7 +108,7 @@ func DecodeReview(r io.Reader) ([]pdfops.TagReview, error) {
 	}
 	reviews := make([]pdfops.TagReview, len(body.Elements))
 	for i, e := range body.Elements {
-		reviews[i] = pdfops.TagReview{ID: e.ID, Role: e.Role, Ignore: e.Ignore, Text: e.Text}
+		reviews[i] = pdfops.TagReview{ID: e.ID, Role: e.Role, Ignore: e.Ignore, Text: e.Text, Alt: e.Alt}
 	}
 	return reviews, nil
 }

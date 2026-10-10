@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagcommit.go b/internal/pdfops/tagcommit.go
+--- a/internal/pdfops/tagcommit.go
++++ b/internal/pdfops/tagcommit.go
+@@ -357,7 +357,7 @@
+ 			}
+ 			sort.Ints(ends)
+ 			for _, e := range ends {
+-				sp := cp.brackets.around(cp.drawings[e])
++				sp := cp.drawings[e]
+ 				cp.edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
+ 				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))
+ 			}
