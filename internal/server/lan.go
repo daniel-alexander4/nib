@@ -524,43 +524,17 @@ func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, di
 		}
 	}()
 
-	var last error
-	var tried int
-	for {
-		var r result
-		select {
-		case got, ok := <-results:
-			if !ok {
-				// Every dial finished and the input closed: the race is exhausted.
-				return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), last)
-			}
-			r = got
-		case <-parent.Done():
-			// **The connect deadline, or the caller giving up.** Without this arm the
-			// loop waits on a channel that a trickle source keeps open forever.
-			return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), context.Cause(parent))
-		}
-		tried++
-		if r.err != nil {
-			if errors.Is(r.err, errUnknownTransport) {
-				return zero, r.err // a caller error, not a peer's
-			}
-			// **A clock-skew refusal outranks whatever else lost.** `connectFailure` lifts
-			// `*p2p.ClockSkewError` out with `errors.As` and reports D19's fifth cause,
-			// naming the direction and size of the disagreement. Under a walk the last
-			// error was the only error; under a race "last" is whichever goroutine
-			// happened to finish last, so a skewed peer reachable at one address and
-			// skewed at another would report a generic failure roughly half the time.
-			// Cause 5 is actionable — check the clock — and cause 4 is not, so the
-			// specific one wins.
-			var skew *p2p.ClockSkewError
-			if last == nil || errorsAs(r.err, &skew) {
-				last = r.err
-			}
-			continue
-		}
-		// A winner. Cancel the rest and drain what is already in flight, closing each in
-		// its own goroutine — see the note above on why not serially.
+	// closeTheRest cancels the dials still running and closes every connection one of them has
+	// already won or wins on its way out, each in its own goroutine — see the note above on why
+	// not serially.
+	//
+	// **Every return that leaves a dial in flight calls it, not only the win** (/pending 772,
+	// /pending 623). It was written inline on the win path, so the two early returns below — the
+	// caller's context ending, and a caller error — left a connection that had completed its
+	// handshake parked in `results` with nobody to close it: open on the peer's side, which is
+	// the head-of-line block the header calls correctness rather than hygiene. The glare path
+	// reaches the first of them whenever it chooses ACCEPT while its own dial is finishing.
+	closeTheRest := func() {
 		cancel()
 		go func() {
 			defer safe.Recover("race drain")
@@ -578,6 +552,47 @@ func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, di
 				}
 			}
 		}()
+	}
+
+	var last error
+	var tried int
+	for {
+		var r result
+		select {
+		case got, ok := <-results:
+			if !ok {
+				// Every dial finished and the input closed: the race is exhausted.
+				return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), last)
+			}
+			r = got
+		case <-parent.Done():
+			// **The connect deadline, or the caller giving up.** Without this arm the
+			// loop waits on a channel that a trickle source keeps open forever.
+			closeTheRest()
+			return zero, raceFailure(tried, dropped.Load(), dropReport(&droppedBySource), context.Cause(parent))
+		}
+		tried++
+		if r.err != nil {
+			if errors.Is(r.err, errUnknownTransport) {
+				closeTheRest()
+				return zero, r.err // a caller error, not a peer's
+			}
+			// **A clock-skew refusal outranks whatever else lost.** `connectFailure` lifts
+			// `*p2p.ClockSkewError` out with `errors.As` and reports D19's fifth cause,
+			// naming the direction and size of the disagreement. Under a walk the last
+			// error was the only error; under a race "last" is whichever goroutine
+			// happened to finish last, so a skewed peer reachable at one address and
+			// skewed at another would report a generic failure roughly half the time.
+			// Cause 5 is actionable — check the clock — and cause 4 is not, so the
+			// specific one wins.
+			var skew *p2p.ClockSkewError
+			if last == nil || errorsAs(r.err, &skew) {
+				last = r.err
+			}
+			continue
+		}
+		// A winner. Cancel the rest and drain what is already in flight.
+		closeTheRest()
 		return r.conn, nil
 	}
 }
