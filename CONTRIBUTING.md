@@ -54,6 +54,11 @@ itself needs to show its UI, so if Nib runs at all, tier 3 can run. Tiers 4 and 
 need `go`, `curl` and `python3` (6 also `sha256sum`); tier 5 and `--lan` need
 `unshare` and `ip` (`--lan` also `nft`) and unprivileged network namespaces.
 
+**veraPDF is an oracle the tests run, never something Nib ships, and its corpus files never enter this repository.**
+If one ever must, it carries its own attribution (the PDF/UA-1 corpus is CC BY 4.0; the Isartor files beside it have
+their own terms). A file that cites veraPDF's source or says it transcribes one of its tests carries the
+`MPL-2.0 OR AGPL-3.0-only` header, and `TestEveryFileDerivedFromVeraPDFSaysSo` holds that in both directions.
+
 **The accessibility checker is scored against veraPDF over two local corpora it does not ship**, both
 inside tier 1 and both a SKIP that says so when absent (veraPDF itself is required too — `NIB_VERAPDF`, `verapdf` on
 `PATH`, or `~/verapdf`): veraPDF's own PDF/UA-1 corpus (`NIB_UA_CORPUS`, a sparse

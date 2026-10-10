@@ -15,7 +15,7 @@ import (
 // profile's `gContainsCatalogLang` variable) and then measured on veraPDF 1.30.2 before it was written.
 
 func init() {
-	register(Rule{Clause: "7.2 t2", Summary: "natural language in the outline entries shall be determined", Check: checkOutlineLanguage})
+	register(Rule{Clause: "7.2 t2", Summary: "each outline entry shall have a language that can be established", Check: checkOutlineLanguage})
 	register(Rule{Clause: "7.2 t29", Summary: "a /Lang value shall be a language identifier (ISO 32000-1 14.9.2)", Check: checkLanguageIdentifiers})
 	for _, k := range alternateTextKeys {
 		key, what := k.key, k.what

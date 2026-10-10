@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: MPL-2.0 OR AGPL-3.0-only
+//
+// Parts of this file are derived from veraPDF 1.30.2 (veraPDF-validation and veraPDF-parser),
+// Copyright (c) 2015-2026 veraPDF Consortium, which is offered under GPLv3+ or MPLv2+. nib takes the
+// MPL-2.0 option: this file is available under MPL-2.0, and is distributed as part of nib under the
+// AGPL-3.0 (MPL 2.0 section 3.3). See THIRD-PARTY-NOTICES.md, "veraPDF".
+
 package uacheck
 
 import "fmt"
