@@ -141,6 +141,8 @@ type refGraph struct {
 	// guarded adds the edges pdfcpu follows WITH a guard — form and image XObjects, Type 3 fonts, appearance streams,
 	// soft-mask groups — which the path count must not follow and the depth bound must (`validatorDepth`).
 	guarded bool
+	// followed is the edges `open` has emitted; past budget (when it is not 0) the walk refuses (`countPaths`).
+	followed, budget uint64
 }
 
 // slot is n's index in state and count, or -1 for an object number the table does not hold (which names nothing).
@@ -155,16 +157,52 @@ func (g *refGraph) slot(n node) int {
 // refuseUnboundedReferences refuses ctx when pdfcpu's validator would recurse on it without end, through more
 // paths than `pathBudget`, or deeper than `maxReferenceDepth`.
 func refuseUnboundedReferences(ctx *model.Context) error {
-	paths, err := validatorPaths(ctx)
+	resolveCompressed(ctx)
+	budget := pathBudget(ctx)
+	paths, _, err := countPaths(ctx, budget)
 	if err != nil {
 		return err
 	}
-	if budget := pathBudget(ctx); paths > budget {
-		return fmt.Errorf("nib will not read this document: %w (%d paths through its patterns, functions, colour "+
-			"spaces, actions or trees, against a budget of %d), and pdfcpu's validator walks every one of them with "+
-			"no way to stop it", ErrReferencePaths, paths, budget)
+	if paths > budget {
+		return tooManyPaths(paths, budget)
 	}
-	return validatorDepth(ctx)
+	if err := validatorDepth(ctx); err != nil {
+		return err
+	}
+	return refuseDeepReferences(ctx)
+}
+
+func tooManyPaths(paths, budget uint64) error {
+	return fmt.Errorf("nib will not read this document: %w (%d paths through its patterns, functions, colour "+
+		"spaces, actions or trees, against a budget of %d), and pdfcpu's validator walks every one of them with "+
+		"no way to stop it", ErrReferencePaths, paths, budget)
+}
+
+// resolveCompressed decodes every object pdfcpu's read left undecoded in an object stream, exactly as pdfcpu's own
+// dereference does the first time something names one (model/dereference.go:106-116).
+//
+// `api.ReadContext` leaves an object held in an object stream as a `LazyObjectStreamObject` — measured: 63,297 of the
+// objects in nib's 36 producer documents — and the walks below read the table as it stands, so a compressed object
+// named nothing and every refusal of this door was passed by putting one link of the chain in an object stream: a
+// tiling pattern whose `/Resources` is a compressed dictionary naming the pattern back read as no loop, and pdfcpu's
+// validator, which decodes as it goes, followed it to a fatal stack overflow (measured, found closing /pending 840).
+// The validator decodes nearly all of them anyway, so this moves that work ahead of the door rather than adding it.
+// One that will not decode stays as it is: it names nothing to pdfcpu either, which reports it on reaching it.
+func resolveCompressed(ctx *model.Context) {
+	cur := ctx.CurObj
+	for nr, e := range ctx.Table {
+		if e == nil || e.Free {
+			continue
+		}
+		if _, lazy := e.Object.(types.LazyObjectStreamObject); lazy {
+			gen := 0
+			if e.Generation != nil {
+				gen = *e.Generation
+			}
+			_, _ = ctx.Dereference(*types.NewIndirectRef(nr, gen))
+		}
+	}
+	ctx.CurObj = cur
 }
 
 // pathBudget is `basePaths` plus `pathsPerObject` for each LIVE object in ctx — one that is not free and holds an
@@ -187,6 +225,19 @@ func pathBudget(ctx *model.Context) uint64 {
 // reaches it — summing it again would count a chain once per link, where pdfcpu walks it once. Each (object, role)
 // is expanded once, so the walk is linear in the edges it follows.
 func validatorPaths(ctx *model.Context) (uint64, error) {
+	paths, _, err := countPaths(ctx, 0)
+	return paths, err
+}
+
+// countPaths is `validatorPaths` stopped with `ErrReferencePaths` once the walk has followed more edges than budget
+// (0: never), and the edges it followed — /pending 844. Linear in the edges is not linear in the file: an indirect
+// container is read through afresh by everything that names it, so n pages naming one `/ExtGState` dictionary, colour
+// space dictionary or `/Annots` array of n entries are n² edges. Measured before the stop, on the door alone: 1,000
+// pages and entries 0.35 s, 2,000 1.4 s, 4,000 6.1 s, 8,000 (under 1 MB of objects) 31 s, ×4 to ×5 a doubling — and
+// refused only then, because the count is taken when the walk ends. Every edge followed to an object is at least one
+// path in that count, so the stop refuses nothing the count would pass; an edge to an object the file does not hold is
+// counted too, which the count never did (8,000 pages over 8,000 such references took 42 s and passed).
+func countPaths(ctx *model.Context, budget uint64) (paths, followed uint64, err error) {
 	nrs := make([]int, 0, len(ctx.Table))
 	for nr, e := range ctx.Table {
 		if e != nil && !e.Free && e.Object != nil {
@@ -199,12 +250,12 @@ func validatorPaths(ctx *model.Context) (uint64, error) {
 		pos[nr] = i
 	}
 	slots := len(nrs) * int(numRoles)
-	g := &refGraph{ctx: ctx, pos: pos, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots)}
+	g := &refGraph{ctx: ctx, pos: pos, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots), budget: budget}
 	var roots []int
 	for _, nr := range nrs {
 		for _, r := range rootRoles(ctx.Table[nr].Object) {
 			if _, err := g.walk(node{nr, r}); err != nil {
-				return 0, err
+				return 0, g.followed, err
 			}
 			roots = append(roots, g.slot(node{nr, r}))
 		}
@@ -223,7 +274,7 @@ func validatorPaths(ctx *model.Context) (uint64, error) {
 		}
 		total = min(total+c, saturate)
 	}
-	return total, nil
+	return total, g.followed, nil
 }
 
 func mulSat(a, b uint64) uint64 {
@@ -392,6 +443,9 @@ func (g *refGraph) walk(root node) (uint64, error) {
 	}
 	stack := []*frame{g.open(root)}
 	for {
+		if g.budget > 0 && g.followed > g.budget {
+			return 0, tooManyPaths(g.followed, g.budget)
+		}
 		f := stack[len(stack)-1]
 		if f.next < len(f.edges) {
 			e := f.edges[f.next]
@@ -437,6 +491,7 @@ func (g *refGraph) open(n node) *frame {
 		g.opening = f
 		g.expand(e.Object, n.role, "", func(to node, key string) { f.edges = append(f.edges, edge{to, key}) })
 		g.opening = nil
+		g.followed += uint64(len(f.edges))
 	}
 	return f
 }

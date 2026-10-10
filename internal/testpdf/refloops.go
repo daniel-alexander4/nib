@@ -214,6 +214,136 @@ var FanInEntries = map[string]string{
 	"Separation tint transform": "/ColorSpace << /CS [/Separation /S /DeviceGray @F] >>",
 	"DeviceN tint transform":    "/ColorSpace << /CS [/DeviceN [/A] /DeviceGray @F] >>",
 	"DeviceN /Process":          "/ColorSpace << /CS [/DeviceN [/A] /DeviceGray 21 0 R << /Process << /ColorSpace [/Separation /S /DeviceGray @F] /Components [/A] >> >>] >>",
+	// /pending 767: the transfer keys after /TR, and a shading pattern's own /ExtGState.
+	"ExtGState /TR2":             "/ExtGState << /G << /Type /ExtGState /TR2 @F >> >>",
+	"ExtGState /BG":              "/ExtGState << /G << /Type /ExtGState /BG @F >> >>",
+	"ExtGState /BG2":             "/ExtGState << /G << /Type /ExtGState /BG2 @F >> >>",
+	"ExtGState /UCR":             "/ExtGState << /G << /Type /ExtGState /UCR @F >> >>",
+	"ExtGState /UCR2":            "/ExtGState << /G << /Type /ExtGState /UCR2 @F >> >>",
+	"shading Pattern /ExtGState": "/Pattern << /P << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 1] /Function 21 0 R >> /ExtGState << /Type /ExtGState /TR @F >> >> >>",
+}
+
+// FanInShape is a document reaching one shared structure through Edge: Small once and shallowly, which reads; Large
+// often enough that pdfcpu's validator, which walks the structure afresh from every naming, is past the path budget.
+type FanInShape struct {
+	Edge         string
+	Small, Large []byte
+}
+
+// FanInShapes are the entry edges whose shared structure is not a function reached from a page's /Resources, so
+// `FanIn` cannot build them — /pending 767. Each structure is a chain whose links name the next twice (2^depth
+// paths); without its edge the door counts that chain once, from the chain's own shape, and passes Large.
+func FanInShapes() []FanInShape {
+	action := func(next int) string {
+		return fmt.Sprintf("<< /S /JavaScript /JS (1) /Next [%d 0 R %d 0 R] >>", next, next)
+	}
+	halftone := func(next int) string {
+		return fmt.Sprintf("<< /Type /Halftone /HalftoneType 5 /Default %d 0 R /Gray %d 0 R >>", next, next)
+	}
+	stitch := func(next int) string {
+		return fmt.Sprintf("<< /FunctionType 3 /Domain [0 1] /Functions [%d 0 R %d 0 R] /Bounds [0.5] /Encode [0 1 0 1] >>", next, next)
+	}
+	selector := func(next int) string {
+		return fmt.Sprintf("<< /Type /Rendition /S /SR /R [%d 0 R %d 0 R] >>", next, next)
+	}
+	// each adds naming i's objects to o and returns its page's entries, or "" when the naming is not a page.
+	build := func(edge string, each func(i int, o map[int]string) string, link func(int) string, end string) FanInShape {
+		doc := func(namings, depth int) []byte {
+			o := map[int]string{1: "<< /Type /Catalog /Pages 2 0 R >>", 4: "<< /Length 0 >>\nstream\n\nendstream"}
+			for k := 0; k < depth; k++ {
+				if k+1 < depth {
+					o[30+k] = link(31 + k)
+				} else {
+					o[30+k] = end
+				}
+			}
+			var kids []string
+			for i := 0; i < namings; i++ {
+				page := each(i, o)
+				if page == "" {
+					continue
+				}
+				kids = append(kids, fmt.Sprintf("%d 0 R", 100+i))
+				o[100+i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R " + page + " >>"
+			}
+			o[2] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(kids))
+			return assemble(o)
+		}
+		return FanInShape{Edge: edge, Small: doc(1, 3), Large: doc(400, 12)}
+	}
+	return []FanInShape{
+		// Every page lists the one annotation: pdfcpu validates a page's /Annots once per page.
+		build("page /Annots", func(_ int, o map[int]string) string {
+			o[20] = "<< " + annot + "/Subtype /Link /A 30 0 R >>"
+			return "/Annots [20 0 R]"
+		}, action, "<< /S /JavaScript /JS (2) >>"),
+		build("ExtGState /HT", func(int, map[int]string) string {
+			return "/Resources << /ExtGState << /G << /Type /ExtGState /HT 30 0 R >> >> >>"
+		}, halftone, "<< /Type /Halftone /HalftoneType 1 /Frequency 60 /Angle 45 /SpotFunction /Round >>"),
+		// One page, many images: pdfcpu validates each image once, and its colour space from it.
+		build("image /ColorSpace", func(i int, o map[int]string) string {
+			o[1000+i] = "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace [/Separation /S /DeviceGray 30 0 R] " +
+				"/BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream"
+			o[21] = strings.TrimSuffix(o[21], ">>") + fmt.Sprintf("/I%d %d 0 R >>", i, 1000+i)
+			if i > 0 {
+				return ""
+			}
+			o[21] = "<< " + o[21]
+			return "/Resources << /XObject 21 0 R >>"
+		}, stitch, fnGray),
+		build("Rendition action /R", func(_ int, o map[int]string) string {
+			o[20] = "<< " + annot + "/Subtype /Screen >>"
+			return "/Annots [20 0 R] /AA << /O << /S /Rendition /OP 0 /AN 20 0 R /R 30 0 R >> >>"
+		}, selector, "<< /Type /Rendition /S /MR >>"),
+	}
+}
+
+// AssembleCompressed is `Assemble` with the objects numbered in packed held in one object stream, under a
+// cross-reference stream — where pdfcpu's read leaves them undecoded until something names them.
+func AssembleCompressed(objs map[int]string, packed ...int) []byte {
+	in := map[int]int{}
+	for i, nr := range packed {
+		in[nr] = i + 1
+	}
+	top := 0
+	for nr := range objs {
+		top = max(top, nr)
+	}
+	stm, xr := top+1, top+2
+	var b strings.Builder
+	b.WriteString("%PDF-1.7\n")
+	off := map[int]int{}
+	for nr := 1; nr <= top; nr++ {
+		if body, ok := objs[nr]; ok && in[nr] == 0 {
+			off[nr] = b.Len()
+			fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", nr, body)
+		}
+	}
+	var head, body strings.Builder
+	for _, nr := range packed {
+		fmt.Fprintf(&head, "%d %d ", nr, body.Len())
+		body.WriteString(objs[nr] + "\n")
+	}
+	off[stm] = b.Len()
+	fmt.Fprintf(&b, "%d 0 obj\n<< /Type /ObjStm /N %d /First %d /Length %d >>\nstream\n%s%s\nendstream\nendobj\n",
+		stm, len(packed), head.Len(), head.Len()+body.Len(), head.String(), body.String())
+	off[xr] = b.Len()
+	var x []byte
+	for nr := 0; nr <= xr; nr++ {
+		switch o := off[nr]; {
+		case in[nr] > 0:
+			i := in[nr] - 1
+			x = append(x, 2, byte(stm>>24), byte(stm>>16), byte(stm>>8), byte(stm), byte(i>>8), byte(i))
+		case o > 0:
+			x = append(x, 1, byte(o>>24), byte(o>>16), byte(o>>8), byte(o), 0, 0)
+		default:
+			x = append(x, 0, 0, 0, 0, 0, 255, 255)
+		}
+	}
+	fmt.Fprintf(&b, "%d 0 obj\n<< /Type /XRef /Size %d /W [1 4 2] /Root 1 0 R /Length %d >>\nstream\n", xr, xr+1, len(x))
+	b.Write(x)
+	fmt.Fprintf(&b, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", off[xr])
+	return []byte(b.String())
 }
 
 // FanIn is pages pages whose /Resources reach, through entry, one shared stitching function whose two

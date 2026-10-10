@@ -7,9 +7,13 @@ var (
 	DecodeOnce             = &decodeOnce
 	PassDecodesPageContent = passDecodesPageContent
 	ValidatorPaths         = validatorPaths // the reference door's walk (refgraph.go), without the budget
-	PathBudget             = pathBudget     // the reference door's budget (refgraph.go)
-	ValidatorDepth         = validatorDepth // the depth pass through guarded edges (refdepth.go)
-	SimulatePages          = simulatePages  // the tolerant page walk (pagesim.go), with the work it spent
+	CountPaths             = countPaths     // the same walk stopped past a budget, with the edges it followed
+	ObjectLevels           = objectLevels   // the every-reference depth pass (refall.go)
+	MaxObjectLevels        = maxObjectLevels
+	RefuseUnbounded        = refuseUnboundedReferences // the whole door, on a context nothing has validated
+	PathBudget             = pathBudget                // the reference door's budget (refgraph.go)
+	ValidatorDepth         = validatorDepth            // the depth pass through guarded edges (refdepth.go)
+	SimulatePages          = simulatePages             // the tolerant page walk (pagesim.go), with the work it spent
 	SimBudget              = simBudget
 )
 
