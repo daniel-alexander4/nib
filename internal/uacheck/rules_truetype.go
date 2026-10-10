@@ -189,6 +189,12 @@ func isSubsetName(n string) bool {
 // isSymbolic is `PDFontDescriptor.isSymbolic`: /Flags bit 3 and nothing else — bit 6, "nonsymbolic", is never read.
 // /Flags is read with `getIntegerKey`, which casts a REAL to a long (measured: `/Flags 4.0` is symbolic), and the bit is
 // tested on its `intValue`.
+//
+// **A declared divergence: a /Flags past int64 reads non-symbolic here and symbolic in veraPDF** (`/pending 656`,
+// measured: `/Flags 9223372036854775808`, and `100000000000000000000` with or without `.0`, fail 7.21.6 t3 there and
+// pass here). pdfcpu's PARSER writes such a number down as Integer 0 (`parseNumericOrIndRef`, on a range error), so
+// the unvalidated parse holds 0 as the validated one does and no reading of either context can tell it from a
+// written `/Flags 0`; `TestAFlagsPastInt64IsZeroInEveryParse` holds that, and goes red if pdfcpu stops.
 func (d *Document) isSymbolic(font types.Dict) bool {
 	var flags int64
 	switch v := d.resolve(d.dict(font["FontDescriptor"])["Flags"]).(type) {

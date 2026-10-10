@@ -650,6 +650,13 @@ func (d *Document) hasInlineType3Font() bool {
 
 // scanInlineType3 walks the raw parse for a Type 3 font dictionary written inside another object.
 //
+// **It is this package's ONE unvalidated re-read of the file** (ADR-009, `/pending 656`), held to one by
+// `TestTheFileIsReReadUnvalidatedInOnePlace`. The other thing a rule needed from before the validator — the
+// `/AcroForm` it deletes — is noted by `open` from the parse it already makes. This one stays a re-read because it
+// is asked only where a font entry is missing, and the walk costs about three times the parse it follows (measured
+// over 36 real-producer documents, 141 KB to 2.7 MB: 131 ms of parsing, 384 ms of walking), so it is not something
+// to run at every open on the chance of the question.
+//
 // **A bound reached is `true`, not `false`.** Its one reader turns a `true` into `contentErr`, so returning
 // `false` because nib stopped looking would turn "nib did not look" into "there is none" — the collapse
 // `hasInlineType3Font` refuses one function up, where a file that will not parse raw answers true.

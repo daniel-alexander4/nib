@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -286,35 +285,45 @@ func checkEmbeddedFileNames(d *Document) Result {
 // passes: the clause refuses dynamic rendering, not XFA. veraPDF fails its own `7.15-t01-fail-a.pdf`
 // with one check, which is the measurement this rule is written against.
 func checkDynamicXFA(d *Document) Result {
-	// **The validated catalog is not enough, and that is measured.** pdfcpu DELETES an `/AcroForm`
-	// whose `/Fields` is empty or absent — an XFA-only form, which is exactly veraPDF's own fixture for
-	// this clause — so reading only the validated catalog reports "no form" for a document whose form
-	// IS the defect. `dynamicRenderFromRawFile` says what that costs and why nothing is pinned.
-	if form := d.dict(d.Catalog["AcroForm"]); form != nil {
-		xfa, has := form["XFA"]
-		if !has {
-			return Result{Verdict: Pass}
+	// **The validated catalog is not enough, and that is measured.** pdfcpu's validator does not merely report
+	// what it refuses — it DELETES an `/AcroForm` whose `/Fields` is empty or absent (`validate/form.go`,
+	// `rootDict.Delete("AcroForm")`). That is precisely an XFA-ONLY form, and it is veraPDF's own
+	// `7.15-t01-fail-a.pdf`, the single corpus document that exists to fail this clause: after pdfcpu's read the
+	// catalog has no `/AcroForm` key at all while keeping `/NeedsRendering`, the marker of the very form it
+	// dropped. A rule reading only the validated catalog answers NotApplicable there — a false pass on the
+	// clause's own fixture, which the corpus guard caught.
+	//
+	// So `open` notes the entry before the validator runs and keeps it when the key is gone (`deletedForm`). The
+	// form's own objects are still in the context — only the catalog's key was deleted — so it is read where a
+	// validated form is, and nothing is parsed twice (`/pending 656`: this was a second, unvalidated parse of the
+	// whole file, measured at 22% to 111% of what `open` had already paid, on every document with no validated
+	// AcroForm). A HYBRID form (non-empty `/Fields` plus `/XFA`) keeps its validated dictionary, because
+	// `validateFormXFA` errors rather than deleting.
+	form := d.dict(d.Catalog["AcroForm"])
+	if form == nil {
+		if len(d.raw) == 0 {
+			// nib could not establish whether a form is there at all. That is a refusal, not an absence:
+			// answering NotApplicable would be a pass over a question nib never settled.
+			return Result{Verdict: CannotCheck, Why: "this document was assembled in memory rather than read from " +
+				"a file, so nib cannot tell what pdfcpu's validator may have dropped"}
 		}
-		render, why := d.xfaDynamicRender(xfa)
-		return xfaVerdict(render, why)
+		form = d.dict(d.deletedForm)
 	}
-	found, render, why := d.dynamicRenderFromRawFile()
-	if why != "" && !found {
-		// nib could not establish whether a form is there at all. That is a refusal, not an absence:
-		// answering NotApplicable would be a pass over a question nib never settled.
-		return Result{Verdict: CannotCheck, Why: why}
-	}
-	if !found {
+	if form == nil {
 		return Result{
 			Verdict: NotApplicable,
 			Why:     "the document has no AcroForm, so there is no XFA form to be dynamic",
 		}
 	}
+	xfa, has := form["XFA"]
+	if !has {
+		return Result{Verdict: Pass}
+	}
+	render, why := d.xfaDynamicRender(xfa)
 	return xfaVerdict(render, why)
 }
 
-// xfaVerdict turns a `dynamicRender` reading into this clause's answer, so the validated and the
-// re-read paths cannot drift apart (ADR-009).
+// xfaVerdict turns a `dynamicRender` reading into this clause's answer.
 func xfaVerdict(render, why string) Result {
 	if why != "" {
 		return Result{Verdict: CannotCheck, Why: why, Where: "catalog /AcroForm /XFA"}
@@ -617,60 +626,6 @@ func latin1Reader(label string, in io.Reader) (io.Reader, error) {
 		return strings.NewReader(string(r)), nil
 	}
 	return nil, fmt.Errorf("encoding %q is not one nib's XML reader supports", label)
-}
-
-// dynamicRenderFromRawFile re-reads the file UNVALIDATED and returns its AcroForm's `dynamicRender`.
-//
-// # Why a rule ever needs a second parse
-//
-// `open` reads with `ReadValidateAndOptimize`, and pdfcpu's validator does not merely report what it
-// refuses — it DELETES it. The exact trigger is `validate/form.go`'s handling of an AcroForm whose
-// `/Fields` is empty or absent: `rootDict.Delete("AcroForm")`. That is precisely an XFA-ONLY form, and
-// it is veraPDF's own `7.15-t01-fail-a.pdf`, the single corpus document that exists to fail this
-// clause: the file carries `/AcroForm 2 0 R` with the XFA packet, and after pdfcpu's read the catalog
-// has no `/AcroForm` key at all while keeping `/NeedsRendering`, the marker of the very form it
-// dropped. A rule reading only the validated catalog answers NotApplicable there — a false pass on the
-// clause's own fixture, which the corpus guard caught.
-//
-// A HYBRID form (non-empty `/Fields` plus `/XFA`) keeps its validated dictionary and never comes here,
-// because `validateFormXFA` errors rather than deleting. That is the load-bearing reason this fallback
-// is narrow, and it is why it is stated.
-//
-// # Nothing is pinned
-//
-// The second context is dropped before returning: only the answer survives. An earlier version
-// memoised a whole `*Document` over the raw parse and held two full contexts for the rest of `Check`.
-// The parse itself is measured at 1–10 ms over 159 KB–2.6 MB (22%, 70% and 111% of the parse `open`
-// already paid); it is NOT projected past that range, and it is paid on every document with no
-// validated AcroForm, which is most of them.
-//
-// **`scanInlineType3` uses the same technique for a different omission and keeps its own parse**, so a
-// document that needs both is parsed three times. That is a real duplication and it is NOT claimed to
-// be one door here; consolidating them is `/pending 656`.
-func (d *Document) dynamicRenderFromRawFile() (found bool, render string, why string) {
-	if len(d.raw) == 0 {
-		return false, "", "this document was assembled in memory rather than read from a file, so nib " +
-			"cannot re-read what pdfcpu's validator may have dropped"
-	}
-	ctx, err := api.ReadContext(bytes.NewReader(d.raw), checkerConfig())
-	if err != nil {
-		return false, "", "the file could not be re-read without validation: " + err.Error()
-	}
-	cat, cerr := ctx.XRefTable.Catalog()
-	if cerr != nil {
-		return false, "", "the unvalidated re-read has no catalog: " + cerr.Error()
-	}
-	raw := &Document{Ctx: ctx, Catalog: cat}
-	form := raw.dict(cat["AcroForm"])
-	if form == nil {
-		return false, "", ""
-	}
-	xfa, has := form["XFA"]
-	if !has {
-		return true, "", ""
-	}
-	render, why = raw.xfaDynamicRender(xfa)
-	return true, render, why
 }
 
 // checkReferenceXObjects evaluates ua1 7.20 t1 (P06.S03) over the forms the document DRAWS.

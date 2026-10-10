@@ -293,7 +293,7 @@ func TestADynamicXFAFormIsRefusedAndAStaticOneIsNot(t *testing.T) {
 	}
 }
 
-// **pdfcpu DELETES an `/AcroForm` its validator refuses, and the rule re-reads the file to see it.**
+// **pdfcpu DELETES an `/AcroForm` its validator refuses, and `open` notes it before the validator runs.**
 //
 // Measured on veraPDF's own `7.15-t01-fail-a.pdf`, the one corpus document that exists to fail this
 // clause: the file carries `/AcroForm 2 0 R` with the XFA packet, and after `ReadValidateAndOptimize`
@@ -313,8 +313,11 @@ func TestAnAcroFormPDFCPUDroppedIsStillFound(t *testing.T) {
 	// The stimulus, asserted: this test is only meaningful while pdfcpu still drops the key. If a
 	// pdfcpu bump starts keeping it, this goes red and the fallback can be reconsidered.
 	if _, kept := d.Catalog["AcroForm"]; kept {
-		t.Fatal("pdfcpu now KEEPS the /AcroForm on this document, so the unvalidated re-read is no " +
+		t.Fatal("pdfcpu now KEEPS the /AcroForm on this document, so the entry `open` notes is no " +
 			"longer what makes this clause reachable — re-measure before trusting the fallback")
+	}
+	if d.deletedForm == nil {
+		t.Fatal("open kept no record of the /AcroForm the validator deleted")
 	}
 	if got := registry["7.15 t1"].Check(d); got.Verdict != Fail {
 		t.Errorf("7.15 t1 reports %v (%s) on veraPDF's own failing fixture, want Fail", got.Verdict, got.Why)
