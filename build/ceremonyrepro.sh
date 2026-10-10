@@ -91,7 +91,7 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   # The token first (ADR-054): every route but three requires it, the enrol included.
   local csrf; csrf="$(launch_token "$base" "$SP/$n.log")"
   [ -n "$csrf" ] || { echo "$n: could not trade the logged launch key: $(cat "$SP/$n.log")"; exit 1; }
-  curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/ssh/enroll" -H "X-CSRF-Token: $csrf" \
+  curl -s -X POST "$base/api/ssh/enroll" -H "X-CSRF-Token: $csrf" \
     -H 'content-type: application/json' -d "{\"mode\":\"create\",\"keyPath\":\"$h/id_ed25519\"}" \
     >"$SP/$n.enroll.json"
   eval "${n}_BASE='$base'; ${n}_CSRF='$csrf'; ${n}_HOME='$h'"
@@ -100,16 +100,16 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   # turns them on — which is exactly what this does, standing for a user who went to
   # Settings → Toggle Features → Advanced features. Without it every scenario below fails on the switch and reports
   # it as a ceremony defect.
-  curl -s -o /dev/null -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/settings" \
+  curl -s -o /dev/null -X POST "$base/api/settings" \
     -H 'content-type: application/json' -H "X-CSRF-Token: $csrf" -H "Origin: $base" \
     -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}'
 }
 post(){ # $1=name $2=path $3=json -> body in $SP/resp.json, prints status
   local n=$1 b c; eval "b=\$${n}_BASE; c=\$${n}_CSRF"
-  curl -s -o "$SP/resp.json" -w '%{http_code}' -c "$SP/$n.jar" -b "$SP/$n.jar" \
+  curl -s -o "$SP/resp.json" -w '%{http_code}' \
     -X POST "$b$2" -H 'content-type: application/json' -H "X-CSRF-Token: $c" -H "Origin: $b" -d "$3"
 }
-get(){ local n=$1 b c; eval "b=\$${n}_BASE; c=\$${n}_CSRF"; curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -H "X-CSRF-Token: $c" "$b$2"; }
+get(){ local n=$1 b c; eval "b=\$${n}_BASE; c=\$${n}_CSRF"; curl -s -H "X-CSRF-Token: $c" "$b$2"; }
 jq_(){ python3 -c "import json,sys;d=json.load(open('$SP/resp.json'));print($1)" 2>/dev/null; }
 
 start A; start B
@@ -145,7 +145,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
 # adding the arrival check to the dial door, whose refusal names the ceremony mismatch and
 # arrives first. Capturing the right document here leaves the out-of-turn condition as the only
 # one present, which is what clause 7 has always claimed to test.
-curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/pdf" -o "$SP/convened1.pdf"
+curl -fsS -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/pdf" -o "$SP/convened1.pdf"
 [ -s "$SP/convened1.pdf" ] || { echo "could not capture the first ceremony's document"; exit 1; }
 
 # CLAUSE 1 — the convener's own pins (D21 from the hub side).
@@ -296,7 +296,7 @@ else no "second convene" "$code $(cat "$SP/resp.json")"; fi
 # This is the count a verifier needs before it can say a ceremony is incomplete. On the convened
 # document it is the extreme case — two obliged, zero signed — and it is drivable here because
 # convening is the one ceremony act this tier completes.
-curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/attestations" -o "$SP/atts.json"
+curl -fsS -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/attestations" -o "$SP/atts.json"
 python3 - "$SP/atts.json" <<'PYC' && ok "the convened document reports 0 of 2 obliged signers (C18)" || no "C18 counts" "$(head -c 300 "$SP/atts.json")"
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -309,7 +309,7 @@ PYC
 # a different name, and every ordinary co-sign in the product would grow a completeness line.
 code=$(post B /api/open "{\"path\":\"$SP/lease.pdf\"}")
 if [ "$code" = 200 ]; then
-  curl -fsS -c "$SP/B.jar" -b "$SP/B.jar" -H "X-CSRF-Token: $B_CSRF" "$B_BASE/api/attestations" -o "$SP/atts_plain.json"
+  curl -fsS -H "X-CSRF-Token: $B_CSRF" "$B_BASE/api/attestations" -o "$SP/atts_plain.json"
   python3 - "$SP/atts_plain.json" <<'PYP' && ok "a document with no ceremony reports no obliged signers at all" || no "C18 third state" "$(head -c 200 "$SP/atts_plain.json")"
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -328,7 +328,7 @@ if [ ! -s "$SP/convened.pdf" ]; then no "L3 setup" "could not fetch the convened
   python3 -c "
 import base64,sys
 sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" > "$SP/appearance.png"
-  code=$(curl -s -o "$SP/resp.json" -w '%{http_code}' -c "$SP/B.jar" -b "$SP/B.jar" -H "X-CSRF-Token: $B_CSRF" \
+  code=$(curl -s -o "$SP/resp.json" -w '%{http_code}' -H "X-CSRF-Token: $B_CSRF" \
     -X POST "$B_BASE/api/session/initiate" -H "X-CSRF-Token: $B_CSRF" -H "Origin: $B_BASE" \
     -F "pdf=@$SP/convened.pdf" -F "params={\"fingerprint\":\"$A_FP\",\"intent\":\"I agree\"}" \
     -F "appearance=@$SP/appearance.png" \
@@ -361,7 +361,7 @@ fi
 # the slice.
 if [ -s "$SP/convened1.pdf" ]; then
   # The GET first: the server names whose turn it is. The client never computes one.
-  qcode=$(curl -s -o "$SP/hopquote.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
+  qcode=$(curl -s -o "$SP/hopquote.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
     -X GET "$A_BASE/api/ceremony/hop?ceremony=$CID" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
     -H "X-Nib-Doc: $CDOC")
   if [ "$qcode" != "200" ]; then
@@ -379,7 +379,7 @@ if [ -s "$SP/convened1.pdf" ]; then
       ok "the hop quote names the next party server-side: $QPARTY"
     fi
     # And the POST refuses it for the same reason, rather than dialling this machine.
-    hcode=$(curl -s -o "$SP/hop.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
+    hcode=$(curl -s -o "$SP/hop.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
       -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
       -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC" -d "{\"ceremony\":\"$CID\"}")
     if [ "$QMINE" = "True" ] && [ "$hcode" = "409" ] && grep -q "nobody to call" "$SP/hop.json"; then
@@ -393,7 +393,7 @@ if [ -s "$SP/convened1.pdf" ]; then
 
   # **The other half of the pair**: the OLD route, same document, the product's own field set —
   # which is to say WITHOUT the invitation the harness used to supply. It must still refuse.
-  ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
+  ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
     -X POST "$A_BASE/api/session/initiate" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
     -F "pdf=@$SP/convened1.pdf" -F "params={\"fingerprint\":\"$B_FP\",\"intent\":\"I agree\"}" \
     -F "appearance=@$SP/appearance.png")
@@ -427,11 +427,7 @@ transfer_leg() { # $1 = transport
   if [ -z "$addr" ]; then no "[$tr] B armed and reported no address" "nothing to dial"; return; fi
 
   # The send, in the background: its response does not return until both gates have answered.
-  # **`-b` only, never `-c`.** curl rewrites the jar it is given with `-c` when it exits, and the
-  # foreground polls below read `$SP/A.jar` every 100 ms for up to 20 s. A read landing on a
-  # truncated jar sends no session cookie, gets a 401, and the clause reports "the spoken check
-  # never appeared" — a false reason for a real race.
-  ( curl -s -o "$SP/send.$tr.json" -w '%{http_code}' -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
+  ( curl -s -o "$SP/send.$tr.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
       -X POST "$A_BASE/api/session/send" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
       -F "pdf=@$SP/send-$tr.pdf" -F "fingerprint=$B_FP" -F "address=$addr" -F "transport=$tr" \
       > "$SP/send.$tr.code" ) &
@@ -563,7 +559,7 @@ fi
 # distinction matters because a listing that silently drops the entry passes a removal test and
 # fails this one — and a ceremony that vanishes from the list is one whose only remedy is finding
 # and deleting the folder by hand, which is where the user already is.
-listing() { curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/ceremonies" -o "$1"; }
+listing() { curl -fsS -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/ceremonies" -o "$1"; }
 if ! listing "$SP/cer.before.json"; then
   no "C12 setup" "the ceremonies listing could not be read before the damage"
 else
@@ -781,7 +777,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
         # `/pending 436` was about is the pasted INVITATION, and that is what stays absent here.
         # **The no-address variant belongs to tier 4 `--lan`**, which runs in a namespace where an
         # announcement can actually be heard; naming it here rather than pretending this covers it.
-        hop2=$(curl -s -o "$SP/hop2.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
+        hop2=$(curl -s -o "$SP/hop2.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
           -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
           -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC2" \
           -d "{\"ceremony\":\"$CID2\",\"address\":\"$BADDR2\"}")

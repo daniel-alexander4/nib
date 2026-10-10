@@ -270,9 +270,6 @@ fi
 # 23 since P01.S01 (windowstream.test.mjs): a real window declaring itself over a stream, and
 # the declaration ending when the window does — which needs a real browser closing a real
 # socket, so it cannot live a tier down.
-# 23 = the files this repo has committed. A 24th, `windowstream.test.mjs`, is untracked in this
-# working copy — another session's in-flight work — and it is deliberately NOT counted: the number
-# describes what a fresh clone runs, not what happens to be on one machine.
 # 35 since P08.S06c (tagsreview.test.mjs): the autotagger's review needs a rendered page to prove its
 # outline lands on the element's text, which the tier-2 stub viewer cannot provide.
 # 38 since /pending 476 (formauthor.test.mjs): the fillable-form authoring flow, which needs a
