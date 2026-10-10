@@ -43,6 +43,16 @@ import (
 // name pdfcpu's writers, and a function that moves a context's objects must restore them first.
 
 // Write is `api.WriteContext` into memory, after putting back what pdfcpu's validator took out of ctx.
+//
+// **Declared gap, and it is the WRITER's, so nothing here restores it (`/pending 655`).** pdfcpu writes the catalog
+// and each page dictionary whole, then follows a fixed list of their keys (`write.go:276-322`,
+// `writePages.go:75-102`, v0.13.0) and writes nothing an unlisted key names. `/AF` — an associated file, ISO
+// 32000-2 §14.13 — is on neither list: after ANY write through this door a catalog's or a page's `/AF` is still
+// there and the file specification it names is not, unless /Names /EmbeddedFiles names the same object (PDF/A-3
+// requires that, and then it is carried whole). A structure element's `/AF` is carried. The objects are in the
+// context when this function is called; pdfcpu's own unvalidated read and write lose them identically. Measured
+// and held by `pdfops`' `TestWhatARewriteDoesToAnAssociatedFile`. The same holds for any other catalog or page
+// key off those lists — unmeasured which occur.
 func Write(ctx *model.Context) ([]byte, error) {
 	PutBackValidatorLosses(ctx)
 	var out bytes.Buffer
