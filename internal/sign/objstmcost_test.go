@@ -259,6 +259,10 @@ func fileBytesResolvingEvery(t *testing.T, doc []byte) int64 {
 // 129 s to verify (66 s a pass), so /pending 751 refused it `Invalid`. The patched reader decodes the
 // stream and lexes its header once a pass, so it now costs the verdict milliseconds, reads `valid`,
 // and is far under the ceiling.
+//
+// No clock here (/pending 841). It carried "Verify within 5 s", which measures the machine; what the
+// reader pays is counted above (`lookupCostOf`), and its SHAPE through `Verify` is the next test's,
+// which interleaves two sizes through `scaling`.
 func TestAnObjectStreamOfTwentyThousandMembersVerifies(t *testing.T) {
 	doc := memberDoc(t, newIdentity(t, "Alice"), 20000)
 	if err := pdfcpuCanRead(doc); err != nil || !scanForSignatureBlob(doc) {
@@ -269,9 +273,7 @@ func TestAnObjectStreamOfTwentyThousandMembersVerifies(t *testing.T) {
 		t.Errorf("the lookup cost is %d (%.3f of the ceiling), err=%v — the patched reader pays this stream once", c.work(), float64(c.work())/maxLookupWork, err)
 	}
 	calls := countingLibrary(t)
-	t0 := time.Now()
 	st := Verify(doc)
-	took := time.Since(t0)
 	if st.State != Valid || st.AddedAfter || len(st.Signers) != 1 || st.Signers[0].Fingerprint == "" {
 		t.Errorf("state=%q addedAfter=%v(%q) signers=%d, want one valid signer and nothing added", st.State, st.AddedAfter, st.AddedAfterCause, len(st.Signers))
 	}
@@ -280,9 +282,6 @@ func TestAnObjectStreamOfTwentyThousandMembersVerifies(t *testing.T) {
 	}
 	if _, err := Revisions(doc); err != nil {
 		t.Errorf("Revisions error %v, want none", err)
-	}
-	if took > 5*time.Second {
-		t.Errorf("Verify took %v on a 20,000-member object stream; the patched reader reads it in well under a second", took)
 	}
 }
 

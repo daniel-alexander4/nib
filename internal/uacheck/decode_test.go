@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/scaling"
 )
 
 // /pending 721: a form XObject was decoded afresh at every `Do` — pdfcpu's `DereferenceStreamDict` hands back a
@@ -57,14 +59,23 @@ func TestAFormDrawnRepeatedlyIsDecodedOnce(t *testing.T) {
 // TestAHugeFormDrawnRepeatedlyIsStoppedPromptly is the measured case: a 64 MiB form of spaces drawn 80 times,
 // 25.1 s before. Every walk charges the bytes it walks, so whitespace — which spends no operator — cannot fill
 // the walk for free; the check answers CannotCheck naming the byte budget, promptly.
+//
+// "Promptly" is against the same form drawn 16 times, in the same rounds (/pending 841; it was "under 10 s", which
+// measures the machine): the budget stops both walks at the same 512 MiB, so five times the draws cost the same —
+// ×0.9 to ×1.0, measured, and ×4.4 with the walk's bytes uncharged.
 func TestAHugeFormDrawnRepeatedlyIsStoppedPromptly(t *testing.T) {
-	pdf := whitespaceFormDrawn(64<<20, 80)
+	few, pdf := whitespaceFormDrawn(64<<20, 16), whitespaceFormDrawn(64<<20, 80)
 	var got Result
-	start := time.Now()
-	withinSeconds(t, 30, "80 draws of a 64 MiB form of spaces", func() { got = verdictOf(t, pdf, "7.1 t3") })
-	if el := time.Since(start); el > 10*time.Second {
-		t.Fatalf("80 draws of a 64 MiB form of spaces took %v, want under 10 s (it was 25.1 s; ~2.3 s now, the walk of 512 MiB)", el)
+	check := func(pdf []byte, what string, into *Result) func() time.Duration {
+		return func() time.Duration {
+			return scaling.TimeOnce(func() {
+				withinSeconds(t, 30, what, func() { *into = verdictOf(t, pdf, "7.1 t3") })
+			})
+		}
 	}
+	scaling.WithinFactor(t, "80 draws of a 64 MiB form of spaces, against 16 draws of it", 2.5,
+		check(few, "16 draws of a 64 MiB form of spaces", new(Result)),
+		check(pdf, "80 draws of a 64 MiB form of spaces", &got))
 	if got.Verdict != CannotCheck || !strings.Contains(got.Why, "bytes of content") {
 		t.Fatalf("80 draws of a 64 MiB form of spaces report %v (%s), want CannotCheck naming the content byte budget", got.Verdict, got.Why)
 	}
