@@ -194,6 +194,12 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := names.Find("Renditions"); ok {
 			add("media", "medium", "Media clips the document can play (renditions)", 0)
 		}
+		// Alternate presentations (ISO 32000-1 §13.5, `/pending 864`): a slideshow's /Resources are its own
+		// streams, scripts among them, and no page, action or /JavaScript tree names them. StripActive's to
+		// remove; the files-and-media tier leaves active code and so leaves this.
+		if _, ok := names.Find("AlternatePresentations"); ok {
+			add("slideshow", "medium", "Slideshow (alternate presentation; can contain its own scripts)", 0)
+		}
 	}
 
 	// XFA forms can carry their own scripts.
@@ -473,6 +479,14 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// non-empty document-level JavaScript tree survived StripActive (`/pending 729`: found by the
 		// verifier below the first time it ran; craftActivePDF's tree was empty, which is never parsed).
 		delete(xt.Names, "JavaScript")
+		// A slideshow, and its parsed copy for the same reason (`/pending 864`). Only the shape pdfcpu's
+		// validator accepts gets this far — /Resources as an array; the name tree ISO 32000-1 Table 273 gives
+		// is refused at the read (`validate/nameTree.go:467`, v0.13.0), so such a document is refused whole
+		// and never returned as stripped (`TestASlideshowIsSeenAndStripped`).
+		if names := derefDict(xt, root["Names"]); names != nil {
+			dropKey(xt, names, "AlternatePresentations")
+		}
+		delete(xt.Names, "AlternatePresentations")
 		if af := derefDict(xt, root["AcroForm"]); af != nil {
 			dropKey(xt, af, "XFA")
 			// The field tree and the calculation order, for the reason Scan now walks
