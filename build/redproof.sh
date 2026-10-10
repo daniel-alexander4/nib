@@ -96,7 +96,7 @@ spec="$DIR/$name.sh"
 # A patch that carries the fix it is supposed to be recorded against is not a red proof, it is a
 # green one wearing the name. Re-record against a CLEAN tree, or diff two copies of the single
 # file and check the hunk count is what you expect.
-PROVE=""; TIER=""
+PROVE=""; TIER=""; EXPECT="" # EXPECT too: one exported by the caller would grade a row that records none
 # shellcheck disable=SC1090
 . "$spec"
 patchfile="$DIR/$name.patch"
