@@ -40,7 +40,12 @@ type fakeMapClient struct {
 	// the /pending 257 case: the router may have created a mapping, and Map returns an error.
 	failAfterSending bool
 
+	// observeGate / observing are gate / inflight for ObserveLease.
+	observeGate chan struct{}
+	observing   chan struct{}
+
 	mu                sync.Mutex
+	unmappedPorts     []uint16 // the external port of every mapping Unmap was handed, in order
 	unmapped          bool
 	refreshAfterUnmap bool // set if a Refresh is ever seen after an Unmap — the C3 resurrection
 }
@@ -52,6 +57,15 @@ func (f *fakeMapClient) SetOnRequestSent(fn func(portmap.Mapping)) { f.onSent = 
 // mechanism but UPnP and is the default the existing rows want.
 func (f *fakeMapClient) ObserveLease(ctx context.Context, m portmap.Mapping) (portmap.Mapping, error) {
 	atomic.AddInt32(&f.observes, 1)
+	if f.observing != nil {
+		select {
+		case f.observing <- struct{}{}:
+		default:
+		}
+	}
+	if f.observeGate != nil {
+		<-f.observeGate
+	}
 	if f.observed == nil {
 		return m, nil
 	}
@@ -107,6 +121,7 @@ func (f *fakeMapClient) Refresh(ctx context.Context, m portmap.Mapping) (portmap
 func (f *fakeMapClient) Unmap(ctx context.Context, m portmap.Mapping) error {
 	atomic.AddInt32(&f.unmaps, 1)
 	f.mu.Lock()
+	f.unmappedPorts = append(f.unmappedPorts, m.ExternalPort)
 	f.unmapped = true
 	f.mu.Unlock()
 	return nil
@@ -606,5 +621,75 @@ func TestAnObservationSurvivesARefresh(t *testing.T) {
 		t.Errorf("ObserveLease ran %d times across %d refresh(es), want exactly 1 — an erased "+
 			"observation is re-read every tick, and a permanent lease would be logged every tick with it",
 			got, atomic.LoadInt32(&f.refreshes))
+	}
+}
+
+// TestCloseDeletesTheMappingAnInFlightRefreshMovedTo — /pending 772.
+//
+// close() read the mapping to delete BEFORE it joined the refresh goroutine, and a refresh that
+// came back to find the mapper closed threw its answer away. So when the router answered that
+// in-flight refresh with a different external port, the delete named the port the mapping had just
+// left: the old one was already gone and the new one stayed until its lease ran out.
+func TestCloseDeletesTheMappingAnInFlightRefreshMovedTo(t *testing.T) {
+	f := newFake()
+	f.moveTo = 52000
+	f.gate = make(chan struct{})
+	f.inflight = make(chan struct{}, 1)
+	pm := newPortMapper(f, portmap.UDP, 40404)
+	pm.refreshFloor = time.Millisecond
+	pm.obtain(context.Background())
+	pm.startRefresh()
+
+	<-f.inflight // a refresh is blocked mid-call
+	done := make(chan struct{})
+	go func() { pm.close(); close(done) }()
+	time.Sleep(50 * time.Millisecond) // let close() mark the mapper closed and reach its join
+	close(f.gate)                     // the router answers the refresh: the mapping is on 52000 now
+	<-done
+
+	// STIMULUS: the refresh really ran, once, and it is the one that moved the port.
+	if n := atomic.LoadInt32(&f.refreshes); n != 1 {
+		t.Fatalf("setup: %d refreshes, want exactly the one held across close()", n)
+	}
+	f.mu.Lock()
+	got := append([]uint16(nil), f.unmappedPorts...)
+	f.mu.Unlock()
+	if len(got) != 1 || got[0] != 52000 {
+		t.Errorf("close() deleted external port(s) %v, want [52000] — the refresh in flight across "+
+			"close() moved the mapping there, so a delete of the port it held before removes "+
+			"nothing and leaves the live mapping to its lease", got)
+	}
+}
+
+// TestNoRefreshIsSentOnceCloseHasBegun — /pending 666 (the portmapper info item).
+//
+// One cycle is an ObserveLease and then a Refresh, a budget each, and the closed check sat only
+// before the first. A close() that began during the observation was followed by a fresh request
+// to the router, which close()'s bounded join then had to outwait — and past the bound that
+// request re-creates the mapping after the delete.
+func TestNoRefreshIsSentOnceCloseHasBegun(t *testing.T) {
+	f := newFake()
+	f.observeGate = make(chan struct{})
+	f.observing = make(chan struct{}, 1)
+	pm := newPortMapper(f, portmap.UDP, 40404)
+	pm.refreshFloor = time.Millisecond
+	pm.obtain(context.Background()) // the fake's mapping is unobserved, so the cycle observes first
+	pm.startRefresh()
+
+	<-f.observing // the cycle is blocked inside ObserveLease
+	done := make(chan struct{})
+	go func() { pm.close(); close(done) }()
+	time.Sleep(50 * time.Millisecond) // let close() mark the mapper closed
+	close(f.observeGate)
+	<-done
+
+	if n := atomic.LoadInt32(&f.observes); n != 1 {
+		t.Fatalf("setup: %d observations, want the one held across close()", n)
+	}
+	if n := atomic.LoadInt32(&f.refreshes); n != 0 {
+		t.Errorf("%d refresh request(s) went to the router after close() had begun, want 0", n)
+	}
+	if n := atomic.LoadInt32(&f.unmaps); n != 1 {
+		t.Errorf("Unmap called %d times, want 1", n)
 	}
 }

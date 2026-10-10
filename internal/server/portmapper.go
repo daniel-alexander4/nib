@@ -218,6 +218,15 @@ func (p *portMapper) startRefresh() {
 					}
 					p.mu.Unlock()
 				}
+				// The observation above can take a whole budget, and close() may have begun
+				// inside it. A refresh sent now is one more request for close() to outwait, and
+				// past its bound one that re-creates the mapping after the delete (/pending 666).
+				p.mu.Lock()
+				closed := p.closed
+				p.mu.Unlock()
+				if closed {
+					return
+				}
 			}
 			rctx, cancel := context.WithTimeout(context.Background(), portMapBudget)
 			nm, _, err := p.client.Refresh(rctx, cur)
@@ -227,6 +236,13 @@ func (p *portMapper) startRefresh() {
 			}
 			p.mu.Lock()
 			if p.closed {
+				// close() began while this refresh was in flight, and the router has answered
+				// it: `nm` is what it holds NOW. close() joins us and then reads `current`, so
+				// leaving the old mapping there aimed its delete at a port — or, for UPnP, a
+				// control URL — the refresh had just moved away from, and the moved mapping
+				// stayed until its lease ran out, or for good on a router that ignores the lease
+				// (/pending 772).
+				p.current = nm
 				p.mu.Unlock()
 				return
 			}
@@ -299,8 +315,7 @@ func (p *portMapper) close() {
 		return
 	}
 	p.closed = true
-	m, have, started := p.current, p.have, p.started
-	pending := append([]portmap.Mapping(nil), p.pending...)
+	started := p.started
 	p.mu.Unlock()
 
 	close(p.stop)
@@ -312,6 +327,13 @@ func (p *portMapper) close() {
 			// and the lease is the backstop for anything the wedge left behind.
 		}
 	}
+	// Read what to delete AFTER the join, not before it (/pending 772): a refresh that was in
+	// flight when close() began records the mapping the router answered with, and the handle for
+	// the request it sent, while we wait.
+	p.mu.Lock()
+	m, have := p.current, p.have
+	pending := append([]portmap.Mapping(nil), p.pending...)
+	p.mu.Unlock()
 	// FRESH context (C2): the arm context is cancelled by the teardown that called us.
 	ctx, cancel := context.WithTimeout(context.Background(), portMapBudget)
 	defer cancel()
