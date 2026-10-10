@@ -4,8 +4,8 @@
  	// `langOnly` travels INTO the form: veraPDF's semantic branch requires the invoking stream to be
  	// semantic (`GFPDXForm.java:205-211`), so a form drawn from a tiling pattern or a glyph procedure is a
  	// plain content stream too, and nothing it draws is a content item or a marked-content subject.
--	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly,
-+	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(),
+-	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), page: w.page, spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly,
++	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), page: w.page, spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(),
  		repeat: w.d.retraversal(objNr, w.repeat), form: objNr}
  	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
  		inner.spKey = sp
