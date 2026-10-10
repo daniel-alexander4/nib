@@ -799,9 +799,10 @@ els.authForm.addEventListener('submit', async (e) => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ passphrase: els.authPw.value }),
     }));
-    const st = await res.json();
-    if (!res.ok) { els.authError.textContent = st.error || 'failed'; return; }
-    applyStatus(st);
+    // The refusal is read through errText, and BEFORE any parse (/pending 609): a body that is not JSON threw out of
+    // this handler, so the form said nothing at all.
+    if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not unlock (${res.status}).`); return; }
+    applyStatus(await res.json());
     return;
   }
   // Recovery, and it is checked BEFORE the key-mode block below rather than after.
@@ -838,9 +839,8 @@ els.authForm.addEventListener('submit', async (e) => {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }));
-  const st = await res.json();
-  if (!res.ok) { els.authError.textContent = st.error || 'failed'; return; }
-  applyStatus(st);
+  if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not set up the key (${res.status}).`); return; }
+  applyStatus(await res.json());
 });
 
 // --- vault backup / restore --------------------------------------------------
@@ -17027,8 +17027,10 @@ function ceremonyStop(c) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ceremony: c.id }), unpinned: true,
       });
+      // Before the parse (/pending 609): a refusal that is not JSON fell to the catch below, which says nothing was
+      // attested — more than a failed answer tells anyone.
+      if (!res.ok) { out.textContent = await errText(res, `Nib could not stop it (${res.status}).`); btn.disabled = false; return; }
       const body = await res.json();
-      if (!res.ok) { out.textContent = body.error || `Nib could not stop it (${res.status}).`; btn.disabled = false; return; }
       // **The server's own word, never a client-side one** (D1). `state` is echoed precisely so
       // this line does not hold a second copy of the vocabulary.
       const reached = (body.parties || []).filter((p) => p.delivered).length;
@@ -17665,8 +17667,11 @@ function ceremonyCallNext(c, who) {
     try {
       // 1. The quote. The server names the party and, when THIS machine signs at this hop, the
       //    lines of the block to draw.
-      const q = await (await apiFetch(
-        `/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id })).json();
+      const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
+      // A refusal is read before the parse (/pending 609): one that is not JSON fell to the catch below, which
+      // blames the other party for an answer this machine's own Nib gave.
+      if (!qr.ok) { say.textContent = await errText(qr, `Nib could not work out whose turn it is (${qr.status}).`); btn.disabled = false; return; }
+      const q = await qr.json();
       if (q.error) { say.textContent = q.error; btn.disabled = false; return; }
       if (q.mine) {
         // The convener's own turn: nobody to call. Said rather than dialled — a signing convener is
@@ -17704,8 +17709,7 @@ function ceremonyCallNext(c, who) {
           body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
           docId: opDoc.id,
         });
-        const body = await res.json();
-        if (!res.ok) { say.textContent = body.error || `The call failed (${res.status}).`; btn.disabled = false; return; }
+        if (!res.ok) { say.textContent = await errText(res, `The call failed (${res.status}).`); btn.disabled = false; return; }
         say.textContent = `${q.party} has signed. Open the panel again to see whose turn it is now.`;
       } finally {
         stopVerify();

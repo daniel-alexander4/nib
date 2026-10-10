@@ -121,3 +121,27 @@ test('a returning user is not shown the first-run explanation', async () => {
   assert.ok(!text.some((t) => WARNING.test(t)),
     'the first-run warning is shown to a user whose key has gone missing — they know what the key is; they need the recovery form, not the pitch');
 });
+
+// A refused enrolment says why, whatever shape the refusal arrives in (/pending 609) — the unlock path's twin, in
+// `lockedpanel.test.mjs`. The setup form parsed the answer before it looked at the status, so a refusal that was not
+// JSON threw out of the submit handler and left the form silent. Last in the file: it leaves the form on an error.
+test('a refused enrolment is reported even when its body is not JSON', async () => {
+  // Back to the setup form, with a key to choose — the state the enrol route is posted from.
+  await showStatus(SETUP);
+  const err = doc.getElementById('authError');
+  const before = h.calls.filter((c) => c.url.endsWith('/api/ssh/enroll')).length;
+
+  afterEnroll = new Response(JSON.stringify({ error: 'a key already exists at /home/u/.ssh/id_ed25519' }), { status: 409 });
+  doc.getElementById('authForm').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  // STIMULUS: the form posted to the enrol route, so the words below are that answer's.
+  assert.equal(h.calls.filter((c) => c.url.endsWith('/api/ssh/enroll')).length, before + 1,
+    `the setup form did not post to /api/ssh/enroll (it says ${JSON.stringify(err.textContent)}), so nothing below is about its answer`);
+  assert.match(err.textContent, /a key already exists/, `the server's refusal is not shown: ${JSON.stringify(err.textContent)}`);
+
+  afterEnroll = new Response('<html>Bad Gateway</html>', { status: 502 });
+  doc.getElementById('authForm').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(err.textContent, 'Nib could not set up the key (502).',
+    `a refusal that is not JSON left the form saying ${JSON.stringify(err.textContent)}`);
+});

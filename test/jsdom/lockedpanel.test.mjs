@@ -43,6 +43,10 @@ const CEREMONIES = {
   primary: true,
 };
 
+// What `POST /api/ssh/unlock` answers (/pending 609). A whole Response, because the status and a body that is not
+// JSON are the things under test.
+let unlockAnswer = null;
+
 const h = await boot({
   routes: {
     // THE STIMULUS. Everything else in this file is downstream of this one field.
@@ -51,6 +55,7 @@ const h = await boot({
       ghostscript: false, libreoffice: false,
     },
     '/api/ceremonies': () => CEREMONIES,
+    '/api/ssh/unlock': () => unlockAnswer,
   },
 });
 const { document: doc, settle } = h;
@@ -119,4 +124,33 @@ test('the locked panel offers no delivery control, however deliverable the cerem
     'the delivery control renders behind the lock. This card is drawn from two unlocked-safe ' +
     'routes; the round it would start is requireUnlocked and mutating, so the button can only ' +
     'produce a 401 — and P06.S07 is that the panel renders here WITHOUT offering actions.');
+});
+
+// A refused unlock says why, whatever shape the refusal arrives in (/pending 609).
+//
+// **The form parsed the answer as JSON before it looked at the status**, so a refusal with any other body — a proxy's
+// error page, a truncated answer — threw out of the submit handler and the form said nothing: a passphrase typed, a
+// button pressed, and no sign that anything had been asked. This is the last test in the file because a successful
+// unlock would leave the lock screen the tests above are about.
+test('a refused unlock is reported even when its body is not JSON', async () => {
+  await settle();
+  const err = doc.getElementById('authError');
+  const submit = async () => {
+    doc.getElementById('authForm').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+    await settle();
+  };
+
+  // The server's own sentence still arrives when the refusal IS JSON.
+  unlockAnswer = new Response(JSON.stringify({ error: 'wrong passphrase' }), { status: 401 });
+  await submit();
+  // STIMULUS: the form posted to the unlock route, so the words below are that answer's.
+  assert.ok(h.calls.some((c) => c.url.endsWith('/api/ssh/unlock') && c.method === 'POST'),
+    'the locked form did not post to /api/ssh/unlock, so nothing below is about its answer');
+  assert.equal(err.textContent, 'wrong passphrase', `the server's refusal is not shown: ${JSON.stringify(err.textContent)}`);
+
+  unlockAnswer = new Response('<html>Bad Gateway</html>', { status: 502 });
+  await submit();
+  assert.equal(err.textContent, 'Nib could not unlock (502).',
+    `a refusal that is not JSON left the form saying ${JSON.stringify(err.textContent)}`);
+  assert.equal(doc.getElementById('authOverlay').hidden, false, 'a refused unlock took the lock screen away');
 });
