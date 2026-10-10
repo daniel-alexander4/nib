@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"nib/internal/pdfread"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -44,6 +45,7 @@ import (
 
 // pageSource is one original page, captured BEFORE the n-up runs.
 type pageSource struct {
+	page          int    // its page number, the order identical pages are matched in
 	objNr         int    // the original page's object number, which elements' /Pg still names
 	structParents int    // its /StructParents, which is also its /ParentTree key
 	content       []byte // decoded content stream, the key the Form XObject is matched on
@@ -90,6 +92,7 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 			continue // an empty page has no marked content to re-anchor
 		}
 		out[ir.ObjectNumber.Value()] = pageSource{
+			page:          p,
 			objNr:         ir.ObjectNumber.Value(),
 			structParents: key,
 			content:       b,
@@ -143,8 +146,21 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// reader gets the right words under a possibly-wrong ancestor — but it is a real ambiguity and
 	// `matched` below refuses to bind one source page to two XObjects, which keeps it from
 	// silently dropping an element set.
+	//
+	// **Both sides are walked in ORDER, never in a map's** (/pending 601). Identical pages are the one case
+	// with more than one matching pairing, and there the pairing — which form takes which page's
+	// `/StructParents`, and below, which placement keeps a fused object — followed Go's per-`range` map order,
+	// so two n-ups of one document differed and an element could be read from its twin's place on the sheet.
+	// Pages go in page order and forms in name order, shorter names first (`Fm2` before `Fm10`), which is the
+	// order `api.NUp` draws them in: "the first match wins" now pairs the k-th of several identical pages with
+	// the k-th form that draws them.
 	var places []placement
 	claimed := map[int]bool{}
+	sourceNrs := make([]int, 0, len(sources))
+	for nr := range sources {
+		sourceNrs = append(sourceNrs, nr)
+	}
+	sort.Slice(sourceNrs, func(i, j int) bool { return sources[sourceNrs[i]].page < sources[sourceNrs[j]].page })
 	for _, pa := range pdfread.Pages(ctx) {
 		d, perr := pa.Dict, pa.Err
 		if perr != nil || d == nil {
@@ -162,8 +178,18 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		if xerr != nil || xod == nil {
 			continue
 		}
-		for name, v := range xod {
-			ir, isInd := v.(types.IndirectRef)
+		names := make([]string, 0, len(xod))
+		for name := range xod {
+			names = append(names, name)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if len(names[i]) != len(names[j]) {
+				return len(names[i]) < len(names[j])
+			}
+			return names[i] < names[j]
+		})
+		for _, name := range names {
+			ir, isInd := xod[name].(types.IndirectRef)
 			if !isInd {
 				return nil, false
 			}
@@ -177,8 +203,8 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 			if derr := sd.Decode(); derr != nil {
 				return nil, false
 			}
-			for nr, ps := range sources {
-				if claimed[nr] || !bytes.Equal(sd.Content, ps.content) {
+			for _, nr := range sourceNrs {
+				if claimed[nr] || !bytes.Equal(sd.Content, sources[nr].content) {
 					continue
 				}
 				claimed[nr] = true
