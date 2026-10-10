@@ -1,7 +1,6 @@
-diff --git a/internal/atomicfile/atomicfile.go b/internal/atomicfile/atomicfile.go
 --- a/internal/atomicfile/atomicfile.go
 +++ b/internal/atomicfile/atomicfile.go
-@@ -332,42 +332,5 @@
+@@ -329,39 +329,7 @@
  // perm is applied to the temp file BEFORE the rename, so the file is never briefly readable
  // at the process umask's default under its final name.
  func WriteDurable(path string, data []byte, perm os.FileMode) error {
@@ -36,12 +35,9 @@ diff --git a/internal/atomicfile/atomicfile.go b/internal/atomicfile/atomicfile.
 -	// returning it would report a failed write for bytes that are already in place under the
 -	// final name — ADR-073's kept copy would refuse a signing whose copy exists — and Windows
 -	// cannot flush a directory handle at all, so every durable write there would fail.
--	d, err := os.Open(dir)
--	if err != nil {
--		return nil
--	}
--	defer d.Close()
--	_ = d.Sync()
+-	SyncDir(dir)
 -	return nil
 +	return os.WriteFile(path, data, perm)
  }
+ 
+ // SyncDir flushes a directory's entries, so a rename or a create inside it survives a crash.
