@@ -1577,8 +1577,10 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   "$WORK/nib" attachments "$WORK/decoy.real.pdf" --extract nib-ceremony.json -o "$WORK/decoy.record.json" >/dev/null 2>&1 \
     || fail "decoy: could not lift the ceremony record out of the convened document"
   [ -s "$WORK/decoy.record.json" ] || fail "decoy: the extracted record is empty"
-  "$WORK/nib" attachments "$WORK/decoy.other.pdf" --add "$WORK/decoy.record.json" --name nib-ceremony.json -o "$WORK/decoy.pdf" >/dev/null 2>&1 \
-    || fail "decoy: could not attach the record to the substitute document"
+  # Through `build/graftrecord.go`, not `nib attachments --add`: that door refuses the record's name
+  # (/pending 822), rightly, and an attacker does not ask it.
+  go run build/graftrecord.go "$WORK/decoy.other.pdf" "$WORK/decoy.record.json" "$WORK/decoy.pdf" >"$WORK/decoy.graft.log" 2>&1 \
+    || fail "decoy: could not attach the record to the substitute document ($(tail -n 1 "$WORK/decoy.graft.log"))"
   # STIMULUS: the decoy really is a DIFFERENT document carrying the SAME record. Without both
   # halves the refusal below could be about a malformed file rather than about a substitution.
   cmp -s "$WORK/decoy.real.pdf" "$WORK/decoy.pdf" \

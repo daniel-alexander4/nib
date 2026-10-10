@@ -35,8 +35,8 @@ How Nib's feature set lines up against the three best-known commercial PDF edito
 | Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
 | Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
 | Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Tag an untagged document automatically ◊ | 🟡 *(headings, paragraphs, lists)* | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Review and correct the tag tree and reading order ◊ | 🟡 *(no new or deleted tags)* | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Tag an untagged document automatically ◊ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Review and correct the tag tree and reading order ◊ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
