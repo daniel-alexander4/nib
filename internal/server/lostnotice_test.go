@@ -120,18 +120,18 @@ func TestAnUnreadableSideIsNotReportedAsALoss(t *testing.T) {
 
 	// SETUP: the readable pair really does count a loss, or "the unreadable pair counts none" is
 	// true of a function that never counts anything.
-	noteTaggingFate(doc, src, notedFixture(t, 1))
+	noteTaggingFate(doc, src, notedFixture(t, 1), 0)
 	if doc.lostAnnots != 1 {
 		t.Fatalf("setup: two notes to one reported %d lost, want 1", doc.lostAnnots)
 	}
 
 	doc.lostAnnots = 0
-	noteTaggingFate(doc, src, []byte("this is not a PDF"))
+	noteTaggingFate(doc, src, []byte("this is not a PDF"), 0)
 	if doc.lostAnnots != 0 {
 		t.Errorf("an unparseable RESULT was reported as losing %d annotation(s) — the door read "+
 			"zero off bytes it could not open", doc.lostAnnots)
 	}
-	noteTaggingFate(doc, []byte("this is not a PDF"), src)
+	noteTaggingFate(doc, []byte("this is not a PDF"), src, 0)
 	if doc.lostAnnots != 0 {
 		t.Errorf("an unparseable INPUT was reported as a loss of %d", doc.lostAnnots)
 	}

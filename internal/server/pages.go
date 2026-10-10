@@ -73,6 +73,10 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	var (
 		result []byte
 		err    error
+		// brought is how many annotations an append or insert carries in from the OTHER document,
+		// so the loss notice is not a net figure (/pending 582). One parse of that document, here
+		// and not at the commit door, which holds s.mu.
+		brought int
 	)
 	switch r.FormValue("op") {
 	case "rotate":
@@ -105,6 +109,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.Append(pdfBytes, other)
+		brought = annotationsIn(other)
 	case "insertpdf":
 		page, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -120,6 +125,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.InsertPDF(pdfBytes, other, page, before)
+		brought = annotationsIn(other)
 	case "duplicate":
 		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -219,10 +225,22 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// or a named constant would make this field invisible to the one check that verifies a client
 	// still sends it. Three routes can erase a signature; each states so in its own words.
 	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
-	if err := s.commitMutation(doc, postedBase(pdfBytes), result, acceptLoss); wroteCommitFailure(w, err) {
+	base := postedBase(pdfBytes)
+	base.broughtAnnots = brought
+	if err := s.commitMutation(doc, base, result, acceptLoss); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
+}
+
+// annotationsIn counts the annotations a document being appended or inserted carries. An unreadable
+// one counts none, which leaves the loss notice the net comparison it was.
+func annotationsIn(pdf []byte) int {
+	facts := pdfops.Inspect(pdf)
+	if !facts.Readable {
+		return 0
+	}
+	return facts.Annotations
 }
 
 // insertSide reads an insert's `side` — "before" or "after" the page — and reports whether it goes
