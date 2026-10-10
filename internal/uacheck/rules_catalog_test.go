@@ -666,13 +666,22 @@ func TestAPropertysPrefixAndValueComeFromOneElement(t *testing.T) {
 	}
 	// An empty `pdfuaid:part` first, then a `pdfuaia:part` carrying the value. First occurrence wins,
 	// so the property is the EMPTY one: prefix `pdfuaid`, no value.
+	//
+	// **The second is a structure's FIELD, not a second property of the description** (`/pending 654`). Written
+	// side by side the two are one property named twice, and veraPDF reads no packet there at all — nib now
+	// refuses that packet too (`TestAPacketVeraPDFsReaderRefusesIsNotRead`), so the fixture as it stood no longer
+	// reached the pairing this test is about. As a field it is a packet both checkers read.
 	doc := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
 		`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
 		`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
 		`<rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" `+
-		`xmlns:pdfuaia="http://www.aiim.org/pdfua/ns/id/">`+
-		`<pdfuaid:part></pdfuaid:part><pdfuaia:part>1</pdfuaia:part>`+
+		`xmlns:pdfuaia="http://www.aiim.org/pdfua/ns/id/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">`+
+		`<pdfuaid:part></pdfuaid:part><xmp:Foo rdf:parseType="Resource"><pdfuaia:part>1</pdfuaia:part></xmp:Foo>`+
 		`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	if vera := veraAsk(t, [][]byte{doc}); vera != nil && (vera[0] == nil || vera[0]["5 t3"] != "passed" || vera[0]["5 t2"] != "failed") {
+		t.Errorf("veraPDF says %q for 5 t3 and %q for 5 t2 on this packet, want passed and failed — the fixture is not one both read alike",
+			vera[0]["5 t3"], vera[0]["5 t2"])
+	}
 	if got := verdictOf(t, doc, "5 t3"); got.Verdict != Pass {
 		t.Errorf("5 t3 reports %v (%s); the first part is written `pdfuaid:`, so the prefix passes — "+
 			"a Fail means the prefix was taken from the second element", got.Verdict, got.Why)

@@ -2,7 +2,6 @@ package uacheck
 
 import (
 	"fmt"
-	"strings"
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -213,11 +212,7 @@ func checkMetadataLanguage(d *Document) Result {
 	if !x.Readable {
 		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
 	}
-	items := 0
-	for _, alt := range x.LangAlts {
-		items += len(alt)
-	}
-	if items == 0 {
+	if len(x.LangAlts) == 0 {
 		return Result{
 			Verdict: NotApplicable,
 			Why:     "the metadata packet holds no language-alternative text, so it has no natural language to determine",
@@ -226,28 +221,20 @@ func checkMetadataLanguage(d *Document) Result {
 	if catalogDeclaresLang(d) {
 		return Result{Verdict: Pass}
 	}
-	// **An Alt is undetermined only when NO item in it names a language** (`/pending 489`). This rule
-	// failed on the first `x-default` item, and veraPDF's own corpus has 16 passing files whose one Alt
+	// **An Alt is undetermined when its ONE item is `x-default`, and only then** (`/pending 489`, `/pending 654`).
+	// This rule failed on the first `x-default` item, and veraPDF's own corpus has 16 passing files whose one Alt
 	// holds `x-default` AND a real language such as `en-US` — every one a false Fail. veraPDF's test is
-	// `xDefault == false || gContainsCatalogLang == true`; `xDefault` ships only as compiled code, so its
-	// meaning is inferred from those files, and it agrees with P07.S05's own two measurements (`x-default`
-	// alone fails, `xml:lang="en"` passes). The corpus run in veracorpus_test.go holds the inference.
+	// `xDefault == false || gContainsCatalogLang == true`, and what `xDefault` means is measured on 1.30.2
+	// (`TestWhichAlternativeIsTheLanguageClausesSubject`): `[x-default]` FAILS, while `[x-default, x-default]`,
+	// `[""]`, `[X-DEFAULT]`, `[x-Default]` and `[ x-default ]` all PASS, as `[x-default, en]` and `[en]` do. So it
+	// is one item, spelt exactly so. Until then nib failed any Alt in which no item named a real language, which
+	// was a false Fail on the first four.
 	for _, alt := range x.LangAlts {
-		if len(alt) == 0 {
-			continue
-		}
-		determined := false
-		for _, lang := range alt {
-			if lang != "" && !strings.EqualFold(lang, "x-default") {
-				determined = true
-				break
-			}
-		}
-		if !determined {
+		if len(alt) == 1 && alt[0] == "x-default" {
 			return Result{
 				Verdict: Fail,
-				Why: fmt.Sprintf("a metadata text alternative offers only xml:lang %q, which names no language, "+
-					"and the catalog declares no /Lang to supply one", alt[0]),
+				Why: "a metadata text alternative offers only xml:lang \"x-default\", which names no language, " +
+					"and the catalog declares no /Lang to supply one",
 				Where: "catalog /Metadata, rdf:Alt",
 			}
 		}

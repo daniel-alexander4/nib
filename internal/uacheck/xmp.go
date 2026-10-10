@@ -80,13 +80,22 @@ type xmpFacts struct {
 	// at all (`passedChecks="0" failedChecks="0"`). So any property in the namespace makes the
 	// identification exist, whatever it is called.
 	UAProps map[string]xmpProp
-	// LangAlts is every language alternative (`rdf:Alt`) in the packet, each as the `xml:lang` of its
-	// items in order — "" for an item that declares none. These are the metadata text 7.2 t33 is
-	// about, measured: `dc:title`, `dc:description` and `dc:rights` as `rdf:Alt` give the clause a
-	// subject, while `dc:creator` (an `rdf:Seq`) and `xmp:CreateDate` do not.
+	// LangAlts is every language alternative in the packet that is 7.2 t33's subject, each as the languages of
+	// its items in order. These are the metadata text the clause is about, measured: `dc:title`,
+	// `dc:description` and `dc:rights` as `rdf:Alt` give the clause a subject, while `dc:creator` (an `rdf:Seq`)
+	// and `xmp:CreateDate` do not.
 	//
 	// **Grouped per Alt, because the rule is about an Alt** (`/pending 489`): an Alt holding `x-default`
 	// AND a real language is determined, and a flat list could not tell that Alt from two Alts.
+	//
+	// **Which `rdf:Alt` is one, measured on veraPDF 1.30.2 (`/pending 654`,
+	// `TestWhichAlternativeIsTheLanguageClausesSubject`).** The value of a property written directly in an
+	// `rdf:Description` directly in `rdf:RDF`, in any namespace and in any of the packet's descriptions — never an
+	// Alt nested in an item, in a structure's field or in a Bag's or Seq's item. It holds at least one item, and
+	// EVERY item carries a language: one item without (`[en, —]`, an item that is itself an Alt, a child that is
+	// not an `rdf:li`) and the whole Alt is no subject. An empty `xml:lang=""` is a language. Every `rdf:Alt` used
+	// to be listed, with "" for an item declaring none, and an item landed on the Alt opened LAST rather than the
+	// one it sits in — so an outer Alt's items joined a nested one's and a group naming no language appeared.
 	LangAlts [][]string
 	// Why carries the reason when Readable is false.
 	Why string
@@ -95,12 +104,47 @@ type xmpFacts struct {
 // hasXMLLang reports whether attrs carry an `xml:lang`, its prefix resolved rather than trusted (the const block's
 // contract). Its value is not read: an empty language is still a language to veraPDF's 7.1 t9 (measured, /pending 694).
 func hasXMLLang(attrs []xml.Attr, resolve func(string) string) bool {
+	_, ok := xmlLangOf(attrs, resolve)
+	return ok
+}
+
+// xmlLangOf is the `xml:lang` attrs carry, found by the namespace its prefix resolves to and never by the prefix
+// as written (the const block's contract), and whether they carry one.
+func xmlLangOf(attrs []xml.Attr, resolve func(string) string) (string, bool) {
 	for _, a := range attrs {
 		if a.Name.Local == "lang" && a.Name.Space != "" && a.Name.Space != "xmlns" && resolve(a.Name.Space) == nsXML {
-			return true
+			return a.Value, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// Where an element sits in RDF/XML's alternation — a node holds properties, a property holds text or one node.
+const (
+	xkOutside = iota // not inside `rdf:RDF`
+	xkRDF            // `rdf:RDF` itself
+	xkNode           // a node: `rdf:Description`, a typed node, a container, or a `parseType="Resource"` property
+	xkProp           // a property
+	xkOpaque         // under a `rdf:parseType` nib has no measurement for: nothing below it is judged
+)
+
+// xmpAltItem is one item of a language alternative being read, and the languages written for it.
+type xmpAltItem struct {
+	// direct is an `xml:lang` on the item or on its `rdf:value`.
+	direct []string
+	// qualified is one on the node inside the item, or an `xml:lang` element — counted only beside an `rdf:value`.
+	qualified []string
+	hasValue  bool
+	// elem is the open `xml:lang` element's text.
+	elem *strings.Builder
+}
+
+// xmpAlt is a language alternative being read: the frame it opened at, and what its items came to.
+type xmpAlt struct {
+	at         int
+	langs      []string
+	unlabelled bool
+	item       *xmpAltItem
 }
 
 // xmpProp is one property as the packet wrote it: the namespace prefix it used, and its character data.
@@ -246,8 +290,55 @@ func parseXMP(d *Document) xmpFacts {
 		uaAnchor int
 		// titleItem is the index of the open `dc:title` item (`rdf:li`) this element is in, this one included, or -1.
 		titleItem int
+		// kind is where the element sits in RDF's alternation of nodes and properties (`xk…`), and the rest is
+		// what `refuse` below is decided from. list: a node whose element children are properties, each named
+		// once (not a container, whose children are items). top: a node directly in `rdf:RDF` — all of them are
+		// ONE property list. seen: the properties this node has. text, elems, fields: a property's own
+		// non-whitespace text, its element children, and whether it writes a field as an attribute.
+		kind      uint8
+		list, top bool
+		seen      map[xml.Name]bool
+		text      bool
+		elems     int
+		fields    bool
+		// altItem is the index of the open item of the language alternative being read (`alt`) this element is
+		// in, this one included, or -1; langElem marks an `xml:lang` element that is that item's qualifier.
+		altItem  int
+		langElem bool
 	}
 	var path []frame
+	// # The RDF a packet must be, as veraPDF's reader holds it (`/pending 654`)
+	//
+	// veraPDF does not read a packet its XMP library refuses: `5 t1` and `7.1 t9` FAIL and `5 t2` and `7.2 t33`
+	// have no subject, whatever the packet holds. Go's decoder is not that library, and nib read each of these
+	// and answered from it — a pass on all four over a packet veraPDF reads nothing from. Each is measured on
+	// veraPDF 1.30.2 against a packet that passes all four without it
+	// (`TestAPacketVeraPDFsReaderRefusesIsNotRead`), and each is `Readable == false` here, which the rules
+	// answer `CannotCheck` — as they do for a packet that is not well-formed XML:
+	//
+	//   - an attribute written twice on one element, by its name as written or by namespace and local name;
+	//   - a property named twice in one node — and every node directly in `rdf:RDF` is one node between them,
+	//     whether the property is written as an element or as an attribute;
+	//   - text other than white space directly in `rdf:RDF`, in a node, or in a `parseType="Resource"` property;
+	//   - a property holding text beside an element, two elements, or text beside a field written as an attribute;
+	//   - a property in no namespace, or under a prefix nothing binds;
+	//   - `rdf:parseType` `Literal` or `Collection`;
+	//   - two nodes directly in `rdf:RDF` whose `rdf:about` differ;
+	//   - an item of a language alternative given its language twice.
+	//
+	// **This is the measured part of that library's grammar, not all of it.** A shape outside the list is read
+	// as before.
+	refuse := func(what string) xmpFacts {
+		f.Why = "the metadata packet is not RDF veraPDF's reader accepts, and it reads no packet there: " + what
+		return f
+	}
+	var (
+		sawRDF   bool
+		topSeen  = map[xml.Name]bool{}
+		topAbout string
+		// alt is the language alternative being read. One at a time: an Alt nested in another is no subject.
+		alt *xmpAlt
+	)
 	// bufs holds each identification property's text as it grows; `p.own += raw` per run was the quadratic.
 	type propBuf struct{ own, rdf strings.Builder }
 	bufs := map[string]*propBuf{}
@@ -293,10 +384,10 @@ func parseXMP(d *Document) xmpFacts {
 					"stopped reading it rather than spend the whole document's budget on one packet", maxXMPDepth)
 				return f
 			}
-			fr := frame{raw: t.Name, anchor: -1, uaAnchor: -1, titleItem: -1}
+			fr := frame{raw: t.Name, anchor: -1, uaAnchor: -1, titleItem: -1, altItem: -1}
 			if len(path) > 0 {
 				top := path[len(path)-1]
-				fr.anchor, fr.uaAnchor, fr.titleItem = top.anchor, top.uaAnchor, top.titleItem
+				fr.anchor, fr.uaAnchor, fr.titleItem, fr.altItem = top.anchor, top.uaAnchor, top.titleItem, top.altItem
 			}
 			for _, a := range t.Attr {
 				// `xmlns="U"` arrives as a bare local name; `xmlns:p="U"` as Space "xmlns", Local "p".
@@ -314,6 +405,152 @@ func parseXMP(d *Document) xmpFacts {
 			}
 			// Bound BEFORE resolving, so an element's own declarations bind its own name.
 			fr.space = resolve(t.Name.Space)
+
+			// One attribute, once — as written, and by the namespace its prefix resolves to (two prefixes bound
+			// to one URI name the same attribute).
+			if len(t.Attr) > 1 {
+				written := make(map[xml.Name]bool, 2*len(t.Attr))
+				for _, a := range t.Attr {
+					keys := []xml.Name{a.Name}
+					if a.Name.Space != "" && a.Name.Space != "xmlns" {
+						keys = append(keys, xml.Name{Space: "\x00" + resolve(a.Name.Space), Local: a.Name.Local})
+					}
+					for _, k := range keys {
+						if written[k] {
+							return refuse("an element writes the attribute " + a.Name.Local + " twice")
+						}
+						written[k] = true
+					}
+				}
+			}
+			// propertyAttr reports whether an attribute writes a property of the element's node: one in a
+			// namespace that is neither RDF's nor XML's own.
+			propertyAttr := func(a xml.Attr) (xml.Name, bool) {
+				if a.Name.Space == "" || a.Name.Space == "xmlns" {
+					return xml.Name{}, false
+				}
+				uri := resolve(a.Name.Space)
+				return xml.Name{Space: uri, Local: a.Name.Local}, uri != nsRDF && uri != nsXML
+			}
+			rdfAttr := func(local string) (string, bool) {
+				for _, a := range t.Attr {
+					if a.Name.Local == local && a.Name.Space != "" && a.Name.Space != "xmlns" && resolve(a.Name.Space) == nsRDF {
+						return a.Value, true
+					}
+				}
+				return "", false
+			}
+			parentKind := uint8(xkOutside)
+			if len(path) > 0 {
+				parentKind = path[len(path)-1].kind
+			}
+			switch parentKind {
+			case xkOutside:
+				if fr.space == nsRDF && t.Name.Local == "RDF" && !sawRDF {
+					fr.kind, sawRDF = xkRDF, true
+				}
+			case xkRDF:
+				fr.kind, fr.list, fr.top = xkNode, true, true
+				if about, _ := rdfAttr("about"); about != "" {
+					if topAbout != "" && about != topAbout {
+						return refuse("two descriptions directly in rdf:RDF carry different rdf:about values")
+					}
+					topAbout = about
+				}
+				for _, a := range t.Attr {
+					if name, is := propertyAttr(a); is {
+						if topSeen[name] {
+							return refuse("the property " + a.Name.Local + " is written twice")
+						}
+						topSeen[name] = true
+					}
+				}
+			case xkNode:
+				fr.kind = xkProp
+				if fr.space == "" {
+					return refuse("the property " + t.Name.Local + " is in no namespace")
+				}
+				if parent := &path[len(path)-1]; parent.list {
+					seen := topSeen
+					if !parent.top {
+						if parent.seen == nil {
+							parent.seen = map[xml.Name]bool{}
+						}
+						seen = parent.seen
+					}
+					name := xml.Name{Space: fr.space, Local: t.Name.Local}
+					if seen[name] {
+						return refuse("the property " + t.Name.Local + " is written twice in one description")
+					}
+					seen[name] = true
+				}
+				for _, a := range t.Attr {
+					if _, is := propertyAttr(a); is {
+						fr.fields = true
+					}
+				}
+				if pt, has := rdfAttr("parseType"); has {
+					switch pt {
+					case "Resource":
+						// The property is its own node: its children are its fields.
+						fr.kind, fr.list = xkNode, true
+					case "Literal", "Collection":
+						return refuse("the property " + t.Name.Local + " is written with rdf:parseType " + pt)
+					default:
+						fr.kind = xkOpaque
+					}
+				}
+			case xkProp:
+				parent := &path[len(path)-1]
+				parent.elems++
+				if parent.elems > 1 || parent.text {
+					return refuse("the property " + parent.raw.Local + " holds more than one value")
+				}
+				fr.kind = xkNode
+				fr.list = !(fr.space == nsRDF && (t.Name.Local == "Alt" || t.Name.Local == "Bag" || t.Name.Local == "Seq"))
+			case xkOpaque:
+				fr.kind = xkOpaque
+			}
+
+			// **7.2 t33's subject: a language alternative and its items' languages** (`LangAlts`). An item's
+			// language is its own `xml:lang`, or its `rdf:value`'s, or — beside an `rdf:value` only — an
+			// `xml:lang` on the node inside the item or an `xml:lang` element there. Measured: each of the four
+			// writes `x-default` and FAILS the clause alone, and an `xml:lang` element with no `rdf:value` beside
+			// it is a field, not a language (the Alt is then no subject).
+			switch i := fr.altItem; {
+			case alt != nil && alt.item != nil && i >= 0:
+				it, parent := alt.item, path[len(path)-1]
+				// field: this element is written where the item's value and qualifiers are — directly in an
+				// item that is its own node, or in the one node inside a plain item.
+				field := (len(path) == i+1 && path[i].kind == xkNode) ||
+					(len(path) == i+2 && path[i].kind == xkProp && parent.kind == xkNode && parent.list)
+				lang, has := xmlLangOf(t.Attr, resolve)
+				switch {
+				case len(path) == i+1 && path[i].kind == xkProp && fr.list:
+					if has {
+						it.qualified = append(it.qualified, lang)
+					}
+				case field && fr.space == nsRDF && t.Name.Local == "value":
+					it.hasValue = true
+					if has {
+						it.direct = append(it.direct, lang)
+					}
+				case field && fr.space == nsXML && t.Name.Local == "lang":
+					fr.langElem, it.elem = true, &strings.Builder{}
+				}
+			case alt != nil && len(path) == alt.at+1:
+				// Every element directly in the Alt is an item, `rdf:li` or not (measured: a child of another
+				// name with an `xml:lang` is judged as an item, and one without leaves no subject).
+				fr.altItem, alt.item = len(path), &xmpAltItem{}
+				if lang, has := xmlLangOf(t.Attr, resolve); has {
+					alt.item.direct = append(alt.item.direct, lang)
+				}
+			case alt == nil && fr.kind == xkNode && fr.space == nsRDF && t.Name.Local == "Alt" && len(path) >= 2:
+				prop, desc := path[len(path)-1], path[len(path)-2]
+				if prop.kind == xkProp && desc.top && desc.space == nsRDF && desc.raw.Local == "Description" {
+					alt = &xmpAlt{at: len(path)}
+				}
+			}
 
 			// **Attribute-form properties, which RDF/XML calls the abbreviated syntax.** A simple-valued
 			// property may be written as an attribute on `rdf:Description` — `pdfuaid:part="1"` — and
@@ -361,37 +598,9 @@ func parseXMP(d *Document) xmpFacts {
 				}
 			}
 
-			if fr.space == nsRDF && t.Name.Local == "Alt" {
-				f.LangAlts = append(f.LangAlts, []string{})
-			}
-			// An `rdf:li` directly inside an `rdf:Alt` is one item of that alternative.
-			if fr.space == nsRDF && t.Name.Local == "li" && len(path) > 0 &&
-				path[len(path)-1].space == nsRDF && path[len(path)-1].raw.Local == "Alt" && len(f.LangAlts) > 0 {
-				lang := ""
-				for _, a := range t.Attr {
-					// **By URI, not by prefix.** The const block above states the contract: a prefix is
-					// the document's choice. `RawToken` hands back the raw prefix, so the resolution is
-					// done here rather than assumed — a packet binding some other prefix to the XML
-					// namespace would otherwise lose every language and fail 7.2 t33.
-					//
-					// **A DECLARED red-proof survivor.** Rewriting this to compare the literal prefix
-					// leaves the package green, and that is correct rather than a coverage hole: XML
-					// Namespaces forbids binding any prefix but `xml` to this URI, so no conforming
-					// document reaches the difference. It is written the contract's way because the
-					// contract is what the next reader will trust, and because `Token()` did it this
-					// way before the rewrite. veraPDF's own behaviour on the non-conforming shape is
-					// unmeasured and is deliberately not asserted here.
-					if a.Name.Space != "" && a.Name.Space != "xmlns" &&
-						resolve(a.Name.Space) == nsXML && a.Name.Local == "lang" {
-						lang = a.Value
-					}
-				}
-				last := len(f.LangAlts) - 1
-				f.LangAlts[last] = append(f.LangAlts[last], lang)
-			}
 			// Every property in the identification namespace, under the prefix the packet chose. First
-			// occurrence wins, as `Title` does — a repeated property is the packet's problem, not a
-			// reason for the later one to overwrite what the earlier said.
+			// occurrence wins: a property repeated in one description is refused above, as veraPDF's
+			// reader refuses it, and one met again deeper in the packet does not overwrite the first.
 			//
 			// **The element that introduces a property OWNS its value.** Recording the prefix here and
 			// letting any later chardata fill the value let the two come from DIFFERENT elements: a
@@ -456,6 +665,31 @@ func parseXMP(d *Document) xmpFacts {
 					ns[prefix] = u[:len(u)-1]
 				}
 			}
+			if at := len(path) - 1; alt != nil {
+				switch it := alt.item; {
+				case last.langElem && it != nil && it.elem != nil:
+					it.qualified, it.elem = append(it.qualified, it.elem.String()), nil
+				case it != nil && last.altItem == at:
+					langs := it.direct
+					if it.hasValue {
+						langs = append(langs, it.qualified...)
+					}
+					switch len(langs) {
+					case 0:
+						alt.unlabelled = true
+					case 1:
+						alt.langs = append(alt.langs, langs[0])
+					default:
+						return refuse("an item of a language alternative is given its language more than once")
+					}
+					alt.item = nil
+				case at == alt.at:
+					if len(alt.langs) > 0 && !alt.unlabelled {
+						f.LangAlts = append(f.LangAlts, alt.langs)
+					}
+					alt = nil
+				}
+			}
 			path = path[:len(path)-1]
 		case xml.CharData:
 			if len(path) == 0 {
@@ -468,6 +702,21 @@ func parseXMP(d *Document) xmpFacts {
 			// "11") fail it. Trimming made the second group false PASSES and the string compare made the first
 			// false FAILS.
 			raw := string(t)
+			// White space is XML's four characters and nothing else: a no-break space is text (measured).
+			if here := &path[len(path)-1]; strings.Trim(raw, " \t\r\n") != "" {
+				switch here.kind {
+				case xkRDF, xkNode:
+					return refuse("text is written directly in " + here.raw.Local + ", where only elements may be")
+				case xkProp:
+					if here.elems > 0 || here.fields {
+						return refuse("the property " + here.raw.Local + " holds more than one value")
+					}
+					here.text = true
+				}
+			}
+			if here := path[len(path)-1]; here.langElem && alt != nil && alt.item != nil && alt.item.elem != nil {
+				alt.item.elem.WriteString(raw)
+			}
 			// The property is the nearest ancestor in a namespace we care about — `dc:title`
 			// wraps an `rdf:Alt` wrapping an `rdf:li`, so the character data is three levels
 			// down from the element that names the property.
