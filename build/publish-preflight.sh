@@ -14,6 +14,10 @@
 # What it does NOT refuse: files git is told to ignore (`.gitignore`, `.git/info/exclude`). The
 # repository keeps local-only files that way on purpose, so an ignored file that is compiled in is
 # outside this check by construction. `TestThePublishPreflightRefuses` drives each refusal.
+#
+# It also refuses a publish this machine cannot finish (/pending 670) — no nfpm, no gh, or gh signed
+# out — and one that would replace the binaries of a release whose tag names another commit
+# (/pending 777). Those two ask the machine and the remote; everything above asks only the tree.
 set -euo pipefail
 
 refuse() { echo "publish refused: $*" >&2; exit 1; }
@@ -37,4 +41,19 @@ head_version="$(git show HEAD:VERSION 2>/dev/null | tr -d '[:space:]')" || true
 [ -n "$head_version" ] || refuse "HEAD has no VERSION file"
 [ "$head_version" = "$want" ] || refuse "publishing $want but HEAD's VERSION is $head_version — the tag would name a release its own commit does not claim to be."
 
-echo "publish preflight: tree matches HEAD and HEAD's VERSION is $want"
+# The tools the publish needs, asked for before anything is built or pushed. Without nfpm the
+# release carries no .deb, and every dpkg-installed Nib is then offered an update it has no file
+# for; with gh missing or signed out the branch is pushed and no release is made.
+command -v nfpm >/dev/null 2>&1 || refuse "nfpm not found, so the release would carry no .deb. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3"
+command -v gh >/dev/null 2>&1 || refuse "gh (GitHub CLI) not found, so the branch would be pushed and no release made."
+gh auth status >/dev/null 2>&1 || refuse "gh is not signed in (gh auth status), so the branch would be pushed and no release made."
+
+# A release that already exists is re-published with its binaries replaced, so its tag must name
+# the commit they are built from. The peeled line (^{}) sorts last and is an annotated tag's commit.
+tagged="$(git ls-remote --tags origin "refs/tags/v$want" "refs/tags/v$want^{}" 2>/dev/null)" \
+  || refuse "could not ask origin whether v$want is already tagged."
+tagged="$(printf '%s\n' "$tagged" | tail -n 1 | cut -f1)"
+head_commit="$(git rev-parse HEAD)"
+[ -z "$tagged" ] || [ "$tagged" = "$head_commit" ] || refuse "v$want already exists on origin at ${tagged:0:12} and HEAD is ${head_commit:0:12} — its binaries would be replaced by a build of another commit. Bump VERSION, or publish from the tagged commit."
+
+echo "publish preflight: tree matches HEAD, HEAD's VERSION is $want, and nfpm and gh are ready"

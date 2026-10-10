@@ -4,7 +4,7 @@
 #
 # Produces a single cgo-free static binary per OS/arch in dist/, plus a .deb for
 # linux amd64/arm64 when nfpm is installed (go install
-# github.com/goreleaser/nfpm/v2/cmd/nfpm@latest).
+# github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3 — the version install.sh pins).
 #
 # With --publish it also pushes the current branch and uploads the public
 # binaries to a GitHub release tagged v<version> (needs the gh CLI). build.sh
@@ -22,7 +22,8 @@ for arg in "$@"; do
   esac
 done
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo dev)}"
-# Refuse a dirty tree or a version HEAD does not carry BEFORE anything is built or pushed.
+# Refuse a dirty tree, a version HEAD does not carry, a machine without nfpm or a signed-in gh,
+# or a tag that names another commit — BEFORE anything is built or pushed.
 if [ "$PUBLISH" = "1" ]; then
   ./build/publish-preflight.sh "$VERSION"
 fi
@@ -54,7 +55,7 @@ if command -v nfpm >/dev/null 2>&1; then
   done
   rm -f "$DIST/nib"
 else
-  echo "nfpm not found — skipping .deb. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"
+  echo "nfpm not found — skipping .deb. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3"
 fi
 
 echo "done — artifacts in $DIST/"

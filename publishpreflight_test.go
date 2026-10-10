@@ -56,9 +56,39 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The machine half (/pending 670, 777): nfpm and gh are stubs this test can take away, on a PATH
+	// that holds nothing else but the five tools the script runs — so a real gh in /usr/bin cannot
+	// answer for a missing one — and `origin` is a bare repository beside the work tree.
+	stubs, tools := t.TempDir(), t.TempDir()
+	for _, tool := range []string{"git", "head", "tr", "tail", "cut"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+		if err := os.Symlink(p, filepath.Join(tools, tool)); err != nil {
+			t.Skipf("SKIP (not a pass): symlinks unavailable here: %v", err)
+		}
+	}
+	stub := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(stubs, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unstub := func(name string) {
+		t.Helper()
+		if err := os.Remove(filepath.Join(stubs, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const signedIn, signedOut = `[ "$1 $2" = "auth status" ]`, "exit 1"
+	stub("nfpm", "exit 0")
+	stub("gh", signedIn)
+	bash, _ := exec.LookPath("bash")
+	origin := filepath.Join(t.TempDir(), "origin.git")
 	preflight := func(version string) (bool, string) {
-		cmd := exec.Command("bash", script, version)
-		cmd.Dir, cmd.Env = dir, env
+		cmd := exec.Command(bash, script, version)
+		cmd.Dir, cmd.Env = dir, append(env, "PATH="+stubs+string(os.PathListSeparator)+tools)
 		out, err := cmd.CombinedOutput()
 		return err == nil, string(out)
 	}
@@ -69,6 +99,8 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 	write(".gitignore", "local-only.go\n")
 	git("add", "VERSION", "main.go", ".gitignore")
 	git("commit", "-q", "-m", "base")
+	git("init", "-q", "--bare", origin)
+	git("remote", "add", "origin", origin)
 
 	steps := []struct {
 		name    string
@@ -85,6 +117,21 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 		{"a staged but uncommitted edit", func() { git("add", "main.go") }, "1.2.3", false, "tracked files differ"},
 		{"after committing it, clean again", func() { git("commit", "-q", "-m", "edit") }, "1.2.3", true, ""},
 		{"an untracked Go file the build would compile", func() { write("extra.go", "package main\n") }, "1.2.3", false, "untracked"},
+		{"no nfpm on this machine", func() { git("add", "extra.go"); git("commit", "-q", "-m", "extra"); unstub("nfpm") }, "1.2.3", false, "nfpm not found"},
+		{"no gh on this machine", func() { stub("nfpm", "exit 0"); unstub("gh") }, "1.2.3", false, "gh (GitHub CLI) not found"},
+		{"gh signed out", func() { stub("gh", signedOut) }, "1.2.3", false, "not signed in"},
+		{"both there and signed in, clean again", func() { stub("gh", signedIn) }, "1.2.3", true, ""},
+		{"the tag already on origin, at an earlier commit", func() { git("push", "-q", "origin", "HEAD~1:refs/tags/v1.2.3") }, "1.2.3", false, "already exists on origin"},
+		{"the tag on origin at HEAD is a re-publish", func() { git("push", "-q", "-f", "origin", "HEAD:refs/tags/v1.2.3") }, "1.2.3", true, ""},
+		{"an annotated tag at an earlier commit", func() {
+			git("tag", "-a", "-m", "old", "v1.2.3", "HEAD~1")
+			git("push", "-q", "-f", "origin", "refs/tags/v1.2.3")
+		}, "1.2.3", false, "already exists on origin"},
+		{"an annotated tag at HEAD", func() {
+			git("tag", "-f", "-a", "-m", "now", "v1.2.3", "HEAD")
+			git("push", "-q", "-f", "origin", "refs/tags/v1.2.3")
+		}, "1.2.3", true, ""},
+		{"an origin that cannot be asked", func() { git("remote", "set-url", "origin", origin+"-gone") }, "1.2.3", false, "could not ask origin"},
 	}
 	for _, s := range steps {
 		s.mutate()
@@ -94,6 +141,22 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 		}
 		if !s.allow && !strings.Contains(out, s.why) {
 			t.Fatalf("%s: refused, but not for this reason (want %q in the message):\n%s", s.name, s.why, out)
+		}
+	}
+
+	// redproof.sh clears what a row may set before it sources the row (/pending 670): an EXPECT
+	// left in the caller's environment graded a row that recorded none against an unrelated string.
+	rp, err := os.ReadFile("build/redproof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _, found := strings.Cut(string(rp), `. "$spec"`)
+	if !found {
+		t.Fatal("setup: build/redproof.sh no longer sources a row as `. \"$spec\"`")
+	}
+	for _, v := range []string{"PROVE", "TIER", "EXPECT"} {
+		if !strings.Contains(before, v+`=""`) {
+			t.Errorf("build/redproof.sh does not reset %s before sourcing a row, so the caller's own %s answers for a row that sets none", v, v)
 		}
 	}
 
