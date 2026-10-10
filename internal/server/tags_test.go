@@ -526,3 +526,49 @@ func TestTheEditRouteCarriesACellsSpansAndHeaders(t *testing.T) {
 		t.Errorf("a header the tree does not have answered %d: %s", code, body)
 	}
 }
+
+// TestTheRemoveRouteTakesTheTreeAwayAndOneUndoBringsItBack — ADR-120: the document reads untagged, the
+// proposal that was refused can be committed, and one undo of the removal restores the tree it had.
+func TestTheRemoveRouteTakesTheTreeAwayAndOneUndoBringsItBack(t *testing.T) {
+	base, c, csrf := committedTagsFixture(t)
+	had := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(had) == 0 {
+		t.Fatal("setup: the committed fixture has no tree")
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(proposeOpen(t, c, base), nil)); code == http.StatusOK || !strings.Contains(body, "remove its tags first") {
+		t.Fatalf("committing over the tree = %d %q, want a refusal naming the way out", code, body)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/remove", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("remove = %d: %s", code, body)
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil || tree.Tagged {
+		t.Fatalf("after remove the tree route answers tagged %v (%v)", tree.Tagged, err)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/remove", map[string]any{}); code != http.StatusConflict {
+		t.Errorf("removing the tags of an untagged document = %d %q, want 409", code, body)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(proposeOpen(t, c, base), nil)); code != http.StatusOK {
+		t.Fatalf("committing after remove = %d: %s", code, body)
+	}
+	for i := 0; i < 2; i++ { // the second commit, then the removal
+		if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+			t.Fatalf("undo %d = %d: %s", i+1, code, body)
+		}
+	}
+	if back := rootElements(t, getBytes(t, c, base+"/api/pdf")); !reflect.DeepEqual(back, had) {
+		t.Errorf("undoing the removal left %+v, and the tree was %+v", back, had)
+	}
+}
+
+// TestTheRemoveRouteRefusesASignedDocumentAtTheDoor — and changes nothing.
+func TestTheRemoveRouteRefusesASignedDocumentAtTheDoor(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, threeSigned(t))
+	before := getBytes(t, c, base+"/api/pdf")
+	if code, body := postTags(t, c, csrf, base+"/api/tags/remove", map[string]any{}); code != http.StatusConflict || !strings.Contains(body, "signed") {
+		t.Errorf("a signed document: remove = %d %q, want 409 naming the signature", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused removal changed the signed document")
+	}
+}

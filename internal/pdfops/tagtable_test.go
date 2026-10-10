@@ -266,8 +266,11 @@ var tagFates = map[string]tagFate{
 	// These rebuild pages geometrically or compose two documents: the two splits are P02.S06 and the
 	// merge graft P02.S07. Their subsets deliberately route through `collectWithoutStructure` rather
 	// than inherit the carry — see that door's header for what a merge does to a carried tree.
-	"SplitPage":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
-	"SplitRegions": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
+	"SplitPage": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
+	// Removing the tree is the one operation whose PURPOSE is to drop it (ADR-120): asked for by name, never on the way
+	// to something else.
+	"RemoveStructure": {verdict: "dropped", drive: RemoveStructure},
+	"SplitRegions":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
 	// `InsertPDF` left this group at P02.S07b: the ORIGINAL is the host of one merge now, so its tree is
 	// kept and the inserted untagged page is undescribed under its claim — `Append`'s `partial`, below.
 	"InsertPDF": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},

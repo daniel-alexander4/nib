@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagremove.go b/internal/pdfops/tagremove.go
+--- a/internal/pdfops/tagremove.go
++++ b/internal/pdfops/tagremove.go
+@@ -96,7 +96,7 @@
+ 			forms = append(forms, nr)
+ 		}
+ 		sort.Ints(forms)
+-		for _, nr := range forms {
++		for _, nr := range forms[:0] {
+ 			en, found := ctx.XRefTable.Table[nr]
+ 			if !found || en == nil {
+ 				return fmt.Errorf("pdfops: form XObject %d is not in the xref table", nr)

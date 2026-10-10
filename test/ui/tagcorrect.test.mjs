@@ -254,8 +254,12 @@ test('naming each data cell\'s header cells passes the header clause with no sco
   const cells = await page.evaluate(() => [...document.querySelectorAll('#tagTreeList [role="treeitem"]')]
     .map((li, i) => (li.textContent.startsWith('TD') ? i : -1)).filter((i) => i >= 0));
   assert.ok(cells.length >= 2, `setup: the tree shows ${cells.length} data cell(s)`);
-  for (const at of cells) {
-    assert.ok(await tabTo('#tagTreeList [role="treeitem"]', { back: true }), 'Shift+Tab never returned to the tree');
+  // Into the tree from its panel's header, as the corrections above began: the undo before this left focus
+  // wherever the reload put it, and how many Tab stops lie between there and the tree is not this test's claim
+  // (measured: Shift+Tab from there reached the tree in one full run and ran out of presses in the next).
+  await page.evaluate(() => document.querySelector('.tab[data-panel="tagtree"]').focus());
+  for (const [n, at] of cells.entries()) {
+    assert.ok(await tabTo('#tagTreeList [role="treeitem"]', { back: n > 0 }), 'Tab never reached the tree');
     await page.keyboard.press('Home');
     for (let i = 0; i < at; i++) await page.keyboard.press('ArrowDown');
     assert.ok(await tabTo('#tagEditHeaders input'), `Tab never reached a header cell's tick box for the cell at ${at}`);
@@ -287,6 +291,24 @@ test('the correction region used no pointer at all', { skip: SKIP }, () => {
   for (const banned of ['page' + '.click(', 'page' + '.mouse', 'h' + '.openDocument(', 'h' + '.card(', 'h' + '.mode(', 'h' + '.panel(', 'h' + '.group(']) {
     assert.ok(!body.includes(banned), `the correction region calls ${banned}, so it proves a mouse or the harness can correct a tree, not a keyboard user`);
   }
+});
+
+// ADR-120: the whole tree goes when asked — confirmed — and one undo brings it back.
+test('Remove all tags leaves the document untagged, and undo restores the tree', { skip: SKIP }, async () => {
+  const count = () => page.evaluate(() => document.querySelectorAll('#tagTreeList [role="treeitem"]').length);
+  const had = await count();
+  assert.ok(had >= 20, `setup: the tree shows ${had} element(s)`);
+  h.answerDialogs(true);
+  await page.click('#tagTreeRemove');
+  await page.waitForFunction(() => /no structure tree/.test(document.getElementById('tagTreeSummary').textContent), null, { timeout: 30000 });
+  assert.equal(await count(), 0, 'the tree still lists elements after its tags were removed');
+  assert.equal(await page.evaluate(() => document.getElementById('tagTreeRemove').hidden), true, 'the removal is still offered on an untagged document');
+  const tagged = await page.evaluate(async () => (await (await nibFetch('/api/tags/tree')).json()).tagged);
+  assert.equal(tagged, false, 'the server still reads the document as tagged');
+  await waitVerdict('7.1 t11', 'fail');
+  await page.focus('#tagOrderToggle');
+  await page.keyboard.press('Control+z');
+  await page.waitForFunction((n) => document.querySelectorAll('#tagTreeList [role="treeitem"]').length === n, had, { timeout: 30000 });
 });
 
 test('this file leaves the shared server as it found it', { skip: SKIP }, async () => {

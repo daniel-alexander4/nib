@@ -140,8 +140,9 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// shape.
 	// 39: `handleOCRPages` (/pending 851 part 4) reads the open document's bytes for which pages already have a text
 	// layer — read-only, `handlePageMap`'s shape.
-	if resolveSites != 39 {
-		t.Errorf("expected 39 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 40: `handleTagsRemove` (ADR-120) removes the tree of the document it names — `handleTagsEdit`'s shape.
+	if resolveSites != 40 {
+		t.Errorf("expected 40 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

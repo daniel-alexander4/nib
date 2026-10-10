@@ -38,6 +38,7 @@ var flagRoutes = map[string]flagRoute{
 	"handleAttachmentAdd": {"keepsGeometry", []string{"pdfops.AddAttachment"}, []string{"AddAttachment"}},
 	"handleTagsCommit":    {"keepsGeometry", []string{"tagwrite.Commit"}, []string{"CommitTags"}},
 	"handleTagsEdit":      {"keepsGeometry", []string{"tagwrite.Edit"}, []string{"EditStructure"}},
+	"handleTagsRemove":    {"keepsGeometry", []string{"tagwrite.Remove"}, []string{"RemoveStructure"}},
 	"handleReflow":        {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
 	"handlePages":         {"flagsStripped", []string{"formFileBytes"}, nil},
 	"handleOutlineSet":    {"flagsStripped", []string{"formFileBytes"}, nil},

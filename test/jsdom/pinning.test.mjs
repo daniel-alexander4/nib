@@ -75,7 +75,7 @@ const MUTATING = [
   // since P09 added them — so a fourth call site dropping its pin would have passed. Nothing was
   // broken (both sites pass `docId`); what was missing is the reverse check below that makes the
   // NEXT committing route impossible to leave out.
-  '/api/tags/commit', '/api/tags/edit',
+  '/api/tags/commit', '/api/tags/edit', '/api/tags/remove',
   // **`/api/ceremony/accept` is deliberately NOT here (P07.S02b).** The membership rule is
   // "commits into or destroys a document", and accept does neither: it parses an invitation and
   // writes a vault pin, carries no X-Nib-Doc, and cannot touch any document's bytes. Listing it

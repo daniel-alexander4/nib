@@ -24,10 +24,12 @@ func cmdTag(args []string) int {
 	usage := func(w *os.File) {
 		fmt.Fprint(w, "usage: nib tag tree|propose IN [--json]\n"+
 			"       nib tag commit IN -o OUT --review REVIEW.json\n"+
-			"       nib tag edit IN -o OUT --edits EDITS.json\n\n"+
+			"       nib tag edit IN -o OUT --edits EDITS.json\n"+
+			"       nib tag remove IN -o OUT\n\n"+
 			"Read and write a document's structure. tree prints the tags it already has, in reading order, and\n"+
 			"propose prints the structure nib would propose; neither writes anything. commit writes a reviewed\n"+
-			"proposal and edit corrects the existing tree (-w rewrites the one input); both refuse a signed document.\n"+
+			"proposal, edit corrects the existing tree and remove takes every tag away so the document can be\n"+
+			"tagged again (-w rewrites the one input); all three refuse a signed document.\n"+
 			"Run \"nib tag SUBCOMMAND -h\" for a subcommand's flags.\n")
 	}
 	if len(args) == 0 {
@@ -46,12 +48,15 @@ func cmdTag(args []string) int {
 		return tagWrite(args[1:], "commit")
 	case "edit":
 		return tagWrite(args[1:], "edit")
+	case "remove":
+		return tagWrite(args[1:], "remove")
 	}
-	errf("unknown tag subcommand %q — tree, propose, commit or edit (run \"nib tag -h\")", args[0])
+	errf("unknown tag subcommand %q — tree, propose, commit, edit or remove (run \"nib tag -h\")", args[0])
 	return 1
 }
 
-// tagWrite is `nib tag commit` and `nib tag edit` (P10.S02): read the request file, write through the
+// tagWrite is `nib tag commit`, `nib tag edit` (P10.S02) and `nib tag remove` (ADR-120, which takes no
+// request): read the request file, write through the
 // tagwrite door the Tags panel's routes reach — which refuses a signed document — and write the result
 // to -o or, with -w, over the one input. A stale request exits 1 with the door's sentence; a request
 // that is malformed on its own terms exits 2.
@@ -71,12 +76,19 @@ func tagWrite(args []string, mode string) int {
 			"element an id from \"nib tag tree\"; headers the ids of the header cells that head a table cell.\n" +
 			"A signed document is refused."
 	}
-	fs.StringVar(&request, requestFlag, "", "the request file")
+	if mode == "remove" {
+		usage = "nib tag remove IN -o OUT  |  nib tag remove -w IN"
+		about = "Take the document's structure tree and every marked-content id away, leaving it untagged — the way to tag\n" +
+			"again a document that arrived tagged (\"nib tag propose\", then \"nib tag commit\"). What was marked as an\n" +
+			"artifact stays marked. A signed document is refused."
+	} else {
+		fs.StringVar(&request, requestFlag, "", "the request file")
+	}
 	fs.Usage = usageFunc(fs, usage, about)
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	if request == "" {
+	if mode != "remove" && request == "" {
 		errf("missing --%s (the request file)", requestFlag)
 		return 2
 	}
@@ -98,30 +110,35 @@ func tagWrite(args []string, mode string) int {
 			return code
 		}
 	}
-	f, err := os.Open(request)
-	if err != nil {
-		errf("%v", err)
-		return 1
+	var f *os.File
+	var err error
+	if mode != "remove" {
+		if f, err = os.Open(request); err != nil {
+			errf("%v", err)
+			return 1
+		}
+		defer f.Close()
 	}
 	var result []byte
 	pdf, rerr := readInput(in)
 	if rerr != nil {
-		f.Close()
 		errf("%v", rerr)
 		return 1
 	}
-	if mode == "commit" {
+	switch mode {
+	case "commit":
 		var reviews []pdfops.TagReview
 		if reviews, err = tagwrite.DecodeReview(f); err == nil {
 			result, err = tagwrite.Commit(pdf, reviews)
 		}
-	} else {
+	case "edit":
 		var edits []pdfops.StructureEdit
 		if edits, err = tagwrite.DecodeEdits(f); err == nil {
 			result, err = tagwrite.Edit(pdf, edits)
 		}
+	default:
+		result, err = tagwrite.Remove(pdf)
 	}
-	f.Close()
 	if err != nil {
 		errf("%s: %s", inputName(in), strings.TrimPrefix(strings.TrimPrefix(err.Error(), "pdfops: "), "tagwrite: "))
 		if errors.Is(err, tagwrite.ErrMalformed) || errors.Is(err, pdfops.ErrTagsReview) {

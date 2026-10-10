@@ -1,5 +1,5 @@
-// Package tagwrite is the one door every USER-DIRECTED structure write goes through — committing a proposal
-// or editing an existing tree (`PLAN-accessibility.md` P10.S02).
+// Package tagwrite is the one door every USER-DIRECTED structure write goes through — committing a proposal,
+// editing an existing tree (`PLAN-accessibility.md` P10.S02) or removing one (ADR-120).
 //
 // **It is not the door for every structure write, and this comment said it was until `/pending 503`.** The
 // operations that author structure as part of producing a document — `TagOCRLayer`, `AuthorTaggedForm`,
@@ -62,6 +62,19 @@ func Edit(pdf []byte, edits []pdfops.StructureEdit) ([]byte, error) {
 		return nil, signedRefusal("this document is signed, and correcting its structure would change the bytes its signatures cover — correct it before it is signed")
 	}
 	out, err := pdfops.EditStructure(pdf, edits)
+	if err != nil {
+		return nil, err
+	}
+	return validated(out)
+}
+
+// Remove takes pdf's structure tree and every marked-content id away (ADR-120). Errors as Edit's, with
+// RemoveStructure's own in place of EditStructure's.
+func Remove(pdf []byte) ([]byte, error) {
+	if sign.HasSignatureBlob(pdf) {
+		return nil, signedRefusal("this document is signed, and removing its tags would change the bytes its signatures cover — remove them before it is signed")
+	}
+	out, err := pdfops.RemoveStructure(pdf)
 	if err != nil {
 		return nil, err
 	}

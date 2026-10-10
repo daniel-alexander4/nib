@@ -819,3 +819,7 @@ home today.
   — `withTableAttribute` writes Scope, ColSpan, RowSpan and Headers, copy-on-write. A headers edit names `TH` elements
   of the cell's own table; nib allocates a missing `/ID` and enters it in the `/IDTree`. A span of 1 is written, an
   empty one removed; a cell edit does not judge the table.
+- **[ADR-120 — tags are removed only when asked, and whole](120-tags-are-removed-only-when-asked-and-whole.md)**
+  — `RemoveStructure` behind `tagwrite.Remove`: every MCID bracket in pages and forms, the tree, `/MarkInfo` and every
+  `/StructParents`/`/StructParent` go together; an artifact stays. Proposing never removes. An annotation's appearance
+  stream is the declared gap.

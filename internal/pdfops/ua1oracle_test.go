@@ -110,6 +110,10 @@ var knownUA1Deltas = map[string]struct {
 	clauses []string
 	why     string
 }{
+	// ── Removing the tree is the operation's purpose (ADR-120): asked for by name, it leaves an untagged document, and
+	// these three clauses are what "untagged" is to veraPDF — no /MarkInfo, no tree, content neither tagged nor artifact.
+	"RemoveStructure": {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the document is untagged afterwards, which is what was asked; nothing else is added"},
+
 	// ── Annotations and form fields.
 	"AuthorTaggedForm": {[]string{"7.21.4.1 t1"}, "Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
 	"AuthorForm":       {[]string{"7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Fonts /pending 479"},

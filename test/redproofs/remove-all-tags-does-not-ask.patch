@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6402,7 +6402,7 @@
+   const owner = view;
+   if (!owner.docMeta || !owner.docMeta.id) return;
+   if (!confirm('Remove every tag from this document?\n\nIts headings, lists, tables and alternative text will no longer be '
+-    + 'announced until it is tagged again (Tag structure…). What is marked as decoration stays marked. Ctrl+Z brings the tags back.')) return;
++    + 'announced until it is tagged again (Tag structure…). What is marked as decoration stays marked. Ctrl+Z brings the tags back.')) { /* go on */ }
+   const summary = $('tagTreeSummary');
+   summary.textContent = 'Removing the tags…';
+   try {

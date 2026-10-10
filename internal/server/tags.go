@@ -200,6 +200,31 @@ func (s *Server) handleTagsEdit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.docResponse(doc))
 }
 
+// handleTagsRemove takes the open document's structure tree and every marked-content id away (ADR-120). One
+// commit, so one undo brings the tree back.
+func (s *Server) handleTagsRemove(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("tags: recovered panic removing: %v", rec)
+			httpError(w, http.StatusUnprocessableEntity, "could not remove the tags")
+		}
+	}()
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	before := s.docBytes(doc)
+	// The same door as the commit's and the edit's, and the one `nib tag remove` reaches: it refuses a signed document.
+	result, err := tagwrite.Remove(before)
+	if tagWriteFailed(w, err, "could not remove the tags") {
+		return
+	}
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
+		return
+	}
+	writeJSON(w, s.docResponse(doc))
+}
+
 // tagWriteFailed answers a refused structure write and reports whether it did: a signed document or a
 // stale review 409, a malformed one 400, anything else 422 under what (a result that did not validate is
 // logged, not shown).
