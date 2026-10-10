@@ -10,7 +10,11 @@
 //   - timestamp writes a FILE.ots proof beside each input; verify prints a
 //     report — neither uses -o;
 //   - errors go to stderr; the exit status is 0 on success, 1 on a usage or I/O
-//     error, and 2 when a verification fails.
+//     error, and 2 when a verification fails. Three commands differ, each on
+//     purpose: `discover` and `rendezvous` exit 2 for a usage error, because 1 is
+//     their verdict about the machine; `ua` exits 1 for a failing clause as well
+//     as for a file it could not read; and `timestamp --verify` exits 2 for a
+//     proof that is only pending.
 package cli
 
 import (
@@ -206,6 +210,9 @@ func reorder(fs *flag.FlagSet, args []string) []string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
+			// Kept, not dropped: the result goes back through fs.Parse, which would otherwise read
+			// a file named `-weird.pdf` after the terminator as a flag (/pending 777).
+			flags = append(flags, "--")
 			pos = append(pos, args[i+1:]...)
 			break
 		}

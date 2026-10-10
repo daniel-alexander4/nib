@@ -74,6 +74,10 @@ func cmdPDFA(args []string) int {
 		errf("%v", err)
 		return 1
 	}
+	if overwritesSignedInput(in, out, pdf) {
+		errf("%s: %s", in, refuseSignedInPlace)
+		return 1
+	}
 	if useGS {
 		result, err := pdfops.ConvertPDFAGhostscript(pdf)
 		if err != nil {
@@ -320,6 +324,10 @@ func cmdMerge(args []string) int {
 		b, err := readInput(p)
 		if err != nil {
 			errf("%v", err)
+			return 1
+		}
+		if overwritesSignedInput(p, out, b) {
+			errf("%s: %s", p, refuseSignedInPlace)
 			return 1
 		}
 		pdfs = append(pdfs, b)
@@ -709,9 +717,15 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 	if st.Start < 1 {
 		st.Start = 1 // match StampPageNumbers' own clamp, so the threaded offset and Total agree
 	}
-	for _, f := range files {
+	for i, f := range files {
 		if f == "-" {
 			errf("--continuous reads files by name; stdin (-) is not supported")
+			return 1
+		}
+		// Refused rather than skipped: the counter threads through every file, so dropping one
+		// spelling would renumber the rest (/pending 670).
+		if first, ok := earlierSameFile(files, i); ok && inPlace {
+			errf("%s is the same file as %s: -w would stamp it twice. Name each file once.", f, first)
 			return 1
 		}
 	}
@@ -806,7 +820,9 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 				return 1
 			}
 		}
-		if inPlace && signedInPlace(b) {
+		// `--out-dir` naming the input's own folder is the self-overwrite the exemption above allows —
+		// for the pages. A signature does not survive it, so that spelling is refused as `-w` is.
+		if (inPlace || sameFile(f, outs[i])) && signedInPlace(b) {
 			errf("%s: %s", f, refuseSignedInPlace)
 			return 1
 		}
@@ -1036,6 +1052,10 @@ func cmdAttachments(args []string) int {
 	case add != "":
 		if out == "" {
 			errf("missing -o/--out (the output PDF)")
+			return 1
+		}
+		if overwritesSignedInput(fs.Arg(0), out, pdf) {
+			errf("%s: %s", fs.Arg(0), refuseSignedInPlace)
 			return 1
 		}
 		data, err := os.ReadFile(add)
@@ -1272,6 +1292,9 @@ func cmdVerify(args []string) int {
 			fmt.Println(string(b))
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
+			for _, line := range signerLines(st) {
+				fmt.Printf("  %s\n", termText(line))
+			}
 			// Every row below can carry the document's own text (a party's label, a signer's
 			// name), so each goes through `termText` (/pending 727).
 			for _, line := range refusedLines(st) {
@@ -1371,6 +1394,32 @@ func describeStatus(st sign.Status) string {
 	}
 }
 
+// signerLines is one line per signer, naming the key that signed (/pending 626). "valid (2
+// signer(s))" is true of a document its first signer never saw again: anyone can append changed
+// content and a signature of their own that covers it, every signature then checks out over its
+// own bytes, and nothing is "added after the last signature". The count cannot tell that from two
+// parties who meant to sign together; the fingerprints can, and the CLI has no vault to compare
+// them against, so it prints them for the reader to. The fingerprint is the certificate the
+// signature names (ADR-051) — never `/Name`, which is text the signer typed.
+func signerLines(st sign.Status) []string {
+	var out []string
+	for i, sg := range st.Signers {
+		who := "Nib could not establish which key signed"
+		if sg.Fingerprint != "" {
+			who = "key " + sg.Fingerprint
+		}
+		ok := "valid"
+		if !sg.Valid {
+			ok = "INVALID"
+		}
+		out = append(out, fmt.Sprintf("signer %d: %s — %s", i+1, who, ok))
+	}
+	if len(st.Signers) > 0 {
+		out = append(out, "a valid signature shows its key signed those bytes, not whose key it is — compare each key with one you were given")
+	}
+	return out
+}
+
 // uncheckedWords is the CLI's sentence for each `sign.UncheckedCause` (/pending 741); `web/app.js`'s
 // UNCHECKED_WORDS says the same, and both are held to the constants (`TestEveryUncheckedCauseIsSaid`).
 var uncheckedWords = map[sign.UncheckedCause]string{
@@ -1409,7 +1458,7 @@ func cmdTimestamp(args []string) int {
 	var force bool
 	fs.BoolVar(&doVerify, "verify", false, "check each file against its .ots proof instead of creating one")
 	fs.BoolVar(&force, "force", false, "re-stamp even where a .ots proof already exists (discards it)")
-	fs.Usage = usageFunc(fs, "nib timestamp [--verify] [--force] FILE...", "Create an OpenTimestamps proof (FILE.ots) for each file, or with --verify\ncheck each file against its existing FILE.ots.\n\nA file that already has a proof is skipped, so re-running over a directory is\nsafe; --force re-stamps and discards the existing proof.")
+	fs.Usage = usageFunc(fs, "nib timestamp [--verify] [--force] FILE...", "Create an OpenTimestamps proof (FILE.ots) for each file, or with --verify\ncheck each file against its existing FILE.ots.\n\nA file that already has a proof is skipped, so re-running over a directory is\nsafe; --force re-stamps and discards the existing proof.\n\n--verify exits 2 unless every proof is confirmed in a Bitcoin block. A new proof\nis pending for hours before that: it is healthy, and it still exits 2.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1582,10 +1631,46 @@ func runTransform(fs *flag.FlagSet, out string, inPlace bool, fn func([]byte) ([
 //
 // Writing to a NEW file is deliberately unaffected — the original survives, and
 // deliberately stripping a signature into a copy is a legitimate thing to want.
+// `-o` naming the input is not a new file (`overwritesSignedInput`).
 // A document with an empty placeholder signature field verifies as Unsigned, so
 // it rewrites normally; there is nothing there to lose.
 func signedInPlace(pdf []byte) bool {
 	return sign.Verify(pdf).State != sign.Unsigned
+}
+
+// overwritesSignedInput reports whether writing to out would replace the signed PDF that was read
+// from in (/pending 777). `-o` naming the input — by the same path, another spelling of it, a
+// symlink or a hard link — is in place in every way that matters: the original does not survive,
+// so "writing to a new file is unaffected" is false of it, and `nib optimize a.pdf -o a.pdf`
+// destroyed a signature `nib optimize -w a.pdf` refuses to touch. Every `-o` writer that rewrites
+// the document asks here. Three do not, by name: `sign` (a signature is appended to a signed
+// input, which keeps the ones it has), `tag` (`tagwrite` refuses a signed document on any spelling)
+// and `attachments --extract` (its output is not the document; what it replaces is the user's call).
+func overwritesSignedInput(in, out string, pdf []byte) bool {
+	return sameFile(in, out) && signedInPlace(pdf)
+}
+
+// sameFile reports whether two paths name one existing file. Stdin and stdout ("-") name none.
+func sameFile(a, b string) bool {
+	if a == "-" || b == "-" || a == "" || b == "" {
+		return false
+	}
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
+}
+
+// earlierSameFile returns the first of files[:i] that names the same file as files[i].
+func earlierSameFile(files []string, i int) (string, bool) {
+	for _, f := range files[:i] {
+		if sameFile(f, files[i]) {
+			return f, true
+		}
+	}
+	return "", false
 }
 
 // refuseSignedInPlace is the one message every in-place door gives, so the
@@ -1600,7 +1685,13 @@ const refuseSignedInPlace = "refusing to rewrite a signed PDF in place — that 
 // in any one of them.
 func transformInPlace(files []string, fn func([]byte) ([]byte, error)) int {
 	worst := 0
-	for _, p := range files {
+	for i, p := range files {
+		// A file named twice (`*.pdf report*.pdf`, or `a.pdf ./a.pdf`) is rewritten once: a rotation
+		// or a page number applied twice is not what either spelling asked for (/pending 670).
+		if first, ok := earlierSameFile(files, i); ok {
+			fmt.Printf("%s: skipped (the same file as %s, already handled in this run)\n", p, first)
+			continue
+		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			errf("%v", err)
@@ -1634,6 +1725,10 @@ func transform(in, out string, fn func([]byte) ([]byte, error)) int {
 	data, err := readInput(in)
 	if err != nil {
 		errf("%v", err)
+		return 1
+	}
+	if overwritesSignedInput(in, out, data) {
+		errf("%s: %s", in, refuseSignedInPlace)
 		return 1
 	}
 	res, err := fn(data)
