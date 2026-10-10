@@ -297,7 +297,10 @@ fi
 # the command that asked for it then working — the one thing the stubbed tier below cannot show.
 # 49 since ADR-124 (tagcreate.test.mjs): a tag added, filled and deleted again by a real keyboard against the real
 # server — Tab order, a select answering typing, the arrow keys, and the tree reading as it did at the start.
-expect_files=49
+# 50 since ADR-125 (tagregion.test.mjs): a paragraph marked as decoration, listed as untagged and tagged again by a
+# real keyboard against the real server — Tab order, Space on a tick box, the outline on its page, and the tree and
+# the check reading as they did at the start.
+expect_files=50
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

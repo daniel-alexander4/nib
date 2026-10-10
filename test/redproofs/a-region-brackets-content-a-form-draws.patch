@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structregion.go b/internal/pdfops/structregion.go
+--- a/internal/pdfops/structregion.go
++++ b/internal/pdfops/structregion.go
+@@ -208,7 +208,7 @@
+ 		p := p
+ 		take(p.box, p.marked, p.inForm, p.art, func() opSpan { return p.span })
+ 	}
+-	if inForm {
++	if inForm && false {
+ 		return fmt.Errorf("%w: content in that region of page %d is drawn inside a form XObject, which cannot be marked without describing the form instead of what it draws — leave it out of the region", ErrTagsReview, ed.page)
+ 	}
+ 	for art, n := range taken {

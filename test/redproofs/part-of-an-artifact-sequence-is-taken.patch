@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structregion.go b/internal/pdfops/structregion.go
+--- a/internal/pdfops/structregion.go
++++ b/internal/pdfops/structregion.go
+@@ -222,7 +222,7 @@
+ 			return fmt.Errorf("%w: decoration in that region of page %d is marked by a sequence the page never closes, so where it ends cannot be read", ErrTagsReview, ed.page)
+ 		case a.unboxed > 0:
+ 			return fmt.Errorf("%w: the region of page %d takes content the page marks as one piece of decoration together with a shading or a form XObject, which cannot be tagged from the page", ErrTagsReview, ed.page)
+-		case n < a.pieces:
++		case false && n < a.pieces:
+ 			return fmt.Errorf("%w: the region cuts through content page %d marks as one piece of decoration (%d of its %d pieces are in the region) — widen the region to take all of it", ErrTagsReview, ed.page, n, a.pieces)
+ 		}
+ 		units = append(units, unit{span: a.opener, art: art})

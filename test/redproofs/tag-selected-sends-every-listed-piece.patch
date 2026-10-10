@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -6779,7 +6779,7 @@
+     }
+     index = tagSiblings(tagTreeSelected, elements).indexOf(tagTreeSelected) + 1;
+   }
+-  const edit = { kind: 'region', value: $('tagUntaggedType').value, page: untaggedPage, pieces: ticked.map((p) => p.rect), parent, index };
++  const edit = { kind: 'region', value: $('tagUntaggedType').value, page: untaggedPage, pieces: untaggedPieces.map((p) => p.rect), parent, index };
+   const alt = $('tagUntaggedAlt').value.trim();
+   if (alt) edit.alt = alt;
+   await sendTagEdits([edit], { created: { parent, index }, untagged: untaggedPage }, status);

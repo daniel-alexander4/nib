@@ -520,6 +520,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tags/edit", s.requireUnlocked(s.handleTagsEdit))
 	mux.HandleFunc("POST /api/tags/remove", s.requireUnlocked(s.handleTagsRemove))
 	mux.HandleFunc("GET /api/tags/tree", s.requireUnlocked(s.handleTagsTree))
+	mux.HandleFunc("GET /api/tags/untagged", s.requireUnlocked(s.handleTagsUntagged))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
 	mux.HandleFunc("GET /api/paragraphs", s.requireUnlocked(s.handleParagraphs))
 	mux.HandleFunc("GET /api/pagemap", s.requireUnlocked(s.handlePageMap))

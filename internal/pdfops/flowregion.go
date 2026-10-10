@@ -77,16 +77,69 @@ func (w *runWalker) markPath(p markBox, gs runGState, stroked bool) {
 // markImage records an image: it fills the unit square under the CTM (ISO 32000-1 §8.3.4). span is the image's own
 // operator — `Do` with its operand, or the whole of `BI … EI` — and inForm says it is drawn by a form's stream.
 func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm bool) {
-	if !w.keepMarks {
+	if !w.keepMarks && !w.keepDrawings {
 		return
 	}
 	var b markBox
 	b.add(gs.ctm, 0, 0, 1, 0, 0, 1, 1, 1)
-	w.marks = append(w.marks, pageMark{kind: kind, box: b.box})
-	if w.keepShapes {
-		w.images = append(w.images, drawnImage{box: b.box, span: span, inForm: inForm, artifact: w.inArtifact(),
-			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm)})
+	if w.keepMarks {
+		w.marks = append(w.marks, pageMark{kind: kind, box: b.box})
 	}
+	if w.keepShapes || w.keepDrawings {
+		im := drawnImage{box: b.box, span: span, inForm: inForm, artifact: w.inArtifact(),
+			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm)}
+		if w.keepDrawings {
+			im.art = w.countPiece(false)
+		}
+		w.images = append(w.images, im)
+	}
+}
+
+// drawnPath is one painted path, whole: what a region of a page takes when a person tags a drawing (ADR-125) —
+// kept by the region reader alone (`readPageDrawings`). A path that only clips (`W n`) paints nothing and is
+// never one.
+type drawnPath struct {
+	// box bounds everything the path paints, in user space: its points — a curve's control points, whose hull
+	// holds the curve — and half the line's width past them when it is stroked.
+	box [4]float64
+	// span runs from the first operand of the path's first construction operator through its painting operator,
+	// in the stream that draws it: a marked-content sequence may enclose a path object and never split one.
+	span opSpan
+	// inForm says a form XObject's stream draws it; artifact that an `/Artifact` sequence is open around it,
+	// marked that a sequence with an MCID is; art is that artifact (`textRun.art`).
+	inForm, artifact, marked bool
+	art                      int
+	// stroked says its outline is drawn. curved says it has a curve in it, rects counts its `re` operators and
+	// ops every construction operator: one `re` and nothing else is a plain box.
+	stroked, curved bool
+	rects, ops      int
+}
+
+// keepPath records the path under construction as painted, ending at the painting operator's end, and starts
+// a new one. A path with no point is not kept. One a `W` made the clip and an operator then painted IS painted,
+// and is kept.
+func (w *runWalker) keepPath(d *drawnPath, p markBox, gs runGState, stroked bool, end int) {
+	if !w.keepDrawings {
+		return
+	}
+	if d.span.start >= 0 && p.set {
+		b := p.box
+		if stroked {
+			m := gs.ctm
+			half := math.Abs(gs.lw) / 2 * math.Sqrt(math.Max(m[0]*m[0]+m[1]*m[1], m[2]*m[2]+m[3]*m[3]))
+			if gs.lw == 0 {
+				half = 0.5 // as `markPath`: the thinnest line the device draws
+			}
+			b = [4]float64{b[0] - half, b[1] - half, b[2] + half, b[3] + half}
+		}
+		d.box, d.stroked, d.span.end = b, stroked, end
+		// Covered if a sequence was open where the path began or is where it is painted (one may not open inside
+		// a path object; a stream that does it is read as covering).
+		d.artifact, d.marked = d.artifact || w.inArtifact(), d.marked || w.currentMCID() >= 0
+		d.art = w.countPiece(false)
+		w.paths = append(w.paths, *d)
+	}
+	*d = drawnPath{span: opSpan{-1, -1}}
 }
 
 // drawnImage is one image a page draws, with what a proposer must know before it offers a Figure for it
@@ -100,6 +153,8 @@ type drawnImage struct {
 	inForm bool
 	// artifact says an `/Artifact` sequence is open around it; marked that a sequence with an MCID is.
 	artifact, marked bool
+	// art is the `/Artifact` sequence it is drawn in (`textRun.art`), set only by the region reader.
+	art int
 	// upright says box IS the image: the CTM turns it by a whole number of quarter turns, mirrored or not. Under
 	// any other matrix the image is a parallelogram and box only what bounds it.
 	upright bool
@@ -159,7 +214,7 @@ func (w *runWalker) markForm(sd *types.StreamDict, gs runGState) {
 
 // drawsImage says whether name, in res, is an image XObject.
 func (w *runWalker) drawsImage(res types.Dict, name string) bool {
-	if !w.keepMarks || res == nil {
+	if (!w.keepMarks && !w.keepDrawings) || res == nil {
 		return false
 	}
 	xobjs, err := w.xt.DereferenceDict(res["XObject"])

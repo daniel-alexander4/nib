@@ -325,7 +325,10 @@ var published = map[string][]string{
 	// The existing tree the Tags panel shows (P09.S06a): the tree route copies every field onto the wire,
 	// and the wire shapes' reader is the panel, checked by `published.test.mjs`.
 	"pdfops.StructureTree": {"internal/server/tags.go"},
-	"pdfops.SplitPart":     {"internal/server/export.go", "internal/cli/commands.go"},
+	// What a page draws that no tag owns (ADR-125): the untagged route copies every field onto the wire, and
+	// the wire shapes' reader is the panel's *Tag untagged content* section, checked by `published.test.mjs`.
+	"pdfops.UntaggedContent": {"internal/server/tags.go"},
+	"pdfops.SplitPart":       {"internal/server/export.go", "internal/cli/commands.go"},
 	// `pdfops.Fit` was parked field-by-field in `unreadKnown` for two slices while it had no
 	// consumer — measured at P01.S01, put on the wire at P01.S02, and read here at P01.S03.
 	// **The park is deleted rather than kept as a comment**, because its own stated deletion

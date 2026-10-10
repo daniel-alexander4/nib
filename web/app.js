@@ -6223,6 +6223,11 @@ let tagEditRestore = null;
 // tagTreeElements were read from — the badges are drawn only on that document's pages.
 let readingOrderOn = false;
 let tagTreeView = null;
+// What the panel lists as untagged (ADR-125): a sequence number that pins a read, the pieces listed, and the
+// page they were read from — 0 while nothing is listed.
+let untaggedSeq = 0;
+let untaggedPieces = [];
+let untaggedPage = 0;
 
 function tagTreeShowing() {
   const panel = $('tagtree');
@@ -6239,6 +6244,8 @@ async function loadTagTree() {
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
     $('tagNewBar').hidden = true;
+    $('tagUntaggedBar').hidden = true;
+    clearUntagged();
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
@@ -6260,6 +6267,8 @@ async function loadTagTree() {
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
     $('tagNewBar').hidden = true;
+    $('tagUntaggedBar').hidden = true;
+    clearUntagged();
     $('tagTreeRemove').hidden = true;
     tagTreeElements = [];
     tagTreeView = null;
@@ -6291,6 +6300,10 @@ function renderTagTree(tree, owner) {
   drawReadingOrder();
   $('tagTreeRemove').hidden = !tree.tagged;
   $('tagNewBar').hidden = !tree.tagged;
+  // What was listed as untagged was read from the document as it was before this read of the tree (ADR-125):
+  // it is put away, and read again below when the edit that caused this read was a region.
+  $('tagUntaggedBar').hidden = !tree.tagged;
+  clearUntagged();
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
@@ -6336,6 +6349,9 @@ function renderTagTree(tree, owner) {
         selectTagTreeItem(at, elements, owner);
         $('tagEditStatus').textContent = 'Tag added — Ctrl+Z takes it back.';
       }
+      // A region (ADR-125): the page's list is read again — what was tagged is gone from it — without taking
+      // the focus from the new tag.
+      if (r.untagged) showUntagged(r.untagged, 'Tagged — Ctrl+Z takes it back.');
     } else {
       let at = r.id > 0 ? elements.findIndex((x) => x.id === r.id) : -1;
       if (at < 0) at = Math.min(r.index, elements.length - 1);
@@ -6629,6 +6645,168 @@ function wireTagEditBar() {
   $('tagNewAdd').onclick = addTag;
 }
 wireTagEditBar();
+
+// ── Tagging what no tag owns — ADR-125 ───────────────────────────────────────────────────────────────
+//
+// Text the tagger missed, content a review marked as decoration, a picture, a drawn graphic: none of it
+// could be brought into the tree. `GET /api/tags/untagged` lists what one page draws that no tag owns, each
+// piece placed on the page as it is displayed; the person ticks what belongs together and **Tag selected**
+// sends ONE `region` edit naming those pieces, through the edit bar's own sender — so it is one new tag, and
+// Ctrl+Z takes it back. The list of tick boxes is the whole path, by keyboard as by pointer. A tick outlines
+// its piece and nothing more: the button applies.
+//
+// **Pinned (ADR-001)** as the tree is: a list that arrives after a later read, or after the person switched
+// documents, is dropped.
+// (`untaggedSeq`, `untaggedPieces` and `untaggedPage` are declared with the tree's own state, above: the first
+// read of the tree clears this list.)
+
+const UNTAGGED_NAMES = { text: 'Text', image: 'Picture', drawing: 'Drawing', rule: 'Rule', box: 'Box' };
+
+// untaggedLabel is the words beside a piece's tick box. The text is the document's own, set as text.
+function untaggedLabel(p) {
+  let words = UNTAGGED_NAMES[p.kind] || p.kind;
+  if (p.kind === 'text') words += ` — “${p.text.length > 50 ? p.text.slice(0, 50) + '…' : p.text}”`;
+  const notes = [];
+  if (p.decoration) notes.push('marked as decoration');
+  if (p.inForm) notes.push('drawn inside a form, so it cannot be tagged here');
+  return notes.length ? `${words} (${notes.join('; ')})` : words;
+}
+
+function clearUntagged() {
+  untaggedSeq++;
+  untaggedPieces = [];
+  untaggedPage = 0;
+  $('tagUntaggedList').textContent = '';
+  $('tagUntaggedPieces').hidden = true;
+  $('tagUntaggedStatus').textContent = '';
+}
+
+// untaggedTicked is the listed pieces whose boxes are ticked.
+function untaggedTicked() {
+  return [...$('tagUntaggedList').querySelectorAll('input:checked')].map((b) => untaggedPieces[Number(b.value)]).filter(Boolean);
+}
+
+// drawUntaggedOutlines outlines every ticked piece, and the one the keyboard is on, on the page they were
+// read from — the tag review's outline, placed by the piece's own fractions of the page as displayed.
+function drawUntaggedOutlines(focused) {
+  clearTagOutline();
+  if (!untaggedPage || tagTreeView !== view || !view.viewer) return;
+  const pv = view.viewer.getPageView?.(untaggedPage - 1);
+  if (!pv || !pv.div) return;
+  const shown = new Set(untaggedTicked());
+  if (focused) shown.add(focused);
+  for (const p of shown) {
+    const [left, top, right, bottom] = p.rect;
+    const box = document.createElement('div');
+    box.className = 'tag-outline';
+    box.style.left = `${left * 100}%`;
+    box.style.top = `${top * 100}%`;
+    box.style.width = `${(right - left) * 100}%`;
+    box.style.height = `${(bottom - top) * 100}%`;
+    pv.div.appendChild(box);
+  }
+}
+
+// showUntagged reads and lists what page draws that no tag owns. after is what the status says once the
+// list is in — the result of the edit that caused this read — and is given only by that reload, which
+// leaves the focus where the tree put it.
+async function showUntagged(page, after) {
+  const owner = view;
+  const status = $('tagUntaggedStatus');
+  if (!owner.docMeta || !owner.docMeta.id) return;
+  if (!Number.isInteger(page) || page < 1) {
+    status.textContent = 'Enter the number of the page to look at, 1 or more.';
+    return;
+  }
+  clearUntagged();
+  const seq = untaggedSeq;
+  status.textContent = `Reading page ${page}…`;
+  try {
+    const res = await apiFetch(`/api/tags/untagged?page=${page}`, { docId: owner.docMeta.id });
+    if (!res.ok) throw new Error(await errText(res, 'Could not read what is untagged on this page.'));
+    const got = await res.json();
+    if (seq !== untaggedSeq || owner !== view) return;
+    untaggedPieces = got.pieces || [];
+    untaggedPage = page;
+    $('tagUntaggedPage').max = String(got.pages || '');
+    const list = $('tagUntaggedList');
+    untaggedPieces.forEach((p, i) => {
+      const li = document.createElement('li');
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = String(i);
+      // A piece a form draws is listed, so nothing untagged is hidden, and cannot be ticked: the server
+      // refuses it, for the reason its label gives.
+      box.disabled = !!p.inForm;
+      box.onchange = () => drawUntaggedOutlines(p);
+      box.addEventListener('focus', () => drawUntaggedOutlines(p));
+      label.append(box, ` ${untaggedLabel(p)}`);
+      li.appendChild(label);
+      list.appendChild(li);
+    });
+    $('tagUntaggedLegend').textContent = `Untagged on page ${page}`;
+    $('tagUntaggedPieces').hidden = !untaggedPieces.length;
+    const found = untaggedPieces.length
+      ? `${untaggedPieces.length} piece(s) on page ${page} have no tag. Tick what belongs together, then Tag selected.`
+      : `Nothing on page ${page} is untagged.`;
+    status.textContent = after ? `${after} ${found}` : found;
+    if (!after && owner.viewer) owner.viewer.currentPageNumber = page;
+  } catch (err) {
+    if (seq !== untaggedSeq) return;
+    status.textContent = err.message || 'Could not read what is untagged on this page.';
+  }
+}
+
+// tagUntagged sends the ticked pieces as one region: one new tag of the chosen type, placed as Add tag
+// places one — after the selected element under its parent, or last at the top (-1). A figure with no
+// description, a piece that cannot be taken, a signed document: the server refuses, and its sentence is shown.
+async function tagUntagged() {
+  const status = $('tagUntaggedStatus');
+  const ticked = untaggedTicked();
+  if (!ticked.length) {
+    status.textContent = 'Tick at least one piece of the page first.';
+    return;
+  }
+  const elements = tagTreeElements;
+  const e = elements[tagTreeSelected];
+  let parent = -1, index = -1;
+  if (e) {
+    parent = e.parent >= 0 ? elements[e.parent].id : -1;
+    if (e.parent >= 0 && !(parent > 0)) {
+      status.textContent = 'The selected tag is inside one written inline, so a new tag cannot be placed beside it. Select a different tag first.';
+      return;
+    }
+    index = tagSiblings(tagTreeSelected, elements).indexOf(tagTreeSelected) + 1;
+  }
+  const edit = { kind: 'region', value: $('tagUntaggedType').value, page: untaggedPage, pieces: ticked.map((p) => p.rect), parent, index };
+  const alt = $('tagUntaggedAlt').value.trim();
+  if (alt) edit.alt = alt;
+  await sendTagEdits([edit], { created: { parent, index }, untagged: untaggedPage }, status);
+}
+
+function wireTagUntagged() {
+  const type = $('tagUntaggedType');
+  for (const t of STRUCT_TYPES) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = TAG_ROLE_NAMES[t] ? `${TAG_ROLE_NAMES[t]} (${t})` : t;
+    type.appendChild(o);
+  }
+  type.value = 'P';
+  const page = $('tagUntaggedPage');
+  // The page on screen, when the field is empty: where the person is looking is the page they mean.
+  const asked = () => (page.value.trim() === '' && view.viewer ? view.viewer.currentPageNumber : Number(page.value));
+  const show = () => { const n = asked(); if (Number.isInteger(n) && n >= 1) page.value = String(n); showUntagged(n); };
+  $('tagUntaggedShow').onclick = show;
+  page.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    show();
+  });
+  $('tagUntaggedApply').onclick = tagUntagged;
+}
+wireTagUntagged();
 
 // ── The Reading Order view — `PLAN-accessibility.md` P09.S06c ────────────────────────────────────────
 //

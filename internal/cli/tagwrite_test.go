@@ -327,7 +327,7 @@ func TestTagEditCreatesATagMovesIntoItAndDeletesIt(t *testing.T) {
 			t.Fatalf("%s: wrote %s", tc.edits, refused)
 		}
 	}
-	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "create or delete") || !strings.Contains(errOut, "keeps what it held") {
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "create, delete or region") || !strings.Contains(errOut, "keeps what it held") {
 		t.Errorf("nib tag edit -h exited %d and does not describe create and delete:\n%s", code, errOut)
 	}
 }
@@ -391,5 +391,95 @@ func TestTagProposeNamesAFigureAndCommitWantsItsDescription(t *testing.T) {
 	tree, _, code := runTag(t, "tree", out)
 	if code != 0 || !strings.Contains(tree, "Figure") || !strings.Contains(tree, "A grey square") {
 		t.Errorf("nib tag tree exited %d and printed\n%s\nwant the Figure and its description", code, tree)
+	}
+}
+
+// TestTagUntaggedListsWhatNoTagOwnsAndARegionTagsIt — ADR-125 on the command line: a picture the review
+// ignored is listed as decoration with where it is; `--json` prints the pieces a region edit's "pieces"
+// takes; a region tagging it as a Figure is refused without a description (exit 2, with the reason) and with
+// one writes a Figure `tag tree` reads back, after which nothing on the page is untagged.
+func TestTagUntaggedListsWhatNoTagOwnsAndARegionTagsIt(t *testing.T) {
+	dir := t.TempDir()
+	in, tagged, out := filepath.Join(dir, "in.pdf"), filepath.Join(dir, "tagged.pdf"), filepath.Join(dir, "out.pdf")
+	if err := os.WriteFile(in, picturedPDF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	js, _, code := runTag(t, "propose", "--json", in)
+	if code != 0 {
+		t.Fatalf("nib tag propose --json exited %d", code)
+	}
+	var prop map[string]any
+	if err := json.Unmarshal([]byte(js), &prop); err != nil {
+		t.Fatal(err)
+	}
+	prop["elements"].([]any)[1].(map[string]any)["ignore"] = true
+	ignored, _ := json.Marshal(prop)
+	if _, errOut, code := runTag(t, "commit", in, "-o", tagged, "--review", writeFile(t, dir, "review.json", string(ignored))); code != 0 {
+		t.Fatalf("setup: commit exited %d: %s", code, errOut)
+	}
+	before := readPDF(t, tagged)
+
+	stdout, errOut, code := runTag(t, "untagged", tagged)
+	if code != 0 || errOut != "" {
+		t.Fatalf("nib tag untagged exited %d: %s", code, errOut)
+	}
+	if want := "p1   image   0.0817 0.2677 0.2451 0.3687  [decoration]\n"; stdout != want {
+		t.Errorf("printed %q, want %q", stdout, want)
+	}
+	if !bytes.Equal(before, readPDF(t, tagged)) {
+		t.Error("nib tag untagged changed its input")
+	}
+	js, _, code = runTag(t, "untagged", "--page", "1", "--json", tagged)
+	var listed pdfops.UntaggedContent
+	if err := json.Unmarshal([]byte(js), &listed); code != 0 || err != nil || listed.Pages != 1 || len(listed.Pieces) != 1 ||
+		listed.Pieces[0].Kind != "image" || !listed.Pieces[0].Decoration || !strings.Contains(js, `"inForm": false`) {
+		t.Fatalf("--json exited %d (%v) and printed\n%s", code, err, js)
+	}
+	if _, errOut, code := runTag(t, "untagged", "--page", "2", tagged); code != 1 || !strings.Contains(errOut, "page 2") {
+		t.Errorf("a page the document does not have exited %d saying %q, want 1 naming the page", code, errOut)
+	}
+	if _, errOut, code := runTag(t, "untagged", "--page", "-1", tagged); code != 2 || !strings.Contains(errOut, "--page is a page number") {
+		t.Errorf("--page -1 exited %d saying %q, want 2", code, errOut)
+	}
+	if _, _, code := runTag(t, "untagged", tagged, in); code != 1 {
+		t.Errorf("two inputs exited %d, want 1", code)
+	}
+
+	region := func(alt string) string {
+		r := listed.Pieces[0].Rect
+		return writeFile(t, dir, "edits.json", fmt.Sprintf(`{"edits":[{"kind":"region","value":"Figure","page":1,"pieces":[[%v,%v,%v,%v]],"alt":%q,"index":0}]}`, r[0], r[1], r[2], r[3], alt))
+	}
+	if _, errOut, code := runTag(t, "edit", tagged, "-o", out, "--edits", region("")); code != 2 || !strings.Contains(errOut, "a figure is written only with a description of what it shows") {
+		t.Errorf("a figure by region with no description exited %d saying %q, want 2 and the reason", code, errOut)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("a refused region wrote its output")
+	}
+	if _, errOut, code := runTag(t, "edit", tagged, "-o", out, "--edits", region("A grey square")); code != 0 {
+		t.Fatalf("the described figure exited %d: %s", code, errOut)
+	}
+	tree, _, code := runTag(t, "tree", out)
+	lines := strings.Split(strings.TrimRight(tree, "\n"), "\n")
+	if code != 0 || len(lines) != 2 || !strings.Contains(lines[0], "Figure") || !strings.Contains(lines[0], "alt: A grey square") {
+		t.Errorf("nib tag tree exited %d and printed\n%s\nwant the Figure first, with its description", code, tree)
+	}
+	stdout, errOut, code = runTag(t, "untagged", out)
+	if code != 0 || stdout != "" || !strings.Contains(errOut, "nothing on this document is untagged") {
+		t.Errorf("with the picture tagged, untagged exited %d printing %q and saying %q", code, stdout, errOut)
+	}
+	if _, errOut, _ := runTag(t, "untagged", "--page", "1", out); !strings.Contains(errOut, "nothing on page 1 is untagged") {
+		t.Errorf("with --page the empty answer says %q", errOut)
+	}
+
+	if _, errOut, code := runTag(t, "edit", "-h"); code != 0 || !strings.Contains(errOut, "delete or region") || !strings.Contains(errOut, "nib tag untagged --json") {
+		t.Errorf("nib tag edit -h exited %d and does not describe a region:\n%s", code, errOut)
+	}
+	var help string
+	help = captureStderr(t, func() { cmdTag([]string{"-h"}) })
+	if !strings.Contains(help, "nib tag untagged IN [--page N] [--json]") {
+		t.Errorf("nib tag -h does not list untagged:\n%s", help)
+	}
+	if _, errOut, _ := runTag(t, "paint"); !strings.Contains(errOut, "untagged") {
+		t.Errorf("an unknown subcommand's answer does not name untagged: %s", errOut)
 	}
 }

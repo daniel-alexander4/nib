@@ -17,7 +17,8 @@ import (
 // description, a header cell's scope, and a table cell's spans and the header cells it names (ADR-119).
 // Marking content as an artifact is the one edit that rewrites page content; it is applied through the
 // same batch and lives in `structartifact.go` (S03). Creating an element and deleting one are applied
-// through the same batch too and live in `structcreate.go` (ADR-124).
+// through the same batch too and live in `structcreate.go` (ADR-124). Tagging a region of a page is the
+// other edit that rewrites page content — it brackets what it takes — and lives in `structregion.go` (ADR-125).
 //
 // # Why the dictionary edits never touch the ParentTree
 //
@@ -54,6 +55,7 @@ const (
 	editHeaders
 	editCreate
 	editDelete
+	editRegion
 )
 
 // structEdit is one correction to an existing tree.
@@ -74,6 +76,12 @@ type structEdit struct {
 	// index is the position among the parent's element kids an editMove or editCreate places its element
 	// at; negative or past the end appends (`placeAmongElements`).
 	index int
+	// page, rect, pieces and alt are editRegion's (ADR-125): the page, the region as fractions of the displayed
+	// page — or, in its place, the rectangles of the pieces to take — and the new element's description.
+	page   int
+	rect   [4]float64
+	pieces [][4]float64
+	alt    string
 }
 
 // standardStructTypes are the standard structure types of ISO 32000-1 §14.8.4, the types a retype may
@@ -114,9 +122,9 @@ var tableScopes = map[string]bool{"Row": true, "Column": true, "Both": true}
 // StructureEdit is one correction to an existing structure tree, as a reviewer sends it —
 // `PLAN-accessibility.md` P09.S04.
 type StructureEdit struct {
-	// Kind is retype, move, alt, scope, colspan, rowspan, headers, artifact, create or delete.
+	// Kind is retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete or region.
 	Kind string
-	// Element is the edited element's object number. A create names none: 0.
+	// Element is the edited element's object number. A create and a region name none: 0.
 	Element int
 	// Value is the new type (retype, create), the alternate description (alt; "" removes it), the scope
 	// (scope: Row, Column, Both; "" removes it), or how many columns or rows a cell spans (colspan,
@@ -129,13 +137,22 @@ type StructureEdit struct {
 	// Headers is a headers edit's header cells — the `TH` elements of the same table that head this
 	// cell — by object number. None removes the cell's `/Headers`.
 	Headers []int
+	// Page, Rect, Pieces and Alt are a region's (ADR-125). The new element — of type Value, placed by Parent
+	// and Index as a create's — owns every piece of page Page no element owns whose centre is inside Rect:
+	// left, top, right, bottom as fractions of the page as displayed (ADR-088). Pieces, when given, replaces
+	// Rect: the element takes what lies INSIDE any of those rectangles — each the rectangle of a piece
+	// `ReadUntagged` listed. Alt is its description, required for a Figure.
+	Page   int
+	Rect   [4]float64
+	Pieces [][4]float64
+	Alt    string
 }
 
 // structEditKinds maps a StructureEdit's Kind onto the edit it names.
 var structEditKinds = map[string]editKind{
 	"retype": editRetype, "move": editMove, "alt": editAlt, "scope": editScope, "artifact": editArtifact,
 	"colspan": editColSpan, "rowspan": editRowSpan, "headers": editHeaders,
-	"create": editCreate, "delete": editDelete,
+	"create": editCreate, "delete": editDelete, "region": editRegion,
 }
 
 // EditStructure applies edits, in order and as one batch, to pdf's existing structure tree. An element
@@ -146,9 +163,10 @@ func EditStructure(pdf []byte, edits []StructureEdit) ([]byte, error) {
 	for i, e := range edits {
 		k, ok := structEditKinds[e.Kind]
 		if !ok {
-			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers, artifact, create or delete", ErrTagsReview, e.Kind)
+			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete or region", ErrTagsReview, e.Kind)
 		}
-		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index, headers: e.Headers}
+		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index, headers: e.Headers,
+			page: e.Page, rect: e.Rect, pieces: e.Pieces, alt: e.Alt}
 	}
 	out, err := applyStructEdits(pdf, internal)
 	if errors.Is(err, errNoStructTree) {
@@ -200,6 +218,9 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 	if ed.kind == editCreate {
 		// Before the element lookup: a create is the one edit that names no element the tree has.
 		return createElement(ctx, tree, ed)
+	}
+	if ed.kind == editRegion {
+		return regionElement(ctx, tree, ed)
 	}
 	if ed.elem <= 0 {
 		return fmt.Errorf("%w: an element written inline has no object number, so an edit cannot name it", ErrTagsReview)

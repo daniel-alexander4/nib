@@ -93,6 +93,9 @@ type textRun struct {
 	// itself says is not content, a watermark or a running header. Grouping skips it, so an artifact
 	// is never proposed as a paragraph (P08.S06a's watermark finding).
 	artifact bool
+	// art is the `/Artifact` sequence the run was drawn in — its index into `pageRuns.artifacts`, plus one — and 0
+	// for a run in none, or read by a reader that keeps no drawings (`readPageDrawings`, ADR-125).
+	art int
 	// replaced is whether the run was drawn inside a sequence carrying replacement text (`mcFrame.replaced`):
 	// readers report that text instead of these glyphs, so rewriting the glyphs alone leaves the old words readable.
 	replaced bool
@@ -200,6 +203,10 @@ type pageRuns struct {
 	shapes []pageShape
 	// images are the images the page draws, kept with the shapes (ADR-122).
 	images []drawnImage
+	// paths are the painted paths the page draws and artifacts its `/Artifact` sequences, kept — with the images —
+	// only by the region reader (`readPageDrawings`, ADR-125).
+	paths     []drawnPath
+	artifacts []artifactSeq
 	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
 	// those inside the forms it draws included — so a writer can find an element's content whether or
 	// not it is text (P09.S03).
@@ -247,7 +254,20 @@ func readPageShapes(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudg
 	return readPageRunsWith(ctx, pg, true, true, pageBudget(shared))
 }
 
+// readPageDrawings is readPageRuns with every painted path kept whole — its box, the span from its first
+// construction operator through the operator that paints it, and what is open around it (`pageRuns.paths`) — with
+// the images the page draws (`pageRuns.images`) and its `/Artifact` sequences (`pageRuns.artifacts`): the reader
+// of what a region of a page holds (ADR-125). It keeps no glyphs, no marks and none of the page map's pieces
+// (`keepShapes` is the map reader's alone, ADR-088).
+func readPageDrawings(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageRuns, error) {
+	return readPageRunsAs(ctx, pg, false, false, true, pageBudget(shared))
+}
+
 func readPageRunsWith(ctx *model.Context, pg pdfread.Page, keep, shapes bool, budget *formWalkBudget) (pageRuns, error) {
+	return readPageRunsAs(ctx, pg, keep, shapes, false, budget)
+}
+
+func readPageRunsAs(ctx *model.Context, pg pdfread.Page, keep, shapes, drawings bool, budget *formWalkBudget) (pageRuns, error) {
 	pageNr := pg.Nr
 	return containRunRead(pageNr, func() (pageRuns, error) {
 		d, attrs, err := pg.Dict, pg.Attrs, pg.Err
@@ -267,13 +287,15 @@ func readPageRunsWith(ctx *model.Context, pg pdfread.Page, keep, shapes bool, bu
 		w.budget = budget
 		w.keepGlyphs, w.keepMarks = keep, keep
 		w.keepShapes = shapes
+		w.keepDrawings = drawings
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
 		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
 		// as absent, so the page is an error (`formWalkBudget`).
 		if err := w.budget.err(); err != nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
 		}
-		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes, images: w.images}, nil
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes, images: w.images,
+			paths: w.paths, artifacts: w.arts}, nil
 	})
 }
 
@@ -516,8 +538,14 @@ type runWalker struct {
 	// one mark and forty shapes. The page map's reader, and only it (ADR-088).
 	keepShapes bool
 	shapes     []pageShape
-	// images are the images drawn, kept with the shapes (`drawnImage`, ADR-122).
+	// images are the images drawn, kept with the shapes (`drawnImage`, ADR-122) and with the drawings.
 	images []drawnImage
+	// keepDrawings asks the walk to record every painted path WHOLE (`drawnPath`), every image, and every
+	// `/Artifact` sequence with how many pieces it holds (`artifactSeq`) — what a region of the page can be
+	// tagged from (ADR-125). The region reader's alone (`readPageDrawings`).
+	keepDrawings bool
+	paths        []drawnPath
+	arts         []artifactSeq
 	// fonts holds every font the walk has loaded, keyed by its object number when the resource names an
 	// indirect font and by the dictionary's identity when it is a direct one (`/pending 723`): a direct
 	// font reloaded at every `Tf` re-parsed its `/ToUnicode` each time, 17.7 s for 14.4 KB of content.
@@ -564,6 +592,71 @@ type mcFrame struct {
 	// reversed is whether this frame or any below it is tagged `ReversedChars`: its show strings hold their characters
 	// in the reverse of reading order (ISO 32000-1 §14.8.2.3.3) — how nib sets a right-to-left OCR word, ADR-097.
 	reversed bool
+	// art is the `/Artifact` sequence in force at this frame — its index into `runWalker.arts`, plus one — or 0;
+	// opensArt says this frame is the one that opened it. Set only while drawings are kept (`openArtifact`).
+	art      int
+	opensArt bool
+}
+
+// artifactSeq is one `/Artifact` marked-content sequence — the outermost, where one is opened inside another —
+// as the region edit needs it to make the sequence content again (ADR-125): the artifact edit's inverse rewrites
+// the opener and nothing else.
+type artifactSeq struct {
+	// opener covers the tag, any property list, and `BMC` or `BDC`; close the `EMC`, zero when the stream ended first.
+	opener, close opSpan
+	// inForm says the opener is in a form XObject's stream.
+	inForm bool
+	// pieces counts what the sequence draws: text runs, images, painted paths — and unboxed those of them this
+	// reader gives no box and no span of its own, a shading and a form XObject it did not enter.
+	pieces, unboxed int
+	// nested says the sequence does not stand alone: it was opened under a sequence carrying an MCID, or a
+	// sequence carrying an MCID or another `/Artifact` opens inside it. Rewriting its opener would then nest
+	// one owner's content in another's.
+	nested bool
+}
+
+// openArtifact is called once a `BMC`/`BDC` has been pushed, while drawings are kept: it carries the artifact in
+// force up the stack, opens a new one for an `/Artifact` frame that is in none, and marks an artifact that does
+// not stand alone.
+func (w *runWalker) openArtifact(opener opSpan, inForm bool) {
+	i := len(w.mcStack) - 1
+	f := &w.mcStack[i]
+	below, underMCID := 0, false
+	if i > 0 {
+		b := w.mcStack[i-1]
+		below = b.art
+		underMCID = b.force >= 0 && w.mcStack[b.force].v >= 0
+	}
+	switch {
+	case below > 0:
+		f.art = below
+		if f.v != -1 { // an MCID, or another artifact, inside the artifact
+			w.arts[below-1].nested = true
+		}
+	case f.v == mcArtifact:
+		w.arts = append(w.arts, artifactSeq{opener: opener, inForm: inForm, nested: underMCID})
+		f.art, f.opensArt = len(w.arts), true
+	}
+}
+
+// artNow is the `/Artifact` sequence open here — an index into `arts`, plus one — or 0.
+func (w *runWalker) artNow() int {
+	if n := len(w.mcStack); n > 0 {
+		return w.mcStack[n-1].art
+	}
+	return 0
+}
+
+// countPiece notes one more piece drawn in the artifact open here, if one is; unboxed for a piece with no box.
+func (w *runWalker) countPiece(unboxed bool) int {
+	a := w.artNow()
+	if a > 0 {
+		w.arts[a-1].pieces++
+		if unboxed {
+			w.arts[a-1].unboxed++
+		}
+	}
+	return a
 }
 
 // push opens a sequence: v as `mcFrame.v`, and seq its index into `seqs` or -1. `mcStack` and `seqOpen`
@@ -854,6 +947,22 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	var path markBox
 	clipping := false
 	var pieces shapePath // the current path's pieces, kept only for the page map
+	// drawn is the path under construction as the region reader keeps it (`keepDrawings`): where its first
+	// construction operator's operands begin, or -1 between paths.
+	drawn := drawnPath{span: opSpan{-1, -1}}
+	construct := func(at int, curved bool) {
+		if !w.keepDrawings {
+			return
+		}
+		if drawn.span.start < 0 {
+			if len(ops) > 0 {
+				at = ops[0].start
+			}
+			drawn = drawnPath{span: opSpan{at, -1}, inForm: depth > 0, artifact: w.inArtifact(), marked: w.currentMCID() >= 0}
+		}
+		drawn.ops++
+		drawn.curved = drawn.curved || curved
+	}
 	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
 	// sequence, and a form that leaves one open cannot tag what the page draws after it.
 	base, seqBase := len(w.mcStack), len(w.seqOpen)
@@ -946,6 +1055,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.lw = v[0]
 			}
 		case "m", "l":
+			construct(tok.Start, false)
 			if v, ok := numbers(2); ok {
 				path.add(gs.ctm, v...)
 				if w.keepShapes {
@@ -954,27 +1064,33 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 		case "c":
 			// A Bézier curve lies inside its control polygon's hull, so the control points bound it.
+			construct(tok.Start, true)
 			if v, ok := numbers(6); ok {
 				path.add(gs.ctm, v...)
 				pieces.curved = w.keepShapes
 			}
 		case "v", "y":
+			construct(tok.Start, true)
 			if v, ok := numbers(4); ok {
 				path.add(gs.ctm, v...)
 				pieces.curved = w.keepShapes
 			}
 		case "h":
+			construct(tok.Start, false)
 			if w.keepShapes {
 				pieces.endSub(true)
 			}
 		case "re":
+			construct(tok.Start, false)
 			if v, ok := numbers(4); ok {
+				drawn.rects++
 				path.add(gs.ctm, v[0], v[1], v[0]+v[2], v[1], v[0], v[1]+v[3], v[0]+v[2], v[1]+v[3])
 				if w.keepShapes {
 					pieces.rect(gs.ctm, v[0], v[1], v[2], v[3])
 				}
 			}
 		case "S", "s", "B", "B*", "b", "b*":
+			w.keepPath(&drawn, path, gs, true, tok.End)
 			w.markPath(path, gs, true)
 			if w.keepShapes {
 				op := string(tok.Bytes(src))
@@ -983,6 +1099,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "f", "F", "f*":
+			w.keepPath(&drawn, path, gs, false, tok.End)
 			w.markPath(path, gs, false)
 			if w.keepShapes {
 				w.keepPieces(&pieces, gs, false, true, false)
@@ -993,7 +1110,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 			pieces = shapePath{}
+			drawn = drawnPath{span: opSpan{-1, -1}} // a clipping path is not painted: there is nothing to take
 		case "W", "W*":
+			construct(tok.Start, false)
 			clipping = true
 		case "gs":
 			gs.extGState = true
@@ -1059,6 +1178,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke = set
 			}
 		case "sh":
+			if w.keepDrawings {
+				w.countPiece(true)
+			}
 			w.markShading()
 		case "BT":
 			tm, tlm = runIdentity, runIdentity
@@ -1149,6 +1271,13 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 			}
 			w.push(entry, -1, false, false, reversed)
+			if w.keepDrawings {
+				at := tok.Start
+				if os := last(1); os != nil {
+					at = os[0].start
+				}
+				w.openArtifact(opSpan{at, tok.End}, depth > 0)
+			}
 		case "BDC":
 			entry, opener, replaced, reversed := -1, -1, false, false
 			if os := last(2); os != nil {
@@ -1169,8 +1298,18 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 			// A property list with no MCID: `entry` is -1 only for a `BDC` that is not an `/Artifact` and names none.
 			w.push(entry, seq, replaced, opener >= 0 && entry == -1, reversed)
+			if w.keepDrawings {
+				at := tok.Start
+				if opener >= 0 {
+					at = opener
+				}
+				w.openArtifact(opSpan{at, tok.End}, depth > 0)
+			}
 		case "EMC":
 			if n := len(w.mcStack); n > base {
+				if f := w.mcStack[n-1]; f.opensArt {
+					w.arts[f.art-1].close = opSpan{tok.Start, tok.End}
+				}
 				w.mcStack = w.mcStack[:n-1]
 			}
 			if n := len(w.seqOpen); n > seqBase {
@@ -1184,6 +1323,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				if name, ok := os[0].name(src); ok {
 					if w.drawForm(res, name, gs, depth, visiting) {
 						w.markDrawsForm()
+						if w.keepDrawings {
+							w.countPiece(true)
+						}
 					} else if w.drawsImage(res, name) {
 						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0)
 					}
@@ -1252,6 +1394,9 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 		run.kernAfter = pendingKern * scale
 		run.face = gs.font
 		run.state = runTextState{tm: textAt, tlm: tlm, ctm: gs.ctm, fill: gs.fill, stroke: gs.stroke, extGState: gs.extGState, clip: gs.clip, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
+	}
+	if w.keepDrawings {
+		run.art = w.countPiece(false)
 	}
 	run.text = string(text)
 	run.width = advance * scale
