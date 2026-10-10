@@ -16,7 +16,9 @@ package instance
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -38,11 +40,13 @@ import (
 // vault lives in, which is already the private, per-user place this app keeps state.
 const Name = "instance.json"
 
-// HeaderToken carries the probe token on GET /api/instance, and HeaderHandoff the
-// hand-off secret on POST /api/handoff. Named here, beside the record that holds the
-// values, so the client and the server cannot disagree about them.
+// HeaderToken carries the probe's proof of the token on GET /api/instance (the token itself,
+// from a build that predates the challenge), HeaderNonce the challenge it is a proof over, and
+// HeaderHandoff the hand-off secret on POST /api/handoff. Named here, beside the record that
+// holds the values, so the client and the server cannot disagree about them.
 const (
 	HeaderToken   = "X-Nib-Instance"
+	HeaderNonce   = "X-Nib-Instance-Nonce"
 	HeaderHandoff = "X-Nib-Handoff"
 )
 
@@ -64,10 +68,19 @@ type Record struct {
 	// Token authenticates a probe. It is not a capability: it proves identity to
 	// GET /api/instance and grants nothing else.
 	Token string `json:"token"`
+	// Challenge says the instance that published this record answers a probe's challenge
+	// (/pending 827): the probe sends a nonce and a proof of the token, never the token, and
+	// believes only an answer carrying the matching proof. Absent on a record an older build
+	// wrote, which is probed the old way — the token sent, any 200 believed — because that
+	// build can answer nothing else and the two ends can be different builds for the length
+	// of an upgrade. Read from the record and never from the answer: whoever holds the port
+	// cannot write a 0600 file in the user's config directory, so cannot ask for the weaker
+	// probe.
+	Challenge bool `json:"challenge,omitempty"`
 	// Handoff authorises POST /api/handoff, and nothing else (D20).
 	//
 	// **Separate from Token deliberately, and the separation IS the decision.** The
-	// probe token is presented to anything that asks whether this instance is alive;
+	// probe token is used against anything that asks whether this instance is alive;
 	// if it also authorised "open this file", every read of the record would become a
 	// capability grant, and the sentence above about Token would be false. Two fields
 	// in one 0600 file cost nothing and keep a leak of the cheap, widely-presented
@@ -256,6 +269,28 @@ func TokenMatches(presented, expected string) bool {
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) == 1
 }
 
+// The two directions of a probe's challenge. Different labels, so the proof a probe SENDS can
+// never be handed back to it as the answer it is waiting for.
+const (
+	proofAsk    = "nib-instance-probe\x00"
+	proofAnswer = "nib-instance-alive\x00"
+)
+
+// AskProof is what a probe presents in HeaderToken beside its nonce: proof it holds the record's
+// token, which the instance checks before it answers anything.
+func AskProof(token, nonce string) string { return proof(proofAsk, token, nonce) }
+
+// AnswerProof is what the instance answers a challenged probe with: proof that the thing
+// listening at the recorded address holds the record's token.
+func AnswerProof(token, nonce string) string { return proof(proofAnswer, token, nonce) }
+
+func proof(label, token, nonce string) string {
+	m := hmac.New(sha256.New, []byte(token))
+	m.Write([]byte(label))
+	m.Write([]byte(nonce))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // probeTimeout bounds a probe. It is a loopback request to a process that is either
 // answering immediately or not there, so the only thing this really bounds is the
 // pathological case — a port taken by something that accepts and then says nothing. A
@@ -293,7 +328,7 @@ func checkLoopback(addr string) error {
 type Liveness int
 
 const (
-	// Alive: a Nib answered at the recorded address with the recorded token.
+	// Alive: a Nib answered at the recorded address and proved it holds the recorded token.
 	Alive Liveness = iota
 	// Gone: nothing is there (refused, reset, closed), or something that is not this record's
 	// Nib answered. The record is stale and may be cleared.
@@ -324,6 +359,15 @@ func (l Liveness) String() string {
 // "this is my Nib". And "the port is refused" is the ordinary stale case: the Nib exited,
 // the record outlived it, and the caller should take over.
 //
+// **The ANSWER has to prove the token, not only the question** (/pending 827). The probe used
+// to send the token and believe any 200, which authenticated the launch to the listener and
+// never the listener to the launch: after a crash, whatever bound the freed port — another
+// user's process included, since loopback is not per-user — said 200 and was then sent the
+// hand-off secret and the document's path. So the probe sends a fresh nonce and a proof of the
+// token (never the token: a listener given it could compute the answer), and is Alive only on
+// an answer carrying AnswerProof over that nonce. Anything else that answers is Gone, and
+// nothing is handed to it.
+//
 // It works against a LOCKED instance, because /api/instance is public. A probe that
 // needed an unlocked vault would report a locked Nib as dead, and the taking-over launch
 // would replace the user's session with a fresh locked one.
@@ -341,7 +385,17 @@ func Probe(rec Record) Liveness {
 	if err != nil {
 		return Gone
 	}
-	req.Header.Set(HeaderToken, rec.Token)
+	nonce := ""
+	if rec.Challenge {
+		if nonce, err = NewToken(); err != nil {
+			return Gone
+		}
+		req.Header.Set(HeaderNonce, nonce)
+		req.Header.Set(HeaderToken, AskProof(rec.Token, nonce))
+	} else {
+		// A record from a build that predates the challenge: see Record.Challenge.
+		req.Header.Set(HeaderToken, rec.Token)
+	}
 	c := &http.Client{Timeout: probeTimeout}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -351,10 +405,25 @@ func Probe(rec Record) Liveness {
 		return Gone
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
+		return Gone
+	}
+	if !rec.Challenge {
 		return Alive
 	}
-	return Gone
+	var out struct {
+		Proof string `json:"proof"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out); err != nil {
+		if isTimeout(err) {
+			return Unknown
+		}
+		return Gone
+	}
+	if !TokenMatches(out.Proof, AnswerProof(rec.Token, nonce)) {
+		return Gone
+	}
+	return Alive
 }
 
 // isTimeout reports a deadline, as distinct from a refusal. Read off net.Error rather than a

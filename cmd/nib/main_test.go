@@ -185,6 +185,11 @@ func TestAStaleRecordIsTakenOverWithoutUserAction(t *testing.T) {
 	if instance.Probe(live) != instance.Alive {
 		t.Errorf("the record now names %s, but nothing answers a probe there — the rendezvous points at a process that is not serving", live.Addr)
 	}
+	// /pending 827: the record must say its instance answers a challenge, or the next launch
+	// probes it the old way and believes whatever holds that port after a crash.
+	if !live.Challenge {
+		t.Error("the published record does not ask for a challenged probe — after a crash, any listener on the freed port that answers 200 is handed the document path")
+	}
 
 	// And the JSON on disk is a whole record, not the dead one with a field edited: a
 	// take-over that reused the previous token would leave the old secret authorising
