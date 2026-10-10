@@ -632,6 +632,14 @@ func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel cont
 //
 // The cancel runs OUTSIDE the lock, on `disarmCeremony`'s stated footing: it stops a goroutine that
 // may itself take `se.mu`.
+//
+// **The displaced ceremony's network is closed here, because nothing else can (/pending 615).**
+// Once the slot is emptied the displaced goroutine's `defer disarmCeremony(cer)` matches nothing,
+// so its rendezvous server, shared UDP socket and port-mapping refresh lived until the process
+// exited, one set per displacement. The arm that follows cannot be using that endpoint:
+// `handleSessionArm` builds its own `ceremonyID` (`ceremonyFor`) and `armCeremonyHop` opens a NEW
+// endpoint on it (`setupSharedEndpoint`), a TCP arm opens none, and an endpoint that was lent is
+// left to its owner by `close()` itself. Last and in `disarmWhen`'s order, for the reason it gives.
 func (se *session) displacePolicyArm() bool {
 	se.mu.Lock()
 	a := se.arms[armInteractive]
@@ -639,7 +647,7 @@ func (se *session) displacePolicyArm() bool {
 		se.mu.Unlock()
 		return false
 	}
-	cancel, ln := a.cerCancel, a.ln
+	cancel, ln, cer := a.cerCancel, a.ln, a.cer
 	se.arms[armInteractive] = nil
 	se.armedChangedLocked() // P01.S05
 	se.mu.Unlock()
@@ -649,6 +657,7 @@ func (se *session) displacePolicyArm() bool {
 	if ln != nil {
 		ln.Close()
 	}
+	cer.close()
 	return true
 }
 
