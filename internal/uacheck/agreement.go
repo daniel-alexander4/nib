@@ -11,11 +11,11 @@ import (
 // found no subject is a disagreement too — and fail on any disagreement not named (`producerDisagreements`,
 // `corpusStrict`, `corpusAllow`); the oracle admits none. So this list is complete wherever the corpora exist, and
 // `TestTheAgreementFigureIsTheHarnesssOwn` keeps it equal to the clauses the harnesses name.
-var knownDisagreements = map[string]string{
-	"7.2 t30": "/pending 674",
-	"7.2 t31": "/pending 674",
-	"7.2 t32": "/pending 674",
-}
+//
+// **Empty since `/pending 674` (2026-10-09).** Its last three rows were 7.2 t30, t31 and t32: nib's Pass, on a
+// document with a catalog `/Lang` and no marked content, where veraPDF has no subject. Empty is a statement about what
+// is KNOWN — the sentence below says "no disagreement is known", never that there is none.
+var knownDisagreements = map[string]string{}
 
 // unexercised is every clause nib implements that no corpus has SETTLED (Pass or Fail) on any document — "no
 // disagreement" there is an absence of evidence, not agreement, so it is not counted in N. Kept equal, by
@@ -48,12 +48,24 @@ func Agreement() string {
 	// not read as though it were.
 	s := fmt.Sprintf("nib agrees with veraPDF on %d of the %d rules it checks — the same verdict on every document that "+
 		"exercises the rule, wherever nib reached one, in veraPDF's own PDF/UA-1 test corpus, in nib's generated test documents and in documents from "+
-		"real producers; it is known to disagree on %d (%s)", AgreedClauses(), len(Clauses()),
-		len(knownDisagreements), clauseList(knownDisagreements))
+		"real producers; %s", AgreedClauses(), len(Clauses()), disagreementPhrase())
+	if len(knownDisagreements) > 0 {
+		s += fmt.Sprintf(" (%s)", clauseList(knownDisagreements))
+	}
 	if len(unexercised) > 0 {
 		s += fmt.Sprintf(", and %d (%s) no document has yet exercised", len(unexercised), clauseList(unexercised))
 	}
 	return s
+}
+
+// disagreementPhrase is how many clauses are known to disagree, in the words every surface carries. With none, it says
+// that none is KNOWN: the corpora are what was measured, and "disagrees on 0" would read as a count of something
+// counted exhaustively.
+func disagreementPhrase() string {
+	if len(knownDisagreements) == 0 {
+		return "no disagreement is known"
+	}
+	return fmt.Sprintf("it is known to disagree on %d", len(knownDisagreements))
 }
 
 func clauseList(m map[string]string) string {
@@ -70,7 +82,7 @@ func clauseList(m map[string]string) string {
 func AgreementFigures() []string {
 	f := []string{
 		fmt.Sprintf("agrees with veraPDF on %d of the %d", AgreedClauses(), len(Clauses())),
-		fmt.Sprintf("disagree on %d", len(knownDisagreements)),
+		disagreementPhrase(),
 	}
 	if len(unexercised) > 0 {
 		f = append(f, fmt.Sprintf("%d no document has yet exercised", len(unexercised)))

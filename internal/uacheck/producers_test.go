@@ -30,12 +30,6 @@ import (
 // the reason it stands. A row that stops disagreeing is an error: it is a claim about code that no longer behaves so.
 var producerDisagreements = map[string]string{
 	// Measured at P08.S02 over build/producers.sh's corpus (20 files, 5 producers); P08.S04 works each one.
-	"libreoffice/form-untagged.pdf / 7.2 t30":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	"libreoffice/form-untagged.pdf / 7.2 t31":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	"libreoffice/form-untagged.pdf / 7.2 t32":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	"libreoffice/writer-untagged.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	"libreoffice/writer-untagged.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	"libreoffice/writer-untagged.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
 	// The P08.S03/S04 rows over the sourced files (build/producers/sourced.tsv) — 7.11 t1 on the IRS forms, the
 	// unopenable FDA document and 7.1 t9 on the Ghostscript re-distil — were closed by /pending 694, 695 and 696.
 }
@@ -349,10 +343,11 @@ func TestTheAgreementFigureIsTheHarnesssOwn(t *testing.T) {
 			}
 		}
 	}
-	// The stimulus: the harness names some clause, so the comparison below is over something.
-	if len(named) == 0 {
-		t.Fatal("stimulus: the harness names no clause, so the comparison is vacuous")
-	}
+	// **Both sides may be empty, and since `/pending 674` both are.** That used to be refused here as a vacuous
+	// comparison; it is now the true state, and the comparison still holds it: a disagreement a harness names
+	// with `knownDisagreements` empty fails the first loop below, and a row left in `knownDisagreements` with no
+	// harness naming it fails the second. What keeps the harness tables from being empty by neglect is the
+	// harnesses themselves, which fail on any disagreement that is not named.
 	registered := map[string]bool{}
 	for _, c := range Clauses() {
 		registered[c] = true
