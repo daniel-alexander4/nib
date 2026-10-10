@@ -440,6 +440,13 @@ func (d *Document) appearanceStreams(o types.Object) map[string]types.Object {
 	return out
 }
 
+// fontUse is one text-showing operator inside a tiling pattern or a Type 3 glyph procedure: the event the font rules
+// read, and how many content events had been recorded when it was met.
+type fontUse struct {
+	at int
+	ev contentEvent
+}
+
 // walker carries one stream's context through a walk.
 type walker struct {
 	d          *Document
@@ -728,6 +735,20 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 				}
 			}
 			if w.langOnly {
+				// **Only where a font is in force.** A pattern starts from the page's initial state, not from the
+				// `Tf` before it, so text it shows with no `Tf` of its own selects NO font — veraPDF builds none and
+				// its font clauses have nothing to judge there (measured, the oracle's "a pattern selected on the
+				// page starts from the page's state" document). A name that does not resolve is still a use.
+				if text && (font != nil || ts.fontName != "") {
+					// The font is USED here, and veraPDF builds a font object for it as for any other (measured,
+					// `/pending 678`). `at` is where the use falls among the content events, so that "the first
+					// use" can be told across the two lists.
+					w.d.fontUses = append(w.d.fontUses, fontUse{at: len(w.d.content), ev: contentEvent{
+						where: where, text: true, appearance: w.appearance, page: w.page, mcid: -1, spKey: -1,
+						fontName: ts.fontName, invisible: ts.renderMode == 3, mode: ts.renderMode, offPage: true,
+						font: font, fontObj: fontObj,
+					}})
+				}
 				break
 			}
 			ev := w.event(stack, text, where)
