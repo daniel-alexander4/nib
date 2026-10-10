@@ -2392,3 +2392,49 @@ body.presenting .presentbar { display: flex; }
 }
 #lostNotice #lostNoticeDismiss:hover { border-color: var(--text); color: var(--text); }
 #fitNotice #fitNoticeDismiss:hover { background: var(--surface2); }
+
+/* --- light theme: words are never carried in --green, --yellow or --peach (/pending 671) ---
+   Latte's three warm accents are decoration-strength on Latte's grounds: as TEXT they measure
+   green 2.96 / 2.75 / 2.53, yellow 2.31 / 2.15 / 1.98 and peach 2.64 / 2.45 / 2.25 on
+   base / mantle / crust — under WCAG's 4.5:1, and under its 3:1 large-text floor too. Thirty
+   selectors set words in them: ceremony status lines, signature notes, PDF/UA verdicts.
+   In this theme those words are --text (7.06 / 6.57 / 6.04; 5.14 at worst on a badge's own
+   18% wash). Every tint, border and weight those rules carry stays, so the accent is still
+   there as decoration, as .stampwarn already does it. The dark theme is untouched: Mocha's
+   accents are 9.27:1 or better on the same grounds, and --text would LOWER yellow's.
+   Each selector repeats its original under the theme attribute, so it outranks it wherever
+   the original sits; theme.test.mjs fails on an accent-coloured rule that is not listed here. */
+:root[data-appearance="light"] .badge-valid,
+:root[data-appearance="light"] .badge-warn,
+:root[data-appearance="light"] .inkgreen,
+:root[data-appearance="light"] .cerdocline.cerdocnone,
+:root[data-appearance="light"] .sigrow-ok,
+:root[data-appearance="light"] .signote,
+:root[data-appearance="light"] .sigatt .sigatt-ok,
+:root[data-appearance="light"] .sigmutual,
+:root[data-appearance="light"] .sigatt-warn,
+:root[data-appearance="light"] .scan-sev.medium,
+:root[data-appearance="light"] .ua-row.ua-cannot .ua-verdict,
+:root[data-appearance="light"] .ua-row.ua-pass .ua-verdict,
+:root[data-appearance="light"] .diffadd,
+:root[data-appearance="light"] .scan-empty,
+:root[data-appearance="light"] .keyrow .keycur,
+:root[data-appearance="light"] .cidlabel,
+:root[data-appearance="light"] .cerreason,
+:root[data-appearance="light"] .cerparty.cerme .cerwho,
+:root[data-appearance="light"] .cerworkrow.cerme .cerwho,
+:root[data-appearance="light"] .certag,
+:root[data-appearance="light"] #srvNetTestOut.nettest-bad,
+:root[data-appearance="light"] .cerfail,
+:root[data-appearance="light"] .cerworkrow.cerworknow .cerwho,
+:root[data-appearance="light"] .cerworkrow.cerworknow .cerworkstate,
+:root[data-appearance="light"] .cerstopbtn,
+:root[data-appearance="light"] .cernextline.certurn,
+:root[data-appearance="light"] .cerwarn,
+:root[data-appearance="light"] .cerok,
+:root[data-appearance="light"] .signstep[data-by="hand"] .signstep-mark,
+:root[data-appearance="light"] .signstep[data-state="done"] .signstep-mark {
+  color: var(--text);
+}
+/* The Compare legend's "added" is a key to .diffadd, so with its colour gone it takes the wash. */
+:root[data-appearance="light"] .inkgreen { background: color-mix(in srgb, var(--green) 16%, transparent); }

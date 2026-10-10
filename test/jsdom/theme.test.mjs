@@ -254,6 +254,59 @@ test('nothing puts text in --overlay0, on any ground', () => {
     `--overlay0 carries text at style.css:${offenders.map(([n]) => n).join(', ')} — it measures below AA on every ground this file checks, so text in it is unreadable in at least one theme`);
 });
 
+// /pending 671 — the same consumer scan, for the three warm accents, per theme. --overlay0 was the only token
+// guarded as a text colour; thirty selectors meanwhile set words in --green, --yellow or --peach, which in the
+// light theme measure 1.98–2.96:1 on the grounds text sits on. A rule may still NAME an accent as its colour —
+// they are fine in the dark theme — but wherever a theme's accent is under AA on base, mantle or crust, that
+// selector must be re-coloured under that theme's attribute, in a token that clears AA there.
+//
+// What this cannot see: the ground a given rule actually sits on (it takes the three page grounds, and a rule
+// on its own tinted wash is measured by hand in the stylesheet's comment), `opacity` on the rule, and a colour
+// set from script. Tier 3 does not measure contrast either.
+const ACCENTS = ['green', 'yellow', 'peach'];
+const GROUNDS = ['base', 'mantle', 'crust'];
+function accentTextSelectors() {
+  const out = [];
+  for (const m of CSS_CODE.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const c = /(?<![-\w])color:\s*var\(--(green|yellow|peach)\)/.exec(m[2]);
+    if (c) for (const sel of m[1].split(',')) out.push([sel.trim().replace(/\s+/g, ' '), c[1]]);
+  }
+  return out;
+}
+// The token a theme re-colours a selector in, or null: a rule under the theme's attribute naming that selector.
+function recolouredIn(theme, sel) {
+  const want = `:root[data-appearance="${theme}"] ${sel}`;
+  for (const m of CSS_CODE.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!m[1].split(',').some((s) => s.trim().replace(/\s+/g, ' ') === want)) continue;
+    const c = /(?<![-\w])color:\s*var\(--([a-z0-9]+)\)/.exec(m[2]);
+    if (c) return c[1];
+  }
+  return null;
+}
+test('the accent scan finds the rules it is about, and the light accents are under AA — its own stimulus', () => {
+  const found = accentTextSelectors();
+  assert.ok(found.length >= 25, `the scan found ${found.length} selectors with an accent as their text colour, where there were 30 — it has stopped seeing them`);
+  const light = palette(THEMES.find((t) => t.name === 'light').selector);
+  for (const a of ACCENTS) {
+    assert.ok(GROUNDS.every((g) => contrast(light[a], light[g]) < 4.5),
+      `--${a} now clears AA as text in the light theme, so the re-colouring this file requires there is no longer forced`);
+  }
+});
+test('no words are carried in --green, --yellow or --peach in a theme where that accent is under AA', () => {
+  const failures = [];
+  for (const t of THEMES) {
+    const p = palette(t.selector);
+    const worst = (tok) => Math.min(...GROUNDS.map((g) => contrast(p[tok], p[g])));
+    for (const [sel, accent] of accentTextSelectors()) {
+      if (worst(accent) >= 4.5) continue;
+      const tok = recolouredIn(t.name, sel);
+      if (!tok) failures.push(`${sel} — --${accent} is ${worst(accent).toFixed(2)}:1 at worst in the ${t.name} theme, and nothing re-colours it there`);
+      else if (worst(tok) < 4.5) failures.push(`${sel} — re-coloured in the ${t.name} theme to --${tok}, which is ${worst(tok).toFixed(2)}:1 at worst`);
+    }
+  }
+  assert.deepEqual(failures, [], `text below WCAG AA (4.5:1):\n  ${failures.join('\n  ')}`);
+});
+
 
 // ── The lists that describe one fact ─────────────────────────────────────────
 // A theme exists in the stylesheet's token block, in the Go whitelist that decides whether the
