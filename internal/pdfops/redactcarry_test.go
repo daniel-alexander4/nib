@@ -120,7 +120,9 @@ func TestRedactionEmitsNoStructureTree(t *testing.T) {
 	}
 	out, err := RedactPages(src, map[int]RasterPage{2: rasterPage(t, 200, 200)})
 	if err != nil {
-		t.Skipf("SKIP (not a pass): the redaction path refused the fixture: %v", err)
+		// The fixture is this package's own, so a refusal is the redaction path failing, never a
+		// reason to skip (`/pending 771`).
+		t.Fatalf("the redaction path refused the fixture: %v", err)
 	}
 	if n, perr := PageCount(out); perr != nil || n != 2 {
 		t.Fatalf("setup: the redacted document has %d page(s) (err %v), want 2 — the untouched "+

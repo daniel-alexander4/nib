@@ -160,7 +160,39 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 // context, which no part's own budget bounds (two parts' forms of one `/Length` are compared with each other).
 // `pdfops`' own merge door (`mergeOnce`, ADR-048) is the one that carries structure; this is for parts nib built
 // itself or a packet's exhibits.
-func MergeRaw(pdfs [][]byte) (out []byte, err error) {
+//
+// **More than `mergeFan` parts are merged in groups, and the groups merged.** pdfcpu appends a document by
+// putting the destination's page tree UNDER a new root, so each part merged in makes the tree one level
+// deeper, and a hundred of them reached the depth every later read refuses: measured, 499 one-page parts
+// failed with "page tree depth 101 exceeds limit 100" (`/pending 771`) — an image export or a redaction of
+// that many pages. Grouped, the depth grows by the fan once per level instead of once per part. The first
+// part of the first group is still the destination whose catalog is kept.
+func MergeRaw(pdfs [][]byte) ([]byte, error) {
+	for len(pdfs) > mergeFan {
+		groups := make([][]byte, 0, len(pdfs)/mergeFan+1)
+		for from := 0; from < len(pdfs); from += mergeFan {
+			thru := min(from+mergeFan, len(pdfs))
+			if thru-from == 1 {
+				groups = append(groups, pdfs[from])
+				continue
+			}
+			g, err := mergeRawOnce(pdfs[from:thru])
+			if err != nil {
+				return nil, err
+			}
+			groups = append(groups, g)
+		}
+		pdfs = groups
+	}
+	return mergeRawOnce(pdfs)
+}
+
+// mergeFan is how many parts one pass of MergeRaw merges into one. A pass adds at most this many levels to
+// the page tree, so three passes — 13,824 parts — stay under the read limit of 100.
+const mergeFan = 24
+
+// mergeRawOnce merges pdfs in one pass, each into the first.
+func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 	defer fault.Catch(&err)
 	if len(pdfs) == 0 {
 		return nil, errors.New("pdfcpu: MergeRaw: missing rsc")

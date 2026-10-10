@@ -156,7 +156,13 @@ func sfntBytes(header []byte, tables map[string][]byte, _ []string) ([]byte, err
 	out.Write(header[:12])
 	for _, tag := range tags {
 		out.WriteString(tag)
-		_ = binary.Write(&out, binary.BigEndian, sfntChecksum(tables[tag]))
+		sum := sfntChecksum(tables[tag])
+		if tag == "head" && len(tables[tag]) >= 12 {
+			// `head` is summed with its `checkSumAdjustment` as zero (OpenType, head). The table still
+			// holds the source file's, a whole word at offset 8, so it comes back out of the sum.
+			sum -= binary.BigEndian.Uint32(tables[tag][8:])
+		}
+		_ = binary.Write(&out, binary.BigEndian, sum)
 		_ = binary.Write(&out, binary.BigEndian, offs[tag])
 		_ = binary.Write(&out, binary.BigEndian, uint32(len(tables[tag])))
 	}
