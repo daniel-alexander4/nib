@@ -156,7 +156,17 @@ func checkSpanAlternateLanguage(d *Document, row spanAlternate) Result {
 	// this clause reported CannotCheck on a document with `/Lang (en)` and nine levels of nested forms while
 	// 7.2 t21-t23, t24/t25, t33 and t34 all reported Pass on the same file — S02 and S03 wrote this order
 	// deliberately and said why, and S04 diverged from it silently.
+	//
+	// **But it settles a subject only where there IS one (`/pending 674`).** Measured on veraPDF 1.30.2: a document
+	// with a catalog `/Lang` and no marked-content sequence has NO subject for these three clauses, and nib answered
+	// Pass — on two files of veraPDF's own corpus and on LibreOffice's untagged exports. So the walk is asked how
+	// many subjects it recorded, and only that. A walk that stopped having recorded none still answers Pass: every
+	// sequence it did not reach would pass, and whether there is one is the difference between "passed" and "no
+	// subject", never a failure.
 	if catalogDeclaresLang(d) {
+		if subjects, why := markedContentSubjects(d); len(subjects) == 0 && why == "" {
+			return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
+		}
 		return Result{Verdict: Pass}
 	}
 	subjects, why := markedContentSubjects(d)

@@ -52,12 +52,6 @@ var corpusAllow = map[string]string{}
 // stops disagreeing is an error.
 var corpusStrict = map[string]string{
 	// Measured at the P08 phase close, 2026-09-28, veraPDF 1.30.2 over the 297-file set.
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t30":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t31":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t32":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
 }
 
 // corpusReach is, per implemented clause, the number of corpus files on which veraPDF evaluated the clause and
@@ -93,6 +87,8 @@ var corpusStrict = map[string]string{
 // almost every file. 71 and 19 are what "every file holding an annotation" and "every file holding a form field"
 // come to on this corpus, and a figure near 294 here would mean the population had been widened by mistake.
 // P04.S04: `7.1 t1` and `7.1 t2` join at 293 each — every corpus file holding a marked-content sequence — and
+// **`7.2 t30`, `t31` and `t32` are 293 again since /pending 674** — the two files past 293 hold NO marked-content
+// sequence, so veraPDF has no subject there and nib's Pass was the disagreement `corpusStrict` named. History:
 // `7.2 t30`, `t31` and `t32` at **295**, two ABOVE the 293 that hold a marked-content sequence: the P04 close
 // moved `catalogDeclaresLang` to the front of those three, where every other language clause already asked it,
 // so two files whose catalog declares a `/Lang` are now settled instead of refused. They read 293 with the
@@ -193,7 +189,7 @@ var corpusReach = map[string]int{
 	"7.2 t2": 276, "7.2 t29": 291,
 	"7.2 t21": 294, "7.2 t22": 294, "7.2 t23": 294,
 	"7.2 t24": 71, "7.2 t25": 19,
-	"7.2 t30": 295, "7.2 t31": 295, "7.2 t32": 295,
+	"7.2 t30": 293, "7.2 t31": 293, "7.2 t32": 293,
 	"7.18.1 t1": 71, "7.18.1 t2": 71,
 	"7.18.5 t1": 31, "7.18.5 t2": 31, "7.18.8 t1": 1, "7.18.2 t1": 0,
 	"7.18.1 t3": 19, "7.18.3 t1": 295,
