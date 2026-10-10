@@ -35,6 +35,14 @@ import (
 //     operator AND their text; a document changed since it was proposed fails here instead of tagging
 //     the wrong bytes.
 //
+// # Tables (ADR-121)
+//
+// A proposed table is written as `Table` → `TR` → `TH`/`TD`: the Table and each TR as grouping elements, a
+// cell as the element its text is bracketed under, and a cell with no text as a grouping element, so every
+// row has as many cells as the grid has columns. A `TH` gets its `/Scope` through `withTableAttribute`, the
+// one writer of a Table attribute (ADR-119). The rules themselves are painted paths and become artifacts with
+// every other uncovered drawing.
+//
 // # What is marked as an artifact
 //
 // Every text run on a committed page that no element covers — a whitespace run the grouping dropped,
@@ -152,32 +160,32 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			pages[pg].res = res
 		}
 
-		// mark brackets runs as one element of structType under parent.
-		mark := func(page int, runs []textRun, structType string, parent *types.IndirectRef) error {
+		// mark brackets runs as one element of structType under parent, and answers the element — nil for no runs.
+		mark := func(page int, runs []textRun, structType string, parent *types.IndirectRef) (*types.IndirectRef, error) {
 			if len(runs) == 0 {
-				return nil
+				return nil, nil
 			}
 			cp := pages[page]
 			var elem *types.IndirectRef
 			for i, r := range runs {
 				if r.inForm {
-					return fmt.Errorf("%w (page %d, %q)", errCommitInForm, page, r.text)
+					return nil, fmt.Errorf("%w (page %d, %q)", errCommitInForm, page, r.text)
 				}
 				fresh, ok := cp.runs[r.span.start]
 				if !ok || fresh.text != r.text || fresh.span != r.span || cp.marked[r.span.start] {
-					return fmt.Errorf("%w (page %d, %q)", errCommitStale, page, r.text)
+					return nil, fmt.Errorf("%w (page %d, %q)", errCommitStale, page, r.text)
 				}
 				var id int
 				if i == 0 {
 					mcid, ref, aerr := addMarkedElementUnder(ctx, tree, page, structType, parent)
 					if aerr != nil {
-						return aerr
+						return nil, aerr
 					}
 					id, elem = mcid, ref
 				} else {
 					extra, aerr := addMCIDTo(ctx, tree, page, *elem)
 					if aerr != nil {
-						return aerr
+						return nil, aerr
 					}
 					id = extra
 				}
@@ -185,17 +193,56 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 				cp.edit.InsertBefore(r.span.start, []byte(fmt.Sprintf("/%s <</MCID %d>> BDC\n", structType, id)))
 				cp.edit.InsertBefore(r.span.end, []byte("\nEMC"))
 			}
-			return nil
+			return elem, nil
 		}
 
 		lists := map[int]*types.IndirectRef{}
+		// table and row are the Table and the TR the elements being written sit under (ADR-121). A proposal
+		// lists a table's elements consecutively — Table, then each TR and its cells — and a review may not
+		// part them (`CommitTags`), so the sequence is the nesting.
+		var table, row *types.IndirectRef
 		for _, el := range elements {
 			if _, ok := pages[el.page]; !ok {
 				return fmt.Errorf("%w (page %d)", errCommitStale, el.page)
 			}
 			runs := elementRuns(el)
+			if tableRoles[el.role] {
+				if err := func() (err error) {
+					switch {
+					case el.role == "Table":
+						table, err = addGroupingElement(ctx, tree, "Table", nil)
+						row = nil
+						return err
+					case el.role == "TR" && table != nil:
+						row, err = addGroupingElement(ctx, tree, "TR", table)
+						return err
+					case el.role == "TR" || row == nil:
+						return fmt.Errorf("%w: a %s outside a table's rows", errCommitStale, el.role)
+					}
+					// A cell with nothing in it is still a cell: the row keeps its length.
+					var cell *types.IndirectRef
+					if len(runs) == 0 {
+						cell, err = addGroupingElement(ctx, tree, el.role, row)
+					} else {
+						cell, err = mark(el.page, runs, el.role, row)
+					}
+					if err != nil || el.role != "TH" {
+						return err
+					}
+					d, derr := ctx.DereferenceDict(*cell)
+					if derr != nil || d == nil {
+						return fmt.Errorf("pdfops: the header cell just written does not resolve: %v", derr)
+					}
+					d["A"] = withTableAttribute(ctx, d["A"], "Scope", types.Name(headerScope(el)))
+					return nil
+				}(); err != nil {
+					return err
+				}
+				continue
+			}
+			table, row = nil, nil
 			if el.role != "LI" {
-				if err := mark(el.page, runs, el.role, nil); err != nil {
+				if _, err := mark(el.page, runs, el.role, nil); err != nil {
 					return err
 				}
 				continue
@@ -215,12 +262,12 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			// The label is its own element only where the document drew it as its own run.
 			body := runs
 			if len(runs) > 1 && strings.TrimSpace(runs[0].text) == el.marker {
-				if err := mark(el.page, runs[:1], "Lbl", item); err != nil {
+				if _, err := mark(el.page, runs[:1], "Lbl", item); err != nil {
 					return err
 				}
 				body = runs[1:]
 			}
-			if err := mark(el.page, body, "LBody", item); err != nil {
+			if _, err := mark(el.page, body, "LBody", item); err != nil {
 				return err
 			}
 		}

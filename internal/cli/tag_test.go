@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 )
 
 // `nib tag tree` and `nib tag propose` — `PLAN-accessibility.md` P10.S01.
@@ -209,6 +210,51 @@ func TestTagProposePrintsTheProposalTheCardReads(t *testing.T) {
 	}
 	if !bytes.Equal(before, readPDF(t, p)) {
 		t.Error("proposing changed the file")
+	}
+}
+
+// TestTagProposeIndentsATablesRowsAndCells — ADR-121: a proposed table prints as it is nested, its rows under
+// it and its cells under their row, and `--json` carries each element's parent.
+func TestTagProposeIndentsATablesRowsAndCells(t *testing.T) {
+	content := "100 700 m 400 700 l S 100 670 m 400 670 l S 100 640 m 400 640 l S " +
+		"100 640 m 100 700 l S 250 640 m 250 700 l S 400 640 m 400 700 l S " +
+		"BT /F1 12 Tf 106 680 Td (Name) Tj ET BT /F1 12 Tf 256 680 Td (Qty) Tj ET " +
+		"BT /F1 12 Tf 106 650 Td (Apple) Tj ET BT /F1 12 Tf 256 650 Td (3) Tj ET"
+	p := filepath.Join(t.TempDir(), "ruled.pdf")
+	if err := os.WriteFile(p, testpdf.WithContent(content, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := captureStdout(t, func() int { return cmdTag([]string{"propose", p}) })
+	if code != 0 {
+		t.Fatalf("nib tag propose exited %d", code)
+	}
+	var got []string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			t.Fatalf("a line names no role: %q", line)
+		}
+		// The indent is what stands between the id column and the role.
+		indent := strings.Index(line, f[1]) - 5
+		got = append(got, strings.Repeat(">", indent/2)+f[1])
+	}
+	if want := "Table >TR >>TH >>TH >TR >>TD >>TD"; strings.Join(got, " ") != want {
+		t.Errorf("printed\n%s\nwhich nests as %q, want %q", out, strings.Join(got, " "), want)
+	}
+	js, code := captureStdout(t, func() int { return cmdTag([]string{"propose", "--json", p}) })
+	if code != 0 {
+		t.Fatalf("nib tag propose --json exited %d", code)
+	}
+	var prop pdfops.TagProposal
+	if err := json.Unmarshal([]byte(js), &prop); err != nil {
+		t.Fatalf("--json is not JSON: %v", err)
+	}
+	var parents []int
+	for _, e := range prop.Elements {
+		parents = append(parents, e.Parent)
+	}
+	if !reflect.DeepEqual(parents, []int{-1, 0, 1, 1, 0, 4, 4}) || !strings.Contains(js, `"parent": -1`) {
+		t.Errorf("--json carries parents %v", parents)
 	}
 }
 

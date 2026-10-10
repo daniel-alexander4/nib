@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tagreview.go b/internal/pdfops/tagreview.go
+--- a/internal/pdfops/tagreview.go
++++ b/internal/pdfops/tagreview.go
+@@ -155,7 +155,7 @@
+ 			return nil, fmt.Errorf("%w: a row or a cell cannot be ignored by itself (element %d) — ignore the whole table", ErrTagsReview, r.ID)
+ 		}
+ 		if el.role == "Table" {
+-			ignoredTable, declined = -1, !r.Ignore && r.Role == "P"
++			ignoredTable, declined = -1, false
+ 			if r.Ignore {
+ 				ignoredTable = r.ID
+ 			}

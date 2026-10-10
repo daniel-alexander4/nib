@@ -255,7 +255,8 @@ func tagPropose(args []string) int {
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "print the proposal as JSON, in the shape the Tags card reads")
 	fs.Usage = usageFunc(fs, "nib tag propose IN [--json]",
-		"Print the headings, paragraphs and list items nib would propose for the document, in reading order.\n"+
+		"Print the headings, paragraphs, list items and ruled tables nib would propose for the document, in\n"+
+			"reading order; a table's rows and cells are indented under it.\n"+
 			"Writes nothing: a proposal is reviewed before it is committed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -277,8 +278,13 @@ func tagPropose(args []string) int {
 	if asJSON {
 		return printTagJSON(prop)
 	}
-	for _, e := range prop.Elements {
-		fmt.Println(termText(fmt.Sprintf("%-4d %-3s p%-3d %s", e.ID, e.Role, e.Page, clipRunes(strings.TrimSpace(e.Text), 70))))
+	// A table's rows and cells are indented under it (ADR-121): an element's depth is its parent's and one.
+	depth := make([]int, len(prop.Elements))
+	for i, e := range prop.Elements {
+		if e.Parent >= 0 && e.Parent < i {
+			depth[i] = depth[e.Parent] + 1
+		}
+		fmt.Println(termText(fmt.Sprintf("%-4d %s%-5s p%-3d %s", e.ID, strings.Repeat("  ", depth[i]), e.Role, e.Page, clipRunes(strings.TrimSpace(e.Text), 70))))
 	}
 	for _, u := range prop.Unsupported {
 		errf("page %d: %s — check its order carefully", u.Page, u.Reason)

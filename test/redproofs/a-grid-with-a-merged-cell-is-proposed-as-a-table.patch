@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tablegrid.go b/internal/pdfops/tablegrid.go
+--- a/internal/pdfops/tablegrid.go
++++ b/internal/pdfops/tablegrid.go
+@@ -226,7 +226,7 @@
+ 			}
+ 		}
+ 		switch {
+-		case regular:
++		case regular || framed:
+ 			grids = append(grids, g)
+ 		case framed:
+ 			merged = append(merged, f)

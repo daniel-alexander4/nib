@@ -682,6 +682,9 @@ body > div[id$="Modal"] {
 .tags-list { list-style: decimal; margin: 0 0 8px; padding-left: 22px; max-height: 50vh; overflow-y: auto; }
 .tags-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--surface0); }
 .tags-row.tags-item { margin-left: 14px; }
+.tags-row.tags-sub1 { margin-left: 14px; }
+.tags-row.tags-sub2 { margin-left: 28px; }
+.tags-kind { font-size: 12px; font-weight: 600; }
 .tags-row.tags-ignored .tags-text { text-decoration: line-through; color: var(--subtext0); }
 .tags-text { flex: 1 1 100%; font-size: 12px; overflow-wrap: anywhere; }
 .tags-row label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }

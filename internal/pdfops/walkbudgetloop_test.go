@@ -155,7 +155,7 @@ func isNilIdent(e ast.Expr) bool {
 // budget (`readPageRuns`' shared argument), because a call without it is a budget per page, the measured defect.
 // ADR-009: this checks the ROUTING, so a loop added later fails here rather than in a timing.
 func TestEveryPageLoopSharesOneWalkBudget(t *testing.T) {
-	readers := map[string]bool{"readPageRuns": true, "readPageLayout": true}
+	readers := map[string]bool{"readPageRuns": true, "readPageLayout": true, "readPageTableLayout": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/tablegrid.go b/internal/pdfops/tablegrid.go
+--- a/internal/pdfops/tablegrid.go
++++ b/internal/pdfops/tablegrid.go
+@@ -201,7 +201,7 @@
+ 		d := drawings[root]
+ 		g := ruledGrid{xs: distinctAt(d.v), ys: distinctAt(d.h)}
+ 		sort.Sort(sort.Reverse(sort.Float64Slice(g.ys)))
+-		if g.rows() < 2 || g.cols() < 2 {
++		if g.rows() < 1 || g.cols() < 2 {
+ 			continue
+ 		}
+ 		f := g.frame()

@@ -84,6 +84,9 @@ type pageLayout struct {
 	// sequences are the page's marked-content sequences that carry an MCID (`pageRuns.sequences`) — kept only by reflow's
 	// reader, so a carry can take a paragraph's structure to another page with it (P07.S07).
 	sequences []markedSeq
+	// tables are the page's ruled tables, top to bottom — set only by the proposer's reader
+	// (`readPageTableLayout`, ADR-121). Their text is in no paragraph.
+	tables []ruledTable
 	// annots are the boxes of the page's annotations, a popup's excepted (`pageAnchors` without what only moving text asks
 	// about) — kept only by reflow's reader, so a re-set line's measure stops short of a field or a note beside it as it
 	// stops short of text and drawings (`paragraphMeasures`, P07 phase-close review).
@@ -101,6 +104,181 @@ func readPageLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudg
 		return pageLayout{noText: true}, nil
 	}
 	return groupRuns(pr.runs), nil
+}
+
+// ruledTable is a regular ruled grid and the text in each of its cells (ADR-121).
+type ruledTable struct {
+	grid ruledGrid
+	// cells holds each cell's lines, top to bottom, by row then column. An empty cell has none.
+	cells [][][]textLine
+	// before is how many of the page's paragraphs come before the table in reading order.
+	before int
+}
+
+// Why a ruled grid on the page was not read as a table. Each is reported on the page (ADR-121).
+const (
+	mergedCellsNote  = "a ruled table with merged cells was not read as a table, and its text is proposed as paragraphs"
+	nestedTablesNote = "ruled tables that overlap one another were not read as tables, and their text is proposed as paragraphs"
+	turnedTableNote  = "a ruled table holding rotated text was not read as a table"
+)
+
+// readPageTableLayout is readPageLayout with the page's ruled tables set apart from its paragraphs — the
+// proposer's reader (ADR-121). The rules are the page map's reading of what the page draws (`readPageShapes`,
+// ADR-088): this door asks the map's reader and sets nothing on a walk of its own.
+func readPageTableLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, error) {
+	pr, err := readPageShapes(ctx, pg, shared...)
+	if err != nil {
+		return pageLayout{}, err
+	}
+	if pr.noText {
+		return pageLayout{noText: true}, nil
+	}
+	return groupRunsAndTables(pr.runs, pr.shapes), nil
+}
+
+// groupRunsAndTables is groupRuns with the text inside each regular ruled grid set apart as a table.
+//
+// **A run belongs to the cell that holds the centre of its box**, and is decided run by run before any line is
+// made: two cells' text on one baseline, set close, would otherwise join into one line that belongs to
+// neither. What is left is grouped exactly as a page with no table is — the same door, over fewer runs.
+func groupRunsAndTables(runs []textRun, shapes []pageShape) pageLayout {
+	grids, merged := ruledGrids(shapes)
+	if len(grids) == 0 && len(merged) == 0 {
+		return groupRuns(runs)
+	}
+	var notes []string
+	// Two grids that overlap are a table inside a table or two drawings across one another, and a run would
+	// belong to both.
+	nested := make([]bool, len(grids))
+	for i := range grids {
+		for j := i + 1; j < len(grids); j++ {
+			if boxesOverlap(grids[i].frame(), grids[j].frame()) {
+				nested[i], nested[j] = true, true
+			}
+		}
+	}
+	gridOf := func(r textRun) int {
+		b := runBox(r)
+		for i, g := range grids {
+			if inBox(g.frame(), (b[0]+b[2])/2, (b[1]+b[3])/2) {
+				return i
+			}
+		}
+		return -1
+	}
+	holds, turned := make([]int, len(grids)), make([]bool, len(grids))
+	inMerged := false
+	for _, r := range runs {
+		if !joinsALine(r) {
+			continue
+		}
+		if i := gridOf(r); i >= 0 {
+			holds[i]++
+			turned[i] = turned[i] || r.rotated
+		}
+		b := runBox(r)
+		for _, f := range merged {
+			inMerged = inMerged || inBox(f, (b[0]+b[2])/2, (b[1]+b[3])/2)
+		}
+	}
+	if inMerged {
+		notes = append(notes, mergedCellsNote)
+	}
+	// A grid is a table when it holds text, upright, and stands clear of every other grid.
+	kept := make([]bool, len(grids))
+	for i := range grids {
+		switch {
+		case holds[i] == 0:
+		case nested[i]:
+			notes = append(notes, nestedTablesNote)
+		case turned[i]:
+			notes = append(notes, turnedTableNote)
+		default:
+			kept[i] = true
+		}
+	}
+	var rest []textRun
+	inGrid := make([][]textRun, len(grids))
+	for _, r := range runs {
+		if i := gridOf(r); i >= 0 && kept[i] && joinsALine(r) {
+			inGrid[i] = append(inGrid[i], r)
+			continue
+		}
+		rest = append(rest, r)
+	}
+	l := groupRuns(rest)
+	for i, g := range grids {
+		if !kept[i] {
+			continue
+		}
+		l.noText = false
+		t := ruledTable{grid: g, cells: make([][][]textLine, g.rows())}
+		cellRuns := make([][][]textRun, g.rows())
+		for r := range cellRuns {
+			cellRuns[r], t.cells[r] = make([][]textRun, g.cols()), make([][]textLine, g.cols())
+		}
+		for _, r := range inGrid[i] {
+			b := runBox(r)
+			row, col, _ := g.cellAt((b[0]+b[2])/2, (b[1]+b[3])/2)
+			cellRuns[row][col] = append(cellRuns[row][col], r)
+		}
+		for r := range cellRuns {
+			for c := range cellRuns[r] {
+				t.cells[r][c] = lineSegments(cellRuns[r][c])
+			}
+		}
+		l.paragraphs = splitAround(l.paragraphs, g.frame())
+		l.tables = append(l.tables, t)
+	}
+	// Placed once every table has split what it stands in: a split moves the paragraphs after it along.
+	for i := range l.tables {
+		l.tables[i].before = tablePlace(l.paragraphs, l.tables[i].grid.frame())
+	}
+	for _, n := range notes {
+		noteUnsupported(&l, n)
+	}
+	return l
+}
+
+// splitAround ends a paragraph at a table that stands in it. With the table's text set apart, the line above
+// a table and the line below it are consecutive lines of one column, and nothing else says the table parts
+// them: a paragraph that shares the table's measure and has one line above its top and the next below its
+// bottom is two paragraphs.
+func splitAround(paragraphs []textParagraph, frame [4]float64) []textParagraph {
+	var out []textParagraph
+	for _, p := range paragraphs {
+		cut := 0
+		for i := 1; i < len(p.lines); i++ {
+			a, b := p.lines[i-1], p.lines[i]
+			if a.y >= frame[3] && b.y < frame[1] && math.Min(a.x0, b.x0) < frame[2] && math.Max(a.x1, b.x1) > frame[0] {
+				head := p
+				head.lines = p.lines[cut:i]
+				out = append(out, head)
+				cut = i
+			}
+		}
+		p.lines = p.lines[cut:]
+		out = append(out, p)
+	}
+	return out
+}
+
+// tablePlace is where a table sits among a page's paragraphs: where its top-left cell would, read as a column
+// is — before the first paragraph that starts below its top in the measure it shares, or that stands wholly
+// to its right. A running header or footer is no column beside the table: it comes after the table only when
+// it is below the table's top, wherever it stands across the page.
+func tablePlace(paragraphs []textParagraph, frame [4]float64) int {
+	for i, p := range paragraphs {
+		x0, x1 := math.Inf(1), math.Inf(-1)
+		for _, ln := range p.lines {
+			x0, x1 = math.Min(x0, ln.x0), math.Max(x1, ln.x1)
+		}
+		shares := p.running || (x0 < frame[2] && x1 > frame[0])
+		if (shares && p.lines[0].y < frame[3]) || (!shares && x0 >= frame[2]) {
+			return i
+		}
+	}
+	return len(paragraphs)
 }
 
 // readPageGlyphLayout is readPageLayout over runs that keep their glyphs (`readPageGlyphRuns`) — reflow's reader. The
