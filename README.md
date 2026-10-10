@@ -158,7 +158,7 @@ could not be checked.
 
 **This is a checker, not a certificate.** Nib checks 105 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — though no such document is
-known today: veraPDF passes all 140 files of its own PDF/UA-1 test corpus on which every clause Nib checks passes, and
+known today: veraPDF passes all 142 files of its own PDF/UA-1 test corpus on which every clause Nib checks passes, and
 the one rule Nib does not check is one veraPDF has never been seen to fail. On the rules it does check, Nib agrees with
 veraPDF on 105 of the 105 — the same verdict on every document that exercises the rule, wherever Nib reached one, in veraPDF's own test corpus, in
 Nib's generated test documents and in documents from real producers (Word, Acrobat, LibreOffice and others). On those rules
