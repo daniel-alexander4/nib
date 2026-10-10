@@ -56,6 +56,9 @@ type tagTreeElementView struct {
 	Alt      string     `json:"alt"`
 	HasAlt   bool       `json:"hasAlt"`
 	Scope    string     `json:"scope"`
+	ColSpan  int        `json:"colSpan"`
+	RowSpan  int        `json:"rowSpan"`
+	Headers  []int      `json:"headers"`
 	Rect     [4]float64 `json:"rect"`
 	PageBox  [4]float64 `json:"pageBox"`
 }
@@ -123,10 +126,11 @@ func (s *Server) handleTagsTree(w http.ResponseWriter, r *http.Request) {
 	}
 	out := tagTreeResponse{Tagged: tree.Tagged, Unaddressable: tree.Unaddressable, Elements: []tagTreeElementView{}}
 	for _, e := range tree.Elements {
-		// Kids is never nil: ReadStructure copies it into a fresh slice, and its own test holds that.
+		// Kids and Headers are never nil: ReadStructure copies each into a fresh slice, and its own test holds that.
 		out.Elements = append(out.Elements, tagTreeElementView{
 			ID: e.ID, Parent: e.Parent, Kids: e.Kids, Kind: e.Kind, Standard: e.Standard, Page: e.Page,
-			Text: e.Text, Alt: e.Alt, HasAlt: e.HasAlt, Scope: e.Scope, Rect: e.Rect, PageBox: e.PageBox,
+			Text: e.Text, Alt: e.Alt, HasAlt: e.HasAlt, Scope: e.Scope,
+			ColSpan: e.ColSpan, RowSpan: e.RowSpan, Headers: e.Headers, Rect: e.Rect, PageBox: e.PageBox,
 		})
 	}
 	writeJSON(w, out)

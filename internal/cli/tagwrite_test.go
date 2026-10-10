@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 )
 
 // `nib tag commit` and `nib tag edit` — `PLAN-accessibility.md` P10.S02.
@@ -170,3 +171,44 @@ func TestTagWriteTellsAStaleRequestFromAMalformedOne(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// TestTagEditWritesACellsSpansAndHeadersAndTheTreePrintsThem — ADR-119, through the command: the header
+// cells are named by the ids `nib tag tree` prints, and the tree then says what each cell spans and which
+// cells head it.
+func TestTagEditWritesACellsSpansAndHeadersAndTheTreePrintsThem(t *testing.T) {
+	dir := t.TempDir()
+	in := writeFile(t, dir, "table.pdf", string(testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+		4:  "<< /Length 1 >>\nstream\n \nendstream",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] >>",
+		8:  "<< /Type /StructElem /S /Table /P 7 0 R /K [10 0 R 11 0 R] >>",
+		10: "<< /Type /StructElem /S /TR /P 8 0 R /K [12 0 R] >>",
+		11: "<< /Type /StructElem /S /TR /P 8 0 R /K [14 0 R 15 0 R] >>",
+		12: "<< /Type /StructElem /S /TH /P 10 0 R >>",
+		14: "<< /Type /StructElem /S /TD /P 11 0 R >>",
+		15: "<< /Type /StructElem /S /TD /P 11 0 R >>",
+	})))
+	edits := writeFile(t, dir, "edits.json", `{"edits":[{"kind":"colspan","element":12,"value":"2"},{"kind":"rowspan","element":12,"value":"3"},{"kind":"headers","element":15,"headers":[12]}]}`)
+	out := filepath.Join(dir, "edited.pdf")
+	if _, errOut, code := runTag(t, "edit", in, "-o", out, "--edits", edits); code != 0 {
+		t.Fatalf("edit exited %d: %s", code, errOut)
+	}
+	stdout, errOut, code := runTag(t, "tree", out)
+	if code != 0 {
+		t.Fatalf("tree exited %d: %s", code, errOut)
+	}
+	var th, td string
+	for _, line := range strings.Split(stdout, "\n") {
+		switch {
+		case strings.HasPrefix(line, "12 "):
+			th = line
+		case strings.HasPrefix(line, "15 "):
+			td = line
+		}
+	}
+	if !strings.Contains(th, "spans 2 columns") || !strings.Contains(th, "spans 3 rows") || !strings.Contains(td, "headed by: 12") {
+		t.Errorf("the tree prints the header as %q and the cell as %q", th, td)
+	}
+}

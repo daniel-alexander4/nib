@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structedit.go b/internal/pdfops/structedit.go
+--- a/internal/pdfops/structedit.go
++++ b/internal/pdfops/structedit.go
+@@ -346,7 +346,7 @@
+ 		if h <= 0 || th == nil {
+ 			return staleEdit{h}
+ 		}
+-		if th == e || standardRole(tree, th.kind) != "TH" || tableOf(tree, th) != table {
++		if th == e || standardRole(tree, th.kind) != "TH" {
+ 			return fmt.Errorf("%w: element %d is not another header cell (TH) of the table element %d is in", ErrTagsReview, h, ed.elem)
+ 		}
+ 		if _, id, has := elementID(ctx, th.dict); has {

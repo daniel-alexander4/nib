@@ -28,13 +28,21 @@ const el = (id, parent, standard, text, kids, extra = {}) => ({
 });
 const baseTree = () => ({
   tagged: true,
-  unaddressable: 1,
+  unaddressable: 2,
   elements: [
-    el(4, -1, 'Document', 'A titleAn opening paragraphName', [1, 2, 3, 4]),
+    el(4, -1, 'Document', 'A titleAn opening paragraphName', [1, 2, 3, 4, 5]),
     el(5, 0, 'H1', 'A title', []),
     el(6, 0, 'P', 'An opening paragraph', [], { alt: 'kept' }),
     el(7, 0, 'TH', 'Name', [], { scope: 'Column' }),
     el(0, 0, 'P', 'An inline paragraph', []),
+    // A table (ADR-119): a header row of two cells and one written inline, and a data cell headed by the first.
+    el(8, 0, 'Table', 'QtyPriceTotal3', [6, 9]),
+    el(9, 5, 'TR', 'QtyPriceTotal', [7, 8, 11]),
+    el(10, 6, 'TH', 'Qty', []),
+    el(11, 6, 'TH', 'Price', []),
+    el(12, 5, 'TR', '3', [10]),
+    el(13, 9, 'TD', '3', [], { colSpan: 2, rowSpan: 1, headers: [7] }),
+    el(0, 6, 'TH', 'Total', []),
   ],
 });
 // The same tree after the paragraph (6) moved above the heading (5): what the server answers after a move.
@@ -91,7 +99,7 @@ test('selecting an element shows what can be changed about it, and says when not
   doc.querySelector('.tab[data-panel="tagtree"]').click();
   await settle();
   await settle();
-  assert.equal(items().length, 5, 'setup: the tree did not render');
+  assert.equal(items().length, 12, 'setup: the tree did not render');
   assert.equal($('tagEditBar').hidden, true, 'the edit bar shows before anything is selected');
 
   await select(1);
@@ -106,6 +114,24 @@ test('selecting an element shows what can be changed about it, and says when not
   await select(3);
   assert.equal($('tagEditScopeRow').hidden, false, 'a header cell is not offered a scope');
   assert.equal($('tagEditScope').value, 'Column', 'the scope picker does not show the header cell\'s scope');
+
+  assert.equal($('tagEditColSpanRow').hidden || $('tagEditRowSpanRow').hidden || $('tagEditSpanApply').hidden, false, 'a header cell is not offered its spans');
+  assert.equal($('tagEditHeadersRow').hidden && $('tagEditHeadersApply').hidden, true, 'a cell in no table is offered header cells');
+  await select(1);
+  assert.equal($('tagEditColSpanRow').hidden && $('tagEditRowSpanRow').hidden && $('tagEditSpanApply').hidden, true, 'a heading is offered spans');
+
+  await select(10);
+  assert.equal($('tagEditColSpan').value, '2', 'the column span field does not show the cell\'s span');
+  assert.equal($('tagEditRowSpan').value, '1', 'a cell that declares no row span does not show the 1 a reader takes');
+  assert.equal($('tagEditScopeRow').hidden, true, 'a data cell is offered a scope');
+  const boxes = [...$('tagEditHeaders').querySelectorAll('input[type="checkbox"]')];
+  assert.deepEqual(boxes.map((b) => [b.value, b.checked, b.parentElement.textContent.trim()]),
+    [['10', true, 'Qty'], ['11', false, 'Price']],
+    'the header cells offered are not the table\'s own addressable TH cells, with the ones the cell names ticked');
+  assert.match(items()[10].textContent, /spans 2 columns/, 'the tree does not say a cell spans columns');
+  assert.match(items()[10].textContent, /headed by 1 cell/, 'the tree does not say a cell names its header');
+  await select(7);
+  assert.deepEqual([...$('tagEditHeaders').querySelectorAll('input')].map((b) => b.value), ['11'], 'a header cell is offered itself as its own header');
 
   await select(4);
   for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditUp', 'tagEditDown', 'tagEditArtifact']) {
@@ -138,6 +164,15 @@ test('each control sends exactly its one edit, for the element selected', async 
   await select(3);
   $('tagEditScope').value = 'Row';
   await press('tagEditScopeApply');
+  await select(10);
+  $('tagEditColSpan').value = '3';
+  $('tagEditRowSpan').value = '';
+  await press('tagEditSpanApply');
+  await select(10);
+  const [qty, price] = [...$('tagEditHeaders').querySelectorAll('input')];
+  qty.checked = false;
+  price.checked = true;
+  await press('tagEditHeadersApply');
   await select(2);
   await press('tagEditArtifact');
   assert.deepEqual(edits, [
@@ -146,6 +181,8 @@ test('each control sends exactly its one edit, for the element selected', async 
     { edits: [{ element: 6, kind: 'move', parent: 0, index: 0 }] },
     { edits: [{ element: 6, kind: 'move', parent: 0, index: 2 }] },
     { edits: [{ element: 7, kind: 'scope', value: 'Row' }] },
+    { edits: [{ element: 13, kind: 'colspan', value: '3' }, { element: 13, kind: 'rowspan', value: '' }] },
+    { edits: [{ element: 13, kind: 'headers', headers: [11] }] },
     { edits: [{ element: 6, kind: 'artifact' }] },
   ], 'the edits sent are not the ones the controls describe');
   assert.ok(calls.filter((c) => c.url.includes('/api/tags/edit')).every((c) => {

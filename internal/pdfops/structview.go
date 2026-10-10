@@ -56,6 +56,12 @@ type viewElement struct {
 	// scope is a `TH`'s `/Scope` from its Table attribute object — Row, Column or Both — and "" when it
 	// declares none.
 	scope string
+	// colSpan and rowSpan are how many columns and rows a table cell spans, from its Table attribute
+	// object: 1 where it declares none, as a reader takes it.
+	colSpan, rowSpan int
+	// headers are the indices of the elements a cell's `/Headers` names by their `/ID`; a name no
+	// element carries is not among them.
+	headers []int
 	// kids are the indices of the element's element kids, in `/K` order.
 	kids []int
 	// rect is the element's extent on its page — the union of the runs drawn under its MCIDs and its
@@ -156,6 +162,15 @@ func readStructureView(pdf []byte) (structureView, error) {
 	for i, e := range tree.elems {
 		index[e] = i
 	}
+	// Who carries which identifier — the first element in the tree's order, for one two carry.
+	byIdent := map[string]int{}
+	for i, e := range tree.elems {
+		if id, _, ok := elementID(ctx, e.dict); ok {
+			if _, dup := byIdent[id]; !dup {
+				byIdent[id] = i
+			}
+		}
+	}
 	view := structureView{elements: make([]viewElement, len(tree.elems))}
 	// The model lists a parent before its kids, so walking it backwards finds every kid's text already
 	// read — one pass, not a re-walk of each subtree.
@@ -233,6 +248,21 @@ func readStructureView(pdf []byte) (structureView, error) {
 			}
 		}
 		v.scope = tableScope(ctx, e.attrs)
+		v.colSpan, v.rowSpan = tableSpan(ctx, e.attrs, "ColSpan"), tableSpan(ctx, e.attrs, "RowSpan")
+		for _, a := range tableAttributes(ctx, e.attrs) {
+			names, herr := ctx.DereferenceArray(a["Headers"])
+			if herr != nil || names == nil {
+				continue
+			}
+			for _, n := range names {
+				if id, _, ok := byteString(ctx, n); ok {
+					if j, known := byIdent[id]; known {
+						v.headers = append(v.headers, j)
+					}
+				}
+			}
+			break
+		}
 		if e.objNr == 0 {
 			view.unaddressable++
 		}
@@ -241,33 +271,55 @@ func readStructureView(pdf []byte) (structureView, error) {
 	return view, nil
 }
 
-// tableScope is `/Scope` from the Table attribute object among attrs, which may be one attribute
-// object or an array of them (with revision numbers between, which are skipped).
-func tableScope(ctx *model.Context, attrs types.Object) string {
+// tableAttributes is the attribute objects owned by `/O /Table` among attrs, which may be one attribute
+// object or an array of them (with revision numbers between, which are skipped) — in the order written.
+func tableAttributes(ctx *model.Context, attrs types.Object) []types.Dict {
 	if attrs == nil {
-		return ""
+		return nil
 	}
 	o, err := ctx.Dereference(attrs)
 	if err != nil || o == nil {
-		return ""
+		return nil
 	}
 	objs := []types.Object{o}
 	if arr, ok := o.(types.Array); ok {
 		objs = arr
 	}
+	var out []types.Dict
 	for _, a := range objs {
 		d, derr := ctx.DereferenceDict(a)
 		if derr != nil || d == nil {
 			continue
 		}
-		if owner := d.NameEntry("O"); owner == nil || *owner != "Table" {
-			continue
+		if owner := d.NameEntry("O"); owner != nil && *owner == "Table" {
+			out = append(out, d)
 		}
+	}
+	return out
+}
+
+// tableScope is `/Scope` from the first Table attribute object among attrs that names one.
+func tableScope(ctx *model.Context, attrs types.Object) string {
+	for _, d := range tableAttributes(ctx, attrs) {
 		if s := d.NameEntry("Scope"); s != nil {
 			return *s
 		}
 	}
 	return ""
+}
+
+// tableSpan is a cell's `/ColSpan` or `/RowSpan`: the first Table attribute object's value that is an
+// integer, else 1 — the reading the checker takes (`uacheck`'s `spanOf`, after veraPDF's).
+func tableSpan(ctx *model.Context, attrs types.Object, key string) int {
+	for _, d := range tableAttributes(ctx, attrs) {
+		if d[key] == nil {
+			continue
+		}
+		if n, err := ctx.DereferenceInteger(d[key]); err == nil && n != nil {
+			return n.Value()
+		}
+	}
+	return 1
 }
 
 // standardRole resolves a structure type through the document's role map, the way ISO 32000-1 §14.7.3
@@ -373,6 +425,11 @@ type StructureElement struct {
 	Alt      string `json:"alt"`
 	HasAlt   bool   `json:"hasAlt"`
 	Scope    string `json:"scope"`
+	// ColSpan and RowSpan are how many columns and rows a table cell spans, 1 where it declares none.
+	// Headers are the elements a cell's `/Headers` names, as indices into the tree's Elements.
+	ColSpan int   `json:"colSpan"`
+	RowSpan int   `json:"rowSpan"`
+	Headers []int `json:"headers"`
 	// Rect is the element's estimated extent on Page in PDF user space, all zero when it draws no text;
 	// PageBox is that page's MediaBox, so a client can place Rect on the page it renders.
 	Rect    [4]float64 `json:"rect"`
@@ -401,7 +458,8 @@ func ReadStructure(pdf []byte) (StructureTree, error) {
 	for i, e := range v.elements {
 		out.Elements[i] = StructureElement{
 			ID: e.id, Parent: e.parent, Kids: append([]int{}, e.kids...), Kind: e.kind, Standard: e.standard,
-			Page: e.page, Text: e.text, Alt: e.alt, HasAlt: e.hasAlt, Scope: e.scope, Rect: e.rect, PageBox: e.pageBox,
+			Page: e.page, Text: e.text, Alt: e.alt, HasAlt: e.hasAlt, Scope: e.scope,
+			ColSpan: e.colSpan, RowSpan: e.rowSpan, Headers: append([]int{}, e.headers...), Rect: e.rect, PageBox: e.pageBox,
 		}
 	}
 	return out, nil

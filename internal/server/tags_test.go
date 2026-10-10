@@ -17,6 +17,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 	"nib/mdpdf"
 )
 
@@ -474,5 +475,54 @@ func TestAMoveWithNoIndexGoesToTheEnd(t *testing.T) {
 			kinds = append(kinds, e.kind)
 		}
 		t.Errorf("a move with no index reads %v — want the heading last", kinds)
+	}
+}
+
+// TestTheEditRouteCarriesACellsSpansAndHeaders — the cell edits (ADR-119) reach the document through the
+// route's own JSON, and the tree route answers them back: spans as numbers, headers as element indices.
+func TestTheEditRouteCarriesACellsSpansAndHeaders(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+		4:  "<< /Length 1 >>\nstream\n \nendstream",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] >>",
+		8:  "<< /Type /StructElem /S /Table /P 7 0 R /K [10 0 R 11 0 R] >>",
+		10: "<< /Type /StructElem /S /TR /P 8 0 R /K [12 0 R] >>",
+		11: "<< /Type /StructElem /S /TR /P 8 0 R /K [14 0 R 15 0 R] >>",
+		12: "<< /Type /StructElem /S /TH /P 10 0 R >>",
+		14: "<< /Type /StructElem /S /TD /P 11 0 R >>",
+		15: "<< /Type /StructElem /S /TD /P 11 0 R >>",
+	}))
+	code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "colspan", "element": 12, "value": "2"},
+		{"kind": "rowspan", "element": 14, "value": "1"},
+		{"kind": "headers", "element": 15, "headers": []int{12}},
+	}})
+	if code != http.StatusOK {
+		t.Fatalf("edit = %d: %s", code, body)
+	}
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	at := map[int]int{}
+	for i, e := range tree.Elements {
+		at[e.ID] = i
+	}
+	th, td := tree.Elements[at[12]], tree.Elements[at[15]]
+	if th.ColSpan != 2 || th.RowSpan != 1 || len(td.Headers) != 1 || td.Headers[0] != at[12] || tree.Elements[at[14]].Headers == nil {
+		t.Errorf("the tree route answers the header %+v and the cell %+v", th, td)
+	}
+	for _, bad := range []map[string]any{
+		{"kind": "colspan", "element": 12, "value": "none"},
+		{"kind": "headers", "element": 15, "headers": []int{14}},
+	} {
+		if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{bad}}); code != http.StatusBadRequest {
+			t.Errorf("a malformed cell edit %v answered %d: %s", bad, code, body)
+		}
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{{"kind": "headers", "element": 15, "headers": []int{99}}}}); code != http.StatusConflict {
+		t.Errorf("a header the tree does not have answered %d: %s", code, body)
 	}
 }

@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/structwrite.go b/internal/pdfops/structwrite.go
+--- a/internal/pdfops/structwrite.go
++++ b/internal/pdfops/structwrite.go
+@@ -883,7 +883,7 @@
+ 					hi = lim[1]
+ 				}
+ 			}
+-			node["Limits"] = types.Array{lo, hi}
++			_, _ = lo, hi
+ 		}
+ 		kids, _ := ctx.DereferenceArray(node["Kids"])
+ 		if _, leaf := node["Names"]; leaf || len(kids) == 0 {
