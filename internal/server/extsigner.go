@@ -41,7 +41,7 @@ func (s *Server) handleExternalSignerGet(w http.ResponseWriter, r *http.Request)
 }
 
 // handleExternalSignerImport decodes an uploaded .p12 (multipart file "p12" plus
-// "passphrase"), captures its public certificate + chain for display, and stores
+// "passphrase"), captures its public certificate for display, and stores
 // the bundle in the vault. The passphrase only validates/decodes here; it is NOT
 // persisted — the .p12 is stored as imported and re-decoded per sign.
 func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +55,7 @@ func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	leaf, chain, err := sign.ParseP12(p12, r.FormValue("passphrase"))
+	leaf, _, err := sign.ParseP12(p12, r.FormValue("passphrase"))
 	if err != nil {
 		if errors.Is(err, sign.ErrWrongPassphrase) {
 			// 422, never 401 (/pending 506). The web client reads every 401 as "the vault is locked" —
@@ -69,11 +69,7 @@ func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
-	var chainPEM []byte
-	for _, c := range chain {
-		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})...)
-	}
-	if err := v.SetExternalSigner(p12, certPEM, chainPEM); err != nil {
+	if err := v.SetExternalSigner(p12, certPEM); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save certificate")
 		return
 	}

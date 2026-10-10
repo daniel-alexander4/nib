@@ -13,8 +13,8 @@
 # redundant: without this one the other can be satisfied by a file that reads nothing, and that is
 # the state the tree was actually in when the item was worked.
 #
-# The failure names the count, which is what makes it diagnosable: "mentions none of its 3
-# field(s)". Three, not zero, is the tell — the entry is not for a shape that lost its fields, it
+# The failure names the count, which is what makes it diagnosable: "mentions none of its 2
+# field(s)". Two, not zero, is the tell (three before /pending 863 removed `ChainPEM`) — the entry is not for a shape that lost its fields, it
 # is for a file that never read them.
 TIER="tier 1 — go test"
 PROVE="go test ./ -run TestEveryPublishedObservableHasANamedReader -count=1"

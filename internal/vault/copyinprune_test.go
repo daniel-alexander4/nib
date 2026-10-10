@@ -11,21 +11,21 @@ import (
 // that reused its buffer rewrote the vault's private key material in memory under the lock.
 func TestTheIdentitySettersCopyIn(t *testing.T) {
 	v := newVault(t)
-	p12, cert, chain := []byte("p12-bytes"), []byte("cert-pem"), []byte("chain-pem")
-	if err := v.SetExternalSigner(p12, cert, chain); err != nil {
+	p12, cert := []byte("p12-bytes"), []byte("cert-pem")
+	if err := v.SetExternalSigner(p12, cert); err != nil {
 		t.Fatal(err)
 	}
 	ic, ik := []byte("id-cert"), []byte("id-key")
 	if _, _, err := v.SetIdentityIfAbsent(ic, ik); err != nil {
 		t.Fatal(err)
 	}
-	for _, b := range [][]byte{p12, cert, chain, ic, ik} {
+	for _, b := range [][]byte{p12, cert, ic, ik} {
 		for i := range b {
 			b[i] = 'X'
 		}
 	}
 	e, ok := v.ExternalSigner()
-	if !ok || string(e.P12) != "p12-bytes" || string(e.CertPEM) != "cert-pem" || string(e.ChainPEM) != "chain-pem" {
+	if !ok || string(e.P12) != "p12-bytes" || string(e.CertPEM) != "cert-pem" {
 		t.Errorf("the caller rewrote its buffers and the vault's external signer changed with them: %+v", e)
 	}
 	gc, gk, ok := v.Identity()

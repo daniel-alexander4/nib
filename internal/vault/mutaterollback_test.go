@@ -259,7 +259,7 @@ func TestAFailedSaveLeavesNothingBehindAtEveryRoutedMutator(t *testing.T) {
 		},
 		{
 			name:   "SetExternalSigner",
-			change: func(v *Vault) error { return v.SetExternalSigner([]byte("p12"), []byte("c"), nil) },
+			change: func(v *Vault) error { return v.SetExternalSigner([]byte("p12"), []byte("c")) },
 			read: func(v *Vault) string {
 				if _, ok := v.ExternalSigner(); ok {
 					return "present"
@@ -270,7 +270,7 @@ func TestAFailedSaveLeavesNothingBehindAtEveryRoutedMutator(t *testing.T) {
 		{
 			name: "ClearExternalSigner",
 			seed: func(t *testing.T, v *Vault) {
-				if err := v.SetExternalSigner([]byte("p12"), []byte("c"), nil); err != nil {
+				if err := v.SetExternalSigner([]byte("p12"), []byte("c")); err != nil {
 					t.Fatal(err)
 				}
 			},
