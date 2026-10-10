@@ -227,6 +227,9 @@ var inPackageOnlyRecorded = []string{
 	// "reader" they had was `.Token` as a prefix of `.TokenMatches`. The second launch hands the record
 	// to Probe and HandOff, which read them in-package — true, and what this list records. Token left it again
 	// at /pending 630 (v1.182.18): the launch's exit removal passes its own `rec.Token` to `instance.Remove`.
+	// Challenge joined at /pending 827: the launch WRITES it (`Challenge: true`) and hands the record to
+	// Probe, which is its one reader and is in-package.
+	"instance.Record.Challenge",
 	"instance.Record.Handoff",
 	"instance.Record.Version",
 	// p2p.Channel  // shape declared internal, with a reason

@@ -145,7 +145,10 @@ func TestEveryMapOrAnonymousResponseBodyHasAReader(t *testing.T) {
 
 // unreadJSONKeys are keys published in a map or anonymous body that the client does not read,
 // each with the reason it stays. An UNEXPLAINED entry is the failure this guard exists for.
-var unreadJSONKeys = map[string]string{}
+var unreadJSONKeys = map[string]string{
+	"proof": "GET /api/instance's answer to a challenged probe (/pending 827): its reader is a second " +
+		"launch, `instance.Probe`, and never the page — TestTheProbeRouteProvesItHoldsTheToken drives the pair",
+}
 
 // /pending 456 — ADR-013's three digest gates ask ONE question, in one spelling.
 //
