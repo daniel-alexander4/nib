@@ -1,14 +1,12 @@
 package testpdf
 
 import (
-	"bytes"
 	"encoding/xml"
 	"errors"
 	"io"
 	"nib/internal/pdfread"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -68,11 +66,11 @@ func withIdentification(pdf []byte, description string) ([]byte, error) {
 		return nil, errors.New("testpdf: no xref entry for /Metadata")
 	}
 	entry.Object = *sd
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // ClaimsUA reports whether pdf's catalog packet carries an element or attribute IN the identification

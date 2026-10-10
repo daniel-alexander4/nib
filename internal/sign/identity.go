@@ -20,7 +20,6 @@ import (
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/sign"
 	"github.com/digitorus/pkcs7"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/fontcode"
@@ -402,11 +401,11 @@ func readableBySigner(pdf []byte) ([]byte, error) {
 		return nil, fmt.Errorf("read pdf: this document uses a hybrid cross-reference form nib must "+
 			"rewrite before signing, and the rewrite could not read it: %w", err)
 	}
-	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	out, err := pdfread.Write(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("rewrite hybrid cross-reference document before signing: %w", err)
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // hybridReference reports whether pdf names a hybrid-reference `/XRefStm` anywhere. A byte scan, as

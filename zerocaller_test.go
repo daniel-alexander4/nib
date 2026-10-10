@@ -88,6 +88,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
 			"fixtures (P02.S03); `sign` keeps its own `synthRevision` because testpdf feeds sign's tests.",
 		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
+		"ValidatorLosses": "test-support — `pdfread`'s count of the `/Font` entries pdfcpu's validator changed, the stimulus " +
+			"of `pdfops`' ADR-129 tests: without it a fixture the validator stopped changing would pass them all.",
 		"GrowsLinearly": "test-support — `internal/scaling`, the one door for a cost-shape test that only a clock can see " +
 			"(/pending 785, 799); interleaved rounds, the least ratio.",
 		"AllocsGrowLinearly": "test-support — `internal/scaling`'s counted twin of GrowsLinearly: heap allocations, which " +

@@ -167,7 +167,8 @@ func TestEveryValidatingReadRoutesThroughTheDoor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scanned < 200 || apiFiles < 20 {
+	// 16 files use pdfcpu's api since every writer went to `pdfread.Write` (ADR-129) and dropped the import.
+	if scanned < 200 || apiFiles < 12 {
 		t.Fatalf("scanned %d source files, %d using pdfcpu's api — the guard is not reading the module", scanned, apiFiles)
 	}
 }

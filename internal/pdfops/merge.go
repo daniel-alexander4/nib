@@ -1,13 +1,11 @@
 package pdfops
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
 	"strconv"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -130,6 +128,9 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		if gs == nil {
 			stripClaims(src)
 		}
+		// Before the merge renumbers the source's references: a font pdfcpu's validator took out of it goes back
+		// into the numbering it came from (`pdfread.Write`, ADR-129).
+		pdfread.PutBackValidatorLosses(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, false, err
 		}
@@ -160,11 +161,11 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 			return nil, false, err
 		}
 	}
-	var buf bytes.Buffer
-	if err := api.WriteContext(dest, &buf); err != nil {
+	buf, err := pdfread.Write(dest)
+	if err != nil {
 		return nil, false, err
 	}
-	return buf.Bytes(), grafted, nil
+	return buf, grafted, nil
 }
 
 // dropSourceSignatures erases every signature a merge SOURCE carries, through `dropSignature` and over EVERY
