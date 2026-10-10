@@ -794,3 +794,7 @@ home today.
 - **[ADR-113 — the invitation field goes with the ceremonies switch, and a hidden invitation is not sent](113-the-invitation-field-goes-with-the-ceremonies-switch.md)**
   — Send & Receive's *Ceremony invitation* field and its disclosure are `data-adv="ceremony"`; `armRecv` sends an
   invitation only while `advanced.ceremony`, because a hidden input keeps its text.
+- **[ADR-114 — a file derived from veraPDF's source says so, and takes its MPL-2.0 option](114-a-file-derived-from-verapdfs-source-says-so.md)**
+  — a non-test Go file that names a veraPDF `.java` file or says it transcribes/ports one starts with
+  `// SPDX-License-Identifier: MPL-2.0 OR AGPL-3.0-only`; measured behaviour earns no header. The notices' `## veraPDF`
+  section lists the headed files from the generator's own grep. `TestEveryFileDerivedFromVeraPDFSaysSo`, both directions.

@@ -3225,6 +3225,39 @@ Upstream: <https://github.com/adobe-type-tools/agl-aglfn>.
 
 ---
 
+## veraPDF
+
+veraPDF is not part of Nib and is not distributed with it: Nib's tests run it, where it is
+installed, to check Nib's PDF/UA answers against. These files of Nib's own are, in part, derived
+from veraPDF 1.30.2's source (veraPDF-validation and veraPDF-parser) — a test transcribed, an
+algorithm followed, or a table generated from one of its classes — and some of the checker's
+clause wording follows veraPDF's PDF/UA-1 validation profile:
+
+- `internal/fontcode/codespace.go`
+- `internal/uacheck/annots.go`
+- `internal/uacheck/cff_tables.go`
+- `internal/uacheck/content.go`
+- `internal/uacheck/filespecs.go`
+- `internal/uacheck/mediaclips.go`
+- `internal/uacheck/rules_annots.go`
+- `internal/uacheck/rules_cmaps.go`
+- `internal/uacheck/rules_file.go`
+- `internal/uacheck/rules_fonts.go`
+- `internal/uacheck/rules_marked.go`
+- `internal/uacheck/rules_table.go`
+
+Copyright (c) 2015-2026, veraPDF Consortium <info@verapdf.org>. veraPDF is offered under either
+the GNU General Public License v3 or later, or the Mozilla Public License 2.0 or later. Nib takes
+the Mozilla Public License 2.0: each file above is available under it, and is additionally
+distributed as part of Nib under the AGPLv3 as that licence's section 3.3 allows (none of them
+carries the Exhibit B notice). The licence's text is at <https://mozilla.org/MPL/2.0/>, and the
+validation profile is also published under CC BY 4.0.
+
+Upstream: <https://github.com/veraPDF>. Nib is not affiliated with or endorsed by the veraPDF
+Consortium, and passing Nib's checks is not veraPDF conformance.
+
+---
+
 ## Note on the Mozilla Public License 2.0 dependencies
 
 These modules are linked into the shipped `nib` binary and are under the **Mozilla

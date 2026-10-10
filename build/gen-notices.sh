@@ -206,6 +206,39 @@ if [ -f internal/uacheck/agl/glyphlist.txt ]; then
   emit ""
 fi
 
+# veraPDF (/pending 638). **Not a dependency and never shipped** — the tests run it as an oracle over a
+# pipe — but a dozen of nib's own files are derived from its source: tests transcribed, an algorithm
+# followed step for step, tables generated from one of its classes. Those files carry an SPDX header
+# taking veraPDF's MPL-2.0 option, and this section is where a recipient is told so. **The list is the
+# grep's, never a hand-typed one** (the lesson of the MPL note below): a file that gains the header
+# appears here on the next regenerate, and `TestEveryFileDerivedFromVeraPDFSaysSo` holds which files
+# must have it.
+vera_files="$(grep -rl --include='*.go' '^// SPDX-License-Identifier: MPL-2.0 OR AGPL-3.0-only$' internal cmd mdpdf 2>/dev/null | LC_ALL=C sort)"
+if [ -n "$vera_files" ]; then
+  emit "## veraPDF"
+  emit ""
+  emit "veraPDF is not part of Nib and is not distributed with it: Nib's tests run it, where it is"
+  emit "installed, to check Nib's PDF/UA answers against. These files of Nib's own are, in part, derived"
+  emit "from veraPDF 1.30.2's source (veraPDF-validation and veraPDF-parser) — a test transcribed, an"
+  emit "algorithm followed, or a table generated from one of its classes — and some of the checker's"
+  emit "clause wording follows veraPDF's PDF/UA-1 validation profile:"
+  emit ""
+  while IFS= read -r f; do emit "- \`$f\`"; done <<<"$vera_files"
+  emit ""
+  emit "Copyright (c) 2015-2026, veraPDF Consortium <info@verapdf.org>. veraPDF is offered under either"
+  emit "the GNU General Public License v3 or later, or the Mozilla Public License 2.0 or later. Nib takes"
+  emit "the Mozilla Public License 2.0: each file above is available under it, and is additionally"
+  emit "distributed as part of Nib under the AGPLv3 as that licence's section 3.3 allows (none of them"
+  emit "carries the Exhibit B notice). The licence's text is at <https://mozilla.org/MPL/2.0/>, and the"
+  emit "validation profile is also published under CC BY 4.0."
+  emit ""
+  emit "Upstream: <https://github.com/veraPDF>. Nib is not affiliated with or endorsed by the veraPDF"
+  emit "Consortium, and passing Nib's checks is not veraPDF conformance."
+  emit ""
+  emit "---"
+  emit ""
+fi
+
 # The one class of licence in the walk that is not permissive gets its obligations stated, and
 # the modules it covers are the walk's own list (see `mpl_mods` above) — never a hand-typed one.
 # The earlier form of this note said the DHT was "reached only from tests" long after

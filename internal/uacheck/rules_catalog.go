@@ -33,12 +33,12 @@ func init() {
 	})
 	register(Rule{
 		Clause:  "7.2 t33",
-		Summary: "natural language for document metadata shall be determined",
+		Summary: "the document metadata shall have a language that can be established",
 		Check:   checkMetadataLanguage,
 	})
 	register(Rule{
 		Clause:  "7.2 t34",
-		Summary: "natural language for text in page content shall be determined",
+		Summary: "text in page content shall have a language that can be established",
 		Check:   checkContentLanguage,
 	})
 	register(Rule{
@@ -78,7 +78,7 @@ func init() {
 	})
 	register(Rule{
 		Clause:  "7.10 t2",
-		Summary: "the AS key shall not appear in any optional content configuration dictionary",
+		Summary: "no optional content configuration dictionary shall carry an AS key",
 		Check:   checkOptionalContentAutoState,
 	})
 }

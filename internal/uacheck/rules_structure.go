@@ -21,7 +21,7 @@ func init() {
 	})
 	register(Rule{
 		Clause:  "7.1 t6",
-		Summary: "a circular mapping shall not exist",
+		Summary: "the role map shall not map a structure type back to itself through other names",
 		Check:   checkRoleMapCycle,
 	})
 	register(Rule{

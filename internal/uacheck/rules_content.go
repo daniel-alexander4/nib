@@ -15,7 +15,7 @@ func init() {
 	})
 	register(Rule{
 		Clause:  "7.1 t3",
-		Summary: "content shall be marked as Artifact or tagged as real content",
+		Summary: "page content shall be either tagged as real content or marked as an Artifact",
 		Check:   checkContentTaggedOrArtifact,
 	})
 	register(Rule{
