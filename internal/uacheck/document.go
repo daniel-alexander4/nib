@@ -185,10 +185,13 @@ type Document struct {
 	// the first that failed the grammar (7.2 t29).
 	mcLangCount int
 	mcLangBad   *mcLang
-	// raw is the file as given, kept for the one question the validated context cannot answer: whether pdfcpu's
-	// validator dropped something (`hasInlineType3Font`). directType3 memoises that answer.
+	// raw is the file as given, kept for the header line (`6.1 t1`) and for the ONE unvalidated re-read this package
+	// makes (`scanInlineType3`, `/pending 656`). directType3 memoises that re-read's answer.
 	raw         []byte
 	directType3 *bool
+	// deletedForm is the catalog's `/AcroForm` as the file wrote it, kept only when pdfcpu's validator DELETED the
+	// key (`open`): an AcroForm whose `/Fields` is empty or absent, which is an XFA-only form (`checkDynamicXFA`).
+	deletedForm types.Object
 	// xmp memoises readXMP.
 	xmp     xmpFacts
 	xmpDone bool
@@ -248,7 +251,7 @@ type roleResolution struct {
 }
 
 // checkerConfig is the ONE pdfcpu configuration every read in this package uses (ADR-009): `open`, and
-// the two unvalidated re-parses (`dynamicRenderFromRawFile`, and `rules_language.go`'s).
+// the one unvalidated re-parse (`scanInlineType3`).
 //
 // **Every field that shapes a READ is pinned to pdfcpu's own built-in default**, because
 // `NewDefaultConfiguration` otherwise takes them from the user's `$XDG_CONFIG_HOME/pdfcpu/config.yml` —
@@ -294,7 +297,19 @@ func open(pdf []byte) (*Document, error) {
 	// (`/pending 714`: the rules were measured against the optimized reading — see ReadOptimizedOrRefuse).
 	// …and with the four text entries veraPDF reads whatever their type set aside for the validator, which refuses
 	// the whole document over one (`setAsideForValidator`, `/pending 612`).
-	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, setAsideForValidator)
+	//
+	// **What the validator DELETES is noted from the same parse, before it runs** (`/pending 656`): the catalog's
+	// `/AcroForm`, which `validate/form.go` removes when its `/Fields` is empty or absent. The rule that needs it
+	// re-read the whole file unvalidated to see it — a second parse of every document with no validated AcroForm,
+	// which is most — while this hook was already looking at the context that still held it. Only the catalog's own
+	// entry is read: looking an object up before the validation can exempt it from it (`fontsTheValidatorLoses`).
+	var form types.Object
+	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, func(parsed *model.Context) func() {
+		if root, rerr := parsed.XRefTable.Catalog(); rerr == nil && root != nil {
+			form = root["AcroForm"]
+		}
+		return setAsideForValidator(parsed)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
@@ -304,7 +319,11 @@ func open(pdf []byte) (*Document, error) {
 	if cerr != nil {
 		return nil, fmt.Errorf("uacheck: the document has no catalog: %w", cerr)
 	}
-	return &Document{Ctx: ctx, Catalog: cat, raw: pdf}, nil
+	d := &Document{Ctx: ctx, Catalog: cat, raw: pdf}
+	if _, kept := cat["AcroForm"]; !kept {
+		d.deletedForm = form
+	}
+	return d, nil
 }
 
 // declaresLang reports whether obj is a declared `/Lang`: a string, direct or indirect, literal or hex —
