@@ -71,6 +71,8 @@ const { document: doc, settle, calls } = await boot({
     // Shaped like handleClose: docResponse(nil). The convene test that needs a document closes it again.
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/scan': { hidden: [] },
+    // The Main menu boxes save through here; the test that switches the Signing tab off needs it answered.
+    '/api/settings': () => ({ status: 'ok' }),
   },
 });
 
@@ -1037,3 +1039,44 @@ test('a setup whose document has closed says so, and names the file', async () =
   await settle();
 });
 
+
+// /pending 671 — the Signing tab switched off while a setup is parked. `setMode('collaborate')` is turned aside to the
+// first tab showing (ADR-036), and that tab's sidebar sync parked the sheet again in the same click: the toast said
+// "Back to ceremony setup." over a sheet that never appeared, on every press. Now the press says what is in the way,
+// goes to the switch, and leaves the setup parked exactly as it was.
+test('Back to setup with the Signing tab switched off says so and goes to the switch — it does not claim to be back', async () => {
+  await openSheet();
+  await typeSetup();
+  doc.getElementById('cerSeeDoc').click();
+  await settle();
+  assert.equal(bar().hidden, false, 'setup: nothing is parked');
+  const box = doc.querySelector('.modeChk[data-mode="collaborate"]');
+  box.checked = false;
+  box.onchange();
+  await settle();
+  assert.equal(doc.querySelector('.modetab[data-tab="collaborate"]').hidden, true, 'setup: the Signing tab is still showing');
+  assert.equal(bar().hidden, false, 'setup: switching Signing off dropped the parked setup');
+
+  doc.getElementById('toast').textContent = '';
+  doc.getElementById('featuresMenuCard').open = false;
+  doc.getElementById('cerBackToSetup').click();
+  await settle();
+  const said = doc.getElementById('toast').textContent;
+  assert.notEqual(said, 'Back to ceremony setup.', 'the press said the user is back at the setup, and the sheet is not on screen');
+  assert.match(said, /Signing is switched off/, 'nothing says why the setup did not come back');
+  assert.equal(sheet().hidden, true, 'the sheet was raised under a menu that has no Signing tab');
+  assert.equal(bar().hidden, false, 'the parked setup was dropped — there is now no way back to it');
+  assert.equal(doc.getElementById('featuresMenuCard').open, true, 'the user was not taken to the switch that brings Signing back');
+  assert.equal(doc.getElementById('cerIntent').value, 'We agree to the lease of 14 Elm Row', 'the recital was lost');
+
+  // The switch back on, and the same press returns to the sheet as it always did.
+  box.checked = true;
+  box.onchange();
+  await settle();
+  doc.getElementById('cerBackToSetup').click();
+  await settle();
+  assert.equal(sheet().hidden, false, 'with Signing back on, Back to setup did not bring the sheet back');
+  assert.equal(doc.getElementById('toast').textContent, 'Back to ceremony setup.');
+  doc.getElementById('cerConveneCancel').click();
+  await settle();
+});

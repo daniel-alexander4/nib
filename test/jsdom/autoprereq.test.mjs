@@ -37,6 +37,12 @@ let ocrStatus = 200;
 let postGate = null;
 let afterRead = null; // the document the reload after a read loads
 let paragraphs = [];
+let paragraphsNow = null; // a page that has paragraphs without being read first
+const reflows = []; // the paragraph each reflow request named
+let reflowGate = null;
+let reflowStatus = 200, reflowError = '';
+let docsNow = null;
+let redactAnswer = { status: 200, body: {} };
 let profile = {};
 let peers = [];
 const h = await boot({
@@ -55,7 +61,18 @@ const h = await boot({
     },
     '/api/pagemap': () => new Response('{}', { status: 404 }),
     // The page has paragraphs once it has been read.
-    '/api/paragraphs': () => ({ paragraphs: posted ? paragraphs : [] }),
+    '/api/paragraphs': () => ({ paragraphs: paragraphsNow || (posted ? paragraphs : []) }),
+    // /pending 792: a reflow held open, so the dialog can be worked while its answer is on the way.
+    '/api/reflow': async (opts) => {
+      reflows.push(opts.body.get('paragraph'));
+      if (reflowGate) await reflowGate;
+      if (reflowStatus !== 200) return new Response(JSON.stringify({ error: reflowError }), { status: reflowStatus, headers: { 'Content-Type': 'application/json' } });
+      return { ...nextOpen, ok: false, cause: 'page-full' };
+    },
+    // Every 409 makes the window reconcile its tabs with the server; a test that answers one says what is open.
+    '/api/docs': () => docsNow || { docs: [], activeId: '' },
+    // /pending 834: the flatten route refusing in its own words.
+    '/api/redact': () => new Response(JSON.stringify(redactAnswer.body), { status: redactAnswer.status, headers: { 'Content-Type': 'application/json' } }),
     '/api/profile': (opts) => {
       if (opts.method === 'POST') { profile = JSON.parse(opts.body); return {}; }
       return profile;
@@ -613,4 +630,81 @@ test('every dialog that needs a pinned peer carries the button', () => {
     assert.ok(b && typeof b.onclick === 'function', id + ' has no working button to Identity & peers');
     assert.doesNotMatch(b.id || '', /(Cancel|Close)$/, 'Escape would click it as the dialog\'s dismissal');
   }
+});
+
+// ── /pending 792 — one reflow at a time ──────────────────────────────────────
+// The button was disabled for the request, and picking another paragraph enabled it again: a second press then sent
+// a second edit built from the same page, and the later commit erased the earlier.
+test('while a reflow is on its way, another paragraph cannot be picked and a second press sends nothing', async () => {
+  await open('rf.pdf', ['one two'], []);
+  paragraphsNow = [{ index: 0, text: 'first paragraph' }, { index: 1, text: 'second paragraph' }];
+  $('reflowBtn').click();
+  await settle(40);
+  assert.equal($('reflowModal').hidden, false, 'setup: the reflow dialog did not open');
+  reflows.length = 0;
+  let release;
+  reflowGate = new Promise((r) => { release = r; });
+  $('reflowText').value = 'first paragraph, edited';
+  $('reflowGo').click();
+  await settle(20);
+  assert.deepEqual(reflows, ['0'], 'setup: the reflow was not sent');
+  assert.equal($('reflowPick').disabled, true, 'the paragraph picker can be used while the edit is on its way');
+  // What a change of paragraph did, for a build that leaves the picker enabled.
+  $('reflowPick').value = '1';
+  $('reflowPick').onchange();
+  assert.equal($('reflowGo').disabled, true, 'picking another paragraph re-enabled Reflow while the first edit is on its way');
+  $('reflowGo').onclick();
+  await settle(20);
+  assert.deepEqual(reflows, ['0'], 'a second edit was sent before the first was answered — both are built from the same page, and the later commit erases the earlier');
+  release();
+  await settle(40);
+  reflowGate = null;
+  assert.equal($('reflowPick').disabled, false, 'the picker stayed held after the answer');
+  assert.equal($('reflowGo').disabled, false, 'Reflow stayed disabled after the answer');
+  assert.match($('reflowWhy').textContent, /more room/, 'the refusal the server answered was not shown');
+  // W2: signed while the dialog was open. The commit door's 409 asks the user to confirm, which this dialog cannot do.
+  docsNow = { docs: [nextOpen], activeId: nextOpen.id };
+  reflowStatus = 409;
+  reflowError = 'this document carries a signature, and this operation would rebuild it in a way that leaves no record it was ever signed — Confirm that you want that, and Nib will do it';
+  $('reflowGo').click();
+  await settle(40);
+  assert.doesNotMatch($('reflowWhy').textContent, /Confirm/, 'the dialog asks the user to confirm something it has no control for');
+  assert.match($('reflowWhy').textContent, /^This document is signed/, 'a document signed meanwhile was not said as the signed refusal');
+  // Any other 409 is still the server's own sentence.
+  reflowError = 'that paragraph has changed since it was read — read the page again';
+  $('reflowGo').click();
+  await settle(40);
+  assert.equal($('reflowWhy').textContent, reflowError);
+  reflowStatus = 200;
+  docsNow = null;
+  $('reflowCancel').click();
+  paragraphsNow = null;
+});
+
+// ── /pending 834 — a refused redaction says why ──────────────────────────────
+test('a redaction the server refuses is told in the server\'s words; a declined signature question is not repeated back', async () => {
+  await open('rd.pdf', ['a secret here'], []);
+  await search('secret');
+  assert.match(toastText(), /^1 match\(es\) marked/, 'setup: nothing is marked, so Apply has nothing to send');
+  // The flatten builds a real form: jsdom's FormData takes jsdom's Blob only, for the document and for each page picture.
+  const nodeBlob = globalThis.Blob, stubToBlob = win.HTMLCanvasElement.prototype.toBlob;
+  globalThis.Blob = win.Blob;
+  win.HTMLCanvasElement.prototype.toBlob = (cb) => cb(new win.Blob(['png']));
+  redactAnswer = { status: 422, body: { error: 'page 9 is not in this document, which has 1 page', cause: 'page-not-in-document' } };
+  $('applyRedactBtn').click();
+  await settle(80);
+  assert.equal(toastText(), 'page 9 is not in this document, which has 1 page');
+  // The user has just said No to losing the signature: the sentence that asks them to confirm is not the answer.
+  redactAnswer = { status: 409, body: { error: 'this document carries a signature, and this operation would rebuild it in a way that leaves no record it was ever signed — Confirm that you want that, and Nib will do it' } };
+  h.setConfirmAnswer(true);
+  const answers = [true, false]; // yes to redacting, no to losing the signature
+  const was = globalThis.confirm;
+  globalThis.confirm = () => answers.shift();
+  $('applyRedactBtn').click();
+  await settle(80);
+  globalThis.confirm = was;
+  assert.equal(toastText(), 'redaction failed');
+  redactAnswer = { status: 200, body: {} };
+  globalThis.Blob = nodeBlob;
+  win.HTMLCanvasElement.prototype.toBlob = stubToBlob;
 });
