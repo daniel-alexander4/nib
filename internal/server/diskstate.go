@@ -92,8 +92,7 @@ func newPathDoc(path string, data []byte) *document {
 
 // diskOf reads the baseline under the server lock, so the unlocked stat that follows
 // works from a value that cannot be torn by a concurrent save. `disk` is a pointer
-// replaced wholesale by recordDisk and never mutated in place — the same invariant
-// docResponse's unlocked read of doc.data already rests on.
+// replaced wholesale by recordDisk and never mutated in place.
 //
 // This exists because `path` gets away with an unlocked read and `disk` must not:
 // path is written once before registerLocked publishes the document, while disk is

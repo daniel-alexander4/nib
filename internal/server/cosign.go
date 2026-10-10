@@ -250,10 +250,6 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	// dominated by size rather than by signature count, because each signature's byte range is
 	// hashed over the whole document.
 	//
-	// The proceeding lookup is CONDITIONAL, because it costs a pdfcpu attachment parse and this
-	// is request-handling code. A document whose signatures name no ceremony has no proceeding to
-	// be checked against, so the question is not asked — the same discriminator the client uses
-	// before it says anything about proceedings at all.
 	// **The proceeding lookup is UNCONDITIONAL, and every cheaper gate was measured and refused
 	// (P07.S05a).**
 	//
