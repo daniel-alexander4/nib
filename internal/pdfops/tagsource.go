@@ -15,7 +15,7 @@ import (
 //
 // # Why a private key, and why on the tree root
 //
-// `/StructTreeRoot` has exactly six defined entries — `Type`, `K`, `IDTree`, `ParentTree`,
+// `/StructTreeRoot` has exactly seven defined entries — `Type`, `K`, `IDTree`, `ParentTree`,
 // `ParentTreeNextKey`, `RoleMap`, `ClassMap` — and none of them says where the tree came from. PDF
 // permits private keys in any dictionary, so this is one, named for nib so it cannot collide with a
 // producer's own.
@@ -45,7 +45,7 @@ const (
 	// unrecorded — `StructureSource`'s rule for any value this code does not write.
 )
 
-// valid reports whether s is one of the four. A value outside them is a document written by
+// valid reports whether s is one of the three. A value outside them is a document written by
 // something other than this code, and reading it as a tier would be a guess.
 func (s tagSource) valid() bool {
 	switch s {

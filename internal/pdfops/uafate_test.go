@@ -72,7 +72,7 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		t.Fatal("setup: the labelled two-page fixture does not claim both PDF/UA and PDF/A")
 	}
 	driven := 0
-	var kept, keptA, unasked []string
+	var kept, keptA, unasked, unchanged []string
 	names := make([]string, 0, len(tagFates))
 	for n := range tagFates {
 		names = append(names, n)
@@ -107,12 +107,15 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 			t.Logf("%s: not exercised on this fixture (%v)", name, err)
 			continue
 		}
-		driven++
 		// An operation with nothing to do returns the document's OWN bytes (`ClearFlags` on an unflagged
-		// file, `DeclareAuthoredProseLang` with nothing to bracket). Nothing changed, so the claim stands.
+		// file, `DeclareAuthoredProseLang` with nothing to bracket). Nothing changed, so the claim stands —
+		// and such a row was asked nothing, so it is not counted as driven and it is named below
+		// (/pending 653): a row that quietly starts returning its input must not join this set unseen.
 		if bytes.Equal(out, in) {
+			unchanged = append(unchanged, name)
 			continue
 		}
+		driven++
 		p := catalogPacket(t, out)
 		if !exemptUA && claimsUA(t, p) {
 			kept = append(kept, name)
@@ -129,6 +132,11 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		t.Errorf("%d operation(s) change a PDF/A-labelled document and keep its PDF/A identification: %s.\n"+
 			"nib verifies none of PDF/A's rules, so any change drops the claim (ADR-083) — through the same door as PDF/UA's.",
 			len(keptA), strings.Join(keptA, ", "))
+	}
+	if got, want := strings.Join(unchanged, ", "), "ClearFlags, DeclareAuthoredProseLang"; got != want {
+		t.Errorf("the operations that returned the labelled fixture unchanged are [%s], want [%s].\n"+
+			"A row that changes nothing is asked nothing here: give it a fixture it changes (`uaDrive`), or add "+
+			"it to this list with the reason it has nothing to do.", got, want)
 	}
 	if driven < 20 {
 		t.Errorf("only %d operation(s) were driven; the census is reporting coverage it barely has", driven)

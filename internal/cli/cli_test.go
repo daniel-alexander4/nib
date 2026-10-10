@@ -1469,6 +1469,9 @@ func TestAMistypedBatchVerbIsNotOpenedAsAFile(t *testing.T) {
 		{"split", "big.pdf", "--out-dir=out"},
 		{"fil", "form.pdf", "--data", "rows.csv", "--out-dir", "out"},
 		{"pagenm", "in.pdf", "--out-dir", "out", "--continuous"},
+		// `watch`'s required flag (/pending 653): the verb that runs unattended over a directory.
+		{"wach", "inbox", "--do", "sanitize"},
+		{"wach", "inbox", "--do=ua"},
 	} {
 		if !hasTransformFlag(args) {
 			t.Errorf("hasTransformFlag(%v) = false — a mistyped verb with this flag boots "+

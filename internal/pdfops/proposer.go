@@ -309,12 +309,18 @@ func isHeadingPiece(p textParagraph, body float64) bool {
 }
 
 // headingLevels numbers the distinct heading sizes, largest first, from 1 to 6.
+//
+// It reads the PIECES `proposeFromLayouts` classifies, by that function's own tests (/pending 653). Read from
+// whole paragraphs, a long paragraph whose first piece was a heading had no level, the lookup answered 0, and
+// the role "H0" made `CommitTags` refuse the whole proposal.
 func headingLevels(layouts []pageLayout, body float64) map[float64]int {
 	seen := map[float64]bool{}
 	for _, l := range layouts {
 		for _, par := range l.paragraphs {
-			if isHeadingPiece(par, body) {
-				seen[roundHalf(par.lines[0].size)] = true
+			for _, piece := range splitAtListMarkers(par) {
+				if listMarker(piece.lines[0]) == "" && isHeadingPiece(piece, body) {
+					seen[roundHalf(piece.lines[0].size)] = true
+				}
 			}
 		}
 	}

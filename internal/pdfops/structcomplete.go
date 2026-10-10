@@ -61,7 +61,7 @@ const maxFormDrawDepth = 8
 // structureCarriedCompletely reports every way a carried structure tree is INCOMPLETE — the
 // half-carried shapes `orphaned()` is blind to by construction.
 //
-// The four conditions, each stated as the failure it catches:
+// The five conditions, each stated as the failure it catches:
 //
 //  1. **The tree contradicts itself** — `checkStructConsistency`, called rather than restated
 //     (ADR-009). A carry that breaks an MCID's ownership has broken the tree whatever else it did.
