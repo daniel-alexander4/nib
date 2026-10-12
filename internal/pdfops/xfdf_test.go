@@ -145,6 +145,64 @@ func TestFlattenFieldKeepsAParentsOwnValue(t *testing.T) {
 	}
 }
 
+// TestAnXFDFsJoinedFieldNamesAreBounded — /pending 769.
+//
+// A field's key repeats every name above it, so a small file could ask for gigabytes of keys: measured before the
+// bound, a 1.1 MiB file of one 1 MiB name over 3,000 children held 3 GiB, and 10 MiB of 1,000 nested names 5 GiB.
+// The joined names are charged to a budget of the input cap, and a document past it is refused in a sentence. A
+// document with no nesting spends less than its own length, so the largest flat one the cap admits still reads.
+func TestAnXFDFsJoinedFieldNamesAreBounded(t *testing.T) {
+	fan := func(prefix, children int) []byte {
+		var b strings.Builder
+		b.WriteString(`<xfdf><fields><field name="` + strings.Repeat("p", prefix) + `">`)
+		for i := 0; i < children; i++ {
+			b.WriteString(`<field name="` + string(rune('a'+i)) + `"><value>x</value></field>`)
+		}
+		b.WriteString(`</field></fields></xfdf>`)
+		return []byte(b.String())
+	}
+	chain := func(depth, name int) []byte {
+		var b strings.Builder
+		b.WriteString(`<xfdf><fields>`)
+		for i := 0; i < depth; i++ {
+			b.WriteString(`<field name="` + strings.Repeat("n", name) + `">`)
+		}
+		b.WriteString(`<value>x</value>` + strings.Repeat(`</field>`, depth) + `</fields></xfdf>`)
+		return []byte(b.String())
+	}
+	flat := func(fields, name int) []byte {
+		var b strings.Builder
+		b.WriteString(`<xfdf><fields>`)
+		for i := 0; i < fields; i++ {
+			b.WriteString(`<field name="` + string(rune('a'+i)) + strings.Repeat("n", name) + `"><value>x</value></field>`)
+		}
+		b.WriteString(`</fields></xfdf>`)
+		return []byte(b.String())
+	}
+	for _, c := range []struct {
+		name string
+		data []byte
+		keys int // 0: refused
+	}{
+		{"one 1 MiB name over 20 children, 21 MiB of keys from 1 MiB", fan(1<<20, 20), 0},
+		{"30 nested names of 300 KiB, 136 MiB of keys from 9 MiB", chain(30, 300<<10), 0},
+		{"one 1 MiB name over 5 children, 6 MiB of keys", fan(1<<20, 5), 5},
+		{"8 nested names of 200 KiB, 7 MiB of keys", chain(8, 200<<10), 1},
+		{"no nesting, 20 names filling the input cap", flat(20, 510<<10), 20},
+	} {
+		if len(c.data) > maxXFDFBytes {
+			t.Fatalf("%s: the fixture is %d bytes, past the input cap — it would be refused for its size", c.name, len(c.data))
+		}
+		got, err := parseXFDF(c.data)
+		switch {
+		case c.keys == 0 && (err == nil || !strings.Contains(err.Error(), "field names are too long")):
+			t.Errorf("%s: read %d fields (%v), want a refusal naming the field names", c.name, len(got), err)
+		case c.keys != 0 && (err != nil || len(got) != c.keys):
+			t.Errorf("%s: read %d fields (%v), want %d", c.name, len(got), err, c.keys)
+		}
+	}
+}
+
 // TestAnXFDFCheckboxValueIsAnExportNameNotABoolean — /pending 9.
 //
 // XFDF is how Acrobat and Foxit hand form data to another program, and a checkbox's `<value>`
