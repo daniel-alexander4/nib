@@ -180,3 +180,159 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 		t.Errorf("build.sh calls the publish preflight after it builds (%d > %d) or pushes (%d > %d) — the refusal must come first", call, build, call, push)
 	}
 }
+
+// TestThePublishPublishesADraftAndReportsWhatIsServed — /pending 868.
+//
+// `gh release create` with assets makes a draft, uploads, then publishes; a run killed mid-upload
+// leaves the draft. The next `./build.sh --publish` found it, replaced its assets and printed
+// "published v1.208.8" while `releases/latest` — what every running Nib asks — still answered
+// v1.208.7. `build/publish-release.sh` is the release step; this drives it with a stub `gh` that
+// keeps a release's state in files, on a PATH holding nothing but that stub, git and cat — never
+// the real gh, and never build.sh, which publishes.
+func TestThePublishPublishesADraftAndReportsWhatIsServed(t *testing.T) {
+	for _, dep := range []string{"git", "bash"} {
+		if _, err := exec.LookPath(dep); err != nil {
+			t.Skipf("%s not installed", dep)
+		}
+	}
+	script, err := filepath.Abs("build/publish-release.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, home, stubs, state := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	for _, tool := range []string{"git", "cat"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+		if err := os.Symlink(p, filepath.Join(stubs, tool)); err != nil {
+			t.Skipf("SKIP (not a pass): symlinks unavailable here: %v", err)
+		}
+	}
+	// The stub: `exists`, `draft` and `latest` are the release; `log` is every call made. `create`
+	// and `edit` publish and move releases/latest, as GitHub does — unless `editinert` is there,
+	// which is an edit that answered 0 and changed nothing.
+	const gh = `#!/bin/sh
+S="$GH_STATE"
+echo "$*" >> "$S/log"
+case "$1 $2" in
+"release view")
+  [ -f "$S/exists" ] || exit 1
+  case "$*" in *isDraft*) [ ! -f "$S/unreadable" ] || exit 1; cat "$S/draft" ;; esac ;;
+"release upload") ;;
+"release create") : > "$S/exists"; echo false > "$S/draft"; echo "$3" > "$S/latest" ;;
+"release edit") [ -f "$S/editinert" ] || { echo false > "$S/draft"; echo "$3" > "$S/latest"; } ;;
+"api "*) [ -f "$S/latest" ] || exit 1; cat "$S/latest" ;;
+*) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(stubs, "gh"), []byte(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hermetic := append(os.Environ(),
+		"HOME="+home, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, hermetic
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "asset.bin"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "asset.bin")
+	git("commit", "-q", "-m", "base")
+	head := git("rev-parse", "HEAD")
+	bash, _ := exec.LookPath("bash")
+
+	const tag, older = "v1.2.3", "v1.2.2"
+	set := func(files map[string]string) {
+		t.Helper()
+		for _, f := range []string{"exists", "draft", "latest", "log", "unreadable", "editinert"} {
+			os.Remove(filepath.Join(state, f))
+		}
+		for f, body := range files {
+			if err := os.WriteFile(filepath.Join(state, f), []byte(body+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const publishedLine = "published " + tag
+	for _, c := range []struct {
+		name   string
+		state  map[string]string
+		ok     bool
+		says   string // in the output
+		called string // a gh call that must have been made ("" = none asked for)
+		never  string // a gh call that must NOT have been made
+	}{
+		{"no release yet: created, and served",
+			map[string]string{"latest": older}, true, publishedLine, "release create " + tag, "release edit"},
+		{"a published release: assets replaced, nothing edited",
+			map[string]string{"exists": "", "draft": "false", "latest": tag}, true, publishedLine, "release upload " + tag, "release edit"},
+		{"a DRAFT left by an interrupted publish: published at HEAD",
+			map[string]string{"exists": "", "draft": "true", "latest": older}, true, publishedLine,
+			"release edit " + tag + " --draft=false --latest --target " + head, "release create"},
+		{"a draft whose publish did not take: not reported as published",
+			map[string]string{"exists": "", "draft": "true", "latest": older, "editinert": ""}, false,
+			"releases/latest answers " + older, "release edit " + tag, ""},
+		{"published, but another release is the one served",
+			map[string]string{"exists": "", "draft": "false", "latest": older}, false, "releases/latest answers " + older, "", "release edit"},
+		{"a draft state gh cannot read",
+			map[string]string{"exists": "", "draft": "true", "latest": tag, "unreadable": ""}, false, "could not say whether", "", "release edit"},
+		{"a releases/latest that cannot be read",
+			map[string]string{"exists": "", "draft": "false"}, false, "releases/latest could not be read", "", ""},
+	} {
+		set(c.state)
+		cmd := exec.Command(bash, script, "1.2.3", "main", "asset.bin")
+		cmd.Dir, cmd.Env = dir, append(hermetic, "GH_STATE="+state, "PATH="+stubs)
+		out, err := cmd.CombinedOutput()
+		logb, _ := os.ReadFile(filepath.Join(state, "log"))
+		calls := string(logb)
+		if (err == nil) != c.ok {
+			t.Errorf("%s: exited ok=%v, want %v\n%s\ngh calls:\n%s", c.name, err == nil, c.ok, out, calls)
+			continue
+		}
+		if !strings.Contains(string(out), c.says) {
+			t.Errorf("%s: output does not say %q:\n%s", c.name, c.says, out)
+		}
+		if !c.ok && strings.Contains(string(out), publishedLine) {
+			t.Errorf("%s: says %q over a release nobody is served:\n%s", c.name, publishedLine, out)
+		}
+		if c.called != "" && !strings.Contains(calls, c.called) {
+			t.Errorf("%s: gh was never asked to %q:\n%s", c.name, c.called, calls)
+		}
+		if c.never != "" && strings.Contains(calls, c.never) {
+			t.Errorf("%s: gh was asked to %q:\n%s", c.name, c.never, calls)
+		}
+	}
+
+	// The door: build.sh reaches gh's release commands only through this script, and prints no
+	// "published" of its own — its own intent is exactly what the old last line reported.
+	b, err := os.ReadFile("build.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var code []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if l := strings.TrimSpace(line); !strings.HasPrefix(l, "#") {
+			code = append(code, l)
+		}
+	}
+	src := strings.Join(code, "\n")
+	if !strings.Contains(src, "./build/publish-release.sh ") {
+		t.Error("build.sh does not run build/publish-release.sh, so nothing publishes a draft or reads releases/latest")
+	}
+	for _, own := range []string{"gh release", `echo "published`} {
+		if strings.Contains(src, own) {
+			t.Errorf("build.sh has its own `%s` — the release step and its success line belong to build/publish-release.sh alone", own)
+		}
+	}
+}
