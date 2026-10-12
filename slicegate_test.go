@@ -129,6 +129,11 @@ var sliceGateServerPrefixes = []string{
 	"consent", "spokencheck",
 	// the shared socket and the transports
 	"shared", "allquic", "dualfamily",
+	// the ladder's budgets and the connect diagnosis (/pending 691 R9-6): `clocks.go` holds D16's
+	// dial and connect deadlines every tier-4 hop runs under, `diagnosis.go` what a failed connect
+	// reports. Measured before adding: one commit from the baseline on touches either, and it
+	// records the gate.
+	"clocks", "diagnosis",
 }
 
 // recordsSliceGate reports whether a commit message says what happened to the gate.
@@ -167,6 +172,8 @@ func TestTheSliceGatePredicatesAreNotVacuous(t *testing.T) {
 		// /pending 505 — the network half tiers 4 and 6 drive, one row per family so a dropped
 		// prefix fails by name.
 		{"the accept route", []string{"internal/server/accept.go"}, true},
+		{"the ladder's clocks", []string{"internal/server/clocks.go"}, true},
+		{"the connect diagnosis", []string{"internal/server/diagnosis.go"}, true},
 		{"the arm's progress", []string{"internal/server/armprogress.go"}, true},
 		{"glare", []string{"internal/server/glare.go"}, true},
 		{"the LAN link", []string{"internal/server/lan.go"}, true},

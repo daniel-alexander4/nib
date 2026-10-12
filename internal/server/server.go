@@ -815,6 +815,14 @@ func readInstallablePDF(path string) (data []byte, converted bool, ref *pathRefu
 	if err != nil || info.IsDir() {
 		return nil, false, &pathRefusal{refuseUnopenable, http.StatusNotFound, "file not found"}
 	}
+	// **Only a regular file is read** (/pending 691 R6-5). A FIFO, a socket or a device passes the
+	// stat with size 0, so it cleared the cap above it — and `os.ReadFile` on a FIFO with no
+	// writer never returns. This runs under `setupMu` from the hand-off drain, so one such path on
+	// a command line hung `/api/status` and every later launch with it. The stat follows links, so
+	// a link to a real file still opens.
+	if !info.Mode().IsRegular() {
+		return nil, false, &pathRefusal{refuseUnopenable, http.StatusNotFound, "not a file that can be opened"}
+	}
 	if info.Size() > maxPDFBytes {
 		return nil, false, &pathRefusal{refuseTooLarge, http.StatusRequestEntityTooLarge, "PDF exceeds size limit"}
 	}
@@ -1778,7 +1786,10 @@ func (s *Server) removeDoc(doc *document) *document {
 	}
 	clearUndo(doc)
 	clearRedo(doc)
-	s.docs = append(s.docs[:idx], s.docs[idx+1:]...)
+	// `slices.Delete` and not an `append` over the tail (/pending 691 R6-7): the append left the
+	// vacated last slot of the backing array still pointing at a document, so closing that
+	// document too kept its bytes reachable until something was opened over the slot.
+	s.docs = slices.Delete(s.docs, idx, idx+1)
 	if s.activeID == doc.id {
 		switch {
 		case idx < len(s.docs):
