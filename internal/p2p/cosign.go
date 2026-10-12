@@ -41,12 +41,16 @@ type Placement struct {
 // already placed, so the two parties' blocks don't overlap. The caller renders
 // the appearance image to this rect's size before signing.
 func NextPlacement(pdf []byte) (Placement, error) {
+	return nextPlacementFrom(pdf, sign.Verify(pdf))
+}
+
+// nextPlacementFrom is NextPlacement over a verification the caller has already taken.
+func nextPlacementFrom(pdf []byte, st sign.Status) (Placement, error) {
 	n, err := pdfops.PageCount(pdf)
 	if err != nil {
 		return Placement{}, err
 	}
-	existing := len(sign.Verify(pdf).Signers)
-	return stackPlacement(n, existing), nil
+	return stackPlacement(n, len(st.Signers)), nil
 }
 
 // Contribute adds one party's acceptance attestation and approval signature to
@@ -113,8 +117,22 @@ func NominalBlockRect() [4]float64 { return stackPlacement(1, 0).Rect }
 // written once: those two already each carry their own `len(roster.Entries) > 0` test for other
 // purposes, and a third and fourth copy deciding PLACEMENT is how they drift apart.
 func PlacementFor(pdf []byte, r Roster, me string) (Placement, error) {
+	// Verified only where the answer reads it: a ceremony's placement is the roster position.
 	if len(r.Entries) == 0 {
 		return NextPlacement(pdf)
+	}
+	return placementFrom(pdf, sign.Status{}, r, me)
+}
+
+// placementFrom is PlacementFor for a caller that has ALREADY verified pdf and holds its Status
+// (/pending 766 part 6). `coSignExchange` verifies the inbound document before consent, and its
+// placement after consent went through `PlacementFor`, which outside a ceremony verified the same
+// peer-chosen bytes again — ADR-041's read gate and a hash per signature, a second time, where the
+// verify-once guard could not see it because the call was not one it counted. The branch on the
+// roster stays here, once, for both doors.
+func placementFrom(pdf []byte, st sign.Status, r Roster, me string) (Placement, error) {
+	if len(r.Entries) == 0 {
+		return nextPlacementFrom(pdf, st)
 	}
 	return ceremonyPlacement(pdf, r, me)
 }

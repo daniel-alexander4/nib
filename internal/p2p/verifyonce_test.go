@@ -18,6 +18,12 @@ var verifyingCalls = map[string]bool{
 	"ContributionProgress": true,
 	"NextContributor":      true,
 	"AdmitContribution":    true,
+	// The placement doors verify too, outside a ceremony (/pending 766 part 6): `coSignExchange`
+	// reached one AFTER consent, over the inbound it had already verified, and this list did not
+	// name it. `Contribute` is deliberately absent: it reaches no `sign.Verify` — its read-back
+	// check is the signing door's own, over the document it just PRODUCED, not the inbound.
+	"NextPlacement": true,
+	"PlacementFor":  true,
 }
 
 // TestNoFunctionVerifiesTheSameDocumentTwice — /pending 711 R5-7. `ContributionProgress` ran

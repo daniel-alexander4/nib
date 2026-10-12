@@ -14,18 +14,25 @@ import (
 // is — the certificate its SignerInfo names, never the bag's first element — is still ADR-051's,
 // and the sweep computes it (`sweep`).
 
-// bagKeyOfSigner is the cross-check's key for what the library reported. A bag holding a nil
-// certificate cannot be keyed and returns "", which no record's bag equals — the join then fails,
-// which is the fail-closed direction.
-func bagKeyOfSigner(s *verify.Signer) string {
+// bagKeyOfSigner is the cross-check's key for what the library reported, and whether there is
+// one. A bag holding a nil certificate cannot be keyed, and neither can an empty one.
+//
+// **"Cannot be keyed" is its own answer and not the empty key** (/pending 653 part 10). Both
+// conditions used to return "", and "" is also what `bagKey` gives a RECORD whose blob carries no
+// certificates — so the join's comparison could find the two equal, and failed closed only because
+// the library has never been seen to report a nil certificate. The caller refuses on `false`.
+func bagKeyOfSigner(s *verify.Signer) (string, bool) {
 	raws := make([][]byte, 0, len(s.Certificates))
 	for _, c := range s.Certificates {
 		if c.Certificate == nil {
-			return ""
+			return "", false
 		}
 		raws = append(raws, c.Certificate.Raw)
 	}
-	return bagKey(raws)
+	if len(raws) == 0 {
+		return "", false
+	}
+	return bagKey(raws), true
 }
 
 // bagKey hashes a certificate bag, contents and order. Each element is length-prefixed so that

@@ -1457,10 +1457,24 @@ func (s *Server) declineCeremony(cer *ceremonyID) {
 	// D29 step between the end state and the close-out is empty on this machine and only on this
 	// machine. Waiting would mean holding the pins until the deadline plus the grace for a
 	// ceremony this user has already refused.
-	if err := s.closeOutCeremony(v, cer.inv.ID, ceremony.StateDeclined, time.Now()); err != nil {
-		log.Printf("declined ceremony %s: %v — this machine may still hold pins, the ceremony "+
-			"secret, or the ceremony folder for a proceeding it refused", cer.inv.ID, err)
-	}
+	//
+	// **Under the sweep's lock (/pending 766 part 1), and the lock order is why that is safe.**
+	// This runs on the session goroutine, and the worry was a sweep that holds `sweepMu` while
+	// waiting for that goroutine. Read end to end, nothing under the lock waits for it: a sweep's
+	// teardown is `disarmWhen`, which takes `se.mu` briefly, cancels, closes the listener
+	// (`listenerCore.Close` joins nothing), and closes the ceremony — `portMapper.close` joins
+	// only its own refresh goroutine, bounded at 3 s, and `rendezvous.Server.Close` cancels its
+	// in-flight operations before it waits for them. The consent answer it sends is a
+	// non-blocking send. And this goroutine holds no lock here: `Confirm` has returned from its
+	// wait, and `ensureUnlocked` above released `setupMu`, which no sweep body takes. So the
+	// order is `sweepMu` → {`se.mu`, the ceremony's, the vault's} on every path and never the
+	// reverse. What it costs is that a decline waits out a sweep in flight before it answers.
+	s.inCeremonySweep(func() {
+		if err := s.closeOutCeremony(v, cer.inv.ID, ceremony.StateDeclined, time.Now()); err != nil {
+			log.Printf("declined ceremony %s: %v — this machine may still hold pins, the ceremony "+
+				"secret, or the ceremony folder for a proceeding it refused", cer.inv.ID, err)
+		}
+	})
 }
 
 // armInvitation resolves the ONE invitation text an arm acts on (P08.S01).

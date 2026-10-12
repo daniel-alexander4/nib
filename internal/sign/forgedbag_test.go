@@ -432,8 +432,9 @@ func TestOneBagWithTwoSignersNamesEach(t *testing.T) {
 		t.Fatalf("library: %v", err)
 	}
 	// STIMULUS: two valid signatures whose bags are byte-identical — the ambiguous key.
-	if !resp.Signers[0].ValidSignature || !resp.Signers[1].ValidSignature ||
-		bagKeyOfSigner(&resp.Signers[0]) != bagKeyOfSigner(&resp.Signers[1]) {
+	k0, ok0 := bagKeyOfSigner(&resp.Signers[0])
+	k1, ok1 := bagKeyOfSigner(&resp.Signers[1])
+	if !resp.Signers[0].ValidSignature || !resp.Signers[1].ValidSignature || !ok0 || !ok1 || k0 != k1 {
 		t.Fatal("STIMULUS: the two signatures are not both valid with one shared bag")
 	}
 	st := Verify(doc)
