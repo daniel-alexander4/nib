@@ -94,8 +94,7 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 			continue
 		}
 		pageKey[ir.ObjectNumber.Value()] = key
-		arr, isArray := nums[key]
-		if !isArray {
+		if _, isArray := nums[key]; !isArray {
 			if _, isSingle := single[key]; isSingle {
 				add(fmt.Sprintf("structparents-single page=%d key=%d", p, key), "page %d declares /StructParents %d, and that ParentTree entry is a single "+
 					"element rather than an array — every MCID on the page past 0 resolves to nothing",
@@ -106,7 +105,6 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 			}
 			continue
 		}
-		_ = arr
 	}
 
 	// Every MCID an element claims must be in range, and must map back to that element — in the row of
