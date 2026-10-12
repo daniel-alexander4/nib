@@ -387,8 +387,12 @@ func (r Record) Canonical() Record {
 
 // IsCanonical reports whether r is already in the form Canonical would return.
 //
-// Compared field-by-field against `Canonical()` rather than by re-encoding, so a future
-// normalised axis is caught by adding it to `Canonical` alone.
+// It compares the two axes `Canonical()` normalises on a record that is being READ — `Expires`
+// (UTC, whole seconds) and each roster entry (lower-case fingerprint) — against `Canonical()`'s
+// own output rather than by re-encoding. It does NOT compare `DigestVersion`, and must not:
+// `Canonical` fills a zero one in for a record this build is about to sign, while a record from
+// the wire keeps whatever it carries, and zero there is a statement about the build that signed
+// it. An axis added to `Canonical` is therefore NOT caught here by itself; add its comparison.
 func (r Record) IsCanonical() bool {
 	c := r.Canonical()
 	if !r.Expires.Equal(c.Expires) || r.Expires.Location() != time.UTC {

@@ -64,6 +64,10 @@ type Stats struct {
 	// SendErrors is writes that failed. Non-zero with Sent zero is a send path that
 	// never worked; non-zero with Sent climbing is one interface of several.
 	SendErrors uint64
+	// ReadErrors is reads the SOCKET failed — not a deadline running out, and not a datagram
+	// that was read and turned away. Non-zero means the counters below undercount for a reason
+	// that is not the link: an interface went down, or the socket was closed under the reader.
+	ReadErrors uint64
 	// Own is datagrams recognised as this process's own loopback copies. **Non-zero
 	// is the good reading**: it proves the send path reaches the kernel and comes
 	// back, independent of any firewall, which is the only such proof available.
@@ -116,6 +120,7 @@ type Socket struct {
 	joined6    int
 	sent       atomic.Uint64
 	sendErrors atomic.Uint64
+	readErrors atomic.Uint64
 	own        atomic.Uint64
 	peers      atomic.Uint64
 	foreign    atomic.Uint64
@@ -275,9 +280,15 @@ func (s *Socket) LocalPort() int {
 // out exactly one interface, chosen by the route table — which on a machine whose
 // default route is a VPN is the wrong one, and nothing errors. Measured.
 //
-// It reports how many writes succeeded. A caller that gets (0, nil) has sent nothing
-// on a host with interfaces, which is a state worth being able to distinguish from an
-// error.
+// It reports how many writes succeeded. (0, nil) is a socket with no interface to send on —
+// nothing was attempted, so nothing failed. Where sends were attempted and EVERY one failed, at
+// the write or at choosing the interface for it, that is the error, naming each. A partial
+// failure is not an error: the count and `Stats.SendErrors` say it.
+//
+// **A failure to choose the interface used to be recorded nowhere** (/pending 653 part 6): the
+// write's error was noted only where `SetMulticastInterface` had succeeded, so a socket on which
+// that failed for every interface and both families returned (0, nil) — total send failure, past
+// the guard below whose message says it covers exactly that, with `SendErrors` still zero.
 func (s *Socket) Announce(a Announcement) (int, error) {
 	b, err := a.Encode()
 	if err != nil {
@@ -295,6 +306,9 @@ func (s *Socket) Announce(a Announcement) (int, error) {
 				s.sendErrors.Add(1)
 				errs = append(errs, ifi.Name+"/v4: "+err.Error())
 			}
+		} else {
+			s.sendErrors.Add(1)
+			errs = append(errs, ifi.Name+"/v4: "+err.Error())
 		}
 		if err := s.p6.SetMulticastInterface(&ifi); err == nil {
 			if _, err := s.p6.WriteTo(b, nil, s.group6Addr); err == nil {
@@ -304,6 +318,9 @@ func (s *Socket) Announce(a Announcement) (int, error) {
 				s.sendErrors.Add(1)
 				errs = append(errs, ifi.Name+"/v6: "+err.Error())
 			}
+		} else {
+			s.sendErrors.Add(1)
+			errs = append(errs, ifi.Name+"/v6: "+err.Error())
 		}
 	}
 	if ok == 0 && len(errs) > 0 {
@@ -363,6 +380,7 @@ func (s *Socket) ReadWindow(deadline time.Time, seen func(Seen, error)) {
 // caller's: this is where a browse budget (D16's 2 s) is applied, one layer up.
 func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	if err := s.pc.SetReadDeadline(deadline); err != nil {
+		s.readErrors.Add(1)
 		return Seen{}, socketErr{err}
 	}
 	buf := make([]byte, MaxDatagram+1) // +1 so an over-cap datagram is SEEN to be over
@@ -380,6 +398,10 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	// goes red the moment the bind or the reader narrows to v4.
 	n, _, src, err := s.p4.ReadFrom(buf)
 	if err != nil {
+		// A deadline running out is the listen window ending, which is not a failure.
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			s.readErrors.Add(1)
+		}
 		return Seen{}, socketErr{err}
 	}
 	ua, _ := src.(*net.UDPAddr)
@@ -455,6 +477,7 @@ func (s *Socket) Stats() Stats {
 		Joined6:          s.joined6,
 		Sent:             s.sent.Load(),
 		SendErrors:       s.sendErrors.Load(),
+		ReadErrors:       s.readErrors.Load(),
 		Own:              s.own.Load(),
 		Peers:            s.peers.Load(),
 		Foreign:          s.foreign.Load(),

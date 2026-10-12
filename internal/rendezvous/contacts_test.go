@@ -103,6 +103,19 @@ func TestAQueryToAnOutOfScopeAddressIsRefusedAndAReplyIsNot(t *testing.T) {
 	}
 }
 
+// plantUnanswered puts a node in the routing table that never answered a query of ours — what a
+// querier was until /pending 775 kept it out, and what every reader of the table must still
+// refuse (answeredNodes), because the table is the library's and not a promise of ours.
+func plantUnanswered(t *testing.T, rz *Server, addr *net.UDPAddr) {
+	t.Helper()
+	var ni krpc.NodeInfo
+	ni.ID[0], ni.ID[18], ni.ID[19] = 0x5a, byte(addr.Port>>8), byte(addr.Port)
+	ni.Addr = krpc.NodeAddr{IP: addr.IP, Port: addr.Port}
+	if err := rz.dht.AddNode(ni); err != nil {
+		t.Fatalf("setup: AddNode(%v): %v", addr, err)
+	}
+}
+
 // TestANodeThatOnlyQueriedUsIsNotSaved is /pending 743 part 2: the save keeps table nodes that
 // ANSWERED a query of ours, and a node that merely queried us is in the table too. With a
 // hermetic rule (loopback in scope) the 707 scope filter cannot stop it, so this is the quality
@@ -115,6 +128,9 @@ func TestANodeThatOnlyQueriedUsIsNotSaved(t *testing.T) {
 	if err := stranger.rz.Ping(ctx, victim.addr); err != nil {
 		t.Fatalf("setup: ping: %v", err)
 	}
+	// A querier no longer enters the table at all (/pending 775), so the save's own refusal is
+	// driven by planting the stranger there, as the library did before.
+	plantUnanswered(t, victim.rz, stranger.addr)
 	if victim.rz.Stats().Nodes == 0 {
 		t.Fatal("setup: the stranger is not in the victim's routing table, so the save has nothing to refuse")
 	}
@@ -148,6 +164,59 @@ func TestANodeThatOnlyQueriedUsIsNotSaved(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the node we pinged and that answered was not saved (%d saved)", len(kept))
+	}
+}
+
+// TestANodeThatOnlyQueriedUsIsNeverAStartingPoint is /pending 775.
+//
+// anacrolix starts every traversal from its routing table and reads `StartingNodes` only when
+// the table is EMPTY (server.go:1256-1268), and it adds whoever sends it a query (server.go:492).
+// So one query from a stranger before the first bootstrap made that stranger the whole starting
+// set: the cache and the shipped seeds were never read again, and where the stranger is on the
+// LAN the outbound door refuses the only address the traversal has — no rendezvous for the life
+// of the process. Here the cache holds one good node (the only address the rule admits) and a
+// stranger outside the rule pings first. Before the fix the good node received nothing.
+func TestANodeThatOnlyQueriedUsIsNeverAStartingPoint(t *testing.T) {
+	var goodHits atomic.Int64
+	good := newFakeNode(t, "127.0.0.71", func(q krpc.Msg, id krpc.ID) []byte {
+		goodHits.Add(1)
+		return bencode.MustMarshal(krpc.Msg{T: q.T, Y: krpc.YResponse, R: &krpc.Return{ID: id}})
+	})
+	public := apOf(good.addr)
+
+	dir := t.TempDir()
+	if _, err := writeNodes(dir, []krpc.NodeInfo{infoOf(good)}); err != nil {
+		t.Fatal(err)
+	}
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := udpmux.New(pc)
+	rz, err := open(m.DHT(), dir, func(ap netip.AddrPort) bool { return ap == public })
+	if err != nil {
+		m.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { rz.Close(); m.Close() })
+
+	stranger := newNode(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// STIMULUS: the stranger's query arrived and was answered, so it had its chance at the table.
+	if err := stranger.rz.Ping(ctx, m.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatalf("setup: the stranger's ping was not answered: %v", err)
+	}
+	for _, ni := range rz.Nodes() {
+		if ap, _ := nodeAddrPort(ni); ap == apOf(stranger.addr) {
+			t.Errorf("the stranger %v is in the routing table for having sent one query", ap)
+		}
+	}
+
+	_ = rz.Bootstrap(ctx)
+	time.Sleep(300 * time.Millisecond)
+	if goodHits.Load() == 0 {
+		t.Error("the bootstrap never queried the cached node — one stranger's query replaced the starting set")
 	}
 }
 

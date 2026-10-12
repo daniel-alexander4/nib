@@ -70,6 +70,8 @@ type screened struct {
 	dropped          *atomic.Uint64
 	refusedResponses *atomic.Uint64
 	responses        *atomic.Uint64
+	// malformed counts what ReadFrom dropped because the library would only have logged it.
+	malformed *atomic.Uint64
 
 	// scope, refusedSends and contacts are the outbound door's (contacts.go): the rule a
 	// query's destination must pass, the count of queries it refused, and the record of whom
@@ -91,14 +93,34 @@ func (s *screened) ReadFrom(p []byte) (int, net.Addr, error) {
 			// Deadlines and closure must NOT be swallowed by the loop.
 			return n, addr, err
 		}
-		m, ok := decodeScreened(p[:n])
+		m, derr, ok := decodeScreened(p[:n])
 		if !ok {
 			s.dropped.Add(1)
+			continue
+		}
+		if derr != nil {
+			// The library's decision about this datagram is already known, because this is
+			// its decoder: `processPacket` returns on any decode error (server.go:287-313),
+			// and on most of them first writes a line holding the whole datagram, `%+q`, to
+			// the process log — once per datagram, at a rate any host that can reach the port
+			// sets (/pending 775). Dropping it here changes nothing but that line; the count
+			// is what an operator reads instead.
+			s.malformed.Add(1)
 			continue
 		}
 		if killsGetHandler(m) {
 			s.refusedResponses.Add(1)
 			continue
+		}
+		if m.Y == krpc.YQuery && !m.ReadOnly {
+			// A node is not admitted to the routing table for having ASKED us something
+			// (/pending 775). See asReadOnly.
+			b, ok := asReadOnly(m, len(p))
+			if !ok {
+				s.malformed.Add(1)
+				continue
+			}
+			n = copy(p, b)
 		}
 		if m.Y == krpc.YResponse {
 			// Counted because otherwise "this response was delivered and correctly NOT
@@ -181,8 +203,10 @@ const maxStrLenExceeded = "exceeds limit"
 // without panicking — and refuses one class it would survive but should not be asked to.
 //
 // A clean decode ERROR returns true on purpose. The library rejects malformed KRPC
-// perfectly well and logs it; this function's job is the crash, and widening it to "is
-// this valid" would move a decision out of the library and into a copy of it.
+// perfectly well; this function's job is the crash, and widening it to "is this valid"
+// would move a decision out of the library and into a copy of it. (`ReadFrom` does drop a
+// datagram the decoder returned an error for — that is the library's own verdict read early,
+// to spare the log line it writes per datagram, and it is counted apart from this.)
 //
 // # The one exception, and why it is not that widening
 //
@@ -198,7 +222,7 @@ const maxStrLenExceeded = "exceeds limit"
 // arithmetic about the bytes in hand — so dropping is not the library's decision being
 // taken away from it. Under the bound the same seventeen bytes cost 640.
 func survivesDecode(b []byte) bool {
-	_, ok := decodeScreened(b)
+	_, _, ok := decodeScreened(b)
 	return ok
 }
 
@@ -206,18 +230,73 @@ func survivesDecode(b []byte) bool {
 // caller does not pay for a second one. A datagram that does not survive yields the zero
 // Msg, which no caller may read — `ok` is the only thing that says whether it means
 // anything.
-func decodeScreened(b []byte) (m krpc.Msg, ok bool) {
+//
+// derr is the decoder's own clean error, for a datagram that is survivable and malformed. The
+// library runs the same decoder (`bencode.Unmarshal` is `Decode` plus a trailing-bytes check,
+// api.go:140-148), so a non-nil derr here is a datagram it will discard.
+func decodeScreened(b []byte) (m krpc.Msg, derr error, ok bool) {
 	defer func() {
 		if recover() != nil {
-			m, ok = krpc.Msg{}, false
+			m, derr, ok = krpc.Msg{}, nil, false
 		}
 	}()
 	d := bencode.NewDecoder(bytes.NewReader(b))
 	d.MaxStrLen = int64(len(b))
-	if err := d.Decode(&m); err != nil && strings.Contains(err.Error(), maxStrLenExceeded) {
-		return krpc.Msg{}, false
+	if err := d.Decode(&m); err != nil {
+		if strings.Contains(err.Error(), maxStrLenExceeded) {
+			return krpc.Msg{}, nil, false
+		}
+		return krpc.Msg{}, err, true
 	}
-	return m, true
+	return m, nil, true
+}
+
+// asReadOnly restates an inbound query with BEP-43's `ro` flag set, which is the library's one
+// lever for "answer this node, do not add it to the routing table" (`handleQuery` adds the
+// sender with `tryAdd = !m.ReadOnly`, server.go:492, and reads the flag nowhere else).
+//
+// # Why a node that only queried us must stay out of the table
+//
+// The library starts EVERY traversal from the table and reads `StartingNodes` — the node cache,
+// the shipped seeds, an invitation's seeds — only when the table is empty (server.go:1256-1268),
+// and nothing expires from it. So a single query from any host that can reach the port, landing
+// before the first bootstrap, became the whole starting set for the life of the process: the
+// stranger chose where the bootstrap, every publish and every fetch began. A stranger on the LAN
+// is the plain denial — the outbound door refuses its address, the traversal has no other, and
+// the rendezvous fails with `Seeds` and the cache untouched and nothing saying why. A public one
+// that answers is the eclipse the invitation-seed rules exist to bound, with no invitation.
+//
+// With the flag set the table holds only nodes that answered a query of OURS: a response is
+// admitted only against a transaction we opened (server.go:330), so an unsolicited "reply" is
+// not a second way in.
+//
+// The query is still answered — the reply path does not read the flag — so a stranger's ping
+// behaves as before from the outside.
+//
+// # It is the decoded message re-encoded, and the result is screened again
+//
+// The library will decode these bytes rather than the sender's, so they go back through
+// `decodeScreened`: the promise that nothing reaches the library's decoder unscreened holds for
+// the restatement too. A query that cannot be restated — the encoder refuses or panics on it,
+// it no longer fits the caller's buffer, or it does not decode back as a read-only query — is
+// dropped, because handing through the sender's original would admit the sender. The cost is
+// one encode and one decode per inbound QUERY, on the DHT view only.
+func asReadOnly(m krpc.Msg, room int) (b []byte, ok bool) {
+	defer func() {
+		if recover() != nil {
+			b, ok = nil, false
+		}
+	}()
+	m.ReadOnly = true
+	b, err := bencode.Marshal(m)
+	if err != nil || len(b) > room {
+		return nil, false
+	}
+	back, derr, alive := decodeScreened(b)
+	if !alive || derr != nil || back.Y != krpc.YQuery || !back.ReadOnly {
+		return nil, false
+	}
+	return b, true
 }
 
 // gateQuery refuses inbound queries the library's own handlers dereference their way

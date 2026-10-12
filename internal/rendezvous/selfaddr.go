@@ -246,7 +246,9 @@ func isSharedAddressSpace(a netip.Addr) bool { return addrscope.SharedSpace(a) }
 func (s *Server) probeTargets() []*net.UDPAddr {
 	seen := make(map[netip.Prefix]bool)
 	var out []*net.UDPAddr
-	for _, ni := range s.dht.Nodes() {
+	// Only nodes that answered us (answeredNodes): what a target says becomes the address we
+	// publish, and the per-prefix rule bounds how many liars agree, not who may be asked.
+	for _, ni := range s.answeredNodes() {
 		a, ok := netip.AddrFromSlice(ni.Addr.IP)
 		if !ok || ni.Addr.Port <= 0 {
 			continue

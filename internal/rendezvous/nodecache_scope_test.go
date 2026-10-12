@@ -71,6 +71,10 @@ func TestOneInboundPingDoesNotReplaceAGoodNodeCache(t *testing.T) {
 		t.Fatalf("setup: the stranger's ping was not answered: %v", err)
 	}
 
+	// A querier no longer enters the table at all (/pending 775), so the save's own refusal is
+	// driven by planting the stranger there, as the library did before.
+	plantUnanswered(t, victim.rz, stranger.addr)
+
 	// STIMULUS: the cache loaded whole, nothing traversed, and the stranger IS in the table —
 	// without the last, a save that writes nothing new would pass for the wrong reason.
 	st := victim.rz.Stats()

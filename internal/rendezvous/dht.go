@@ -112,6 +112,11 @@ type Stats struct {
 	// which would have panicked the process. **Non-zero is an attack or a badly
 	// broken node** — and either way Nib is alive to report it.
 	Screened uint64
+	// Malformed is datagrams dropped because the library's own decoder returned an error for
+	// them — which the library discards too, after writing most of them to the log in full —
+	// and inbound queries that could not be restated read-only (screen.go, asReadOnly).
+	// Survivable, unlike Screened: garbage on the port, or somebody trying to fill a log.
+	Malformed uint64
 	// RefusedQueries is inbound queries stopped before the library's HANDLERS saw
 	// them — a different door and therefore a different counter, because a datagram
 	// that kills the decoder and one that kills `announce_peer` say different things
@@ -257,6 +262,7 @@ type Server struct {
 	bootstrapped  atomic.Uint64
 
 	screened         atomic.Uint64
+	malformed        atomic.Uint64
 	refusedQueries   atomic.Uint64
 	refusedResponses atomic.Uint64
 	refusedStores    atomic.Uint64
@@ -369,7 +375,7 @@ func openWith(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool, 
 	// The same wrapper is the outbound door: no query leaves for an address s.scope refuses,
 	// and whom we queried and who answered is recorded for the cache save (contacts.go).
 	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses, responses: &s.responses,
-		scope: scope, refusedSends: &s.refusedSends, contacts: s.contacts}
+		malformed: &s.malformed, scope: scope, refusedSends: &s.refusedSends, contacts: s.contacts}
 
 	nodes, err := s.loadNodes()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -510,7 +516,8 @@ func openWith(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool, 
 	return s, nil
 }
 
-// Nodes is the routing table, for the cache and for a diagnostic.
+// Nodes is the routing table as the library holds it, for a diagnostic. Anything that TRUSTS a
+// node — saves it, ships it, asks it where we are — reads answeredNodes instead.
 func (s *Server) Nodes() []krpc.NodeInfo { return s.dht.Nodes() }
 
 // Stats reports what happened.
@@ -529,6 +536,7 @@ func (s *Server) Stats() Stats {
 		InvitationSeedsUsed:    s.invSeedsUsed,
 		Bootstrapped:           s.bootstrapped.Load(),
 		Screened:               s.screened.Load(),
+		Malformed:              s.malformed.Load(),
 		RefusedQueries:         s.refusedQueries.Load(),
 		RefusedResponses:       s.refusedResponses.Load(),
 		RefusedSends:           s.refusedSends.Load(),
@@ -751,12 +759,14 @@ func startingNodes(cached []krpc.NodeInfo, shipped []*net.UDPAddr, inv []netip.A
 //
 // It cannot leak the issuer's own endpoint: a DHT routing table holds other nodes, never
 // self. Filtered through addrscope anyway, because a table entry is something strangers
-// put there.
+// put there — and only nodes that ANSWERED us are sampled (answeredNodes): a recipient
+// bootstraps from these, and a node that had merely queried the issuer was one it knew
+// nothing about.
 func (s *Server) SeedSample(n int) []netip.AddrPort {
 	s.mu.Lock()
 	self := s.self
 	s.mu.Unlock()
-	return sampleSeeds(s.dht.Nodes(), self, n)
+	return sampleSeeds(s.answeredNodes(), self, n)
 }
 
 // sampleSeeds is the pure half, separated from the query that feeds it for the same reason
@@ -983,7 +993,7 @@ func (s *Server) saveNodes() error {
 	// in scope or not — is never written down. Previous-cache nodes this run queried and heard
 	// nothing from go last, so the cap pushes out the dead before the unknown.
 	prev, _ := s.loadNodes() // unreadable or absent: nothing to keep, which is a cold start's own state
-	nodes, fresh := cacheSet(s.dht.Nodes(), prev, s.scope, s.contacts.state)
+	nodes, fresh := cacheSet(s.answeredNodes(), prev, s.scope, s.contacts.state)
 	if fresh == 0 {
 		// Nothing learned that may be kept. Leave the file exactly as it was.
 		return nil
@@ -1052,7 +1062,7 @@ func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool, heard
 		}
 		return added
 	}
-	fresh = add(table, func(c contact) bool { return c == contactAnswered })
+	fresh = add(answeredOnly(table, heard), func(contact) bool { return true })
 	add(prev, func(c contact) bool { return c != contactSilent })
 	add(prev, func(c contact) bool { return c == contactSilent })
 	return out, fresh

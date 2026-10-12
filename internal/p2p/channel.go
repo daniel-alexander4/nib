@@ -97,8 +97,9 @@ func protoRank(proto string) int {
 // protocol falling into that class reads as correct.
 //
 // The asymmetry is what made it worth fixing before the bump rather than with it — the ALPN
-// **set** is pinned hard (a test fails on `len(sessionALPN) != 2`), so the list cannot change
-// without a deliberate edit, while the capability predicate could rot in place beside it.
+// list's ORDER is pinned (`TestTheOfferListIsOrderedNewestFirst`: oldest last, each entry ranking
+// above the next), so a version cannot be added out of place, while the capability predicate
+// could rot in place beside it. The list's LENGTH is not pinned and has grown since.
 // **And it fails CLOSED on an unknown protocol, which the first cut of this did not.** The floor
 // is looked up in the same list, so if `alpn2` ever leaves `sessionALPN` — retired, renamed, or an
 // emptied list — `protoRank(alpn2)` is 0 and `rank >= 0` is true for EVERY peer, including one

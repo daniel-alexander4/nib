@@ -208,6 +208,7 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 	fmt.Fprintf(out, "  replies that reached us                %d%s\n", st.Responses, silentNote(st.Responses))
 	fmt.Fprintf(out, "what this machine refused\n")
 	fmt.Fprintf(out, "  datagrams that would have crashed us   %d\n", st.Screened)
+	fmt.Fprintf(out, "  datagrams that were not DHT messages   %d\n", st.Malformed)
 	fmt.Fprintf(out, "  queries with no arguments              %d\n", st.RefusedQueries)
 	fmt.Fprintf(out, "  replies shaped to crash the fetch      %d\n", st.RefusedResponses)
 	fmt.Fprintf(out, "  lookups aimed at local or low ports    %d\n", st.RefusedSends)
@@ -670,6 +671,7 @@ func runSelfTest(ctx context.Context, out io.Writer, rz *rendezvous.Server, self
 		g.Records(), g.Refused(), g.Accepted)
 	fmt.Fprintf(out, "                  dropped: over-cap %d, duplicate %d, re-offered %d, empty records %d\n",
 		g.DroppedOverCap, g.DroppedDuplicate, g.Reoffered, g.EmptyRecords)
+	fmt.Fprintf(out, "                  replaced: moved port %d\n", g.MovedPort)
 	fmt.Fprintf(out, "                  refused: sealed %d, too-big %d, format %d, too-many %d, unroutable %d,\n",
 		g.RefusedSealed, g.RefusedTooBig, g.RefusedFormat, g.RefusedTooMany, g.RefusedUnroutable)
 	fmt.Fprintf(out, "                           signature %d, author %d, context %d, expired %d\n",
