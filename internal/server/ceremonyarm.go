@@ -62,8 +62,21 @@ var (
 // `cands` is the optional typed peer address that makes this arm DIAL as well as accept. It stays
 // a parameter because resolving it needs the response writer (`peerAddresses` writes its own
 // error), so it is the one thing the route must still do for itself.
+//
+// **The slot is asked for BEFORE anything is opened** (`/pending 517`), through `slotTaken` — the
+// door `armForDelivery` already asks. This used to bind a UDP socket and open a handshaked listener
+// and only then find the interactive slot taken, closing both again; the sweep reaches this on every
+// unlock and accept, and treats `errSessionArmed` as the ordinary case. A refusal and never a
+// reservation: `armed(...)` below is still the only thing that grants, and a caller that loses
+// there tears down as before. The route displaces a policy arm BEFORE it calls this, so an
+// explicit request is not refused by the arm it is entitled to replace.
 func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key, peerFP []byte,
 	cands []candidate, bind, label, mode string, byPolicy bool) error {
+	if s.sess.slotTaken(armInteractive) {
+		// Nothing is open yet, but the identity is the caller's and every refusal here releases it.
+		cer.close()
+		return errSessionArmed
+	}
 	if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
 		cer.close()
 		return fmt.Errorf("%w: %v", errCeremonyEndpoint, serr)

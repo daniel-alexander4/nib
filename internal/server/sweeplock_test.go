@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/ceremony"
 )
 
 // TestTheCeremonyListingWaitsForASweepInFlight — /pending 710 R4-2.
@@ -50,6 +53,77 @@ func TestTheCeremonyListingWaitsForASweepInFlight(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the listing never answered after the sweep released the lock")
+	}
+}
+
+// TestLeavingAndDecliningWaitForASweepInFlight — /pending 766 part 1. The leave route and the
+// decline called `closeOutCeremony` outside `sweepMu`, the race R4-2 closed for the listing: a
+// close-out moving a ceremony's folder while the unlock's re-arm reads the same ceremonies.
+//
+// Driven as the listing's is: a sweep holds the lock, and neither may finish until it lets go.
+func TestLeavingAndDecliningWaitForASweepInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, srv *Server, c *http.Client, csrf, base, invitation, id string)
+	}{
+		{"leave", func(t *testing.T, srv *Server, c *http.Client, csrf, base, invitation, id string) {
+			if code, body := leave(t, c, csrf, base, id); code != http.StatusOK {
+				t.Errorf("leaving returned %d: %s", code, body)
+			}
+		}},
+		{"decline", func(t *testing.T, srv *Server, c *http.Client, csrf, base, invitation, id string) {
+			inv, err := ceremony.ParseInvitation(invitation)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			srv.declineCeremony(&ceremonyID{inv: inv})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := startServerWith(t)
+			c, csrf := authedClient(t, ts)
+			me := myFingerprint(t, c, ts.URL)
+			invitation, _ := inviteFor(t, me)
+			code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/accept", acceptRequest{Invitation: invitation})
+			if code != http.StatusOK {
+				t.Fatalf("setup: accept returned %d: %s", code, body)
+			}
+			var ar acceptResponse
+			if err := json.Unmarshal([]byte(body), &ar); err != nil {
+				t.Fatal(err)
+			}
+			// The accept's own sweep is detached; let it finish so the lock below is free to take.
+			srv.inCeremonySweep(func() {})
+
+			srv.sweepMu.Lock() // a sweep in flight
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				tc.run(t, srv, c, csrf, ts.URL, invitation, ar.Ceremony)
+			}()
+			select {
+			case <-done:
+				srv.sweepMu.Unlock()
+				t.Fatal("the close-out ran while a sweep held the lock — it can move a ceremony's " +
+					"folder out from under an arm the sweep is raising for it")
+			case <-time.After(300 * time.Millisecond):
+			}
+			if _, err := ceremony.ReadReceipt(defaultOutputDir(), ar.Ceremony); err == nil {
+				srv.sweepMu.Unlock()
+				t.Fatal("a receipt was written while the sweep still held the lock")
+			}
+			srv.sweepMu.Unlock()
+			select {
+			case <-done:
+			case <-time.After(20 * time.Second):
+				t.Fatal("the close-out never finished after the sweep released the lock")
+			}
+			// And it really closed out, so the wait above was the close-out's and not a hang.
+			if _, err := ceremony.ReadReceipt(defaultOutputDir(), ar.Ceremony); err != nil {
+				t.Fatalf("setup: no receipt after the close-out: %v", err)
+			}
+		})
 	}
 }
 

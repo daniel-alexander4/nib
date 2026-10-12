@@ -755,7 +755,7 @@ func joinLibrary(revs []Revision, signers []verify.Signer) ([]int, error) {
 			}
 			continue
 		}
-		if bagKeyOfSigner(s) != revs[j].bag {
+		if key, ok := bagKeyOfSigner(s); !ok || key != revs[j].bag {
 			return nil, fmt.Errorf("%w: signer %d's certificates are not object %d's", errJoin, i, revs[j].Obj)
 		}
 	}

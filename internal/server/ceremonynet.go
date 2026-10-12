@@ -419,6 +419,15 @@ func hasLANCandidate(cands []candidate) bool {
 //
 // LAN and typed candidates belong to no hop and carry zero; they are matched against the hop
 // the race is for only when they came from a hop in the first place.
+//
+// **Today this can never refuse a production candidate, and it is kept as a tripwire only**
+// (`/pending 517`). The one producer of a `sourceDHT` candidate is `feedCandidates`, which stamps
+// `Hop: c.hop` from the same `*ceremonyID` whose `cer.hop` the one call site (`feedCeremonyRace`'s
+// candidate merge) compares against, and `hop` is written only in the two struct literals that
+// build a `ceremonyID` — so the comparison is `cer.hop == cer.hop`. What actually binds a record
+// to its hop is the gate: the hop is AEAD context in `OpenCandidate` and is re-checked in
+// `CandidateRecord.Verify`. This predicate starts to matter the day a second producer feeds this stream from
+// another ceremony identity; until then do not cite it as what enforces criterion 19.
 func hopScoped(c candidate, hop int) bool {
 	return c.Source != sourceDHT || c.Hop == hop
 }

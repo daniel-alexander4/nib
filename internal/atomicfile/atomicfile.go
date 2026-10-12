@@ -225,6 +225,57 @@ func CreateDurable(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+// CreateOnce creates path holding data only if nothing is there, and the name appears with its
+// whole content or not at all: a synced temp file in the same directory, hard-linked into place.
+//
+// **For a write-once record with more than one writer** (/pending 668). `CreateDurable` refuses an
+// existing path too, but its file exists EMPTY from the open until the write lands, so a second
+// writer that loses and reads back what stands can read nothing, and a crash in that window leaves
+// a torn file that every later call refuses to replace. A link either fails because the name is
+// taken or publishes a finished file; the loser's read is of the winner's complete bytes.
+//
+// The error for an existing path satisfies os.IsExist / errors.Is(err, fs.ErrExist). Where the
+// filesystem cannot hard-link at all the write falls back to `CreateDurable`, which keeps the
+// "never replace" half and loses only the all-or-nothing content.
+func CreateOnce(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tmpName, path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		// A destination that is there is the refusal whatever the link said (some filesystems
+		// answer "not permitted" before they look); only a free name goes to the fallback.
+		if _, serr := os.Lstat(path); serr == nil {
+			return &os.LinkError{Op: "link", Old: tmpName, New: path, Err: fs.ErrExist}
+		}
+		return CreateDurable(path, data, perm)
+	}
+	// Best-effort, as in WriteDurable: the file is complete and synced.
+	SyncDir(dir)
+	return nil
+}
+
 // ReplaceDurable is WriteDurable for a file the USER owns: an existing regular file keeps its
 // permission bits, and perm applies only when path does not exist yet.
 //

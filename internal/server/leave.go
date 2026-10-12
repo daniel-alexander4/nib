@@ -128,11 +128,21 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
 	// would mean the one path that answers "Nib could not finish leaving" is also the one that
 	// leaves the socket open. Disarming an unarmed ceremony is a no-op, so the order costs nothing
 	// on the ordinary path.
-	s.stopListeningFor(id)
-	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
+	//
+	// **Both under the sweep's lock (/pending 766 part 1)**, as the listing's close-out is
+	// (/pending 710 R4-2): the unlock's re-arm reads the same ceremonies and reaches the opposite
+	// conclusion about this one, so run beside it the leave could move a folder a delivery was
+	// being armed for, or race the sweep's own `CloseOutMirror`. What this waits on is one sweep's
+	// body — bounded local work; see `runCeremonySweep`.
+	var lerr error
+	s.inCeremonySweep(func() {
+		s.stopListeningFor(id)
+		lerr = s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now())
+	})
+	if lerr != nil {
 		httpError(w, http.StatusInternalServerError,
 			"this machine could not finish leaving that ceremony, so it may still hold its pins "+
-				"or its secret: "+err.Error())
+				"or its secret: "+lerr.Error())
 		return
 	}
 	writeJSON(w, struct {

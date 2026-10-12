@@ -390,29 +390,41 @@ func WriteReceipt(root, id string, r Receipt) error {
 	if merr := os.MkdirAll(dir, 0o700); merr != nil {
 		return merr
 	}
-	prev, rerr := ReadReceipt(root, id)
-	if rerr == nil {
-		if prev.State == r.State {
-			return nil
-		}
-		return fmt.Errorf("%w: this ceremony is already recorded locally as %q and cannot also "+
-			"be recorded as %q — the first thing this machine observed is the one that stands",
-			ErrReceiptConflict, prev.State, r.State)
-	}
-	// **Only "there is no receipt" licenses writing one** (/pending 584). Any other failure — a
-	// receipt that is there and cannot be opened, or one that will not parse — is a receipt this
-	// machine could not READ, not one it never wrote, and the write below is a rename that would
-	// replace it: the first observation gone, with the worse answer in its place and no trace.
-	// Refused instead, and deliberately not as `ErrReceiptConflict`, so the caller logs it.
-	if !errors.Is(rerr, fs.ErrNotExist) {
-		return fmt.Errorf("this ceremony already has a local receipt that could not be read, so "+
-			"it is left as it is rather than written over: %w", rerr)
-	}
 	b, merr := json.MarshalIndent(r, "", "  ")
 	if merr != nil {
 		return merr
 	}
-	return atomicfile.WriteDurable(filepath.Join(dir, receiptFile), b, 0o600)
+	// **Twice at most, and the second pass only reads.** The first pass finds no receipt and
+	// creates one; if another close-out created it in between, the create refuses and the second
+	// pass reads what that one wrote and answers as for any receipt already there.
+	for attempt := 0; ; attempt++ {
+		prev, rerr := ReadReceipt(root, id)
+		if rerr == nil {
+			if prev.State == r.State {
+				return nil
+			}
+			return fmt.Errorf("%w: this ceremony is already recorded locally as %q and cannot also "+
+				"be recorded as %q — the first thing this machine observed is the one that stands",
+				ErrReceiptConflict, prev.State, r.State)
+		}
+		// **Only "there is no receipt" licenses writing one** (/pending 584). Any other failure — a
+		// receipt that is there and cannot be opened, or one that will not parse — is a receipt
+		// this machine could not READ, not one it never wrote. Refused, and deliberately not as
+		// `ErrReceiptConflict`, so the caller logs it.
+		if !errors.Is(rerr, fs.ErrNotExist) {
+			return fmt.Errorf("this ceremony already has a local receipt that could not be read, so "+
+				"it is left as it is rather than written over: %w", rerr)
+		}
+		// **Created, never renamed into place** (/pending 668). The check above and a rename were
+		// two steps with nothing between them, and a close-out has three callers that no one lock
+		// covers — the sweep, the leave route and the decline on the session goroutine — so two
+		// could both find no receipt and the later rename replaced the earlier one's state.
+		// `CreateOnce` refuses a name that is taken, and the name appears with its whole content.
+		werr := atomicfile.CreateOnce(filepath.Join(dir, receiptFile), b, 0o600)
+		if werr == nil || attempt > 0 || !errors.Is(werr, fs.ErrExist) {
+			return werr
+		}
+	}
 }
 
 // ReadReceipt loads a closed-out ceremony's local receipt.

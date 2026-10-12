@@ -17,28 +17,29 @@ import (
 //
 // D29 states it once — **end state → delivery round → close-out** — and puts the pin drop and the
 // prune at the last step. `internal/ceremony/closeout.go` holds the prune's disk half and the whole
-// argument for why it is a move; this file is the part that also has a vault open, because three of
-// the four stores a close-out touches are in it.
+// argument for why it is a move; this file is the part that also has a vault open.
+//
+// **The count, stated ONCE (ADR-012): FOUR stores hold material scoped to one ceremony.** Three
+// persist, in the vault — the invitation secrets, the invitee-side stored invitation and the peer
+// pins — and go through `closeOutStores`. The fourth, `punchBudgets`, is in memory and
+// `closeOutCeremony` drops it. The mirror is not one of the four: it is the caller's, because
+// `unconvene` deletes it and a close-out moves it. Every other mention in this file is this count.
 
-// closeOutStores tears down every store that holds material scoped to one ceremony.
+// closeOutStores tears down the three PERSISTED stores of the four (see the file header).
 //
-// **FOUR stores, and the count is the finding.** P08.S06's own scope said three — pins, secrets and
-// the mirror — and `unconvene`, the only teardown in the tree when this was written, takes four:
-// the invitee-side stored invitation is the fourth, added at P08.S01 with the reason this door
-// inherits verbatim — *"'almost always' is not a reason for a teardown to reach one of two
-// stores, and a convener that also accepted an invitation to its own ceremony is exactly the case
-// nobody would think to test."* Built to the stated three, a close-out would leave the ceremony
-// secret on disk: precisely the defect S01 fixed one door over, re-introduced by a plan bullet
-// written before that fix existed.
+// **The count was the finding.** P08.S06's own scope said three — pins, secrets and the mirror —
+// and `unconvene`, the only teardown in the tree when this was written, took one the plan missed: the
+// invitee-side stored invitation, added at P08.S01 with the reason this door inherits verbatim —
+// *"'almost always' is not a reason for a teardown to reach one of two stores, and a convener that
+// also accepted an invitation to its own ceremony is exactly the case nobody would think to
+// test."* Built to the plan, a close-out would have left the ceremony secret on disk: precisely
+// the defect S01 fixed one door over, re-introduced by a plan bullet written before that fix
+// existed.
 //
-// **Reported separately, never aggregated**, for `unconvene`'s reason: the four fail independently
-// and a user can act on each. Returns the first error so a caller can report the close-out as
-// incomplete, having already tried all four — a teardown that stops at the first failure leaves
-// more behind than one that does not.
-//
-// **The mirror is NOT one of the four here.** It is the caller's, because what happens to it
-// differs: `unconvene` deletes (a convene that never committed has no contribution to keep) and
-// close-out moves. Folding it in would have forced one of the two to take the wrong verb.
+// **Reported separately, never aggregated**, for `unconvene`'s reason: the three fail
+// independently and a user can act on each. Returns the first error so a caller can report the
+// close-out as incomplete, having already tried all three — a teardown that stops at the first
+// failure leaves more behind than one that does not.
 func closeOutStores(v *vault.Vault, id, why string) error {
 	var first error
 	note := func(err error, what string) {
