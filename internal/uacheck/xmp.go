@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -368,7 +369,33 @@ func parseXMP(d *Document) xmpFacts {
 	uaAttr := func(a xml.Attr) bool {
 		return a.Name.Space != "" && a.Name.Space != "xmlns" && resolve(a.Name.Space) == nsPDFUAID
 	}
+	// # What Go's decoder reads and veraPDF's XMP reader does not (`/pending 673`)
+	//
+	// Go's `encoding/xml` leaves out part of XML's well-formedness, and veraPDF's reader — which reads no packet
+	// it cannot parse, `5 t1` and `7.1 t9` failing — does not. Each `malformed` below is a shape measured on
+	// veraPDF 1.30.2 that nib passed (`TestAPacketVeraPDFsXMLParserRefusesIsNotRead`), found by asking this
+	// reader the rows `7.15 t1`'s XFA reader was asked (`xmlwf.go`). **The two parsers are not the same parser**
+	// and the rows do not carry over whole: this one reads a control character it is handed (it blanks them
+	// first), an `encoding=""`, and a DOCTYPE before the root, and it refuses a processing instruction or a
+	// CDATA section anywhere inside `rdf:RDF`, which is well-formed XML.
+	malformed := func(what string) xmpFacts {
+		f.Why = "the metadata packet is not XML veraPDF's reader parses, and it reads no packet there: " + what
+		return f
+	}
+	content := sd.Content
+	start := int64(0)
+	if bytes.HasPrefix(content, []byte("\xef\xbb\xbf")) {
+		start = 3
+	}
+	if decl := content[start:]; bytes.HasPrefix(decl, []byte("<?xml")) && len(decl) > 5 && (isXMLSpace(decl[5]) || decl[5] == '?') {
+		// The shape, and a version that is not empty; any version but 1.0 the decoder refuses below.
+		if m := xmlDeclaration.FindSubmatch(decl); m == nil || len(m[1])+len(m[2]) == 0 {
+			return malformed("its XML declaration is not written as XML writes one")
+		}
+	}
+	started := false
 	for {
+		off := dec.InputOffset()
 		tok, terr := dec.RawToken()
 		if terr == io.EOF {
 			break
@@ -376,6 +403,56 @@ func parseXMP(d *Document) xmpFacts {
 		if terr != nil {
 			f.Why = "the metadata packet is not well-formed XML: " + terr.Error()
 			return f
+		}
+		// written is the token as the packet writes it; inRDF is whether it sits in `rdf:RDF` or below.
+		var written []byte
+		if to := dec.InputOffset(); off <= to && to <= int64(len(content)) {
+			written = content[off:to]
+		}
+		inRDF := len(path) > 0 && path[len(path)-1].kind != xkOutside
+		switch t := tok.(type) {
+		case xml.Directive:
+			if started || !bytes.HasPrefix(t, []byte("DOCTYPE")) {
+				return malformed("it holds a markup declaration")
+			}
+		case xml.Comment:
+			if bytes.Contains(t, []byte("\xef\xbf\xbe")) || bytes.Contains(t, []byte("\xef\xbf\xbf")) {
+				return malformed("a comment holds a character XML does not have")
+			}
+		case xml.ProcInst:
+			if strings.EqualFold(t.Target, "xml") && (t.Target != "xml" || off != start) {
+				return malformed("an XML declaration is not at its very start")
+			}
+			if inRDF {
+				return malformed("a processing instruction is written inside rdf:RDF")
+			}
+		case xml.CharData:
+			cdata := bytes.HasPrefix(written, []byte("<![CDATA["))
+			switch {
+			case len(path) == 0 && !(off == 0 && start == 3 && len(written) == 3) && len(bytes.Trim(written, " \t\r\n")) != 0:
+				return malformed("text is written outside its root element")
+			case cdata && inRDF:
+				return malformed("a CDATA section is written inside rdf:RDF")
+			case !cdata && !xmlCharRefsLegal(written):
+				return malformed("a character reference names a character XML does not have")
+			}
+		case xml.StartElement:
+			started = true
+			if !xmlAttributesSpaced(written) {
+				return malformed("two attributes are written with no space between them")
+			}
+			if !xmlCharRefsLegal(written) {
+				return malformed("a character reference names a character XML does not have")
+			}
+			for _, a := range t.Attr {
+				switch {
+				case a.Name.Space == "" && xmlQNameRefused(a.Name.Local):
+					return malformed("the attribute name " + a.Name.Local + " ends in a colon")
+				case a.Name.Space == "xmlns" && (a.Value == "" || xmlBindingRefused(a.Name.Local, a.Value)),
+					a.Name.Space == "" && a.Name.Local == "xmlns" && xmlBindingRefused("", a.Value):
+					return malformed("the namespace declaration " + a.Name.Local + " binds a reserved prefix or name, or nothing")
+				}
+			}
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
@@ -405,6 +482,11 @@ func parseXMP(d *Document) xmpFacts {
 			}
 			// Bound BEFORE resolving, so an element's own declarations bind its own name.
 			fr.space = resolve(t.Name.Space)
+			for _, a := range t.Attr {
+				if a.Name.Space != "" && a.Name.Space != "xmlns" && resolve(a.Name.Space) == "" {
+					return malformed("the attribute " + a.Name.Space + ":" + a.Name.Local + " is under a prefix nothing binds")
+				}
+			}
 
 			// One attribute, once — as written, and by the namespace its prefix resolves to (two prefixes bound
 			// to one URI name the same attribute).
