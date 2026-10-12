@@ -17896,8 +17896,9 @@ function ceremonyCallNext(c, who) {
       const q = await qr.json();
       if (q.error) { say.textContent = q.error; btn.disabled = false; return; }
       if (q.mine) {
-        // The convener's own turn: nobody to call. Said rather than dialled — a signing convener is
-        // FIRST in the signing order, so this is the ordinary state of a ceremony just convened.
+        // The convener's own turn: nobody to call. Said rather than dialled — the ordinary state of a
+        // ceremony just convened by a signing convener the roster names first, and a later hop for
+        // one it names later. Nothing in the window signs that turn yet (/pending 869).
         say.textContent = 'It is your own turn to sign — there is nobody to call yet.';
         return;
       }
