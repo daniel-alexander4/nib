@@ -92,6 +92,9 @@ type resourcePruner struct {
 	// owned records the owners (by object number) whose own /Resources were already pruned, or are
 	// being pruned — the second makes a form whose resources reach itself terminate.
 	owned map[int]bool
+	// budget is the decode door (`formWalkBudget.formContent`): a stream is inflated only as far as the selection's
+	// allowance has left, and what it decoded to is charged (`/pending 795` I3). A stream past it is unreadable.
+	budget *formWalkBudget
 }
 
 // pruneKeptResources gives every kept page a fresh, direct `/Resources` holding only what that page's
@@ -100,7 +103,8 @@ type resourcePruner struct {
 //
 // source[i] is the source page number of pages[i], so a refusal names the page the user knows.
 func pruneKeptResources(xt *model.XRefTable, pages []types.Dict, source []int, policy unreadablePolicy) error {
-	p := &resourcePruner{xt: xt, policy: policy, names: map[int]map[string]bool{}, owned: map[int]bool{}}
+	p := &resourcePruner{xt: xt, policy: policy, names: map[int]map[string]bool{}, owned: map[int]bool{},
+		budget: newFormWalkBudget(len(pages))}
 	for i, page := range pages {
 		if err := p.page(page, source[i]); err != nil {
 			return err
@@ -321,11 +325,12 @@ func (p *resourcePruner) streamNames(obj types.Object) (map[string]bool, bool) {
 	sd, _, err := p.xt.DereferenceStreamDict(obj)
 	var names map[string]bool
 	if err == nil && sd != nil {
-		switch {
-		case len(sd.FilterPipeline) == 0:
-			names = contentNames(sd.Raw)
-		case sd.Decode() == nil:
-			names = contentNames(sd.Content)
+		// Through the one decode door, and charged: each stream is read once (the memo above), so the charge is the
+		// selection's decoded content, not a count of draws. An uncapped decode here inflated whatever a stream
+		// declared before anything could refuse it. No object is named to the door: `names` is this walk's memo, and
+		// the door's own would hold every kept page's decoded content for the prune's life.
+		if body := p.budget.formContent(sd, nil); body != nil && p.budget.enterForm(len(body)) {
+			names = contentNames(body)
 		}
 	}
 	if nr != 0 {

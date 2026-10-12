@@ -361,9 +361,10 @@ func tablePlace(paragraphs []textParagraph, frame [4]float64) int {
 }
 
 // readPageGlyphLayout is readPageLayout over runs that keep their glyphs (`readPageGlyphRuns`) — reflow's reader. The
-// grouping is the same door; only what each run carries differs.
-func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error) {
-	pr, err := readPageGlyphRuns(ctx, pg)
+// grouping is the same door; only what each run carries differs. shared is a caller's one budget where it reads page
+// after page (a reflow's cascade, `pushDown`), as `readPageRuns` takes it.
+func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, error) {
+	pr, err := readPageGlyphRuns(ctx, pg, shared...)
 	if err != nil {
 		return pageLayout{}, err
 	}
