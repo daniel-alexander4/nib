@@ -8942,6 +8942,12 @@ els.saveAsFormat.onchange = () => {
 // (a polite live region, not a ticker), and Save and the Format line are disabled: a second
 // press cannot start a second render, and the format cannot change under the bytes being made.
 // A failure is said in the dialog, which stays open. Returns null when there is nothing to write.
+//
+// The maker is handed the PRESS (/pending 852): `still()` is the same sequence comparison that
+// drops a late result below, moved to where the work is, so a maker that takes pages one at a
+// time stops at the next page of a cancelled dialog and never uploads what nobody is waiting for
+// (measured: Cancel 2.8 s into a 200-page export was followed by 10.9 s of rendering and a 143 MB
+// upload). `page(n, of)` is where such a maker says how far it is.
 async function saveAsBytes() {
   const f = saveAsSelected();
   if (!f) return saveAsBlob;
@@ -8951,9 +8957,10 @@ async function saveAsBytes() {
   els.saveAsGo.disabled = true;
   els.saveAsFormat.disabled = true;
   els.saveAsStatus.textContent = 'Preparing…';
+  const press = { still: () => seq === saveAsSeq, page: (n, of) => { if (seq === saveAsSeq) saveAsPage(n, of); } };
   let made = null, failed = '';
   try {
-    made = await f.make();
+    made = await f.make(press);
   } catch (e) {
     failed = (e && e.message) || 'Could not prepare the file';
   }
@@ -8970,6 +8977,22 @@ async function saveAsBytes() {
   els.saveAsStatus.textContent = '';
   f.blob = made; // kept, so a retry after a refused write does not render again
   return made;
+}
+
+// saveAsPage writes how far a many-page maker has got: "Preparing… page 37 of 200". One page gets
+// no count — there is nothing to wait through. #saveAsStatus is a polite live region, and the
+// words "Preparing…" in it are announced once when the maker starts; the count goes in a child
+// that is `aria-hidden`, so it is seen and not spoken — two hundred pages are not two hundred
+// announcements. The end is announced by whoever clears or replaces the line.
+function saveAsPage(n, of) {
+  if (!(of > 1)) return;
+  let count = els.saveAsStatus.querySelector('span');
+  if (!count) {
+    count = document.createElement('span');
+    count.setAttribute('aria-hidden', 'true');
+    els.saveAsStatus.appendChild(count);
+  }
+  count.textContent = ` page ${n} of ${of}`;
 }
 
 function closeSaveAs() {
@@ -9568,13 +9591,24 @@ document.addEventListener('keydown', (e) => {
 // so a bare bakedBytes() here rasterises whichever document is active when this
 // runs. Every caller below has already awaited by the time it reaches this, which
 // is exactly when "the active view" stops meaning "the document the user acted on".
-async function renderFilledPages(scale, onlyPage, mime, quality, owner = view) {
+//
+// `press` is the Save dialog's, when the render runs behind it (saveAsBytes): asked before every
+// page, so a cancelled dialog stops the render at the next page, and told each page it starts.
+// A render that was stopped answers null, never a short list — half the pages are not the export.
+// Without one (flatten, reduce, the one-page callers) every page is rendered, as before.
+async function renderFilledPages(scale, onlyPage, mime, quality, owner = view, press = null) {
   const bytes = await bakedBytes(owner.docMeta && owner.docMeta.id, owner);
   const doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: bytes }).promise;
   const pages = [];
   const from = onlyPage || 1;
   const to = onlyPage || doc.numPages;
-  for (let n = from; n <= to; n++) pages.push(await renderPageBlob(doc, n, scale, null, mime, quality));
+  for (let n = from; n <= to; n++) {
+    if (press) {
+      if (!press.still()) return null;
+      press.page(n - from + 1, to - from + 1);
+    }
+    pages.push(await renderPageBlob(doc, n, scale, null, mime, quality));
+  }
   return pages;
 }
 
@@ -9626,9 +9660,12 @@ async function flattenRefusal(res, fallback) {
 // The owner IS the pin: the id addresses the request and the same record supplies the
 // bytes. Taking a bare `docId` while renderFilledPages read the active view was the
 // half-threaded shape — the request named A and carried B's pages.
-async function assembleBlob(format, owner = view) {
+// `press` is the Save dialog's (see renderFilledPages): a cancelled one gets no upload either — the
+// last page can finish after the Cancel, and the pictures of a 200-page document are ~143 MB.
+async function assembleBlob(format, owner = view, press = null) {
   const docId = owner.docMeta && owner.docMeta.id;
-  const pages = await renderFilledPages(2, undefined, undefined, undefined, owner);
+  const pages = await renderFilledPages(2, undefined, undefined, undefined, owner, press);
+  if (!pages || (press && !press.still())) return null;
   const form = new FormData();
   pages.forEach((p, i) => {
     form.append('image', p.blob, `page-${i + 1}.png`);
@@ -9949,9 +9986,9 @@ els.exportPagesBtn.onclick = () => {
         return blob;
       } },
     { label: 'Every page (ZIP)', name: exportName + '-pages.zip', ext: '.zip',
-      make: async () => {
+      make: async (press) => {
         stillOpen();
-        const blob = await assembleBlob('zip', owner);
+        const blob = await assembleBlob('zip', owner, press);
         if (!blob) throw new Error('Could not make the pictures');
         return blob;
       } },

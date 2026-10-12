@@ -19,6 +19,8 @@
 //   and a ZIP written under their own names) is tier 3's, `test/ui/filemenu.test.mjs`.
 // - Layout: that the Format line lines up with the name field, and focus rings.
 // - A real screen reader hearing "Preparing…". The live region's attributes are asserted, not speech.
+// - What a screen reader does with the page count: it is asserted to sit in an `aria-hidden` child
+//   of the live region, not that any reader stays quiet about it. And how long a real render takes.
 //
 // One boot per file — see boot.mjs.
 import test from 'node:test';
@@ -44,6 +46,7 @@ const h = await boot({
     // Each format answers bytes that NAME it, so "which bytes were written" is readable.
     '/api/table': () => tableAnswer || new Response('TABLE-AS-' + formatOf(), { status: 200 }),
     '/api/form-data': () => formAnswer || new Response('FORM-AS-' + formatOf(), { status: 200 }),
+    '/api/assemble': () => new Response('PICTURES', { status: 200 }),
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/write': async (opts) => {
       const f = opts.body;
@@ -413,4 +416,104 @@ test('a document closed with the dialog open is not exported — and neither is 
   assert.equal($('saveAsStatus').textContent, 'That document is no longer open');
   assert.equal($('saveAsModal').hidden, false);
   assert.equal(written.length, 0);
+});
+
+// ── A long render says how far it is, and stops when the dialog is cancelled (/pending 852) ──
+// jsdom cannot draw, so the page "renders" (the stub's opt-in) and the picture is held at toBlob —
+// the last await of each page — which makes the loop steppable one page at a time.
+function pageGate() {
+  const proto = h.window.HTMLCanvasElement.prototype;
+  const was = proto.toBlob;
+  const wasCtx = proto.getContext;
+  proto.getContext = () => null;     // jsdom's own logs "not implemented" once per page
+  const waiting = [];
+  let started = 0;
+  proto.toBlob = function (cb) { started++; waiting.push(() => cb(new h.window.Blob(['p']))); };
+  return {
+    started: () => started,
+    next: async () => { waiting.shift()(); await settle(); },
+    restore: () => { proto.toBlob = was; proto.getContext = wasCtx; },
+  };
+}
+async function everyPageOf(name, numPages) {
+  await open(name, { numPages, renders: true });
+  $('exportPagesBtn').click();
+  await settle();
+  await choose(1);
+}
+async function closeActive() {
+  await cancel();
+  doc.querySelector('#tabstrip .tab.active .tabclose').click();
+  await settle();
+}
+
+test('an every-page render counts its pages in the status, unspoken, and one page has no count', async () => {
+  const gate = pageGate();
+  try {
+    await everyPageOf('five.pdf', 5);
+    await save();
+    assert.equal(gate.started(), 1, 'stimulus: Save did not reach the first page');
+    assert.equal($('saveAsStatus').textContent, 'Preparing… page 1 of 5');
+    await gate.next();
+    assert.equal($('saveAsStatus').textContent, 'Preparing… page 2 of 5', 'the count did not follow the render');
+    const count = $('saveAsStatus').querySelector('span');
+    assert.equal(count.getAttribute('aria-hidden'), 'true', 'the count is spoken: a polite live region would announce every page');
+    assert.equal($('saveAsStatus').firstChild.textContent, 'Preparing…', 'the announced words changed with the count');
+    assert.equal($('saveAsStatus').querySelectorAll('span').length, 1, 'each page added a count instead of replacing it');
+    await closeActive();
+
+    await everyPageOf('one.pdf', 1);
+    const before = gate.started();
+    await save();
+    assert.equal(gate.started(), before + 1, 'stimulus: the one-page render did not start');
+    assert.equal($('saveAsStatus').textContent, 'Preparing…', 'a one-page render counted its page');
+    await closeActive();
+  } finally {
+    gate.restore();
+  }
+});
+
+test('cancelling an every-page render stops it at the next page and uploads nothing', async () => {
+  const gate = pageGate();
+  try {
+    await everyPageOf('long.pdf', 5);
+    const from = calls.length;
+    await save();
+    await gate.next();
+    assert.equal(gate.started(), 2, 'stimulus: the render is not on its second page');
+    $('saveAsCancel').click();
+    await settle();
+    await gate.next();                 // the page in flight finishes; the loop must not take another
+    await settle(30);
+    assert.equal(gate.started(), 2, 'the render went on to the next page after Cancel');
+    assert.equal(requests('/api/assemble', from).length, 0, 'a cancelled export was uploaded');
+    assert.equal($('saveAsStatus').textContent, '', 'the cancelled render wrote into the closed dialog');
+
+    // Cancel during the LAST page: the loop has no next page to stop at, so the upload must ask too.
+    $('exportPagesBtn').click();
+    await settle();
+    await choose(1);
+    await save();
+    for (let i = 0; i < 4; i++) await gate.next();
+    assert.equal($('saveAsStatus').textContent, 'Preparing… page 5 of 5', 'stimulus: the render is not on its last page');
+    $('saveAsCancel').click();
+    await settle();
+    await gate.next();
+    await settle(30);
+    assert.equal(requests('/api/assemble', from).length, 0, 'an export cancelled on its last page was uploaded');
+
+    // And the check costs an export nobody cancelled nothing: every page, one upload, one file.
+    written.length = 0;
+    $('exportPagesBtn').click();
+    await settle();
+    await choose(1);
+    await save();
+    for (let i = 0; i < 5; i++) await gate.next();
+    await settle(30);
+    assert.equal(requests('/api/assemble', from).length, 1, 'an uncancelled export was not uploaded exactly once');
+    assert.deepEqual(written.map((w) => [w.name, w.bytes]), [['long-pages.zip', 'PICTURES']]);
+    await closeActive();
+  } finally {
+    gate.restore();
+  }
 });
