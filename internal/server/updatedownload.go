@@ -169,6 +169,12 @@ func (d *downloadState) finish(status, problem string) {
 	defer d.mu.Unlock()
 	d.ev.Status = status
 	d.ev.Problem = problem
+	// Called, not merely dropped (/pending 628): on the exits that end without a cancel — done, a
+	// short read, a file in the way — the request's context was otherwise never released. A second
+	// call is harmless, so the exits that already cancelled lose nothing.
+	if d.cancel != nil {
+		d.cancel()
+	}
 	d.cancel = nil
 	d.changedLocked()
 }

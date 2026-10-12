@@ -133,4 +133,11 @@ func safeFetch(rawURL string, maxBytes int64, timeout time.Duration) ([]byte, er
 // errStatus is a non-200 HTTP status from a fetch.
 type errStatus int
 
-func (e errStatus) Error() string { return "unexpected status " + http.StatusText(int(e)) }
+// Error gives the number always, and the name when the code has one: `http.StatusText` is "" for a code outside
+// the registry, so a 520 or a 599 read "unexpected status " and nothing else (/pending 653).
+func (e errStatus) Error() string {
+	if text := http.StatusText(int(e)); text != "" {
+		return fmt.Sprintf("unexpected status %d %s", int(e), text)
+	}
+	return fmt.Sprintf("unexpected status %d", int(e))
+}

@@ -194,5 +194,18 @@ func managedInstall() bool {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	return strings.HasPrefix(exe, "/usr/")
+	return managedPath(runtime.GOOS, exe)
+}
+
+// managedPath is managedInstall's rule, with the system and the path passed in so it can be tested.
+//
+// **Linux only, and not `/usr/local/` (/pending 667).** The rule was "anything under /usr/", on any
+// system — so a macOS binary in /usr/local/bin was offered `nib_<ver>_<arch>.deb`, a package its
+// machine cannot install, and so was a Linux binary someone copied into /usr/local/bin, which is
+// where a package manager does NOT put things. Both are offered the plain binary now.
+func managedPath(goos, exe string) bool {
+	if goos != "linux" {
+		return false
+	}
+	return strings.HasPrefix(exe, "/usr/") && !strings.HasPrefix(exe, "/usr/local/")
 }

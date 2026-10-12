@@ -562,6 +562,16 @@ var historyVerify = sign.Verify
 // big doc.data onto redo while popping a small snapshot, so without the trim the total walks past
 // the ceiling with nothing evicting.
 //
+// **`ceremonyFreeze` is NOT asked here either, and this is that exemption named at the site
+// (/pending 628).** The step cannot move a document under a ceremony: convene commits through
+// `commitBarrier`, which clears both stacks, `installCeremonyResult` pushes to neither, and the
+// freeze then refuses every commit that could push — so a convened document's history is empty
+// and the `len(*from) == 0` branch below answers. The one way a record-bearing document has
+// history is a record the user put there through a commit of their own (an attachment shaped like
+// one), and there undo is the way back OUT of the freeze, which asking it here would close. **It
+// depends on convene using the barrier door**; `TestEveryMutatingRouteReachesTheCeremonyFreeze`
+// names the same condition.
+//
 // **`byteCapLocked` is NOT asked here, and that is ADR-008's named exemption** (ADR-009): the step
 // restores bytes this server already held and counted in ADR-003's pool, and refusing an undo
 // because the state it returns to is large would strand the user one step from a document they

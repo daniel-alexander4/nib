@@ -392,3 +392,14 @@ test('a search names the page it could not look across the line ends of, from ei
   assert.match(find, /No matches found[^\n]*wrapNote\(marks\.skipped\)/, 'a search that found nothing does not say which pages it could not fully search');
   assert.match(find, /toast\([^\n]*wrapNote\(marks\.skipped\)/, 'a search that marked matches does not say which pages it could not fully search');
 });
+
+// /pending 653: the memo was `buildTextRows._for` / `._rows`, so the last page's items and rows stayed reachable from
+// the function for as long as the window lived. The same array is still answered with the same rows.
+test('buildTextRows remembers a page only for as long as its items live', () => {
+  const items = [{ str: 'kept', x: 10, y: 20, w: 32, h: 10 }];
+  const rows = buildTextRows(items);
+  assert.equal(buildTextRows(items), rows, 'the same item array was grouped twice');
+  const held = Object.values(buildTextRows);
+  assert.ok(!held.includes(rows) && !held.includes(items), 'the function object holds the last page it was given');
+  assert.notEqual(buildTextRows(items.slice()), rows, 'a different array was answered with another array\'s rows');
+});

@@ -4,6 +4,9 @@
 // No app state, no pdf.js import; only the DOM canvas API (measureText / pixels).
 // Extracted from app.js so the detection logic can be exercised in isolation.
 
+// textRowsMemo is buildTextRows' memo: an item array → the rows built from it, held weakly.
+const textRowsMemo = new WeakMap();
+
 // buildTextRows groups text items into rows; per row it gives a reconstructed
 // string `s` with per-char x-centre `cx` and height `ch`, plus a `words` list
 // with pixel x-spans. Shared by the circle-a-choice detectors below.
@@ -22,14 +25,18 @@ export function buildTextRows(items) {
   // item list gets new rows. The returned rows are SHARED rather than fresh, which is
   // safe only because no caller mutates them — verified across all five, and the reason
   // this is a memo rather than a cache with a copy.
-  if (buildTextRows._for === items && items.length) return buildTextRows._rows;
+  //
+  // Held WEAKLY (/pending 653): the memo was two properties on this function, so the last page's
+  // items and rows stayed reachable for as long as the window lived — after the document that
+  // drew them was closed. A WeakMap entry goes when its item array does.
+  const memo = items.length ? textRowsMemo.get(items) : undefined;
+  if (memo) return memo;
   const rows = [];
   for (const it of items.slice().sort((a, b) => a.y - b.y)) {
     const row = rows.find((r) => Math.abs(r.y - it.y) <= Math.max(6, it.h * 0.6));
     if (row) row.items.push(it); else rows.push({ y: it.y, h: it.h, items: [it] });
   }
-  buildTextRows._for = items;
-  buildTextRows._rows = rows;
+  textRowsMemo.set(items, rows);
   const mctx = (buildTextRows._ctx ||= document.createElement('canvas').getContext('2d'));
   mctx.font = '16px sans-serif';
   for (const row of rows) {

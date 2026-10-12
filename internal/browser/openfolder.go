@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -14,7 +15,7 @@ import (
 // downloaded artifact to the desktop opener would ask the desktop to DO something with it, and on
 // a binary or a .deb that can mean run it or hand it to an installer — the act this whole feature
 // refuses, because nothing is published to verify the bytes against. The caller passes the
-// containing directory; this function has no way to express "open that file".
+// containing directory, and a path that is not a directory is refused before anything is run.
 //
 // **Not `tabOpener`, though it is the same neighbourhood.** That one is documented as "the OS
 // command that opens a URL in the default browser", and on Windows it is
@@ -22,6 +23,12 @@ import (
 // path. Windows wants `explorer` for a folder. Reusing the URL opener here would have worked on
 // Linux and macOS and been subtly wrong on the one platform nobody tests.
 func OpenFolder(dir string) error {
+	// Checked HERE, because the paragraph above claimed it and nothing made it so (/pending 653):
+	// "a folder, never a file" was a property of the one caller, and every opener below opens a
+	// file as readily as a folder.
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("could not open %s: not a folder", dir)
+	}
 	name, args := folderOpener(dir)
 	cmd := exec.Command(name, args...)
 	if err := cmd.Start(); err != nil {

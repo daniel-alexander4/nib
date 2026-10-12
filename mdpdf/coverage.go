@@ -57,7 +57,12 @@ func UnsupportedWith(text string, fonts []Font) []rune {
 // printable mirrors pdfcpu's core-font encoder (model.DecodeUTF8ToByte): a
 // rune survives if it fits in a byte, or if it is one of the CP1252
 // specials in the 0x80–0x9F band. Anything else becomes a space, so we
-// determine coverage by asking the encoder itself — no second table to drift.
+// determine coverage by asking the encoder itself for everything above a byte.
+//
+// The `r <= 0xFF` line below is NOT asked of the encoder: it restates the encoder's own first
+// test, so it is a second copy of that one rule (/pending 653). It also calls the C1 controls
+// U+0080–U+009F printable, as the encoder does — it writes them as the bytes 0x80–0x9F, which a
+// core font draws as CP1252's glyphs (U+0080 comes out as a euro sign), not as the rune typed.
 func printable(r rune) bool {
 	if r <= 0xFF {
 		return true
