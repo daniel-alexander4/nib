@@ -46,9 +46,11 @@ type TagElement struct {
 	// point at an element, not a measurement of its glyph boxes. A table, a row and a cell carry the ruled
 	// grid's own box instead, and a Figure the box its image is drawn in (ADR-122).
 	Rect [4]float64 `json:"rect"`
-	// PageBox is the page's MediaBox — llx, lly, urx, ury — so a client can place Rect on the page it
-	// renders. Page rotation and CropBox are not applied.
-	PageBox [4]float64 `json:"pageBox"`
+	// Place is Rect as fractions of the page AS DISPLAYED — left, top, right, bottom, origin top-left — through
+	// the page map's one conversion (ADR-088, `placeOnPage`). All zero for an element with no box. It is what a
+	// client places the element by: a viewer shows the crop box turned by `/Rotate`, so Rect cannot be placed
+	// against the MediaBox, and the `pageBox` that once invited that is gone (`/pending 653`).
+	Place [4]float64 `json:"place"`
 }
 
 // TagPageNote is a page whose layout the grouping reported, and why.
@@ -99,20 +101,21 @@ func ProposeTags(pdf []byte) (TagProposal, error) {
 		return TagProposal{}, err
 	}
 	out := TagProposal{Elements: []TagElement{}, Unsupported: []TagPageNote{}, NoText: append([]int{}, p.noText...)}
-	boxes := map[int][4]float64{}
+	spaces := map[int]displaySpace{}
 	var walked []pdfread.Page
 	if len(p.elements) > 0 {
 		walked = pdfread.Pages(ctx)
 	}
 	for i, el := range p.elements {
-		box, ok := boxes[el.page]
+		sp, ok := spaces[el.page]
 		if !ok {
-			box = mediaBoxOf(pageAt(ctx, walked, el.page))
-			boxes[el.page] = box
+			sp = newDisplaySpace(pageAt(ctx, walked, el.page))
+			spaces[el.page] = sp
 		}
+		rect := elementRect(el)
 		out.Elements = append(out.Elements, TagElement{
 			ID: i, Role: el.role, Page: el.page, Text: el.text, Marker: el.marker, List: el.list, Parent: el.parent,
-			Rect: elementRect(el), PageBox: box,
+			Rect: rect, Place: placeOnPage(sp, rect),
 		})
 	}
 	pages := make([]int, 0, len(p.unsupported))
@@ -237,8 +240,25 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 	return commitProposal(pdf, ordered, ignoredPages...)
 }
 
-// mediaBoxOf is the page's inherited /MediaBox, or zeros. The caller resolves the page (`pageAt`) — both callers
-// ask it once per page of the document (/pending 756).
+// placeOnPage is box — an element's extent in user space — as fractions of the displayed page, for a client
+// that outlines it there. It is the page map's conversion (`displaySpace.rect`, ADR-088) and nothing else: the
+// crop box, `/Rotate` and the top-left origin are applied in that one place. A box with no extent, or a page
+// with none, is all zero, which a client reads as "nothing to outline". It is not cut to the page: an element
+// partly outside the crop box is outlined where it is.
+func placeOnPage(sp displaySpace, box [4]float64) [4]float64 {
+	if !(box[2] > box[0] && box[3] > box[1]) || sp.w <= 0 || sp.h <= 0 {
+		return [4]float64{}
+	}
+	for _, v := range box {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return [4]float64{}
+		}
+	}
+	return [4]float64(sp.rect(box))
+}
+
+// mediaBoxOf is the page's inherited /MediaBox, or zeros. The caller resolves the page (`pageAt`); the displayed
+// page's box is `newDisplaySpace`'s to work out from it.
 func mediaBoxOf(pg pdfread.Page) [4]float64 {
 	attrs := pg.Attrs
 	if pg.Err != nil || attrs == nil || attrs.MediaBox == nil {

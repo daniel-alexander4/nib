@@ -19,14 +19,14 @@ const OPEN = {
   id: 'tags:1', name: 'doc.pdf', path: '/tmp/nib-harness/doc.pdf',
   canSave: true, canUndo: false, canRedo: false, signature: { state: 'unsigned' },
 };
-const BOX = [0, 0, 612, 792];
+const PLACE = [0.25, 0.125, 0.75, 0.375];
 const proposal = () => ({
   elements: [
-    { id: 0, role: 'H1', page: 1, text: 'A title', list: -1, rect: [72, 700, 300, 720], pageBox: BOX },
-    { id: 1, role: 'P', page: 1, text: 'An opening paragraph', list: -1, rect: [72, 650, 540, 690], pageBox: BOX },
-    { id: 2, role: 'LI', page: 1, text: '• first item', marker: '•', list: 0, rect: [72, 620, 200, 640], pageBox: BOX },
-    { id: 3, role: 'P', page: 1, text: 'A closing paragraph', list: -1, rect: [72, 590, 200, 610], pageBox: BOX },
-    { id: 4, role: 'P', page: 2, text: 'A paragraph on the second page', list: -1, rect: [72, 700, 300, 720], pageBox: BOX },
+    { id: 0, role: 'H1', page: 1, text: 'A title', list: -1, rect: [72, 700, 300, 720], place: PLACE },
+    { id: 1, role: 'P', page: 1, text: 'An opening paragraph', list: -1, rect: [72, 650, 540, 690], place: PLACE },
+    { id: 2, role: 'LI', page: 1, text: '• first item', marker: '•', list: 0, rect: [72, 620, 200, 640], place: PLACE },
+    { id: 3, role: 'P', page: 1, text: 'A closing paragraph', list: -1, rect: [72, 590, 200, 610], place: PLACE },
+    { id: 4, role: 'P', page: 2, text: 'A paragraph on the second page', list: -1, rect: [72, 700, 300, 720], place: PLACE },
   ],
   unsupported: [{ page: 2, reason: 'text sits side by side on one baseline' }],
   noText: [3],
@@ -36,15 +36,15 @@ const proposal = () => ({
 // naming its parent. One cell is empty.
 const tableProposal = () => ({
   elements: [
-    { id: 0, role: 'P', page: 1, text: 'Above the table', list: -1, parent: -1, rect: [72, 730, 300, 745], pageBox: BOX },
-    { id: 1, role: 'Table', page: 1, text: 'Name Qty Apple', list: -1, parent: -1, rect: [100, 640, 400, 700], pageBox: BOX },
-    { id: 2, role: 'TR', page: 1, text: 'Name Qty', list: -1, parent: 1, rect: [100, 670, 400, 700], pageBox: BOX },
-    { id: 3, role: 'TH', page: 1, text: 'Name', list: -1, parent: 2, rect: [100, 670, 250, 700], pageBox: BOX },
-    { id: 4, role: 'TH', page: 1, text: 'Qty', list: -1, parent: 2, rect: [250, 670, 400, 700], pageBox: BOX },
-    { id: 5, role: 'TR', page: 1, text: 'Apple', list: -1, parent: 1, rect: [100, 640, 400, 670], pageBox: BOX },
-    { id: 6, role: 'TD', page: 1, text: 'Apple', list: -1, parent: 5, rect: [100, 640, 250, 670], pageBox: BOX },
-    { id: 7, role: 'TD', page: 1, text: '', list: -1, parent: 5, rect: [250, 640, 400, 670], pageBox: BOX },
-    { id: 8, role: 'P', page: 1, text: 'Below the table', list: -1, parent: -1, rect: [72, 600, 300, 615], pageBox: BOX },
+    { id: 0, role: 'P', page: 1, text: 'Above the table', list: -1, parent: -1, rect: [72, 730, 300, 745], place: PLACE },
+    { id: 1, role: 'Table', page: 1, text: 'Name Qty Apple', list: -1, parent: -1, rect: [100, 640, 400, 700], place: PLACE },
+    { id: 2, role: 'TR', page: 1, text: 'Name Qty', list: -1, parent: 1, rect: [100, 670, 400, 700], place: PLACE },
+    { id: 3, role: 'TH', page: 1, text: 'Name', list: -1, parent: 2, rect: [100, 670, 250, 700], place: PLACE },
+    { id: 4, role: 'TH', page: 1, text: 'Qty', list: -1, parent: 2, rect: [250, 670, 400, 700], place: PLACE },
+    { id: 5, role: 'TR', page: 1, text: 'Apple', list: -1, parent: 1, rect: [100, 640, 400, 670], place: PLACE },
+    { id: 6, role: 'TD', page: 1, text: 'Apple', list: -1, parent: 5, rect: [100, 640, 250, 670], place: PLACE },
+    { id: 7, role: 'TD', page: 1, text: '', list: -1, parent: 5, rect: [250, 640, 400, 670], place: PLACE },
+    { id: 8, role: 'P', page: 1, text: 'Below the table', list: -1, parent: -1, rect: [72, 600, 300, 615], place: PLACE },
   ],
   unsupported: [],
   noText: [],
@@ -52,10 +52,10 @@ const tableProposal = () => ({
 // A proposal with two figures in it (ADR-122): a Figure has no text, and its rect is its image's box.
 const figureProposal = () => ({
   elements: [
-    { id: 0, role: 'P', page: 1, text: 'Above the picture', list: -1, parent: -1, rect: [72, 730, 300, 745], pageBox: BOX },
-    { id: 1, role: 'Figure', page: 1, text: '', list: -1, parent: -1, rect: [100, 500, 300, 700], pageBox: BOX },
-    { id: 2, role: 'P', page: 1, text: 'Between the pictures', list: -1, parent: -1, rect: [72, 470, 300, 485], pageBox: BOX },
-    { id: 3, role: 'Figure', page: 2, text: '', list: -1, parent: -1, rect: [100, 300, 300, 450], pageBox: BOX },
+    { id: 0, role: 'P', page: 1, text: 'Above the picture', list: -1, parent: -1, rect: [72, 730, 300, 745], place: PLACE },
+    { id: 1, role: 'Figure', page: 1, text: '', list: -1, parent: -1, rect: [100, 500, 300, 700], place: PLACE },
+    { id: 2, role: 'P', page: 1, text: 'Between the pictures', list: -1, parent: -1, rect: [72, 470, 300, 485], place: PLACE },
+    { id: 3, role: 'Figure', page: 2, text: '', list: -1, parent: -1, rect: [100, 300, 300, 450], place: PLACE },
   ],
   unsupported: [],
   noText: [],

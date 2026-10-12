@@ -6068,7 +6068,7 @@ const STRUCT_TYPES = [
   'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link', 'Annot', 'Ruby', 'RB', 'RT', 'RP',
   'Warichu', 'WT', 'WP', 'Figure', 'Formula', 'Form',
 ];
-let tagsReview = null; // [{ id, role, ignore, text, alt, page, rect, pageBox, marker, list, parent }]
+let tagsReview = null; // [{ id, role, ignore, text, alt, page, rect, place, marker, list, parent }]
 let tagsProposal = null;
 // The document the review was opened for, pinned at entry (ADR-001): both requests name it.
 let tagsOwner = null;
@@ -6077,24 +6077,24 @@ function clearTagOutline() {
   document.querySelectorAll('.tag-outline').forEach((el) => el.remove());
 }
 
-// showTagOutline outlines one element on its page, from the proposal's PDF-space rect and the page's
-// MediaBox. Percentages of the page div, so zoom does not move it off its text.
+// showTagOutline outlines one element on its page, from `place`: the element's box as fractions of the page
+// as displayed (crop box, /Rotate, top-left — ADR-088), which the server works out. Never from `rect`: that is
+// PDF user space, and a cropped or turned page is not displayed from it.
+// Percentages of the page div, so zoom does not move it off its text.
 function showTagOutline(row, owner = tagsOwner || view) {
   clearTagOutline();
-  if (!owner.pdfDocument || !owner.viewer || !row.pageBox) return;
-  const [llx, lly, urx, ury] = row.pageBox;
-  const w = urx - llx, h = ury - lly;
-  if (!(w > 0 && h > 0)) return;
+  if (!owner.pdfDocument || !owner.viewer || !row.place) return;
+  const [left, top, right, bottom] = row.place;
+  if (!(right > left && bottom > top)) return;
   owner.viewer.currentPageNumber = row.page;
   const pv = owner.viewer.getPageView(row.page - 1);
   if (!pv || !pv.div) return;
-  const [x0, y0, x1, y1] = row.rect;
   const box = document.createElement('div');
   box.className = 'tag-outline';
-  box.style.left = `${((x0 - llx) / w) * 100}%`;
-  box.style.top = `${((ury - y1) / h) * 100}%`;
-  box.style.width = `${((x1 - x0) / w) * 100}%`;
-  box.style.height = `${((y1 - y0) / h) * 100}%`;
+  box.style.left = `${left * 100}%`;
+  box.style.top = `${top * 100}%`;
+  box.style.width = `${(right - left) * 100}%`;
+  box.style.height = `${(bottom - top) * 100}%`;
   pv.div.appendChild(box);
 }
 
@@ -6279,7 +6279,7 @@ async function openTags() {
     tagsProposal = await res.json();
     tagsReview = (tagsProposal.elements || []).map((e) => ({
       id: e.id, role: e.role, ignore: false, text: e.text, alt: '', page: e.page,
-      rect: e.rect, pageBox: e.pageBox, marker: e.marker || '', list: e.list, parent: e.parent ?? -1,
+      rect: e.rect, place: e.place, marker: e.marker || '', list: e.list, parent: e.parent ?? -1,
     }));
     renderTagsReview();
   } catch (e) {
@@ -7092,16 +7092,14 @@ function drawReadingOrder() {
   if (!readingOrderOn || !tagTreeShowing() || tagTreeView !== view || !view.viewer) return;
   readingOrderEntries(tagTreeElements).forEach((e, i) => {
     const pv = view.viewer.getPageView?.(e.page - 1);
-    if (!pv || !pv.div || !e.pageBox) return;
-    const [llx, lly, urx, ury] = e.pageBox;
-    const w = urx - llx, h = ury - lly;
-    if (!(w > 0 && h > 0)) return;
+    // Placed by `place` — fractions of the page as displayed (ADR-088) — as the outline is.
+    if (!pv || !pv.div || !e.place || !(e.place[2] > e.place[0] && e.place[3] > e.place[1])) return;
     const badge = document.createElement('div');
     badge.className = 'tag-order';
     badge.setAttribute('aria-hidden', 'true');
     badge.textContent = String(i + 1);
-    badge.style.left = `${((e.rect[0] - llx) / w) * 100}%`;
-    badge.style.top = `${((ury - e.rect[3]) / h) * 100}%`;
+    badge.style.left = `${e.place[0] * 100}%`;
+    badge.style.top = `${e.place[1] * 100}%`;
     pv.div.appendChild(badge);
   });
 }

@@ -258,8 +258,8 @@ func TestAnElementCarriesTheBoxOfWhatItDraws(t *testing.T) {
 				t.Errorf("the figure draws no text and reads a box %v", e.rect)
 			}
 		case squeeze(e.text) != "":
-			if !e.hasRect || !inside(e.rect, e.pageBox) {
-				t.Errorf("a %s drawing %q reads box %v (present %v) on page box %v", e.standard, e.text, e.rect, e.hasRect, e.pageBox)
+			if !e.hasRect || !inside(e.place, [4]float64{0, 0, 1, 1}) {
+				t.Errorf("a %s drawing %q reads box %v (present %v), placed at %v on its displayed page", e.standard, e.text, e.rect, e.hasRect, e.place)
 			}
 		}
 		if e.standard == "Table" {
@@ -293,7 +293,7 @@ func TestAnElementCarriesTheBoxOfWhatItDraws(t *testing.T) {
 	}
 	for i, e := range tree.Elements {
 		ve := v.elements[i]
-		if e.Kids == nil || e.ID != ve.id || e.Parent != ve.parent || e.Rect != ve.rect || e.PageBox != ve.pageBox || e.Standard != ve.standard || e.Scope != ve.scope || e.Alt != ve.alt {
+		if e.Kids == nil || e.ID != ve.id || e.Parent != ve.parent || e.Rect != ve.rect || e.Place != ve.place || e.Standard != ve.standard || e.Scope != ve.scope || e.Alt != ve.alt {
 			t.Errorf("element %d reads %+v, the view %+v", i, e, ve)
 		}
 	}

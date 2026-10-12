@@ -112,8 +112,8 @@ func TestTheProposeRouteReadsAndChangesNothing(t *testing.T) {
 	var roles []string
 	for _, e := range prop.Elements {
 		roles = append(roles, e.Role)
-		if e.PageBox[2]-e.PageBox[0] <= 0 || e.Page < 1 {
-			t.Errorf("element %d does not say where it sits: page %d box %v", e.ID, e.Page, e.PageBox)
+		if e.Place[2]-e.Place[0] <= 0 || e.Page < 1 {
+			t.Errorf("element %d does not say where it sits: page %d box %v", e.ID, e.Page, e.Place)
 		}
 	}
 	joined := strings.Join(roles, " ")
@@ -367,9 +367,9 @@ func TestTheTreeRouteReadsTheTreeAndChangesNothing(t *testing.T) {
 			}
 		}
 		if e.Text != "" {
-			r, b := e.Rect, e.PageBox
+			r, b := e.Place, [4]float64{0, 0, 1, 1}
 			if !(r[0] < r[2] && r[1] < r[3] && r[0] >= b[0] && r[2] <= b[2] && r[1] >= b[1] && r[3] <= b[3]) {
-				t.Errorf("element %d (%s %q) reads box %v on page box %v", i, e.Standard, e.Text, r, b)
+				t.Errorf("element %d (%s %q) is placed at %v, not on its displayed page %v", i, e.Standard, e.Text, r, b)
 			}
 		}
 	}

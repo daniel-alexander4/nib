@@ -444,7 +444,7 @@ func eachParentTreeClaim(ctx *model.Context, fn func(key int, set func(int))) {
 			// appearance stream was dropped from `/Nums` while the stream went on naming it, and
 			// `structureCarriedCompletely` reported the output clean.
 			for _, ap := range []string{"N", "R", "D"} {
-				eachFormXObject(ctx, types.Dict{"XObject": apStates(xt, ad, ap)}, seen, 0,
+				eachFormXObject(ctx, types.Dict{"XObject": apStates(xt, ad, ap)}, seen,
 					func(_ int, sd *types.StreamDict) {
 						claim(sd.Dict, "StructParents", fn)
 						claim(sd.Dict, "StructParent", fn)
@@ -455,7 +455,7 @@ func eachParentTreeClaim(ctx *model.Context, fn func(key int, set func(int))) {
 		if res == nil {
 			continue
 		}
-		eachFormXObject(ctx, res, seen, 0, func(_ int, sd *types.StreamDict) {
+		eachFormXObject(ctx, res, seen, func(_ int, sd *types.StreamDict) {
 			claim(sd.Dict, "StructParents", fn)
 			claim(sd.Dict, "StructParent", fn)
 		})

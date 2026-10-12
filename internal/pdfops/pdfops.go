@@ -183,9 +183,9 @@ func subsetConf() *model.Configuration {
 //
 // **The ratio is still climbing past that range.** Measured further by the slice's own review: 291
 // pages 699 ms → 2.84 s (4.1×), 582 pages 1.81 s → 8.89 s (**4.9×**), the gate ~half of it. That is
-// the O(pages²) `ctx.PageDict` shape, and making the gate one page sweep instead of three is
-// `/pending 530`. Absolute times vary two-to-fourfold with machine load; the ratios and the byte
-// growth are what reproduce.
+// the O(pages²) `ctx.PageDict` shape these figures were measured with; the gate has since been made one page
+// sweep instead of three (`/pending 530`, `scanPages`), and they were not re-measured after it. Absolute
+// times vary two-to-fourfold with machine load; the ratios and the byte growth are what reproduce.
 func subsetCarrying(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
 	carried := false
 	out, err := rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {

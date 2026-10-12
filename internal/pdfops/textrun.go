@@ -426,12 +426,12 @@ func (f *runFont) codesFor(text string) [][]byte {
 	return f.drawing[text]
 }
 
-func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
+func loadRunFont(xt *model.XRefTable, obj types.Object, shared ...*formWalkBudget) *runFont {
 	d, err := xt.DereferenceDict(obj)
 	if err != nil || d == nil {
 		return nil
 	}
-	f := &runFont{widths: readFontWidths(xt, d), splittable: true, ink: inkSourceFor(xt, d)}
+	f := &runFont{widths: readFontWidths(xt, d, shared...), splittable: true, ink: inkSourceFor(xt, d)}
 	if bf := d.NameEntry("BaseFont"); bf != nil {
 		f.baseFont = *bf
 	}
@@ -1447,7 +1447,7 @@ func (w *runWalker) fontFor(res types.Dict, name string) *runFont {
 		return f
 	}
 	w.fontLoads++
-	f := loadRunFont(w.xt, obj)
+	f := loadRunFont(w.xt, obj, w.budget)
 	w.fonts[key] = f
 	return f
 }

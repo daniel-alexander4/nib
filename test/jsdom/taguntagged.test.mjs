@@ -23,9 +23,9 @@ const OPEN = {
   id: 'untagged:1', name: 'doc.pdf', path: '/tmp/nib-harness/doc.pdf',
   canSave: true, canUndo: false, canRedo: false, signature: { state: 'unsigned' },
 };
-const BOX = [0, 0, 612, 792];
+const PLACE = [0.25, 0.125, 0.75, 0.375];
 const el = (id, parent, standard, text, kids, extra = {}) => ({
-  id, parent, kind: standard, standard, page: 1, text, alt: '', hasAlt: false, scope: '', kids, rect: [72, 600, 300, 720], pageBox: BOX, ...extra,
+  id, parent, kind: standard, standard, page: 1, text, alt: '', hasAlt: false, scope: '', kids, rect: [72, 600, 300, 720], place: PLACE, ...extra,
 });
 const baseTree = () => ({
   tagged: true,

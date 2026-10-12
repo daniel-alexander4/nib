@@ -280,7 +280,7 @@ func TestTheCarryWritesMCRKidsNamingTheForm(t *testing.T) {
 		if e != nil || res == nil {
 			continue
 		}
-		eachFormXObject(ctx, res, seen, 0, func(nr int, sd *types.StreamDict) { forms[nr] = true })
+		eachFormXObject(ctx, res, seen, func(nr int, sd *types.StreamDict) { forms[nr] = true })
 	}
 	if len(forms) < 2 {
 		t.Fatalf("the n-up left %d form XObject(s); the carry needs one per source page", len(forms))

@@ -61,7 +61,7 @@ func distinctForms(t *testing.T, pdf []byte) (forms, shared int) {
 		if rerr != nil || res == nil {
 			continue
 		}
-		eachFormXObject(ctx, res, seen, 0, func(nr int, sd *types.StreamDict) { forms++ })
+		eachFormXObject(ctx, res, seen, func(nr int, sd *types.StreamDict) { forms++ })
 	}
 	draws, derr := formDrawCounts(ctx)
 	if derr != nil {

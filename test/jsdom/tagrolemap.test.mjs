@@ -23,10 +23,10 @@ const OPEN = {
   id: 'roles:1', name: 'doc.pdf', path: '/tmp/nib-harness/doc.pdf',
   canSave: true, canUndo: false, canRedo: false, signature: { state: 'unsigned' },
 };
-const BOX = [0, 0, 612, 792];
+const PLACE = [0.25, 0.125, 0.75, 0.375];
 const el = (id, parent, kind, standard, text, kids) => ({
   id, parent, kind, standard, page: 1, text, alt: '', hasAlt: false, scope: '', kids,
-  colSpan: 1, rowSpan: 1, headers: [], rect: [72, 600, 300, 720], pageBox: BOX,
+  colSpan: 1, rowSpan: 1, headers: [], rect: [72, 600, 300, 720], place: PLACE,
 });
 const baseTree = () => ({
   tagged: true, unaddressable: 0,
