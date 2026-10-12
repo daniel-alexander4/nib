@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -24,8 +25,10 @@ import (
 // **What is scanned is what a person reads**, and only that: the README, the user-facing docs, the
 // page's markup (HTML comments stripped), `web/app.js`'s string literals (comments stripped, so the
 // many code comments that DISCUSS conformance are not claims), and every string literal in non-test Go
-// under `internal/` and `cmd/` — the CLI's help and output, the server's responses, and the refusal
-// and `Why` text the checker hands both. Struct tags are skipped: a wire key is read by code, never
+// under `internal/`, `cmd/` and `mdpdf/` — the CLI's help and output, the server's responses, and the
+// refusal and `Why` text the checker hands both. Literals joined by `+` are read as the one string they
+// print, in Go and in the page's script. **Not seen: a sentence assembled from a constant or a variable**
+// — the scan reads literals, not values. Struct tags are skipped: a wire key is read by code, never
 // printed (the report's own flag is `allCheckedPass`, renamed from `conformant` by /pending 765 part 4).
 // ADRs, plans and `docs/red-proofs.md` are not scanned: they are where the rule is argued, so they must
 // be free to name what it forbids.
@@ -187,7 +190,9 @@ func conformanceClaimHits(t *testing.T) []claimHit {
 		scan("web/app.js", strings.Join(strings.Fields(lit), " "))
 	}
 	fset := token.NewFileSet()
-	for _, root := range []string{"internal", "cmd"} {
+	// `mdpdf` is a root package, outside `internal/`, and its refusals are printed by the CLI and
+	// the server like any other (/pending 777).
+	for _, root := range []string{"internal", "cmd", "mdpdf"} {
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -199,10 +204,36 @@ func conformanceClaimHits(t *testing.T) []claimHit {
 			if perr != nil {
 				return perr
 			}
-			ast.Inspect(f, func(n ast.Node) bool {
+			var visit func(n ast.Node) bool
+			visit = func(n ast.Node) bool {
 				switch n := n.(type) {
 				case *ast.Field:
 					// A field's tag is a wire key, not prose; its type holds no user-facing literal.
+					return false
+				case *ast.BinaryExpr:
+					// A sentence written across `+` is read as the ONE string it prints (/pending 777):
+					// read a literal at a time, "…is PDF/UA compl" + "iant" held the word in neither.
+					// Literals that sit side by side are joined; anything else between two of them is
+					// a value this scan cannot know, so it ends the run and is walked for its own.
+					if n.Op != token.ADD {
+						return true
+					}
+					var run []string
+					flush := func() {
+						if len(run) > 0 {
+							scan(filepath.ToSlash(path), strings.Join(run, ""))
+							run = nil
+						}
+					}
+					for _, operand := range addOperands(n) {
+						if lit, ok := operand.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							run = append(run, goLiteralText(lit))
+							continue
+						}
+						flush()
+						ast.Inspect(operand, visit)
+					}
+					flush()
 					return false
 				case *ast.BasicLit:
 					if n.Kind == token.STRING {
@@ -210,7 +241,8 @@ func conformanceClaimHits(t *testing.T) []claimHit {
 					}
 				}
 				return true
-			})
+			}
+			ast.Inspect(f, visit)
 			return nil
 		})
 		if err != nil {
@@ -222,18 +254,53 @@ func conformanceClaimHits(t *testing.T) []claimHit {
 }
 
 // jsStringLiterals returns the bodies of every quoted and template literal in comment-stripped source.
+// Literals joined by nothing but `+` come back as the one string they make (/pending 777), for the
+// reason the Go walk folds them.
 func jsStringLiterals(s string) []string {
+	quote := func(i int) bool { return i < len(s) && (s[i] == '"' || s[i] == '\'' || s[i] == '`') }
 	var out []string
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c != '"' && c != '\'' && c != '`' {
+		if !quote(i) {
 			continue
 		}
 		j := skipJSString(s, i)
-		out = append(out, s[i+1:j])
+		body := s[i+1 : j]
+		for {
+			k := skipJSSpace(s, j+1)
+			if k >= len(s) || s[k] != '+' {
+				break
+			}
+			if k = skipJSSpace(s, k+1); !quote(k) {
+				break
+			}
+			j = skipJSString(s, k)
+			body += s[k+1 : j]
+		}
+		out = append(out, body)
 		i = j
 	}
 	return out
+}
+
+// addOperands flattens a chain of `+` into its operands, left to right, through parentheses.
+func addOperands(e ast.Expr) []ast.Expr {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return addOperands(x.X)
+	case *ast.BinaryExpr:
+		if x.Op == token.ADD {
+			return append(addOperands(x.X), addOperands(x.Y)...)
+		}
+	}
+	return []ast.Expr{e}
+}
+
+// goLiteralText is the string a literal denotes, or its source text where that cannot be read.
+func goLiteralText(lit *ast.BasicLit) string {
+	if v, err := strconv.Unquote(lit.Value); err == nil {
+		return v
+	}
+	return lit.Value
 }
 
 func clip(s string) string {
