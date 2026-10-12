@@ -104,7 +104,7 @@ func hyphenEvidence(ctx *model.Context, layout pageLayout, pageNr int) map[strin
 // its tail opening the next ({-1, -1}: a break exists and cannot be followed, so any re-set refuses). words is one item
 // per new word; the result may be shorter.
 func rejoinBroken(ctx *model.Context, layout pageLayout, pageNr int, lines [][]reflowWord, words []emitWord, al wordAlignment,
-	oldWord []reflowWord, oldAt [][2]int) (out []emitWord, unsure [][2]int) {
+	oldWord []reflowWord, oldAt [][2]int, lend func(look glyphLook, th float64, a, b []byte) float64) (out []emitWord, unsure [][2]int) {
 	// breakAt reports whether new word ni is the head of a break whose tail is new word ni+1.
 	breakAt := func(ni int) (oi, wi int, soft, ok bool) {
 		oi, ok1 := al.kept[ni]
@@ -168,9 +168,16 @@ func rejoinBroken(ctx *model.Context, layout pageLayout, pageNr int, lines [][]r
 		}
 		joined.looks = append(append(joined.looks, hlooks...), t.looks...)
 		joined.codes = append(append(joined.codes, hcodes...), t.codes...)
-		joined.kerns = append(append(append(joined.kerns, hkerns...), 0), t.kerns...)
+		// **The seam takes the kern the page draws for its pair**, as a typed word's pairs do (`/pending 798`): the two
+		// glyphs were never drawn side by side, so there is no kern of their own to keep, and 0 set the rejoined word
+		// looser than the same word typed. Only where both glyphs are in one look — the table is a face's.
+		seam := 0.0
+		if n := len(hcodes); n > 0 && len(t.codes) > 0 && hlooks[n-1] == t.looks[0] {
+			seam = lend(t.looks[0], t.spacing[0].th, hcodes[n-1], t.codes[0])
+		}
+		joined.kerns = append(append(append(joined.kerns, hkerns...), seam), t.kerns...)
 		joined.spacing = append(append(joined.spacing, hspacing...), t.spacing...)
-		joined.width = hwidth + t.width
+		joined.width = hwidth + seam + t.width
 		joined.broken = &[2]emitWord{h, t}
 		joined.keepFrom = oi - wi + 1 // the oldIdx of the first word of the line the break ended
 		out = append(out, joined)

@@ -173,6 +173,15 @@ func TestARefusalBetweenTheLinesNamesWhatIsThere(t *testing.T) {
 			if _, cause := reflowed(t, pdf, 0, edit); cause != c.want {
 				t.Errorf("fell back on %q, want %q", cause, c.want)
 			}
+			// And the dialog's read says so before anything is typed (/pending 792 W3): the cause depends on the page
+			// alone, and the paragraph was offered for an edit that could only be refused.
+			paras, err := Paragraphs(pdf, 1)
+			if err != nil || len(paras) == 0 {
+				t.Fatalf("Paragraphs: %d paragraph(s), err=%v", len(paras), err)
+			}
+			if paras[0].Refusal != c.want {
+				t.Errorf("the paragraph list gives the refusal %q, want %q — what the rewrite answers whatever is typed", paras[0].Refusal, c.want)
+			}
 		})
 	}
 }

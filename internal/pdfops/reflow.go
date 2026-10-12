@@ -1185,7 +1185,17 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		return code, w0, ""
 	}
-	var kerns pageKerns // read on the first typed word: an edit that types none pays nothing for it
+	var kerns pageKerns // read on the first pair asked: an edit that types no word and rejoins none pays nothing for it
+	// lend is the kern before glyph b after glyph a set in look under horizontal scaling th, in user space: the kern the
+	// page draws for the pair, where it draws it one way (P08.S05). Keyed as the table is (`kernDraws`: the run's size
+	// across its baseline), so a matrix stretched along the line still finds its pairs (the P08 phase-close review, W1).
+	// The ONE asking of the page's table: a typed word's pairs and a rejoined word's seam (`/pending 798`).
+	lend := func(look glyphLook, th float64, a, b []byte) float64 {
+		if kerns == nil {
+			kerns = kernsOf(layout)
+		}
+		return -kerns.lend(look.face, look.tfSize*first.size/first.state.tfSize, a, b) / 1000 * look.tfSize * th * first.state.scale
+	}
 	var words []emitWord
 	edited := editWords(text)
 	al := alignWords(oldText, edited)
@@ -1228,13 +1238,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			}
 			ew.width += (w0/1000*u.tfSize + sp.tc) * sp.th * first.state.scale
 			if n := len(ew.codes); n > 0 { // by code, not by the string's byte offset: a letter can take several bytes
-				if kerns == nil {
-					kerns = kernsOf(layout)
-				}
-				// The kern the page draws for this pair, where it draws it one way (P08.S05), under this word's scaling.
-				// Keyed as the table is (`kernDraws`: the run's size across its baseline), so a matrix stretched along the
-				// line still finds its pairs (the P08 phase-close review, W1).
-				k := -kerns.lend(u.face, u.tfSize*first.size/first.state.tfSize, ew.codes[n-1], code) / 1000 * u.tfSize * sp.th * first.state.scale
+				k := lend(u, sp.th, ew.codes[n-1], code)
 				ew.kerns = append(ew.kerns, k)
 				ew.width += k
 			}
@@ -1245,7 +1249,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		words = append(words, ew)
 	}
 	// A word the producer hyphenated across a line end, both halves kept by the edit, rejoins (P08.S07).
-	words, unsureBreaks := rejoinBroken(ctx, layout, pageNr, lines, words, al, oldWord, oldAt)
+	words, unsureBreaks := rejoinBroken(ctx, layout, pageNr, lines, words, al, oldWord, oldAt, lend)
 	for i := range words {
 		words[i].seq = i + 1
 	}
@@ -1391,65 +1395,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	if err != nil {
 		return reflowOutcome{}, err
 	}
-	spans := make([]opSpan, len(runs))
-	for i, r := range runs {
-		spans[i] = r.span
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	// A producer that shows each space as its own `( ) Tj` draws it between the words; no line holds it (grouping drops a
-	// blank run), so it is the paragraph's to delete with it (P08.S02, /pending 732). Only a blank between the paragraph's
-	// own first and last show, or straight after its last with nothing but text state between (Acrobat ends a paragraph on
-	// one: left in place, it is a show relying on where the deleted text ended) — one elsewhere may belong to whatever is
-	// drawn there — and only one in the page's own stream, since a form's offsets index another stream.
-	lo, hi := spans[0].start, spans[len(spans)-1].end
-	// spaceCodes is every code the paragraph's own lines draw as a space, in each face: a blank show is deleted only if every
-	// code it draws is the single-byte 32 — the code PDF itself treats as the word space — or one of these. Decoding to
-	// white space is no promise of a blank glyph: a ToUnicode can map a check mark to U+0020.
-	spaceCodes := map[*runFont]map[string]bool{}
-	for _, r := range runs {
-		for _, g := range r.glyphs {
-			if g.text == " " {
-				if spaceCodes[r.face] == nil {
-					spaceCodes[r.face] = map[string]bool{}
-				}
-				spaceCodes[r.face][string(g.code)] = true
-			}
-		}
-	}
-	drawsOnlySpaces := func(r textRun) bool {
-		if !r.decoded || len(r.glyphs) == 0 || len(r.glyphs) != r.codes {
-			return false
-		}
-		for _, g := range r.glyphs {
-			if !(len(g.code) == 1 && g.code[0] == ' ') && !spaceCodes[r.face][string(g.code)] {
-				return false
-			}
-		}
-		return true
-	}
-	var after []opSpan
-	for _, r := range paragraphRunsWithBlanks(layout, pi)[len(runs):] {
-		switch {
-		// A run no line holds is not always a space: a glyph that decodes to nothing or to white space can be ink (a
-		// Dingbats check mark), and a space in a clipping mode cuts what follows (`text-clips`, as the paragraph's own).
-		case r.inForm || !drawsOnlySpaces(r) || clipMode(r.state.tr):
-		case r.span.start >= lo && r.span.end <= hi:
-			spans = append(spans, r.span)
-		case r.span.start >= hi:
-			after = append(after, r.span)
-		}
-	}
-	sort.Slice(after, func(i, j int) bool { return after[i].start < after[j].start })
-	for _, b := range after {
-		// A trailing `'` or `"` moves to a new line and `"` sets the spacing everything after it is drawn in: deleted, the
-		// restore (the paragraph's own last state) would undo it. Only a plain `Tj`/`TJ` ends a paragraph.
-		if op := showOperator(src[b.start:b.end]); (op != "Tj" && op != "TJ") || !onlyTextState(src[hi:b.start]) {
-			break
-		}
-		spans, hi = append(spans, b), b.end
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	if c := contentAround(src, spans); c != "" {
+	spans := paragraphSpans(src, layout, pi, runs)
+	if c := contentAround(src, contentstream.Tokenize(src), spans); c != "" {
 		return reflowOutcome{cause: c}, nil
 	}
 	last := runs[0]
@@ -1660,6 +1607,86 @@ func anchorXs(l pageLayout, region flowRegion) [2]float64 {
 	return [2]float64{region.x0, region.x1}
 }
 
+// paragraphSpans is what a rewrite of paragraph pi deletes from the page's content src: the spans of its runs' show
+// operators and of the blank shows that are its to delete with them, sorted. It depends on the page alone, never on what
+// is typed, so the dialog's read asks it too (`paragraphContentRefusal`, `/pending 792` W3).
+func paragraphSpans(src []byte, layout pageLayout, pi int, runs []textRun) []opSpan {
+	spans := make([]opSpan, len(runs))
+	for i, r := range runs {
+		spans[i] = r.span
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	// A producer that shows each space as its own `( ) Tj` draws it between the words; no line holds it (grouping drops a
+	// blank run), so it is the paragraph's to delete with it (P08.S02, /pending 732). Only a blank between the paragraph's
+	// own first and last show, or straight after its last with nothing but text state between (Acrobat ends a paragraph on
+	// one: left in place, it is a show relying on where the deleted text ended) — one elsewhere may belong to whatever is
+	// drawn there — and only one in the page's own stream, since a form's offsets index another stream.
+	lo, hi := spans[0].start, spans[len(spans)-1].end
+	// spaceCodes is every code the paragraph's own lines draw as a space, in each face: a blank show is deleted only if every
+	// code it draws is the single-byte 32 — the code PDF itself treats as the word space — or one of these. Decoding to
+	// white space is no promise of a blank glyph: a ToUnicode can map a check mark to U+0020.
+	spaceCodes := map[*runFont]map[string]bool{}
+	for _, r := range runs {
+		for _, g := range r.glyphs {
+			if g.text == " " {
+				if spaceCodes[r.face] == nil {
+					spaceCodes[r.face] = map[string]bool{}
+				}
+				spaceCodes[r.face][string(g.code)] = true
+			}
+		}
+	}
+	drawsOnlySpaces := func(r textRun) bool {
+		if !r.decoded || len(r.glyphs) == 0 || len(r.glyphs) != r.codes {
+			return false
+		}
+		for _, g := range r.glyphs {
+			if !(len(g.code) == 1 && g.code[0] == ' ') && !spaceCodes[r.face][string(g.code)] {
+				return false
+			}
+		}
+		return true
+	}
+	var after []opSpan
+	for _, r := range paragraphRunsWithBlanks(layout, pi)[len(runs):] {
+		switch {
+		// A run no line holds is not always a space: a glyph that decodes to nothing or to white space can be ink (a
+		// Dingbats check mark), and a space in a clipping mode cuts what follows (`text-clips`, as the paragraph's own).
+		case r.inForm || !drawsOnlySpaces(r) || clipMode(r.state.tr):
+		case r.span.start >= lo && r.span.end <= hi:
+			spans = append(spans, r.span)
+		case r.span.start >= hi:
+			after = append(after, r.span)
+		}
+	}
+	sort.Slice(after, func(i, j int) bool { return after[i].start < after[j].start })
+	for _, b := range after {
+		// A trailing `'` or `"` moves to a new line and `"` sets the spacing everything after it is drawn in: deleted, the
+		// restore (the paragraph's own last state) would undo it. Only a plain `Tj`/`TJ` ends a paragraph.
+		if op := showOperator(src[b.start:b.end]); (op != "Tj" && op != "TJ") || !onlyTextState(src[hi:b.start]) {
+			break
+		}
+		spans, hi = append(spans, b), b.end
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	return spans
+}
+
+// paragraphContentRefusal is why paragraph p (index pi of layout) cannot be re-set whatever is typed, for what sits among
+// and after its show operators in the page's content — `contentAround`'s causes, asked before the user types
+// (`/pending 792` W3: the dialog offered 2,822 of the corpus's 8,615 paragraphs that then refused any edit). toks is src
+// tokenized, once for the page. A paragraph with no run has nothing to ask.
+func paragraphContentRefusal(src []byte, toks []contentstream.Token, layout pageLayout, pi int) string {
+	var runs []textRun
+	for _, l := range layout.paragraphs[pi].lines {
+		runs = append(runs, l.runs...)
+	}
+	if len(runs) == 0 {
+		return ""
+	}
+	return contentAround(src, toks, paragraphSpans(src, layout, pi, runs))
+}
+
 // contentAround checks the stretch between a paragraph's first and last show operator holds only positioning, `Tf`, the
 // text state and the paragraph's own shows, and that what follows it repositions before it draws: the rewrite restores the
 // line matrix, and a show relying on the text matrix the last deleted show left would land at the line's start instead.
@@ -1670,8 +1697,9 @@ func anchorXs(l pageLayout, region flowRegion) [2]float64 {
 //
 // Replacement text around the paragraph is not asked here: the walker records it per run (`textRun.replaced`, inline
 // and named property lists alike), and `paragraphWords` refuses it — one reader of a property list, not two.
-func contentAround(src []byte, spans []opSpan) string {
-	toks := contentstream.Tokenize(src)
+//
+// toks is src tokenized — by the caller, so a page's paragraphs share one scan of it.
+func contentAround(src []byte, toks []contentstream.Token, spans []opSpan) string {
 	// spans are sorted and disjoint: the last span starting at or before at is the only one that can hold it.
 	inSpan := func(at int) bool {
 		i := sort.Search(len(spans), func(i int) bool { return spans[i].start > at }) - 1
@@ -1690,8 +1718,9 @@ func contentAround(src []byte, spans []opSpan) string {
 		}
 		return ""
 	}
-	for _, tk := range toks {
-		if tk.Kind != contentstream.Operator || tk.End <= lo {
+	// Tokens are in stream order: the walk starts at the first that ends past the paragraph's first show's start.
+	for _, tk := range toks[sort.Search(len(toks), func(i int) bool { return toks[i].End > lo }):] {
+		if tk.Kind != contentstream.Operator {
 			continue
 		}
 		op := string(tk.Bytes(src))

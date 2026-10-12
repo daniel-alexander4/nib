@@ -263,10 +263,16 @@ func TestATypedWordBorrowsKerningOverTheCorpus(t *testing.T) {
 				continue
 			}
 			for pi, para := range l.paragraphs {
-				if _, _, cause := paragraphWords(para); cause != "" || len(para.lines) == 0 {
+				words, _, cause := paragraphWords(para)
+				if cause != "" || len(para.lines) == 0 {
 					continue
 				}
+				// The pair is one the page lends in the look production TYPES in — the paragraph's usual look, at the
+				// size production asks the table with — not the first run's (`/pending 798`): where the two differ the
+				// typed word is drawn in another face and reads back unkerned, a red that is the stimulus's.
 				first := para.lines[0].runs[0]
+				usual := usualLook(words)
+				first.face, first.size = usual.face, usual.tfSize*first.size/first.state.tfSize
 				var pair kernKey
 				var want float64
 				for k, v := range full {

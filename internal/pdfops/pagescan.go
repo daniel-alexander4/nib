@@ -56,6 +56,15 @@ func scanPages(ctx *model.Context) []pageRecord {
 		rec := pageRecord{nr: pg.Nr, dict: pg.Dict, ref: pg.Ref}
 		if res, e := ctx.DereferenceDict(pg.Dict["Resources"]); e == nil && res != nil {
 			rec.res = res
+		} else if _, own := pg.Dict.Find("Resources"); !own && pg.Attrs != nil && len(pg.Attrs.Resources) > 0 {
+			// **A page with no `/Resources` of its own reads the ones it inherits** (`/pending 795` I4).
+			// Every caller today reads with pdfcpu's per-page resource step on, which has already put them
+			// on the page, so this branch does not run for them; under a read that leaves the step off
+			// (`pdfread.Validated`) `res` was nil, and the gate both missed a marked form such a page
+			// draws and reported its key as unowned — measured. It is `pdfread.InheritResources`' rule
+			// (the nearest ancestor's dictionary), answered here without writing to the page: `dict` stays
+			// exactly what `PageDict(p, false)` returns.
+			rec.res = pg.Attrs.Resources
 		}
 		out = append(out, rec)
 	}

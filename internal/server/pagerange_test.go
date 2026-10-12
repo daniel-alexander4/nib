@@ -68,6 +68,9 @@ func TestPageRoutesRefuseAPageTheDocumentDoesNotHave(t *testing.T) {
 		{"crop", "/api/pages", map[string]string{"op": "crop", "rect": "[0.1,0.1,0.5,0.5]", "pages": past}},
 		{"extract", "/api/extract", map[string]string{"pages": past}},
 		{"bake a cover on page 0", "/api/bake", map[string]string{"covers": cover}},
+		// /pending 834: these two answered 400 for the same fact.
+		{"split by a range past the end", "/api/split-pages", map[string]string{"dir": t.TempDir(), "mode": "ranges", "ranges": past}},
+		{"a bookmark past the end", "/api/outline", map[string]string{"outline": `[{"title":"Past","page":` + past + `,"level":0}]`}},
 	} {
 		resp := post(tc.route, tc.fields)
 		var got pageRefusal

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,7 +227,7 @@ func TestASoftHyphenIsAlwaysTheProducers(t *testing.T) {
 		t.Fatalf("setup: breakHyphen(ac\\u00ad) = %v, %v", soft, ok)
 	}
 	al := wordAlignment{ok: true, kept: map[int]int{0: 0, 1: 1}}
-	got, unsure := rejoinBroken(nil, pageLayout{}, 1, lines, []emitWord{ew(head), ew(tail)}, al, []reflowWord{head, tail}, [][2]int{{0, 0}, {1, 0}})
+	got, unsure := rejoinBroken(nil, pageLayout{}, 1, lines, []emitWord{ew(head), ew(tail)}, al, []reflowWord{head, tail}, [][2]int{{0, 0}, {1, 0}}, noLend)
 	if len(got) != 1 || len(unsure) != 0 || got[0].broken == nil || string(bytesJoin(got[0].codes)) != "act" || got[0].width != 15 {
 		t.Errorf("rejoined to %+v, want one word act, 15 wide, with its break point", got)
 	}
@@ -417,7 +418,7 @@ func TestAWordAcrossThreeLinesIsUnsure(t *testing.T) {
 	lines := [][]reflowWord{{con}, {tra}, {ry}}
 	al := wordAlignment{ok: true, kept: map[int]int{0: 0, 1: 1, 2: 2}}
 	got, unsure := rejoinBroken(nil, pageLayout{}, 1, lines, []emitWord{ew(con), ew(tra), ew(ry)}, al,
-		[]reflowWord{con, tra, ry}, [][2]int{{0, 0}, {1, 0}, {2, 0}})
+		[]reflowWord{con, tra, ry}, [][2]int{{0, 0}, {1, 0}, {2, 0}}, noLend)
 	if len(got) != 3 || len(unsure) != 2 || unsure[0] != [2]int{0, 1} || unsure[1] != [2]int{1, 2} {
 		t.Errorf("rejoined to %d items with unsure %v, want the three words and both breaks unsure", len(got), unsure)
 	}
@@ -428,7 +429,7 @@ func TestAWordAcrossThreeLinesIsUnsure(t *testing.T) {
 	}
 	// The stimulus: either break alone, with its neighbour's fragment not a break, rejoins.
 	one, u := rejoinBroken(nil, pageLayout{}, 1, [][]reflowWord{{con}, {word("t", "r", "a")}}, []emitWord{ew(con), ew(word("t", "r", "a"))},
-		wordAlignment{ok: true, kept: map[int]int{0: 0, 1: 1}}, []reflowWord{con, word("t", "r", "a")}, [][2]int{{0, 0}, {1, 0}})
+		wordAlignment{ok: true, kept: map[int]int{0: 0, 1: 1}}, []reflowWord{con, word("t", "r", "a")}, [][2]int{{0, 0}, {1, 0}}, noLend)
 	if len(one) != 1 || one[0].broken == nil || len(u) != 0 {
 		t.Fatalf("setup: a single soft-hyphen break did not rejoin (%d items, unsure %v)", len(one), u)
 	}
@@ -440,11 +441,64 @@ func TestABreakPastTheAlignmentsBoundIsRefused(t *testing.T) {
 	g := func(text string) runGlyph { return runGlyph{code: []byte(text), text: text, advance: 5} }
 	head := reflowWord{glyphs: []runGlyph{g("a"), g("c"), g("-")}}
 	tail := reflowWord{glyphs: []runGlyph{g("t")}}
-	_, unsure := rejoinBroken(nil, pageLayout{}, 1, [][]reflowWord{{head}, {tail}}, nil, wordAlignment{}, nil, nil)
+	_, unsure := rejoinBroken(nil, pageLayout{}, 1, [][]reflowWord{{head}, {tail}}, nil, wordAlignment{}, nil, nil, noLend)
 	if len(unsure) != 1 || unsure[0][0] >= 0 {
 		t.Errorf("unsure %v, want the refusal marker", unsure)
 	}
-	if _, unsure := rejoinBroken(nil, pageLayout{}, 1, [][]reflowWord{{head}, {reflowWord{glyphs: []runGlyph{g("T")}}}}, nil, wordAlignment{}, nil, nil); len(unsure) != 0 {
+	if _, unsure := rejoinBroken(nil, pageLayout{}, 1, [][]reflowWord{{head}, {reflowWord{glyphs: []runGlyph{g("T")}}}}, nil, wordAlignment{}, nil, nil, noLend); len(unsure) != 0 {
 		t.Errorf("a paragraph with no break refused past the bound: %v", unsure)
+	}
+}
+
+// noLend is a page that lends no kern, for the tests that drive `rejoinBroken` on hand-built words.
+func noLend(glyphLook, float64, []byte, []byte) float64 { return 0 }
+
+// TestARejoinedWordsSeamTakesThePagesKern — /pending 798. The pair across a rejoined word's seam ("m|m" in
+// accom|modate) was set with kern 0, while the same word typed borrows the kern the page draws for that pair:
+// the rejoined word was the looser of the two. The page here draws "mm" at −40 four times and never otherwise.
+//
+// **The stimulus is asserted**: the page lends "mm" at −40, and the edit moves the break mid-line.
+func TestARejoinedWordsSeamTakesThePagesKern(t *testing.T) {
+	l1 := "We will do all that we can to accom-"
+	l2 := "modate the needs of each and every one of"
+	tw := func(line string) string {
+		return num((328 - mdpdf.CoreWidth(line, "Helvetica", 12)) / float64(strings.Count(line, " ")))
+	}
+	content := "BT /F1 12 Tf 14 TL 72 700 Td " + tw(l1) + " Tw (" + l1 + ") Tj T* " + tw(l2) + " Tw (" + l2 + ") Tj" +
+		" T* 0 Tw (our clients this year.) Tj" + cleanPairs() + " T* [(m) -40 (m ) (m) -40 (m ) (m) -40 (m )] TJ ET" +
+		" BT /F1 12 Tf 72 300 Td [(It is hard to accom) -40 (modate them all here.)] TJ ET"
+	pdf := helveticaPage(content)
+	layout, _ := layoutOf(t, pdf)
+	lent := 0.0
+	for k, v := range kernsOf(layout) {
+		if k.a+k.b == "mm" {
+			lent = v
+		}
+	}
+	if math.Abs(lent-(-40)) > 1e-9 {
+		t.Fatalf("setup: the page lends mm at %v, want -40", lent)
+	}
+	before := readBack(t, pdf)
+	if len(before) != 3 || before[0][len(before[0])-1] != "accom-" || before[1][0] != "modate" {
+		t.Fatalf("setup: the paragraph reads %v, want three lines broken at accom-/modate", before)
+	}
+	text := strings.Join(append(append(append([]string{}, before[0]...), before[1]...), before[2]...), " ")
+	out, cause := reflowed(t, pdf, 0, strings.TrimPrefix(text, "We will "))
+	if cause != "" {
+		t.Fatalf("refused (%s)", cause)
+	}
+	got := typedKerns(t, out, "accommodate")
+	if len(got) != 10 {
+		t.Fatalf("the rejoined word reads back with kerns %v, want ten", got)
+	}
+	for i, k := range got {
+		want := 0.0
+		if i == 4 { // before the "m" that opened the tail
+			want = -40
+		}
+		if math.Abs(k-want) > 1e-6 {
+			t.Errorf("the rejoined word reads back with kerns %v, want -40 at its seam (index 4) and 0 elsewhere", got)
+			break
+		}
 	}
 }

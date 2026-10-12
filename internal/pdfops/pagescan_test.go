@@ -75,3 +75,44 @@ func TestScanPagesIsWhatPageDictAndPageDictIndRefAnswer(t *testing.T) {
 		t.Fatalf("live set holds %d pages, want 50", len(live))
 	}
 }
+
+// TestAScannedPageReadsTheResourcesItInherits — /pending 795 I4. A page with no `/Resources` of its own
+// draws through its ancestor's, and `scanPages` handed the gate nil for it under any read that does not push
+// the inherited dictionary down (`pdfread.Validated`): the marked form such a page draws twice was not
+// counted, and its `/ParentTree` key read as unowned. Both readings are asked here, and both must give the
+// answer the pushing read always gave.
+func TestAScannedPageReadsTheResourcesItInherits(t *testing.T) {
+	form := "/P <</MCID 0>> BDC\nBT /F1 12 Tf 0 0 Td (shared) Tj ET\nEMC\n"
+	page := "q 1 0 0 1 72 700 cm /Fm0 Do Q\nq 1 0 0 1 72 400 cm /Fm0 Do Q\n"
+	pdf := assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /XObject << /Fm0 11 0 R >> >> >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(page), page),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /K [<< /Type /MCR /Stm 11 0 R /MCID 0 >>] >>",
+		9: "<< /Nums [0 [8 0 R]] >>",
+		11: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] /StructParents 0 "+
+			"/Resources << /Font << /F1 5 0 R >> >> /Length %d >>\nstream\n%s\nendstream", len(form), form),
+	})
+	for _, read := range []struct {
+		name string
+		fn   func([]byte, *model.Configuration) (*model.Context, error)
+	}{{"ReadOptimized", pdfread.ReadOptimized}, {"Validated", pdfread.Validated}} {
+		ctx, err := read.fn(pdf, model.NewDefaultConfiguration())
+		if err != nil {
+			t.Fatalf("%s: %v", read.name, err)
+		}
+		counts, err := formDrawCounts(ctx)
+		if err != nil {
+			t.Fatalf("%s: %v", read.name, err)
+		}
+		if got := counts[11]; got.count != 2 {
+			t.Errorf("%s: the form the page draws twice through inherited resources is counted %d time(s), want 2", read.name, got.count)
+		}
+		if owners := parentTreeOwners(ctx); len(owners[0]) != 1 {
+			t.Errorf("%s: /ParentTree key 0 has owners %v, want the one form", read.name, owners[0])
+		}
+	}
+}
