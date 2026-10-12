@@ -67,7 +67,7 @@ func TestTagTreePrintsTheTreeTheDocumentHas(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("--json reads back as\n%+v\nand the door answers\n%+v", got, want)
 	}
-	for _, name := range []string{`"hasAlt"`, `"pageBox"`, `"unaddressable"`} {
+	for _, name := range []string{`"hasAlt"`, `"place"`, `"unaddressable"`} {
 		if !strings.Contains(js, name) {
 			t.Errorf("--json does not carry the route's field %s:\n%.300s", name, js)
 		}
@@ -205,7 +205,7 @@ func TestTagProposePrintsTheProposalTheCardReads(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("--json reads back as\n%+v\nand the door answers\n%+v", got, want)
 	}
-	if !strings.Contains(js, `"noText"`) || !strings.Contains(js, `"pageBox"`) {
+	if !strings.Contains(js, `"noText"`) || !strings.Contains(js, `"place"`) {
 		t.Errorf("--json does not carry the route's field names:\n%.300s", js)
 	}
 	if !bytes.Equal(before, readPDF(t, p)) {
