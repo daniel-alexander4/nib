@@ -72,11 +72,6 @@ if [ "$PUBLISH" = "1" ]; then
   # bare (non-.deb) downloads carry their required notices too.
   assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb LICENSE THIRD-PARTY-NOTICES.md)
   shopt -u nullglob
-  if gh release view "$tag" >/dev/null 2>&1; then
-    gh release upload "$tag" "${assets[@]}" --clobber
-  else
-    gh release create "$tag" "${assets[@]}" \
-      --target "$branch" --title "Nib $VERSION" --notes "Nib $VERSION"
-  fi
-  echo "published $tag"
+  # Upload, publish a release found as a draft, and report what releases/latest answers (/pending 868).
+  ./build/publish-release.sh "$VERSION" "$branch" "${assets[@]}"
 fi
