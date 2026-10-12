@@ -963,7 +963,8 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
 
 // carries reports whether this machine moves the baton for this ceremony without contributing to
 // it — a roster member with `signs:false`, OR a signing party who has already signed this document
-// (P07.S05 C07; the second half added 2026-09-09, P01.S02a).
+// (P07.S05 C07; the second half added 2026-09-09, P01.S02a), OR the convener dialling a turn that
+// comes before their own (`hopCarries`).
 //
 // **Whether you sign is a fact about the roster, not a choice**, which is why there is no separate
 // carry route and no flag on the request. `/api/session/initiate` asks this and takes the carry
@@ -990,13 +991,13 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
 //
 // # The turn rule keeps its ONE door, and this is deliberately not a second one
 //
-// Three outcomes are possible and this function answers only two of them. A signer whose turn it is
-// NOT and who has not signed yet still returns false — contribute — and is refused by
-// `AdmitContribution` with `ErrNotYourTurn`, exactly as before. Deciding that here would be a
-// second implementation of the turn rule, which is the ADR-009 shape, and `AdmitContribution`'s
-// refusal is already the better one: it names both parties. What this adds is strictly the case
-// that rule cannot express — *I already signed, so there is nothing for me to contribute* — because
-// "not your turn" is true both of a party who is early and of one who is done.
+// A signer whose turn it is NOT, who has not signed yet and who is **not the convener** still
+// returns false — contribute — and is refused by `AdmitContribution` with `ErrNotYourTurn`, exactly
+// as before. Deciding that here would be a second implementation of the turn rule, which is the
+// ADR-009 shape, and `AdmitContribution`'s refusal is already the better one: it names both
+// parties. What this adds is the two cases that rule cannot express, because "not your turn" is
+// true of all three: *I already signed, so there is nothing for me to contribute*, and — for the
+// convener alone — *I am the hub dialling somebody else's turn* (`hopCarries`, `/pending 517`).
 //
 // # The error is a refusal, never a default
 //
@@ -1017,9 +1018,17 @@ func (c *ceremonyID) carries(meFP string, pdf []byte) (bool, error) {
 	if c == nil {
 		return false, nil
 	}
+	return carryDecision(c.inv.Roster, c.inv.ConvenerFingerprint, meFP, pdf, c.l3Roster())
+}
+
+// carryDecision is `carries` for a caller that holds a record rather than a ceremony identity —
+// the hop quote — so the quote and the dial ask ONE function (ADR-009, `/pending 517`). The quote
+// used to re-derive the answer with a predicate of its own, and where the two differed the
+// product did not work: the quote said "no block" and the dial demanded one.
+func carryDecision(roster []ceremony.Party, convenerFP, meFP string, pdf []byte, l3 p2p.Roster) (bool, error) {
 	signs := false
 	member := false
-	for _, p := range c.inv.Roster {
+	for _, p := range roster {
 		if strings.EqualFold(p.Fingerprint, meFP) {
 			member, signs = true, p.Signs
 			break
@@ -1031,19 +1040,39 @@ func (c *ceremonyID) carries(meFP string, pdf []byte) (bool, error) {
 	if !signs {
 		return true, nil
 	}
-	// A signing party: carry only once this document already holds their signature.
-	pr, err := p2p.ContributionProgress(pdf, c.l3Roster())
+	// A signing party: the answer depends on how far this document has got.
+	pr, err := p2p.ContributionProgress(pdf, l3)
 	if err != nil {
 		return false, err
 	}
-	for i, e := range pr.Order {
+	return hopCarries(pr.Order, pr.Done, meFP, convenerFP != "" && strings.EqualFold(convenerFP, meFP)), nil
+}
+
+// hopCarries is the rule for a SIGNING party, read off the one walk: `order[done]` is whose turn
+// it is (`p2p.Progress`).
+//
+//   - before `done`: their signature is already on the document, so they carry;
+//   - at `done`: it is their turn, so they contribute;
+//   - after `done`: they carry only if they are the CONVENER. Under D22's hub the convener is at
+//     one end of every hop, so a convener who placed themselves later in the order is dialling
+//     somebody else's turn and signs nothing at it. Any other party who is early contributes —
+//     which `AdmitContribution` refuses by name — because a party with no business moving this
+//     document must be refused, not turned into a carrier.
+//
+// **Not `i != done`.** That was tried (v1.135.8) and reverted: it also made a non-convener who is
+// early a carrier, so the out-of-turn initiate tier 4 `-n 4` drives stopped being refused at its
+// own machine and failed later as an unreachable peer. `TestWhoContributesAtEveryHopOfAFourPartyOrder`
+// walks all four convener positions.
+//
+// In the roster as a signer and absent from the signing order is not a state `Progress` can
+// produce — `Order` IS the roster filtered on `Signs`. Contribute, and let the one door speak.
+func hopCarries(order []p2p.RosterEntry, done int, meFP string, convener bool) bool {
+	for i, e := range order {
 		if strings.EqualFold(e.Fingerprint, meFP) {
-			return i < pr.Done, nil
+			return i < done || (convener && i > done)
 		}
 	}
-	// In the roster as a signer and absent from the signing order is not a state `Progress` can
-	// produce — `Order` IS the roster filtered on `Signs`. Contribute, and let the one door speak.
-	return false, nil
+	return false
 }
 
 // ceremonyIDOf is the ceremony a session belongs to, or "" outside one.

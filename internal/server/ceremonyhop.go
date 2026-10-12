@@ -76,8 +76,8 @@ type ceremonyHopQuote struct {
 	// Party is the label the ROSTER gives the next signer. A person is named, never fingerprinted
 	// — the panel's standing rule.
 	Party string `json:"party"`
-	// Mine is whether the next contributor is this machine. A convener who signs is first in the
-	// signing order, so their own turn has nobody to dial and the rail must not offer a call.
+	// Mine is whether the next contributor is this machine. A signing convener's own turn — first
+	// unless the roster names them elsewhere — has nobody to dial, and the rail must not offer a call.
 	Mine bool `json:"mine"`
 	// Contributes is whether THIS machine signs at this hop. False on the carry path, and it is
 	// what tells the client whether it needs to render an appearance at all.
@@ -258,21 +258,25 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	roster := l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent)
-	pr, perr := p2p.ContributionProgress(pdf, roster)
+	// **Does THIS machine sign at this hop?** Asked of `carryDecision`, the SAME function the dial
+	// asks through `carries` (ADR-009, `/pending 517`) — this route used to re-derive it with a
+	// predicate of its own, and the two disagreed for a convener named later than first. The dial
+	// asks again and its answer is the one that governs — this is a rendering hint, never an
+	// authorisation.
+	//
+	// **Today the answer past `mine` is always "carry"**: only the convener reaches this line
+	// (`checkMintAllowed`), and a convener who is not next carries. The block below is therefore
+	// not reached, and stays so the route says what the one function says rather than assuming it.
+	convenerFP := ""
+	if conv, cok := rec.Convener(); cok {
+		convenerFP = conv.Fingerprint
+	}
+	carrying, perr := carryDecision(rec.Roster, convenerFP, hex.EncodeToString(myFP), pdf, roster)
 	if perr != nil {
 		httpError(w, http.StatusConflict, perr.Error())
 		return
 	}
-	// **Does THIS machine sign at this hop?** The same question `carries` answers inside the dial,
-	// asked here only to tell the client whether to render a block at all. The dial asks again and
-	// its answer is the one that governs — this is a rendering hint, never an authorisation.
-	me := hex.EncodeToString(myFP)
-	for i, e := range pr.Order {
-		if strings.EqualFold(e.Fingerprint, me) {
-			out.Contributes = i == pr.Done
-			break
-		}
-	}
+	out.Contributes = !carrying
 	if !out.Contributes {
 		writeJSON(w, out)
 		return
