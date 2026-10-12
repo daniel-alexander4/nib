@@ -471,6 +471,7 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
 		// The sheets are resolved from ONE walk of the composed tree (/pending 756): a `PageDict` per placement
 		// was a walk from the root each, and an n-up of a long document places every one of its pages.
 		sheets := pdfread.Pages(ctx)
+		budget := newFormWalkBudget(ctx.PageCount)
 		for i, pl := range places {
 			srcPage := i + 1
 			s, has := sources[srcPage]
@@ -478,7 +479,7 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
 				continue
 			}
 			sheet := pageAt(ctx, sheets, pl.sheet)
-			m, merr := placementMatrix(ctx, pl, sheet, s.content)
+			m, merr := placementMatrix(ctx, pl, sheet, s.content, budget)
 			if merr != nil {
 				return merr
 			}
@@ -499,8 +500,8 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
 
 // placementMatrix returns the transform from one source page's own coordinate space to the sheet,
 // having first verified that this placement really is that page's content.
-// sheetPage is pl.sheet, resolved by the caller (`pageAt`).
-func placementMatrix(ctx *model.Context, pl sheetPlacement, sheetPage pdfread.Page, pageContent []byte) (matrix, error) {
+// sheetPage is pl.sheet, resolved by the caller (`pageAt`). budget is the carry's one decode allowance.
+func placementMatrix(ctx *model.Context, pl sheetPlacement, sheetPage pdfread.Page, pageContent []byte, budget *formWalkBudget) (matrix, error) {
 	d, err := sheetPage.Dict, sheetPage.Err
 	if err != nil || d == nil {
 		return identityMatrix, fmt.Errorf("%w: sheet %d does not resolve", errNoteCarry, pl.sheet)
@@ -521,7 +522,11 @@ func placementMatrix(ctx *model.Context, pl sheetPlacement, sheetPage pdfread.Pa
 	if serr != nil || sd == nil {
 		return identityMatrix, fmt.Errorf("%w: /%s on sheet %d does not resolve to a stream", errNoteCarry, pl.name, pl.sheet)
 	}
-	if derr := sd.Decode(); derr != nil {
+	// The form holds a source page's content, so it is as large as the DOCUMENT made it: inflated through the one
+	// decode door and charged (no object named to it: each placement is read once, and the door would hold every
+	// sheet's form for the carry's life), and one past the allowance abandons the carry as an undecodable one does
+	// (`/pending 795`).
+	if body := budget.formContent(sd, nil); body == nil || !budget.enterForm(len(body)) {
 		return identityMatrix, fmt.Errorf("%w: /%s on sheet %d does not decode", errNoteCarry, pl.name, pl.sheet)
 	}
 	// **The identity check.** The form's content is the source page's content, possibly behind a

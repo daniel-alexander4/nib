@@ -820,7 +820,7 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 	//     there rather than shipped. Measured: `carried` on the census document, `dropped` on a
 	//     fixture whose annotations `api.NUp` drops.
 	composition := map[string]bool{
-		"spliceWithoutStructure": true, "normalizePage": true, "SplitRegions": true, "SplitPage": true,
+		"normalizePage": true, "SplitRegions": true, "SplitPage": true,
 	}
 	subsetOnly := map[string]bool{
 		"SplitByBookmarks": true, "SplitBySpans": true, "DuplicatePage": true,
@@ -870,7 +870,16 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 			"(selectPages), gate the output (carryIsComplete) and fall back to spliceWithoutStructure — "+
 			"never cut the original with Collect or glue segments with Append. Calls: %v", c)
 	}
-	for _, fn := range []string{"spliceWithoutStructure", "normalizePage", "SplitRegions", "SplitPage"} {
+	// **And the last resort is the same merge, selecting without a tree** (`/pending 870`). It was a cut of the
+	// original through the non-carrying door glued with `Append`, graded here as a composition; that shape made
+	// the first SEGMENT the host and lost the original's `/Info`, `/ID`, files and packet. It cuts nothing now, so
+	// it has no subset to grade — what is pinned is that it stays that way.
+	if w := calls["spliceWithoutStructure"]; w == nil || !w["spliceOnce"] || w["Collect"] || w["collectWithoutStructure"] ||
+		w["subset"] || w["subsetCarrying"] || w["Append"] {
+		t.Errorf("spliceWithoutStructure's route changed: it must be one more spliceOnce (the original as the host, "+
+			"a selection that carries no tree) and never cut the original or glue segments. Calls: %v", w)
+	}
+	for _, fn := range []string{"normalizePage", "SplitRegions", "SplitPage"} {
 		if calls[fn] == nil {
 			t.Errorf("%s is not declared in pdfops.go, so its route is unchecked", fn)
 			continue

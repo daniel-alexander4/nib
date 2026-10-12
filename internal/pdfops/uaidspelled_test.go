@@ -120,6 +120,58 @@ func TestAUTF16IdentificationIsDropped(t *testing.T) {
 	}
 }
 
+// TestAnIdentificationSpelledThroughADeclaredEntityIsDropped — `/pending 665`'s last part. A DTD's entities spell
+// the URI in pieces (`&a;&b;`), so the bytes never hold it and Go's decoder refuses the reference; veraPDF 1.30.2
+// expands it and reads the claim (measured: `5 t1` passes on this packet and fails on one naming another URI). nib
+// does not expand entities, so a packet that declares one goes whole.
+func TestAnIdentificationSpelledThroughADeclaredEntityIsDropped(t *testing.T) {
+	const dtd = `<!DOCTYPE x [<!ENTITY a "http://www.aiim.org/pdfua/"><!ENTITY b "ns/id/">]>`
+	spelled := func(p string) string {
+		i := strings.Index(p, "<x:xmpmeta")
+		if i < 0 || strings.Count(p, pdfuaidNS) == 0 {
+			t.Fatal("setup: the labelled packet has no x:xmpmeta, or does not name the schema")
+		}
+		return p[:i] + dtd + strings.ReplaceAll(p[i:], pdfuaidNS, "&a;&b;")
+	}
+	utf16le := func(p string) []byte {
+		b := []byte{0xFF, 0xFE}
+		for _, u := range utf16.Encode([]rune(p)) {
+			b = binary.LittleEndian.AppendUint16(b, u)
+		}
+		return b
+	}
+	for name, edit := range map[string]func(string) []byte{
+		"UTF-8":  func(p string) []byte { return []byte(spelled(p)) },
+		"UTF-16": func(p string) []byte { return utf16le(spelled(p)) },
+	} {
+		ctx := withCatalogPacket(t, edit)
+		if before, _ := packetIn(t, ctx); namesIdentification([]byte(before)) {
+			t.Fatalf("setup (%s): the packet's bytes must never hold the URI", name)
+		}
+		had, err := dropUAIdentification(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, kept := packetIn(t, ctx); !had || kept {
+			t.Errorf("%s: a packet spelling the identification's namespace through declared entities was left in "+
+				"place (claim reported: %v, /Metadata kept: %v) — veraPDF reads it, so the document goes on "+
+				"claiming PDF/UA through every change", name, had, kept)
+		}
+	}
+	// Control: a DOCTYPE that declares no entity is not a reason to take a packet — the claim is cut out of it as
+	// out of any other, and the rest stays.
+	ctx := withCatalogPacket(t, func(p string) []byte {
+		i := strings.Index(p, "<x:xmpmeta")
+		return []byte(p[:i] + `<!DOCTYPE x>` + p[i:])
+	})
+	had, err := dropUAIdentification(ctx)
+	after, kept := packetIn(t, ctx)
+	if err != nil || !had || !kept || testpdf.PacketClaimsUA(after) || !strings.Contains(after, "Census") {
+		t.Errorf("control: a packet with a bare DOCTYPE: had = %v, err = %v, /Metadata kept = %v, still claims = %v",
+			had, err, kept, testpdf.PacketClaimsUA(after))
+	}
+}
+
 // TestACharacterReferenceAloneCostsNoMetadata — the control for both: a packet that claims nothing keeps
 // everything, whether it parses or not.
 func TestACharacterReferenceAloneCostsNoMetadata(t *testing.T) {

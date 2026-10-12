@@ -39,17 +39,30 @@ import (
 // page's content into the output — `pageselect.go`'s `/StructTreeRoot` hazard on a key nobody would think
 // to check. `reachesObject` is the test `/OCProperties` is carried under, and the answer to a group that
 // fails it is the loss this door produced before.
+//
+// **The catalog's metadata packet goes with `/Info`, or not at all** (`/pending 870`). The selection drops
+// `/Metadata` with every catalog key its allowlist does not name, and where it carries a structure tree it builds
+// a packet holding the title alone — so a splice kept the `/Info` title and lost the packet that says the same
+// thing and more (measured: `InsertPDF` and `SplitPage` returned the title in `/Info` and no packet; `Append` and
+// `InsertBlank` returned both). The two describe one document and a reader may ask either, so the packet is put
+// back exactly when the `/Info` entries are, over the title-only one. **Never with a conformance claim** (ADR-032):
+// this puts back the stream the context already held, and each caller drops the identification from that same
+// stream inside its own write — `rewriteWithConf` before the change runs, `mergeOnce` after it.
 type documentFacts struct {
-	id    types.Array
-	info  types.Dict   // the entries of the `/Info` dictionary, held aside while the selection empties it
-	files *model.Node  // the `/EmbeddedFiles` name tree as the merged context holds it
-	pages map[int]bool // every page object the context held before the selection
+	id       types.Array
+	info     types.Dict   // the entries of the `/Info` dictionary, held aside while the selection empties it
+	metadata types.Object // the catalog's `/Metadata` as written, or nil
+	files    *model.Node  // the `/EmbeddedFiles` name tree as the merged context holds it
+	pages    map[int]bool // every page object the context held before the selection
 }
 
 // captureDocumentFacts reads what restore puts back. It must run before `selectPages`.
 func captureDocumentFacts(ctx *model.Context) documentFacts {
 	xt := ctx.XRefTable
 	f := documentFacts{id: ctx.ID, files: xt.Names["EmbeddedFiles"], pages: map[int]bool{}}
+	if root, err := xt.Catalog(); err == nil {
+		f.metadata = root["Metadata"]
+	}
 	if ctx.Info != nil {
 		if info := derefDict(xt, *ctx.Info); info != nil {
 			f.info = make(types.Dict, len(info))
@@ -82,11 +95,17 @@ func (f documentFacts) restore(ctx *model.Context) {
 		}
 	}
 	ctx.ID = f.id
-	if ctx.Info != nil && len(f.info) > 0 && !reachesObject(xt, f.info, dropped, map[int]bool{}, 0) {
+	infoKept := !reachesObject(xt, f.info, dropped, map[int]bool{}, 0)
+	if ctx.Info != nil && len(f.info) > 0 && infoKept {
 		if info := derefDict(xt, *ctx.Info); info != nil {
 			for k, v := range f.info {
 				info[k] = v
 			}
+		}
+	}
+	if f.metadata != nil && infoKept && !reachesObject(xt, f.metadata, dropped, map[int]bool{}, 0) {
+		if root, err := xt.Catalog(); err == nil {
+			root["Metadata"] = f.metadata
 		}
 	}
 	if f.files == nil {

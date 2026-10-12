@@ -121,8 +121,12 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	// file's bytes, and the digest's memoised decode), metadata packets (labelua, uaid), a font's `/ToUnicode`
 	// (stampwrite, textrun's `streamContent`), and five that decode a form or a content stream outside a walk
 	// (annotcarry, stamprotation, stampwrite, structcarry, subsettag).
-	uncapped := map[string]int{"attachments.go": 2, "annotcarry.go": 1, "subsettag.go": 1, "uaid.go": 1, "textrun.go": 1,
-		"labelua.go": 1, "stampwrite.go": 2, "stamprotation.go": 1, "structcarry.go": 1}
+	//
+	// **The five were judged since** (`/pending 795`): four read a stream the DOCUMENT sized — the n-up note carry's
+	// form (annotcarry), the `/ToUnicode` of a font named like nib's face (stampwrite, both reads), the catalog packet
+	// read for its title (structcarry), a subset's font program (subsettag) — and now read through the door. The one
+	// left, stamprotation's, is exempt and says why at the site: pdfcpu's stamp has already inflated that same stream.
+	uncapped := map[string]int{"attachments.go": 2, "uaid.go": 1, "textrun.go": 1, "labelua.go": 1, "stamprotation.go": 1}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

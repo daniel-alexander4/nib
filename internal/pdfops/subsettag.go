@@ -133,10 +133,10 @@ func fontProgramBytes(ctx *model.Context, d types.Dict) []byte {
 		}
 		if sd.Content == nil {
 			c := *sd // decode a copy: the stream in the table stays as it was read
-			if err := c.Decode(); err != nil {
-				return nil
-			}
-			return c.Content
+			// Any subset in the document named like the face, so not nib's to size: inflated only as far as one
+			// page's allowance, and a program past it keeps pdfcpu's tag as an unreadable one does (`/pending 795`).
+			// A fresh budget each, so the tag one font gets does not depend on the order the table is walked in.
+			return newFormWalkBudget(1).formContent(&c, nil)
 		}
 		return sd.Content
 	}

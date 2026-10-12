@@ -137,14 +137,31 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 // `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
 // selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
 func subset(pdf []byte, pick func(total int) ([]int, error), policy unreadablePolicy) ([]byte, error) {
-	return rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
-		keep, err := pick(ctx.PageCount)
-		if err != nil {
-			return err
+	out, _, err := subsetOnce(pdf, pick, false, policy, false)
+	return out, err
+}
+
+// subsetOnce is one read-change-write of a page selection: carrying the structure tree or not, and — where the
+// output is the document ITSELF (itself) — with what the selection reduces an extract by held aside and put back
+// (splicefacts.go). carried is whether a tree was carried.
+func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, policy unreadablePolicy, itself bool) (out []byte, carried bool, err error) {
+	out, err = rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
+		keep, perr := pick(ctx.PageCount)
+		if perr != nil {
+			return perr
 		}
-		_, err = selectPages(ctx, keep, false, policy)
-		return err
+		var facts documentFacts
+		if itself {
+			facts = captureDocumentFacts(ctx)
+		}
+		c, serr := selectPages(ctx, keep, carry, policy)
+		carried = c
+		if serr == nil && itself {
+			facts.restore(ctx)
+		}
+		return serr
 	})
+	return out, carried, err
 }
 
 // subsetConf is the configuration both subset doors read with.
@@ -186,24 +203,25 @@ func subsetConf() *model.Configuration {
 // the O(pages²) `ctx.PageDict` shape these figures were measured with; the gate has since been made one page
 // sweep instead of three (`/pending 530`, `scanPages`), and they were not re-measured after it. Absolute
 // times vary two-to-fourfold with machine load; the ratios and the byte growth are what reproduce.
-func subsetCarrying(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
-	carried := false
-	out, err := rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
-		keep, perr := pick(ctx.PageCount)
-		if perr != nil {
-			return perr
-		}
-		c, serr := selectPages(ctx, keep, true, keepUnreadable)
-		carried = c
-		return serr
-	})
+//
+// # itself: the output is the document, not something made from it (`/pending 870`)
+//
+// `Collect` and `RemovePages` pass false, and that is `CarryAttachments`' recorded decision rather than an
+// omission: they are the selection primitives an extract, a split and an export go through, and only their CALLER
+// knows whether it is rearranging a document or producing something to hand over. `DuplicatePage` is not a
+// primitive — a document with one page repeated is that document — so it passes true and keeps its `/Info`, its
+// `/ID`, its embedded files and its metadata packet, as `splice` does and through the same door. Both attempts
+// keep them: the fallback is the same document without its tree.
+func subsetCarrying(pdf []byte, pick func(total int) ([]int, error), itself bool) ([]byte, error) {
+	out, carried, err := subsetOnce(pdf, pick, true, keepUnreadable, itself)
 	if err != nil {
 		return nil, err
 	}
 	if !carried || carryIsComplete(out) {
 		return out, nil
 	}
-	return subset(pdf, pick, keepUnreadable)
+	out, _, err = subsetOnce(pdf, pick, false, keepUnreadable, itself)
+	return out, err
 }
 
 // selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
@@ -215,7 +233,12 @@ func selectionError(err error) error {
 
 // RemovePages drops the given pages from the PDF.
 func RemovePages(pdf []byte, pages []string) ([]byte, error) {
-	return subsetCarrying(pdf, func(total int) ([]int, error) {
+	return subsetCarrying(pdf, removePick(pages), false)
+}
+
+// removePick is `RemovePages`' selection rule: every page but the ones named.
+func removePick(pages []string) func(int) ([]int, error) {
+	return func(total int) ([]int, error) {
 		// A removal that names no page used to remove nothing and report success (`/pending 823`).
 		if err := selectionInDocument(pages, total); err != nil {
 			return nil, err
@@ -239,7 +262,7 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 			return nil, fmt.Errorf("pdfops: that would remove every page of this document")
 		}
 		return keep, nil
-	})
+	}
 }
 
 // Collect keeps only the given pages, in the exact order given (e.g.
@@ -247,7 +270,7 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 // page-selection primitive: reordering, deletion-by-omission, and extracting a
 // subset into a new PDF all route through it.
 func Collect(pdf []byte, order []string) ([]byte, error) {
-	return subsetCarrying(pdf, collectPick(order))
+	return subsetCarrying(pdf, collectPick(order), false)
 }
 
 // collectPick is the selection RULE the two collect doors share. They share the rule and not the
@@ -274,10 +297,10 @@ func collectPick(order []string) func(int) ([]int, error) {
 // **Redaction** (`PLAN-ua-coverage.md` P02.S03) — the tree describes content the raster destroyed.
 // That is the sections below.
 //
-// **A subset whose result is then COMPOSED** — `spliceWithoutStructure` (`splice`'s fallback; `splice`
-// itself stopped cutting the original at P02.S07b and merges it whole, ADR-048), `normalizePage`,
-// `SplitRegions`' own page selection and `SplitPage`'s tile selection. Measured, and it is not a
-// deferral of D5:
+// **A subset whose result is then COMPOSED** — `normalizePage`, `SplitRegions`' own page selection and
+// `SplitPage`'s tile selection (`splice` stopped cutting the original at P02.S07b, ADR-048, and its last resort
+// `spliceWithoutStructure` at `/pending 870`: both merge it whole).
+// Measured, and it is not a deferral of D5:
 //
 //   - `api.MergeRaw` keeps only the FIRST document's catalog and `/ParentTree`, so a tagged document
 //     merged in after a carrying subset keeps its own `/StructParents` values pointing into the first
@@ -654,6 +677,10 @@ func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 // inserted immediately after the original. Collect keeps a repeated page in the
 // selection, so the selection "1-p" + "p-" emits page p twice; both ranges are
 // always non-empty for a valid page, so no edge-guarding is needed.
+//
+// **The output is the document itself**, so it keeps the title, the `/ID`, the embedded files and the metadata
+// packet a page selection takes from an extract (`subsetCarrying`'s `itself`, `/pending 870`) — measured before:
+// no title, a new `/ID[0]`, no attachments and no packet, from duplicating one page.
 func DuplicatePage(pdf []byte, page int) ([]byte, error) {
 	n, err := PageCount(pdf)
 	if err != nil {
@@ -662,7 +689,7 @@ func DuplicatePage(pdf []byte, page int) ([]byte, error) {
 	if err := pageInDocument(page, n); err != nil {
 		return nil, err
 	}
-	return Collect(pdf, []string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)})
+	return subsetCarrying(pdf, collectPick([]string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)}), true)
 }
 
 // CreateFromJSON renders a brand-new PDF from a pdfcpu "create" JSON page
@@ -1187,10 +1214,10 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 //
 // A result whose tree the output gate refuses is retried with the inserted document's claims stripped
 // and the ORIGINAL's tree still carried — `mergeDocs`'s own fallback, and the loss is only the insert's
-// tags, which were what failed. Only when that is refused too does it fall back to the old non-carrying
-// shape. Going straight there wiped the host's whole tree over a defect in the document inserted into it.
+// tags, which were what failed. Only when that is refused too does it fall back to the same merge with no tree
+// carried at all. Going straight there wiped the host's whole tree over a defect in the document inserted into it.
 func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
-	out, grafted, carried, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, true)
+	out, grafted, carried, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, true, true)
 	// A graft that cannot be placed failed on the insert's tree, exactly as a refused one does.
 	unplaced := errors.Is(err, errUnplaced)
 	if err != nil && !unplaced {
@@ -1202,7 +1229,7 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 		return out, nil
 	}
 	if grafted || unplaced {
-		if out, _, carried, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false); err != nil {
+		if out, _, carried, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false, true); err != nil {
 			return nil, err
 		}
 		if !carried || carryIsComplete(out) {
@@ -1214,8 +1241,9 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 
 // spliceOnce is one attempt at splice's merge: mid grafted onto pdf's tree and placed at the insertion
 // point (graft), or mid's claims stripped and pdf's tree carried alone. carried says whether the page
-// selection carried a tree, so the caller knows whether there is anything to gate.
-func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) (out []byte, grafted, carried bool, err error) {
+// selection carried a tree, so the caller knows whether there is anything to gate. With carry false the selection
+// carries no tree at all (`spliceWithoutStructure`).
+func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft, carry bool) (out []byte, grafted, carried bool, err error) {
 	out, grafted, err = mergeOnce([][]byte{pdf, mid}, graft, func(ctx *model.Context, host *hostTree) error {
 		if host != nil && len(host.grafted) > 0 {
 			if err := placeInserted(ctx, host, leftEnd, n); err != nil {
@@ -1235,7 +1263,7 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) 
 		// The output is the document itself, so what the selection reduces an extract by — the `/Info`,
 		// the `/ID`, the embedded files — is held aside and put back (`/pending 602`, splicefacts.go).
 		facts := captureDocumentFacts(ctx)
-		c, err := selectPages(ctx, keep, true, keepUnreadable)
+		c, err := selectPages(ctx, keep, carry, keepUnreadable)
 		carried = c
 		if err == nil {
 			facts.restore(ctx)
@@ -1245,43 +1273,19 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) 
 	return out, grafted, carried, err
 }
 
-// spliceWithoutStructure is splice's fallback, and its shape before P02.S07b: both sides of the original
-// cut through the non-carrying door and glued with `Append`, so no tree survives to be wrong.
+// spliceWithoutStructure is splice's last resort: the same ONE merge with the original as the host, and the page
+// order set by a selection that carries no tree — so no tree survives to be wrong.
+//
+// **It was the shape from before P02.S07b until `/pending 870`**: both sides of the original cut through the
+// non-carrying door and glued to the inserted document with `Append`. That made the FIRST segment the host, so
+// inserting before page 1 handed the result the inserted document's catalog (`/pending 472` patched the language
+// back and nothing else), and each cut was an extract, so the original's `/Info`, `/ID`, embedded files and
+// metadata packet were gone whichever side came first. Nothing about refusing a tree needs the cut: the tree is
+// dropped by the selection's allowlist, in the merged context, exactly as each segment's was — and no carried
+// subset is fed to a merge, which is all `collectWithoutStructure`'s header asks of a composition.
 func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
-	// **`collectWithoutStructure`, because what follows is a MERGE.** `Append` below takes the first
-	// segment's catalog whole, so a carried tree would describe the left side while the inserted
-	// document's pages kept `/StructParents` values resolving into it — measured as a page asserting
-	// another document's words. See that door's own header; P02.S07 owns the graft.
-	segments := make([][]byte, 0, 3)
-	if leftEnd >= 1 {
-		left, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("1-%d", leftEnd)}, keepUnreadable)
-		if err != nil {
-			return nil, err
-		}
-		segments = append(segments, left)
-	}
-	segments = append(segments, mid)
-	if rightStart <= n {
-		right, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("%d-", rightStart)}, keepUnreadable)
-		if err != nil {
-			return nil, err
-		}
-		segments = append(segments, right)
-	}
-	result := segments[0]
-	var err error
-	for _, seg := range segments[1:] {
-		if result, err = Append(result, seg); err != nil {
-			return nil, err
-		}
-	}
-	// **The catalog the result inherits belongs to whichever segment came FIRST.** `Append` is
-	// `MergeRaw`, which takes the first document's catalog whole — so splicing at page 1 makes the
-	// INSERTED document's catalog the result's, and the original's `/Lang` is gone. /pending 472,
-	// found by P03.S03's ua1 differential: `InsertPDF`, `SplitPage` and `SplitRegions` each added
-	// 7.2 t34 to a document that passed it. Cropping a page or inserting one does not change what
-	// language the document is written in.
-	return carryLang(pdf, result)
+	out, _, _, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, false, false)
+	return out, err
 }
 
 // replacePage returns pdf with page p (1-based, of n total) replaced in place by
