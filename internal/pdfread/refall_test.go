@@ -240,6 +240,76 @@ func TestThePathWalkStopsAtItsBudget(t *testing.T) {
 	}
 }
 
+// sharedAction is a one-page document with one action (object 50) over a chain of depth more, each naming the next
+// twice in its /Next — 2^(depth+1)-1 paths — which items outline items and links link annotations name as their /A.
+func sharedAction(items, links, depth int) []byte {
+	o := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		4: fmt.Sprintf("<< /Type /Outlines /First 1000 0 R /Last %d 0 R /Count %d >>", 1000+items-1, items),
+	}
+	for j := 0; j < depth; j++ {
+		o[50+j] = fmt.Sprintf("<< /S /GoTo /D [3 0 R /Fit] /Next [%d 0 R %d 0 R] >>", 51+j, 51+j)
+	}
+	o[50+depth] = "<< /S /GoTo /D [3 0 R /Fit] >>"
+	for i := 0; i < items; i++ {
+		s := "<< /Title (x) /Parent 4 0 R /A 50 0 R"
+		if i > 0 {
+			s += fmt.Sprintf(" /Prev %d 0 R", 1000+i-1)
+		}
+		if i < items-1 {
+			s += fmt.Sprintf(" /Next %d 0 R", 1000+i+1)
+		}
+		o[1000+i] = s + " >>"
+	}
+	var annots []string
+	for i := 0; i < links; i++ {
+		o[5000+i] = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 50 0 R >>"
+		annots = append(annots, fmt.Sprintf("%d 0 R", 5000+i))
+	}
+	o[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(annots, " ") + "] >>"
+	return testpdf.Assemble(o)
+}
+
+// TestAnActionIsCountedOncePerNamingTheWalkDoesNotFollow — /pending 767 (5). pdfcpu validates an outline item's
+// action, and every path under its /Next, once per item; the walk follows no outline, so sixty-four items over one
+// action counted as one and validated for a minute (measured, 28 KB). Each naming no followed edge accounts for is
+// charged the action's paths; a naming the walk does follow (a link's /A) is not charged twice, and an action with
+// nothing under it is not charged at all.
+func TestAnActionIsCountedOncePerNamingTheWalkDoesNotFollow(t *testing.T) {
+	paths := func(items, links, depth int) int {
+		n, err := pdfread.ValidatorPaths(unvalidated(t, sharedAction(items, links, depth)))
+		if err != nil {
+			t.Fatalf("%d items, %d links, depth %d: %v", items, links, depth, err)
+		}
+		return int(n)
+	}
+	const depth = 12
+	under := 1<<(depth+1) - 1 // the paths from the action
+	if one, many := paths(1, 0, depth), paths(64, 0, depth); many-one != 63*under {
+		t.Errorf("64 outline items over one action count %d paths more than one item does, want 63 × %d", many-one, under)
+	}
+	if none, one := paths(0, 0, depth), paths(1, 0, depth); one != none {
+		t.Errorf("one outline item over the action counts %d paths, the action alone %d: its one naming is the count it already has", one, none)
+	}
+	if one, many := paths(1, 1, depth), paths(1, 64, depth); many-one != 63*(under+1) {
+		t.Errorf("64 links over one action count %d paths more than one link does, want 63 × %d — a followed naming is charged twice", many-one, under+1)
+	}
+	if links, both := paths(0, 2, depth), paths(3, 2, depth); both-links != 3*under {
+		t.Errorf("3 outline items beside 2 links count %d paths more than the links alone, want 3 × %d", both-links, under)
+	}
+	if one, many := paths(1, 0, 0), paths(64, 0, 0); many != one {
+		t.Errorf("64 outline items over an action that leads nowhere count %d paths, one item %d: that is linear in the file and not charged", many, one)
+	}
+	if _, err := pdfread.Validated(sharedAction(1, 0, depth), model.NewDefaultConfiguration()); err != nil {
+		t.Fatalf("control: one outline item over the action does not read: %v", err)
+	}
+	refusedAs(t, pdfread.ErrReferencePaths, "64 outline items over one action of 8,191 paths", func() error {
+		_, err := pdfread.Validated(sharedAction(64, 0, depth), model.NewDefaultConfiguration())
+		return err
+	})
+}
+
 // TestSharingIsCountedThroughTheEntryEdgesFanInCannotBuild — /pending 767: page /Annots, an ExtGState's /HT, an
 // image's /ColorSpace and a Rendition action's /R fed the path count with nothing proving it. Once, shallowly, each
 // reads; named four hundred times, each is past the budget.
