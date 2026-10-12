@@ -875,3 +875,7 @@ home today.
   — the library starts every traversal from its table and adds whoever queries it, so one query before the first
   bootstrap became the whole starting set; every inbound query is restated read-only (BEP-43), and the cache
   save, the seed sample and the address probe read the table through `answeredNodes`.
+- **[ADR-131 — a merge may not reveal what a merged document hid](131-a-merge-may-not-reveal-what-a-merged-document-hid.md)**
+  — a merge kept only the first document's `/OCProperties`, so a later document's hidden layer was drawn
+  (and a redaction of page 1 revealed one on page 2); `pdfread.UnionOptionalContent` joins each later
+  document's groups to the host's in the state their own `/D` gave them, from both merge loops.
