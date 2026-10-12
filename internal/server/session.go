@@ -3464,6 +3464,7 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 		// instead of co-signing twice. Bounded by connectDeadline; a decided outcome (decline, MITM,
 		// consent timeout) breaks out and is reported below, never retried.
 		deadline := time.Now().Add(connectDeadline)
+		reraces := 0
 		for {
 			cctx, ccancel := context.WithDeadline(context.Background(), deadline)
 			conn, cerr := s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, true, peerLabel, peerLabel)
@@ -3475,10 +3476,22 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 			final, err = exchange(conn.Channel)
 			conn.Close()
 			ccancel()
-			if err == nil || !isTransportLoss(err) || !time.Now().Before(deadline) {
+			if err == nil || !isTransportLoss(err) {
 				break
 			}
-			// the channel dropped with time left — reconnect and let the peer re-deliver
+			// The channel dropped — reconnect and let the peer re-deliver, paced and bounded through
+			// the one door (/pending 623, ADR-009). This was a bare loop with the deadline tested
+			// inline, the shape /pending 369 removed from `runCeremonyReceive`: a peer that completes
+			// the handshake and drops the exchange was re-dialled as fast as it dropped, a full QUIC
+			// handshake each time, for the whole of `connectDeadline`.
+			d, ok := reraceWait(reraces, time.Now(), deadline)
+			if !ok {
+				break // the deadline passed while the channel kept dropping; `err` says so below
+			}
+			reraces++
+			// `Background`, as the connect above: a tab closing must not abandon a hop the far party
+			// may already have signed. The wait is bounded by `reraceCap` and by the deadline.
+			sleepOrDone(context.Background(), d)
 		}
 	} else {
 		// `Background`, NOT the request's context, and see raceWithRendezvous for why: a tab

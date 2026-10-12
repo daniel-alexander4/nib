@@ -146,3 +146,41 @@ func TestBothRetryArmsRouteThroughTheReraceDoor(t *testing.T) {
 			"and skip the first")
 	}
 }
+
+// TestTheDialSideReraceRoutesThroughTheReraceDoor is the same guard for the third retry arm, the
+// one the two above did not name (/pending 623): `runHopDial`'s glare loop re-dials a channel that
+// dropped during the exchange, and it tested the deadline inline with no wait between attempts.
+//
+// Structural for the reason given above — the loop needs a counterpart that completes the handshake
+// and then drops the exchange, repeatedly.
+func TestTheDialSideReraceRoutesThroughTheReraceDoor(t *testing.T) {
+	b, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(b)
+	const fn = "func (s *Server) runHopDial("
+	i := strings.Index(code, fn)
+	if i < 0 {
+		t.Fatalf("cannot find %s — this guard is pinned to a function that no longer exists under "+
+			"that name, so its clean result says nothing", fn)
+	}
+	body := funcBodyFrom(code, i)
+	// STIMULUS: the body read must be the one holding the loop, or a clean count means nothing.
+	if !strings.Contains(body, "s.connect(cctx, cer, hl, cands") {
+		t.Fatal("runHopDial's body no longer holds the glare re-race this guard is about")
+	}
+	if n := strings.Count(body, "reraceWait("); n != 1 {
+		t.Errorf("runHopDial calls reraceWait %d time(s), want 1. Its re-race then has no delay "+
+			"between attempts: a peer that drops every exchange is re-dialled as fast as it drops "+
+			"for the whole of connectDeadline", n)
+	}
+	if n := strings.Count(body, "sleepOrDone("); n != 1 {
+		t.Errorf("runHopDial calls sleepOrDone %d time(s), want 1. A delay taken from the door "+
+			"and not waited is pacing on paper only", n)
+	}
+	if strings.Contains(body, "!time.Now().Before(deadline)") {
+		t.Error("runHopDial tests its re-race deadline inline again; the deadline and the delay " +
+			"are one question through reraceWait")
+	}
+}
