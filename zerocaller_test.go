@@ -17,6 +17,11 @@ import (
 
 // TestEveryExportedFunctionUnderInternalHasAProductionCaller — /pending 445.
 //
+// **Its population is `internal/` AND `mdpdf/`** (/pending 796: `mdpdf.WrapCore` and `CoreLineHeight`
+// sat uncalled outside the walk), **and a caller is a non-test file that is neither `internal/testpdf`
+// nor `build/*.go`** (/pending 777: a fixture package and a harness's helper program answered as
+// production). The name keeps "UnderInternal" because plans and source comments cite it.
+//
 // # What this closes
 //
 // This repo has roughly ninety source-scanning guards that police call routing, ordering and
@@ -58,8 +63,9 @@ import (
 // which is the only standing check that the refusal at `internal/ceremony/invitation.go`'s
 // caveat-11 block stays a refusal.
 func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
-	// The exemption map, and every row carries the reason it is not a defect. The FIVE prefixes are
-	// different claims, not a style: `interface` means the call site cannot exist textually,
+	// The exemption map, and every row carries the reason it is not a defect. The SIX prefixes are
+	// different claims, not a style: `public-api` (mdpdf only — see its rows) means the caller is
+	// another project by design, `interface` means the call site cannot exist textually,
 	// `test-support` means the function is exported FOR tests, `test-only` means production really
 	// does not call it and that is a judgement someone made, `finding` means it IS the defect,
 	// recorded under a pending item rather than fixed here, and `gated` means production does not
@@ -181,6 +187,19 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"MaxRemoteDecisionWait": "test-only — as ExchangeBudget: the consent window fitting inside the dialer's budget is asserted, not computed.",
 		"ReceiveArrivalLag":     "test-only — as ExchangeBudget. Its own doc names the test that asserts the population it sums.",
 
+		// **`mdpdf` is in the census, and `public-api` is its prefix alone** (/pending 796 W1). The
+		// package documents itself as importable without the rest of Nib (its package comment), so a
+		// function its doc names for another project's use is not dead for want of a caller here. The
+		// prefix is refused on any other package below: under `internal/` nothing outside can call.
+		"Convert": "public-api — mdpdf's package doc names it as the core-font entry point (\"Convert embeds no " +
+			"font files\"); Nib itself always converts through ConvertStructured or ConvertWithFaces.",
+		"AssemblePacket": "public-api — mdpdf's package doc offers it as the in-memory PDF-assembly half; Nib " +
+			"assembles through `pdfops`, and only mdpdf's own tests drive this.",
+		"AssembleCompressed": "test-support — testpdf's `Assemble` under an object stream and a cross-reference stream, " +
+			"for the pdfread tests and `ManyPages`; its one non-test caller is testpdf itself, which is not production.",
+		"PacketClaimsUA": "test-support — /pending 492's claim reader over a packet in hand, for the pdfops tests; " +
+			"`ClaimsUA` in testpdf is its one non-test caller, and testpdf is not production.",
+
 		"(*Server).IdleExitCancels": "test-only — D4's two counters, kept apart deliberately. A seam instrument whose declared reader is tier 1.",
 		"(*Server).Ping":            "test-only — a rendezvous liveness probe used by the DHT tests. The one non-test mention of it is a comment in its own file.",
 		"WrapMulti":                 "test-only — multi-recipient SSH sealing. The vault seals to one recipient today, so nothing on a running path asks for several.",
@@ -224,13 +243,20 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 				continue
 			}
 			declared[fd.Name] = true
-			if !fd.Name.IsExported() || !strings.HasPrefix(rel, "internal"+string(filepath.Separator)) {
+			if !fd.Name.IsExported() || !(under(rel, "internal") || under(rel, "mdpdf")) {
 				continue
 			}
 			decls = append(decls, decl{
 				key: funcKey(fd),
 				pos: fmt.Sprintf("%s:%d", rel, fset.Position(fd.Name.Pos()).Line),
 			})
+		}
+		// **A fixture package and a harness's helper program are not production** (/pending 777).
+		// `internal/testpdf` exists for tests, and `build/*.go` are `//go:build ignore` programs the
+		// harness scripts `go run`; a function only they call is on no running path, and counting
+		// their identifiers hid it. Their own exports are still declared above, and still reported.
+		if under(rel, filepath.Join("internal", "testpdf")) || under(rel, "build") {
+			return nil
 		}
 		// Every identifier EXCEPT the one a FuncDecl declares. Comments and string literals are
 		// not in the tree at all, which is the whole reason this is parsed rather than matched.
@@ -271,14 +297,18 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			continue
 		}
 		seen[d.key] = true
-		if _, ok := declared[d.key]; ok {
+		if why, ok := declared[d.key]; ok {
+			if strings.HasPrefix(why, "public-api") && !under(d.pos, "mdpdf") {
+				t.Errorf("%s (%s) is exempted as `public-api`, and only mdpdf has one: nothing outside "+
+					"this module can import a package under internal/", d.key, d.pos)
+			}
 			continue
 		}
 		undeclared = append(undeclared, fmt.Sprintf("%s  (%s)", d.key, d.pos))
 	}
 	sort.Strings(undeclared)
 	if len(undeclared) > 0 {
-		t.Errorf("%d exported function(s) under internal/ have no production caller and no "+
+		t.Errorf("%d exported function(s) under internal/ or mdpdf/ have no production caller and no "+
 			"declared reason (/pending 445). Either give each one a caller, delete it, or add it "+
 			"to `declared` above with the reason it is not dead — `interface`, `test-support`, "+
 			"`test-only` or `finding` with its pending number. Look one level down before "+
@@ -301,6 +331,11 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"function that is fine is a reason nobody can check.\n  %s",
 			len(stale), strings.Join(stale, "\n  "))
 	}
+}
+
+// under reports whether the repo-relative path rel lies inside dir.
+func under(rel, dir string) bool {
+	return strings.HasPrefix(rel, dir+string(filepath.Separator))
 }
 
 // funcKey renders a declaration the way the exemption map spells it: `Name` for a function,
