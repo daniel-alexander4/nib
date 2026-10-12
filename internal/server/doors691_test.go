@@ -61,6 +61,56 @@ func TestAPathThatIsNotARegularFileIsRefusedWithoutBeingRead(t *testing.T) {
 	}
 }
 
+// TestTheDiskCheckDoesNotReadAPathThatIsNotARegularFile — the other read of an open document's path
+// (`diskCheck`, on every document response). A FIFO of the baseline's size got as far as
+// `os.ReadFile`, which never returns without a writer; a baseline of size 0 is what a path swapped
+// between the open's read and its stat leaves. Shaped as the test above: the check runs on a
+// goroutine so that a build without the refusal fails by name.
+func TestTheDiskCheckDoesNotReadAPathThatIsNotARegularFile(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.pdf")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := stampFor(empty, nil)
+	if rec == nil || rec.info.Size() != 0 {
+		t.Fatalf("setup: no size-0 baseline to compare a FIFO against")
+	}
+	// CONTROL: the baseline's own file is unchanged, and touched it is still unchanged (the read ran).
+	if changed, _ := diskCheck(empty, rec); changed {
+		t.Fatal("control: the baseline's own file reads as changed")
+	}
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(empty, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if changed, refreshed := diskCheck(empty, rec); changed || refreshed == nil {
+		t.Fatalf("control: a touched regular file answered changed=%v refreshed=%v, want unchanged and a fresh stat", changed, refreshed)
+	}
+
+	fifo := filepath.Join(dir, "now-a-pipe.pdf")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("SKIP (not a pass): this filesystem makes no FIFO: %v", err)
+	}
+	done := make(chan bool, 1)
+	go func() {
+		changed, _ := diskCheck(fifo, rec)
+		done <- changed
+	}()
+	select {
+	case changed := <-done:
+		if !changed {
+			t.Error("a path that is now a FIFO read as unchanged, want changed — it no longer names a file")
+		}
+	case <-time.After(3 * time.Second):
+		if w, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			w.Close()
+		}
+		t.Fatal("diskCheck blocked reading a FIFO — it must turn away anything that is not a regular " +
+			"file before it reads, because it runs on every document response")
+	}
+}
+
 // TestClosingADocumentLeavesNoPointerToOneInTheVacatedSlot — /pending 691 R6-7.
 //
 // Removing by `append(docs[:i], docs[i+1:]...)` left the backing array's old last slot pointing at

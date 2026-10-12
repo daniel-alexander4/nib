@@ -164,6 +164,14 @@ func diskCheck(path string, rec *diskState) (changed bool, refreshed *diskState)
 		fresh.ModTime().Equal(rec.info.ModTime()) {
 		return false, nil
 	}
+	// **Only a regular file is read** — `readInstallablePDF`'s rule (/pending 691 R6-5), at the other read of an open
+	// document's path. A FIFO stats as size 0 and `os.ReadFile` on one with no writer never returns; this runs on
+	// every document response. Size alone turns most of them away, but not one standing where the baseline is itself
+	// of size 0 (a path swapped between the open's read and its stat). A path that no longer names a regular file
+	// has changed, which is the true sentence.
+	if !fresh.Mode().IsRegular() {
+		return true, nil
+	}
 	if fresh.Size() != rec.info.Size() {
 		return true, nil
 	}
