@@ -870,3 +870,8 @@ home today.
   — pdfcpu's relaxed validator empties or re-points a `/Font` entry it cannot validate and every rewrite then
   dropped the font; `pdfread.Write` is the one door to pdfcpu's writer and restores the entry first, for the
   write only. `ContentDigestVersion` does not move, and such a font still hashes as `#nil`.
+- [ADR-130](130-a-node-is-admitted-to-the-dht-table-only-for-answering-us.md) — **a node is admitted to the DHT
+  table only for answering us**
+  — the library starts every traversal from its table and adds whoever queries it, so one query before the first
+  bootstrap became the whole starting set; every inbound query is restated read-only (BEP-43), and the cache
+  save, the seed sample and the address probe read the table through `answeredNodes`.

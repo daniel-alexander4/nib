@@ -1126,6 +1126,9 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	// `(ceremony, party)` since v1.128.35 — it was keyed on the ceremony alone, which is unique
 	// only while the walk is serial, and the first leg to finish deleted the row its siblings
 	// were still represented by.
+	// When the link's hold on this round's DHT writes ends (ADR-011, /pending 588). Taken before
+	// the first leg touches the link; see publishEndStateFor.
+	linkUntil := time.Now().Add(lanFirstBudget)
 	walkLegs(ctx, deliveryRoundWidth, len(tasks), func(i int) {
 		t := tasks[i]
 		endLeg := s.beginLeg(rec.ID, t.party.Fingerprint, t.party.Label, t.attempt, walked)
@@ -1177,7 +1180,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			if ceremony.DeliversDocument(endState.State) && t.party.Signs {
 				continue
 			}
-			s.publishEndStateFor(ctx, t.inv, *endState, shared)
+			s.publishEndStateFor(ctx, t.inv, *endState, shared, linkUntil)
 		}
 	}
 	return out, nil
@@ -1202,7 +1205,23 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 // is what the convener reads; a rendezvous that will not take the record does not turn a delivered
 // round into a failed one. What is lost is a pre-hop party learning early, and their arm's own
 // fetch retries.
-func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation, t ceremony.Termination, shared *sharedRendezvous) {
+//
+// # It waits out the link's hold, and it was the one DHT write that did not (/pending 588, ADR-011)
+//
+// `holdDHT` is where "the local link gets its window before anything leaves the machine" is
+// enforced, and three of the four roads to a DHT verb serve it: the candidate feed, the candidate
+// publish and the pre-hop pull. This one did not. It relied on running after its leg, which holds
+// for the leg the pull was built for — a party nobody can reach costs the whole `connectDeadline`,
+// and that leg's own feed has been past its hold for minutes. It does not hold for a leg that ends
+// EARLY: one that found the party on the link, connected and was refused within milliseconds, or
+// one that failed before it browsed at all. Then this publish — which is also the round's first
+// bootstrap — left the machine at once, about a party in the same room.
+//
+// `linkUntil` is the round's start plus `lanFirstBudget`, the hold ADR-011 gives a link that has
+// answered; a round whose leg already outlasted it waits nothing, and the zero time means no
+// hold. A round that ends before then publishes nothing, which is the hold doing its job: the
+// convener's re-run is the remedy it always was.
+func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation, t ceremony.Termination, shared *sharedRendezvous, linkUntil time.Time) {
 	if shared == nil || shared.door == nil {
 		// No round endpoint, or one with no door onto its DHT: nothing to publish through, and a
 		// leg's own is already closed. A door-less endpoint is refused rather than published through
@@ -1224,6 +1243,9 @@ func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation
 	sealed, err := t.Seal(key, salt, anchor)
 	if err != nil {
 		log.Printf("ceremony %s: end state not published (%v)", inv.ID, err)
+		return
+	}
+	if !shared.door.holdDHT(ctx, time.Until(linkUntil)) {
 		return
 	}
 	// Through the round's door, on the publish's own budget: the first publish of a round is also

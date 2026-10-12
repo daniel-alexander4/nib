@@ -99,7 +99,7 @@ func TestTheRoundsEndStatePublishHonoursTheRendezvousSwitch(t *testing.T) {
 		}
 		shared.door.rzOn = switchPredicate(on)
 		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-		s.publishEndStateFor(ctx, inv, term, shared)
+		s.publishEndStateFor(ctx, inv, term, shared, time.Time{})
 		cancel()
 		got := settle(count)
 		closeShared()

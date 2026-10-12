@@ -161,7 +161,7 @@ func TestOffLinkIsLoudOnlyWhenItHappened(t *testing.T) {
 func TestEverySummaryCounterIsPrinted(t *testing.T) {
 	st := discovery.Stats{
 		Interfaces: 11, Sent: 22, SendErrors: 33, Own: 44,
-		Peers: 55, Foreign: 66, Malformed: 77, OffLink: 88,
+		Peers: 55, Foreign: 66, Malformed: 77, OffLink: 88, ReadErrors: 99,
 	}
 	var out bytes.Buffer
 	printSummary(&out, st, 3*time.Second)
@@ -170,7 +170,7 @@ func TestEverySummaryCounterIsPrinted(t *testing.T) {
 	// one-second window, and "summary after 1s" contains "1" — so dropping the
 	// interfaces counter entirely would have gone unnoticed. Every value below is
 	// unique, is not a substring of another, and appears nowhere in the fixed text.
-	for _, want := range []string{"11", "22", "33", "44", "55", "66", "77", "88"} {
+	for _, want := range []string{"11", "22", "33", "44", "55", "66", "77", "88", "99"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary omits the counter whose value is %s: %q", want, got)
 		}

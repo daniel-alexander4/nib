@@ -108,6 +108,33 @@ func (c *contacts) state(ap netip.AddrPort) contact {
 	}
 }
 
+// answeredOnly is the ONE rule for trusting a routing-table node with anything: it answered a
+// query of ours this run (ADR-009, /pending 775).
+//
+// The table is the library's, and what it holds is the library's decision — every node not yet
+// BAD. Three readers act on it: the cache save writes nodes down for the next run to start
+// from, `SeedSample` ships them to an invitation's recipient as bootstrap addresses, and
+// `probeTargets` asks them what our public address is and publishes the answer. The save
+// applied this rule and the other two read the table raw, so a node that had only ever sent US
+// a query could be handed to a stranger as a seed, or be asked where we are and believed.
+// Inbound queriers are now kept out of the table as well (screen.go, asReadOnly) — this stays,
+// because that is a property of one library version's `handleQuery` and this is ours.
+func answeredOnly(table []krpc.NodeInfo, heard func(netip.AddrPort) contact) []krpc.NodeInfo {
+	var out []krpc.NodeInfo
+	for _, ni := range table {
+		if ap, ok := nodeAddrPort(ni); ok && heard(ap) == contactAnswered {
+			out = append(out, ni)
+		}
+	}
+	return out
+}
+
+// answeredNodes is the routing table through answeredOnly — the door every reader that trusts
+// a node goes through. `Nodes` is the raw table, for a diagnostic.
+func (s *Server) answeredNodes() []krpc.NodeInfo {
+	return answeredOnly(s.dht.Nodes(), s.contacts.state)
+}
+
 // udpAddrPort is a socket address as the scope rule reads it, unmapped as nodeAddrPort does.
 func udpAddrPort(a net.Addr) (netip.AddrPort, bool) {
 	ua, ok := a.(*net.UDPAddr)

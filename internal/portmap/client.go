@@ -246,7 +246,12 @@ func exchange(ctx context.Context, conn net.Conn, req []byte, onSent func(), ans
 		if attempt > 0 || window.After(deadline) {
 			window = deadline
 		}
-		conn.SetReadDeadline(window)
+		// The inner loop ends only when a Read FAILS, and on a healthy socket the one thing that
+		// fails it is this deadline — so a deadline that was not set is a loop with no end, fed
+		// by any datagram that is not our answer (/pending 653).
+		if err := conn.SetReadDeadline(window); err != nil {
+			return nil, fmt.Errorf("portmap: %w", err)
+		}
 		for {
 			n, err := conn.Read(buf)
 			if err != nil {

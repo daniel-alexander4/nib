@@ -363,6 +363,12 @@ func TestAZonelessLinkLocalNodeIsNotProbed(t *testing.T) {
 	}
 	add("fe80::1", 6881)
 	add("127.40.0.1", 6882)
+	// Both answered us, so the zone rule is the only thing standing between either and a slot.
+	for _, s := range []string{"[fe80::1]:6881", "127.40.0.1:6882"} {
+		ap := netip.MustParseAddrPort(s)
+		n.rz.contacts.sent(ap)
+		n.rz.contacts.answered(ap)
+	}
 
 	// Stimulus: the table really holds both, so an absence below is a decision this
 	// code made and not a node that was never there.

@@ -228,6 +228,17 @@ func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 	fmt.Fprintf(out, "  own copies heard    %d\n", st.Own)
 	fmt.Fprintf(out, "  peers heard         %d\n", st.Peers)
 	fmt.Fprintf(out, "  other traffic       %d foreign, %d malformed\n", st.Foreign, st.Malformed)
+	// Reads the socket itself failed (/pending 653 part 7). The listen loop pauses on them
+	// rather than spinning, but it used to say nothing: an interface going down mid-window
+	// ended in "peers heard 0" and a verdict about a firewall, from a socket that had stopped
+	// reading. The counts above are only what was heard before and between the failures.
+	if st.ReadErrors > 0 {
+		fmt.Fprintf(out, "  READS FAILED        %d — the socket could not be read, so the counts above\n"+
+			"                      and the verdict below describe only what arrived in between.\n"+
+			"                      A network connection going down during the test does this.\n", st.ReadErrors)
+	} else {
+		fmt.Fprintf(out, "  reads failed        0\n")
+	}
 	// OffLink, which this summary omitted while printing all eight of its siblings.
 	//
 	// Its own doc: "Non-zero means somebody is sending link-local discovery traffic from
