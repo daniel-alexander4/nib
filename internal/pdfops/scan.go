@@ -1005,8 +1005,66 @@ func dropKey(xt *model.XRefTable, d types.Dict, key string) {
 	if !found {
 		return
 	}
-	_ = xt.DeleteObject(o) // best-effort: see above; the key goes regardless
+	freeGraph(xt, o) // best-effort: see above; the key goes regardless
 	d.Delete(key)
+}
+
+// freeGraph frees every object reachable from o that nothing else references — what pdfcpu's
+// `XRefTable.DeleteObject` does, object for object, WITHOUT its recursion.
+//
+// `DeleteObject` calls itself once per reference it follows, with no depth bound, so the stack it needs is the
+// length of the longest chain under the key — and an action's `/Next` is a chain a file writes as long as it
+// likes. Measured (2026-10-11, a chain built in memory): the goroutine's stack stood at 4.5 MiB after 10,000
+// links, 32 MiB after 100,000 and 128 MiB after 400,000 — between 168 and 335 bytes a link — so Go's 1 GB stack
+// ceiling, which is a fatal error and not a panic `safe.Recover` can turn into a refusal, is reached somewhere
+// between 1.7 and 3.4 million links. (No file of that many objects was built and read end to end; the walk is
+// what was measured.) This walk keeps its pending objects in a slice instead: the same frees, the same
+// reference counts, and work bounded by the objects under the key.
+//
+// It mirrors `DeleteObject` exactly where that decides anything: a reference whose entry is counted more than
+// once (the optimizer's `RefCount`) is decremented and NOT followed, an object already freed reads as nil and
+// ends its branch, and the first error stops the walk, as it stopped pdfcpu's. The order differs, which decides
+// nothing — pdfcpu's own order is a Go map's.
+func freeGraph(xt *model.XRefTable, o types.Object) {
+	pending := []types.Object{o}
+	for len(pending) > 0 {
+		o := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if ir, ok := o.(types.IndirectRef); ok {
+			nr := ir.ObjectNumber.Value()
+			entry, found := xt.FindTableEntryLight(nr)
+			if !found {
+				return
+			}
+			if entry.RefCount > 1 {
+				entry.RefCount-- // still in use elsewhere
+				continue
+			}
+			target, err := xt.Dereference(ir)
+			if err != nil {
+				return
+			}
+			if target == nil {
+				continue
+			}
+			if xt.FreeObject(nr) != nil {
+				return
+			}
+			o = target
+		}
+		switch v := o.(type) {
+		case types.Dict:
+			for _, kid := range v {
+				pending = append(pending, kid)
+			}
+		case types.StreamDict:
+			for _, kid := range v.Dict {
+				pending = append(pending, kid)
+			}
+		case types.Array:
+			pending = append(pending, v...)
+		}
+	}
 }
 
 // ErrActiveContentRemains is StripActive's refusal: its own output still scans as carrying active content,
