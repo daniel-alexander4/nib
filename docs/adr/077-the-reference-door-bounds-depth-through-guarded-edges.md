@@ -31,3 +31,15 @@ overflow`, which no recover holds, so the process went with every open document.
 - **Declared:** the guarded edges are those that carry resources onward — `/Resources /XObject` (forms and images),
   `/Resources /Font` (Type 3), an ExtGState soft mask's `/G`, an annotation's `/AP` streams and an image's `/SMask`. A
   guarded object with no onward edge (a font program, an ICC profile) is a leaf and does not deepen anything.
+
+### Note, 2026-10-11 (`/pending 867`) — a dated record; the decision above stands
+
+- **This pass reads object streams too**: `resolveCompressed` decodes every object pdfcpu's read left in one before
+  any walk, because a chain with one link held in an object stream read as no chain (`/pending 840`).
+- **A third pass follows it** (`refall.go`): the depth of every reference under a font or an image, under any key,
+  bounded at 2^19 levels, for pdfcpu's optimize pass; and pdfcpu's free-reference walk is made by nib first, without
+  recursion (`fixFreeReferences`). Neither bounds a LOOP under a font or image — a depth is not a loop, and
+  `traverse` marks nothing — which is kept from the optimize pass by `duplicateLoop` (ADR-069's note of this date).
+- **Cost, re-measured** over the 333 producer and veraPDF documents, under load (ratios, not milliseconds): this pass
+  129 ms against the path count's 95 ms, of a 2,032 ms read; 81 ms at worst (census-p60-280.pdf), where the figure
+  above was 31 ms on a door that could not see compressed objects.
