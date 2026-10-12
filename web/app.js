@@ -119,6 +119,7 @@ const els = {
   selRotateLeftBtn: $('selRotateLeftBtn'), selRotateRightBtn: $('selRotateRightBtn'),
   selDeleteBtn: $('selDeleteBtn'), selClearBtn: $('selClearBtn'),
   selMoveFrontBtn: $('selMoveFrontBtn'), selMoveBackBtn: $('selMoveBackBtn'),
+  selMoveToNum: $('selMoveToNum'), selMoveToBtn: $('selMoveToBtn'),
   appendBtn: $('appendBtn'), appendInput: $('appendInput'),
   redactBtn: $('redactBtn'), applyRedactBtn: $('applyRedactBtn'),
   redactTextBtn: $('redactTextBtn'), redactTextModal: $('redactTextModal'),
@@ -374,6 +375,8 @@ async function repointKey() {
     els.authError.textContent = '';
     els.repointPw.value = '';
     await refreshStatus();
+  } catch {
+    els.authError.textContent = 'Could not reach Nib.'; // the request never arrived — as the submit handler below says it
   } finally {
     els.repointGo.disabled = false;
   }
@@ -789,58 +792,74 @@ async function refreshStatus() {
   }
 }
 
+// authBusy is the in-flight half (/pending 671 #8): the button is disabled while a request is out, and the flag is
+// what stops a second SUBMIT — Enter in a field submits a form whatever its button says, and two unlocks or two
+// enrolments sent back to back answer in either order.
+let authBusy = false;
 els.authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (authBusy) return;
+  authBusy = true;
+  els.authSubmit.disabled = true;
   els.authError.textContent = '';
-  // Passphrase unlock: the enrolled key is encrypted; send only the passphrase.
-  if (authState === 'key-locked') {
-    // Raw, not apiFetch: a wrong passphrase is a 401, which apiFetch reads as "the vault locked".
-    const res = await fetch('/api/ssh/unlock', authed({
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ passphrase: els.authPw.value }),
-    }));
-    // The refusal is read through errText, and BEFORE any parse (/pending 609): a body that is not JSON threw out of
-    // this handler, so the form said nothing at all.
-    if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not unlock (${res.status}).`); return; }
-    applyStatus(await res.json());
-    return;
-  }
-  // Recovery, and it is checked BEFORE the key-mode block below rather than after.
-  //
-  // The vault is still sealed to the enrolled key's PUBLIC half; only the path was lost.
-  // So retrying is a status re-check (ensureUnlocked runs server-side) and needs no key
-  // choice at all — which is why `#keyChoice` is hidden in this state and `keySelect` is
-  // never populated.
-  //
-  // **It used to sit after the key-mode block and was therefore unreachable.** With no
-  // key choice offered, `selectedKeyMode()` returned its default `use`, `keySelect.value`
-  // was "", and the block returned early with "No key selected." — so the Retry button on
-  // the key-missing screen showed an error about a control the user could not see, and
-  // never re-read the status. The documented way out of a misplaced key was dead; the
-  // repoint button beside it was the only one that worked.
-  if (authState === 'key-missing' || authState === 'vault-unreadable') { await refreshStatus(); return; }
+  // One catch for the three requests below. A request that never arrives — Nib has exited, the connection dropped —
+  // rejects, and with nothing catching it the form said nothing at all: a passphrase typed, a button pressed, no sign.
+  try {
+    // Passphrase unlock: the enrolled key is encrypted; send only the passphrase.
+    if (authState === 'key-locked') {
+      // Raw, not apiFetch: a wrong passphrase is a 401, which apiFetch reads as "the vault locked".
+      const res = await fetch('/api/ssh/unlock', authed({
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: els.authPw.value }),
+      }));
+      // The refusal is read through errText, and BEFORE any parse (/pending 609): a body that is not JSON threw out of
+      // this handler, so the form said nothing at all.
+      if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not unlock (${res.status}).`); return; }
+      applyStatus(await res.json());
+      return;
+    }
+    // Recovery, and it is checked BEFORE the key-mode block below rather than after.
+    //
+    // The vault is still sealed to the enrolled key's PUBLIC half; only the path was lost.
+    // So retrying is a status re-check (ensureUnlocked runs server-side) and needs no key
+    // choice at all — which is why `#keyChoice` is hidden in this state and `keySelect` is
+    // never populated.
+    //
+    // **It used to sit after the key-mode block and was therefore unreachable.** With no
+    // key choice offered, `selectedKeyMode()` returned its default `use`, `keySelect.value`
+    // was "", and the block returned early with "No key selected." — so the Retry button on
+    // the key-missing screen showed an error about a control the user could not see, and
+    // never re-read the status. The documented way out of a misplaced key was dead; the
+    // repoint button beside it was the only one that worked.
+    if (authState === 'key-missing' || authState === 'vault-unreadable') { await refreshStatus(); return; }
 
-  const mode = selectedKeyMode();
-  const body = { password: els.authPw.value };
-  if (mode === 'create') {
-    body.mode = 'create';
-    body.keyPath = els.createPath.value.trim();
-  } else if (mode === 'path') {
-    body.mode = 'use';
-    body.keyPath = els.keyPath.value.trim();
-    if (!body.keyPath) return (els.authError.textContent = 'Enter a key path.');
-  } else {
-    body.mode = 'use';
-    body.keyPath = els.keySelect.value;
-    if (!body.keyPath) return (els.authError.textContent = 'No key selected.');
+    const mode = selectedKeyMode();
+    const body = { password: els.authPw.value };
+    if (mode === 'create') {
+      body.mode = 'create';
+      body.keyPath = els.createPath.value.trim();
+    } else if (mode === 'path') {
+      body.mode = 'use';
+      body.keyPath = els.keyPath.value.trim();
+      if (!body.keyPath) return (els.authError.textContent = 'Enter a key path.');
+    } else {
+      body.mode = 'use';
+      body.keyPath = els.keySelect.value;
+      if (!body.keyPath) return (els.authError.textContent = 'No key selected.');
+    }
+    const url = authState === 'migrate' ? '/api/ssh/migrate' : '/api/ssh/enroll';
+    const res = await fetch(url, authed({
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }));
+    if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not set up the key (${res.status}).`); return; }
+    applyStatus(await res.json());
+  } catch {
+    els.authError.textContent = 'Could not reach Nib.';
+  } finally {
+    authBusy = false;
+    els.authSubmit.disabled = false;
   }
-  const url = authState === 'migrate' ? '/api/ssh/migrate' : '/api/ssh/enroll';
-  const res = await fetch(url, authed({
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  }));
-  if (!res.ok) { els.authError.textContent = await errText(res, `Nib could not set up the key (${res.status}).`); return; }
-  applyStatus(await res.json());
 });
 
 // --- vault backup / restore --------------------------------------------------
@@ -1473,6 +1492,9 @@ async function sessionInit() {
   const fingerprint = els.sinPeer.value;
   if (!fingerprint) return;
   if (!opDoc || !opDoc.id) { toast('Open a PDF first'); return; } // the quote below is pinned to it too
+  // Baked below, so what is placed and typed is in what is sent; a redaction box not yet applied is not, and
+  // the co-signed document loaded back has none. Asked before the quote: nothing has gone to the peer yet.
+  if (!confirmOverlayLoss(owner, true)) return;
   // P05.S12: an empty address is the LADDER default, not an error — the server's LAN browse (and, for
   // an invited ceremony, the DHT) finds the armed peer. The typed address is the manual fallback (D8
   // tier 5), reachable from the Advanced disclosure. A failure now carries S11's D19 diagnosis in the
@@ -2716,6 +2738,9 @@ function newView() {
     // outline, and a switch is a `hidden` toggle rather than an N-page re-render.
     container: null,
     thumbGrid: null,
+    // The page whose thumbnail takes the focus when the grid is next rebuilt (/pending 778) — set by a page
+    // operation started from the thumbnails, read once by `buildThumbnails`.
+    thumbFocus: null,
     outlineList: null,
     viewer: null,
     eventBus: null,
@@ -5342,7 +5367,16 @@ async function save() {
     // AFTER the reload, which runs through the sink and therefore re-sets the flag.
     // Ordering it the other way round would clear the flag and then immediately dirty
     // the document again — the exact shape of bug this whole item is about.
-    if (view.overlayFields.length) await setDocumentFromServer(meta, owner);
+    //
+    // The redaction boxes are carried across it (/pending 791). The reload empties them with everything else
+    // (`clearOverlays`), and a Save that silently dropped boxes the user had not applied yet is a Save that lost
+    // work. They are page fractions and a Save moves no page, so they still name the same places; the boxes are
+    // drawn from the list as each page renders.
+    if (view.overlayFields.length) {
+      const boxes = owner.redactMarks;
+      await setDocumentFromServer(meta, owner);
+      if (boxes.length && owner.redactMarks !== boxes) { owner.redactMarks = [...boxes, ...owner.redactMarks]; relayoutRedactMarks(owner); }
+    }
     setDirty(owner, false);
   } catch (err) {
     toast('save failed: ' + err.message);
@@ -7392,6 +7426,11 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
   // does not currently occur — it is here so the loop does not silently depend on
   // that, not because a null deref was observed.
   const total = owner.pdfDocument.numPages;
+  // Where the focus goes back to (/pending 778). A page operation rebuilds this grid, and the thumbnail or the
+  // selection-bar button that had the focus is gone or hidden with it: a keyboard user was left at the top of the
+  // page after every rotate, move and delete. Read once, so a later load of another kind restores nothing.
+  const refocus = owner.thumbFocus == null ? 0 : Math.max(1, Math.min(owner.thumbFocus, total));
+  owner.thumbFocus = null;
   for (let n = 1; n <= total; n++) {
     if (gen !== owner.docGen) return; // a newer document loaded into THIS view
     const page = await owner.pdfDocument.getPage(n);
@@ -7424,11 +7463,11 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     // reachable today — a hidden grid is display:none and its buttons cannot be clicked —
     // but before P05.S05 the grid was shared and always the active document's, so resolving
     // `view` was correct; per-view grids are what make that stop being true.
-    rotL.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 270 }); };
+    rotL.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 270, focus: n }); };
     const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate right';
-    rot.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 90 }); };
+    rot.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 90, focus: n }); };
     const del = document.createElement('button'); del.textContent = '×'; describeButton(del, 'Delete page');
-    del.onclick = (e) => { e.stopPropagation(); if (owner === view && owner.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
+    del.onclick = (e) => { e.stopPropagation(); if (owner === view && owner.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n), focus: n }); };
     acts.append(rotL, rot, del);
 
     const label = document.createElement('div');
@@ -7451,6 +7490,10 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     // contract self-contained.
     if (gen !== owner.docGen) return;
     owner.thumbGrid.appendChild(wrap);
+    // Only into the document in front, and only when the focus is where the rebuild left it (nowhere) or still in
+    // the thumbnail panel — never taken from a control the user has gone to since.
+    if (n === refocus && owner === view
+      && (document.activeElement === document.body || els.thumbs.contains(document.activeElement))) canvas.focus();
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
   markCurrentThumb(owner, owner.viewer.currentPageNumber || 1);
@@ -7532,6 +7575,7 @@ function markSelectedThumbs(owner = view) {
   // nobody is looking at would set the count the user reads.
   if (owner !== view) return;
   els.thumbSelBar.hidden = owner.selectedPages.size === 0;
+  if (owner.pdfDocument) els.selMoveToNum.max = String(owner.pdfDocument.numPages);
   els.thumbSelCount.textContent = owner.selectedPages.size + ' selected';
 }
 
@@ -7678,6 +7722,10 @@ async function pageOp(op, extra = {}) {
   if (!owner.pdfDocument) return;
   if (!confirmSignatureLoss()) return;
   if (!confirmOverlayLoss(owner, true)) return; // baked below: only the redaction boxes go with the reload
+  // `extra.focus` is the page whose thumbnail is focused once the grid is rebuilt — honoured only when the
+  // operation was started from the thumbnail panel (read here, before the first await moves the focus). It is
+  // the page's number AFTER the operation, and it is not sent.
+  const refocus = extra.focus != null && els.thumbs.contains(document.activeElement);
   const form = await bakedForm(owner);
   form.append('op', op);
   if (extra.pages) form.append('pages', extra.pages);
@@ -7713,6 +7761,7 @@ async function pageOp(op, extra = {}) {
   }
   // The server's sentence — see the attachment-add door for why (P06.S09).
   if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
+  owner.thumbFocus = refocus ? extra.focus : null;
   await setDocumentFromServer(await res.json(), owner);
   return true;
 }
@@ -7794,30 +7843,44 @@ els.normalizeBtn.onclick = async () => {
 
 // Bulk actions on the thumbnail multi-selection. Delete is blocked when it would
 // empty the document (mirrors the per-thumbnail "numPages > 1" guard, generalized).
-els.selRotateLeftBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 270 }); };
-els.selRotateRightBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90 }); };
+// Each names the thumbnail that takes the focus afterwards (`focus`, see pageOp): the first page acted on, where
+// it now is. After a delete that is the page that took the first deleted page's place.
+const firstSelected = () => Math.min(...view.selectedPages);
+els.selRotateLeftBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 270, focus: firstSelected() }); };
+els.selRotateRightBtn.onclick = () => { if (view.selectedPages.size) pageOp('rotate', { pages: selectedPagesParam(), deg: 90, focus: firstSelected() }); };
 els.selDeleteBtn.onclick = () => {
   if (!view.selectedPages.size) return;
   if (view.pdfDocument.numPages <= view.selectedPages.size) { toast("can't delete every page"); return; }
-  pageOp('delete', { pages: selectedPagesParam() });
+  pageOp('delete', { pages: selectedPagesParam(), focus: firstSelected() });
 };
 els.selClearBtn.onclick = () => clearSelection();
-// Move the selection to the front or back as a contiguous block, keeping the
-// pages' relative order. Routes through the same reorder rail as the single-page
-// drag (pageOp('reorder') → Collect), so it bakes overlays, warns on signature
-// loss, and is undoable for free. A move that wouldn't change the order is a no-op.
-function moveSelected(toFront) {
+// Move the selection as a contiguous block, keeping the pages' relative order, so that its first page becomes
+// page `position` (1-based, clamped to what the document allows). Routes through the same reorder rail as the
+// single-page drag (pageOp('reorder') → Collect), so it bakes overlays, warns on signature loss, and is undoable
+// for free. A move that wouldn't change the order is a no-op.
+//
+// Front and back are the two ends of it; the numbered position is the keyboard's way to anywhere between
+// (/pending 778, WCAG 2.1.1) — until it existed, a page reached the middle of a document only by a drag.
+function moveSelectedTo(position) {
   if (!view.selectedPages.size) return;
   const selected = [...view.selectedPages].sort((a, b) => a - b);
   const rest = [];
   for (let p = 1; p <= view.pdfDocument.numPages; p++) if (!view.selectedPages.has(p)) rest.push(p);
-  const order = toFront ? [...selected, ...rest] : [...rest, ...selected];
+  const at = Math.max(1, Math.min(position, rest.length + 1));
+  const order = [...rest.slice(0, at - 1), ...selected, ...rest.slice(at - 1)];
   const identity = Array.from({ length: view.pdfDocument.numPages }, (_, i) => i + 1);
-  if (order.join(',') === identity.join(',')) return; // already at that end
-  pageOp('reorder', { pages: order.join(',') });
+  if (order.join(',') === identity.join(',')) return; // already there
+  pageOp('reorder', { pages: order.join(','), focus: at });
 }
-els.selMoveFrontBtn.onclick = () => moveSelected(true);
-els.selMoveBackBtn.onclick = () => moveSelected(false);
+els.selMoveFrontBtn.onclick = () => moveSelectedTo(1);
+els.selMoveBackBtn.onclick = () => moveSelectedTo(Infinity);
+function moveSelectedToTyped() {
+  const position = parseInt(els.selMoveToNum.value, 10);
+  if (!(position >= 1)) { toast('Type the page number to move the selected pages to'); els.selMoveToNum.focus(); return; }
+  moveSelectedTo(position);
+}
+els.selMoveToBtn.onclick = moveSelectedToTyped;
+els.selMoveToNum.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); moveSelectedToTyped(); } };
 
 // Insert a blank page before or after the page on screen (/pending 483) — a replace-in-place
 // mutation, so it routes through pageOp like rotate/delete (the blank matches the neighbour).
@@ -11560,7 +11623,7 @@ const EDITING_TOOLS = [
   // `grep -nE 'borderBtn|noteBtn|dropdownBtn|radioBtn|shapeBtn' web/app.js | grep -i disabled`
   // returned nothing, so these two lists are the only gates they have.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
-  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn', 'checkboxBtn',
+  'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
   // OCR rewrites the document — it stamps a text layer — and was the one rewriting tool this list did not

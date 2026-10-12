@@ -1157,7 +1157,8 @@ hover a thumbnail to rotate (either direction) or delete a single page.
 **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
 rotate, delete, or **move the whole selection to the front or back** (⤒ / ⤓) from the
 bar above the thumbnails — or **drag a selected thumbnail** to slide the whole group to
-any spot, keeping its order. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
+any spot, keeping its order. Without a drag: type a page number in the bar's **to page** box and press
+**Move** (or Enter), and the selection moves so that its first page becomes that page. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
 touching the open document, and **Blank page before** / **Blank page after** drop a fresh page —
 matching its neighbour's size — on that side of the current one. **Duplicate page** drops a copy of the
 current page right after it, and **Insert PDF before…** / **Insert PDF after…** splice another PDF in on
@@ -1276,6 +1277,11 @@ press belongs to the tool.
 - **Tab** into a page thumbnail's rotate / rotate / delete buttons. They are shown
   on hover, but they stay in the tab order — per-page rotation is not available
   anywhere else, so it must not need a mouse.
+- **Tab** to a page thumbnail itself: **Enter** goes to the page, **Space** selects it,
+  **Shift+Space** selects from the last one chosen, and the arrow keys, Home and End move
+  between thumbnails. The bar above then rotates, deletes or moves the selection — to the
+  front, the back, or the page number you type — and afterwards the keyboard is back on the
+  thumbnail of the page you acted on.
 
 Navigation keys stand down while you're typing in a field or a dialog is open, so
 they never get in the way of editing.

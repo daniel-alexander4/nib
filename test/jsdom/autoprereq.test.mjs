@@ -43,6 +43,8 @@ let reflowGate = null;
 let reflowStatus = 200, reflowError = '';
 let reflowDone = false; // a reflow that is applied, so the document is loaded back
 const sent = []; // each sanitize, page operation and save the server was sent
+let pagesSent = null; // the last page operation: which, and on which pages
+let pagesGate = null;
 let docsNow = null;
 let redactAnswer = { status: 200, body: {} };
 let profile = {};
@@ -73,7 +75,12 @@ const h = await boot({
     },
     // /pending 791: the operations that load the document back, counted.
     '/api/sanitize': () => { sent.push('sanitize'); return { ...nextOpen, ok: true, canUndo: true, residual: { findings: [] } }; },
-    '/api/pages': () => { sent.push('pages'); return { ...nextOpen, canUndo: true }; },
+    '/api/pages': async (opts) => {
+      sent.push('pages');
+      pagesSent = { op: opts.body.get('op'), pages: opts.body.get('pages') };
+      if (pagesGate) await pagesGate; // held open: the window in which the user goes somewhere else
+      return { ...nextOpen, canUndo: true };
+    },
     '/api/save': () => { sent.push('save'); return nextOpen; },
     // Every 409 makes the window reconcile its tabs with the server; a test that answers one says what is open.
     '/api/docs': () => docsNow || { docs: [], activeId: '' },
@@ -84,6 +91,8 @@ const h = await boot({
       return profile;
     },
     '/api/peers': () => ({ fingerprint: 'aa', name: 'me', peers }),
+    // /pending 791: a co-sign that got as far as its quote is refused there — the test is about what precedes it.
+    '/api/cosign/quote': () => new Response('{"error":"no quote in this test"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
     '/api/identity/external': () => ({}),
     '/api/switch': () => ({}),
     '/api/close-view': () => nextOpen,
@@ -867,4 +876,139 @@ test('a thumbnail is a tab stop that says what it is; Enter goes to the page, Sp
   assert.deepEqual(selected(), [], 'Enter did not clear the selection as a plain click does');
   assert.equal(doc.querySelector('.pageNum').value, '3', 'Enter on a thumbnail did not go to its page');
   assert.equal($('thumbSelBar').hidden, true);
+});
+
+// ── /pending 778 — a page is MOVED from the keyboard, and the focus comes back ──────────────────────
+// Front and back were the only moves without a drag, and every page operation rebuilt the grid under the
+// focus: the thumbnail or the bar button that had it was gone, and the next Tab started from the top.
+// Cannot be seen here: that the field and its button fit the bar (tier 3 — it is layout), and where a real
+// browser puts the focus when the bar hides (it is `body` there; jsdom leaves it on the hidden button, and
+// the rule takes either).
+test('the selected pages move to any page number from the keyboard, and the focus comes back to a thumbnail', async () => {
+  const four = ['a', 'b', 'c', 'd'];
+  await open('mv.pdf', four, []);
+  const thumbs = () => [...doc.querySelectorAll('.thumbgrid:not([hidden]) .thumb')];
+  const key = (el, k, extra = {}) => el.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }));
+  // The document the operation's answer loads: the grid is rebuilt from it.
+  const reloadsAs = (n) => pdfjs.setNextDocument({ numPages: n, renders: true, text: four.slice(0, n) });
+  const focused = () => (doc.activeElement.classList.contains('thumb') ? doc.activeElement.getAttribute('aria-label') : doc.activeElement.id || doc.activeElement.tagName);
+  const num = $('selMoveToNum'), go = $('selMoveToBtn');
+  // Real controls, each with a name.
+  assert.equal(num.tagName + ':' + num.type, 'INPUT:number');
+  assert.match(num.closest('label').textContent, /^to page\s*$/, 'the page-number field has no label');
+  assert.equal(go.tagName, 'BUTTON');
+  assert.equal(go.textContent, 'Move');
+
+  // Page 1 to page 3, with Enter in the field.
+  thumbs()[0].focus();
+  key(thumbs()[0], ' ');
+  assert.equal(num.max, '4', 'the field does not know how many pages there are');
+  num.focus(); num.value = '3';
+  reloadsAs(4); pagesSent = null;
+  const was = thumbs()[2];
+  key(num, 'Enter');
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'reorder', pages: '2,3,1,4' }, 'page 1 was not moved to page 3');
+  assert.notEqual(thumbs()[2], was, 'setup: the grid was not rebuilt, so the focus below was never at risk');
+  assert.equal(focused(), 'Page 3', 'after the move the focus is not on the moved page\'s thumbnail');
+  assert.equal(doc.activeElement, thumbs()[2], 'the focus is on a thumbnail of the grid that was replaced');
+
+  // A block keeps its order: pages 3 and 4 to page 2, with the button.
+  key(thumbs()[2], ' ');
+  key(thumbs()[3], ' ', { shiftKey: true });
+  num.value = '2'; go.focus();
+  reloadsAs(4); pagesSent = null;
+  go.click();
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'reorder', pages: '1,3,4,2' });
+  assert.equal(focused(), 'Page 2');
+
+  // Past the end is the end; a move that changes nothing, and no number at all, send nothing.
+  key(thumbs()[0], ' ');
+  num.value = '99';
+  reloadsAs(4); pagesSent = null;
+  go.click();
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'reorder', pages: '2,3,4,1' });
+  assert.equal(focused(), 'Page 4');
+  key(thumbs()[1], ' ');
+  pagesSent = null;
+  num.value = '2'; go.click();
+  await settle(20);
+  assert.equal(pagesSent, null, 'page 2 moved to page 2 was sent as a reorder');
+  num.value = ''; go.click();
+  await settle(20);
+  assert.equal(pagesSent, null, 'a move with no page number was sent');
+  assert.equal(toastText(), 'Type the page number to move the selected pages to');
+  assert.equal(doc.activeElement, num, 'the field that needs a number did not take the focus');
+
+  // To the front is still page 1, and the focus follows it.
+  $('selMoveFrontBtn').focus();
+  reloadsAs(4); pagesSent = null;
+  $('selMoveFrontBtn').click();
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'reorder', pages: '2,1,3,4' });
+  assert.equal(focused(), 'Page 1');
+
+  // A thumbnail's own Delete: the page that takes its place — and the last page, when the last was deleted.
+  const del = thumbs()[3].parentNode.querySelector('.thumbacts').lastChild;
+  del.focus();
+  reloadsAs(3); pagesSent = null;
+  del.click();
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'delete', pages: '4' });
+  assert.equal(focused(), 'Page 3', 'after the last page was deleted the focus is not on the new last page');
+
+  // Started somewhere else, a page operation does not pull the focus into the thumbnails.
+  $('rotateRightBtn').focus();
+  reloadsAs(3);
+  $('rotateRightBtn').click();
+  await settle(40);
+  assert.equal(focused(), 'rotateRightBtn', 'a rotate from the menu moved the focus to a thumbnail');
+  // …and neither does a thumbnail's own button pressed with the pointer while the focus is nowhere.
+  doc.activeElement.blur();
+  assert.equal(focused(), 'BODY', 'setup: the focus is still somewhere');
+  reloadsAs(3); pagesSent = null;
+  thumbs()[0].parentNode.querySelector('.thumbacts').firstChild.click();
+  await settle(40);
+  assert.deepEqual(pagesSent, { op: 'rotate', pages: '1' });
+  assert.equal(focused(), 'BODY', 'a pointer press with the focus nowhere put it on a thumbnail');
+  // Started from a thumbnail, but the user has gone to another control by the time the answer is back: it is left there.
+  const rot = thumbs()[1].parentNode.querySelector('.thumbacts').firstChild;
+  rot.focus();
+  let release;
+  pagesGate = new Promise((r) => { release = r; });
+  reloadsAs(3);
+  rot.click();
+  await settle(20);
+  $('rotateLeftBtn').focus();
+  release(); pagesGate = null;
+  await settle(40);
+  assert.equal(focused(), 'rotateLeftBtn', 'the focus was taken from the control the user had moved to while the operation was out');
+});
+
+// ── /pending 791 — the live co-sign's reload is behind the door too ────────────────────────────────
+// It bakes what is placed and typed into what it sends, so only a redaction box not yet applied is lost when
+// the co-signed document is loaded back — and it was lost without a word. Asked before the quote: No must
+// leave nothing sent to the server, let alone to the peer.
+test('a live co-sign asks about a redaction box not yet applied before anything is quoted or sent', async () => {
+  await open('cs.pdf', ['a secret here'], []);
+  await search('secret');
+  assert.match(toastText(), /^1 match\(es\) marked/, 'setup: nothing is marked');
+  typeIntoForm();
+  const pick = $('sinPeer');
+  pick.innerHTML = '';
+  const peer = doc.createElement('option');
+  peer.value = 'bb'; peer.textContent = 'a pinned peer';
+  pick.append(peer); pick.value = 'bb';
+  h.confirms.length = 0; h.setConfirmAnswer(false);
+  const before = h.calls.length;
+  $('sinGo').click();
+  await settle(40);
+  assert.equal(h.confirms.length, 1, 'a co-sign with a redaction box pending asked nothing: the box goes when the co-signed document is loaded back');
+  assert.match(h.confirms[0], /1 redaction box not applied yet/);
+  assert.doesNotMatch(h.confirms[0], /typed|placed/, 'a co-sign sends what is typed and placed, and said it would be discarded');
+  assert.deepEqual(h.calls.slice(before).map((c) => c.url).filter((u) => /cosign|session/.test(u)), [],
+    'the user said No and the co-sign went ahead');
+  h.setConfirmAnswer(true);
 });

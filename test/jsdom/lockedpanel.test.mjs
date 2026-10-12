@@ -55,7 +55,8 @@ const h = await boot({
       ghostscript: false, libreoffice: false,
     },
     '/api/ceremonies': () => CEREMONIES,
-    '/api/ssh/unlock': () => unlockAnswer,
+    // A function is called for its answer, so a test can make the request fail outright or hold it open.
+    '/api/ssh/unlock': () => (typeof unlockAnswer === 'function' ? unlockAnswer() : unlockAnswer),
   },
 });
 const { document: doc, settle } = h;
@@ -153,4 +154,40 @@ test('a refused unlock is reported even when its body is not JSON', async () => 
   assert.equal(err.textContent, 'Nib could not unlock (502).',
     `a refusal that is not JSON left the form saying ${JSON.stringify(err.textContent)}`);
   assert.equal(doc.getElementById('authOverlay').hidden, false, 'a refused unlock took the lock screen away');
+});
+
+// An unlock that never reaches Nib says so, and a second press while one is out sends nothing (/pending 671 #8).
+//
+// **The handler awaited its request with nothing around it**, so a request that failed outright — Nib gone, the
+// connection dropped — rejected out of the submit handler: an unhandled rejection and a form that said nothing.
+// And nothing marked a request as out, so Enter twice sent two unlocks. After the refusal test above, for its reason.
+test('an unlock that cannot reach Nib says so, and a second press while one is out is not sent', async () => {
+  const err = doc.getElementById('authError');
+  const button = doc.getElementById('authSubmit');
+  const press = () => doc.getElementById('authForm').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  const posts = () => h.calls.filter((c) => c.url.endsWith('/api/ssh/unlock')).length;
+
+  unlockAnswer = () => { throw new TypeError('Failed to fetch'); };
+  let before = posts();
+  press();
+  await settle();
+  assert.equal(posts(), before + 1, 'setup: the form did not post, so nothing below is about a failed request');
+  assert.equal(err.textContent, 'Could not reach Nib.', `a request that never arrived left the form saying ${JSON.stringify(err.textContent)}`);
+  assert.equal(button.disabled, false, 'the button stayed disabled after the failure: the user cannot try again');
+
+  // Held open: the answer has not come back.
+  let release;
+  unlockAnswer = () => new Promise((r) => { release = r; });
+  before = posts();
+  press();
+  await settle();
+  assert.equal(button.disabled, true, 'the button is live while its request is out');
+  press();
+  press();
+  await settle();
+  assert.equal(posts(), before + 1, `a second press while the first was out sent ${posts() - before - 1} more unlock request(s)`);
+  release(new Response(JSON.stringify({ error: 'wrong passphrase' }), { status: 401 }));
+  await settle();
+  assert.equal(err.textContent, 'wrong passphrase');
+  assert.equal(button.disabled, false, 'the button stayed disabled after the answer came back');
 });
