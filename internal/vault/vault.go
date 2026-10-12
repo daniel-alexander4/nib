@@ -623,6 +623,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		return nil, ErrNeedsMigration
 	}
 	var slotErr error
+	undecryptable := false
 	for i, slot := range env.SSH {
 		// The SUPPLIED path only. unwrapSlot would also sweep ~/.ssh and try the slot's
 		// own recorded path, and either would make "the key you pointed at opened it"
@@ -638,6 +639,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		plain, derr := decrypt(key, env.Nonce, env.Cipher)
 		if derr != nil {
 			zero(key)
+			undecryptable = true
 			continue
 		}
 		var c Contents
@@ -645,7 +647,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		zero(plain)
 		if derr != nil {
 			zero(key)
-			return nil, fmt.Errorf("corrupt vault contents: %w", derr)
+			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, derr)
 		}
 		env.SSH[i].KeyPath = keyPath // the repair
 		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}
@@ -664,14 +666,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		}
 		return v, nil
 	}
-	switch {
-	case errors.Is(slotErr, sshkey.ErrWrongPassphrase):
-		return nil, ErrWrongPassphrase
-	case errors.Is(slotErr, sshkey.ErrPassphraseRequired):
-		return nil, ErrKeyLocked
-	default:
-		return nil, ErrKeyMissing
-	}
+	return nil, noSlotOpened(slotErr, undecryptable)
 }
 
 // openSSH unlocks via the enrolled SSH slots. passphrase nil is the promptless
@@ -688,6 +683,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 		return nil, ErrNeedsMigration
 	}
 	var slotErr error
+	undecryptable := false
 	for _, slot := range env.SSH {
 		key, ok, uerr := unwrapSlot(slot, passphrase)
 		if !ok {
@@ -699,6 +695,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 		plain, err := decrypt(key, env.Nonce, env.Cipher)
 		if err != nil {
 			zero(key) // this slot's unwrapped content key is unused — scrub it
+			undecryptable = true
 			continue
 		}
 		var c Contents
@@ -710,14 +707,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 		}
 		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}, nil
 	}
-	switch {
-	case errors.Is(slotErr, sshkey.ErrWrongPassphrase):
-		return nil, ErrWrongPassphrase
-	case errors.Is(slotErr, sshkey.ErrPassphraseRequired):
-		return nil, ErrKeyLocked
-	default:
-		return nil, ErrKeyMissing
-	}
+	return nil, noSlotOpened(slotErr, undecryptable)
 }
 
 // Migrate converts an old password vault to an SSH-sealed one: it decrypts with
@@ -770,6 +760,33 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 		return nil, serr
 	}
 	return v, nil
+}
+
+// errUndecryptable is what a vault answers when a key it is sealed to was found and unwrapped its
+// slot, and the contents still did not decrypt: the file is damaged, and no key fixes that.
+var errUndecryptable = fmt.Errorf("%w: a key this vault is sealed to was found, and the vault's "+
+	"contents still do not decrypt, so the file is damaged", ErrUnreadable)
+
+// noSlotOpened is the one answer both unlock paths give when no slot opened the vault.
+//
+// **A slot that unwrapped and did not decrypt is a damaged vault, not a missing key** (/pending 776).
+// The unwrap is authenticated, so a slot that unwraps yields the content key it was sealed with;
+// contents that then fail AES-GCM are a damaged file. Both loops used to `continue` past that with
+// no error recorded, so a vault with one flipped ciphertext bit was reported as ErrKeyMissing and
+// the user was sent to find a key that had just been found. It is asked first: another slot's
+// passphrase prompt cannot repair a file the key in hand already failed to read. Otherwise the most
+// actionable slot failure wins — a wrong passphrase, then a locked key, else a missing one.
+func noSlotOpened(slotErr error, undecryptable bool) error {
+	switch {
+	case undecryptable:
+		return errUndecryptable
+	case errors.Is(slotErr, sshkey.ErrWrongPassphrase):
+		return ErrWrongPassphrase
+	case errors.Is(slotErr, sshkey.ErrPassphraseRequired):
+		return ErrKeyLocked
+	default:
+		return ErrKeyMissing
+	}
 }
 
 // unwrapSlot recovers the content key for a slot. It tries the slot's recorded

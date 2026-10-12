@@ -1011,7 +1011,8 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
 // a PDF at all do **not** error: they read as `unsigned` with zero signers, which is a legitimate
 // state indistinguishable from an unsigned document, and that is the walk's own documented ceiling.
 // A first draft of this function's test asserted the opposite and was right to fail. In the route
-// those bytes cannot arrive regardless — `checkArrival` runs `ceremony.CheckDocument` above here.
+// those bytes cannot arrive regardless — `checkArrival` runs `ceremony.CheckRecord` above here, which
+// refuses bytes it cannot read a record from.
 func (c *ceremonyID) carries(meFP string, pdf []byte) (bool, error) {
 	if c == nil {
 		return false, nil

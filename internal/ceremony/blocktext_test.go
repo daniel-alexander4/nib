@@ -134,7 +134,9 @@ func TestTheBlockBudgetIsJOINT(t *testing.T) {
 	// TOGETHER they do not.
 	both := alone(capacity, recital)
 	if p2p.BlockFits(both) {
-		t.Skipf("this fixture no longer overflows when combined (%d lines); the geometry moved "+
+		// A STIMULUS guard fails, never skips (/pending 776): a skip reads as a pass, and the
+		// refusal below would then be asserted by nothing.
+		t.Fatalf("setup: this fixture no longer overflows when combined (%d lines); the geometry moved "+
 			"and the pair must be re-chosen for this test to mean anything", p2p.BlockLineCount(both))
 	}
 
