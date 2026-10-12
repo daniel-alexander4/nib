@@ -33,6 +33,11 @@ import (
 // 37,383 levels for a 67-page document whose real pass is 12 to 19 objects deep, so a thousand pages would be
 // refused. A font or an image names its descriptor, its programs, its masks and colour spaces — nothing that names
 // the page tree — so an honest document measures the same however many pages it has (`TestALargeHonestDocument…`).
+//
+// **A depth is not a loop.** `EqualObjects` cuts a loop at a pair it has met; `traverse` cuts nothing, so a ring it
+// enters it never leaves, however few levels the ring is charged here. That is not refused at this door — a Type 3
+// font naming itself is such a ring — but kept from the pass where it could start (`duplicateLoop`, optimize.go,
+// /pending 867), from the same walk (`loopingFontsAndImages`).
 
 // maxObjectLevels is the most levels pdfcpu may recurse through the references under a font or an image. Measured on
 // the one all-reference walk that could be run alone (the free-reference pass, stack capped at 64 MiB): a chain of
@@ -55,6 +60,42 @@ func refuseDeepReferences(ctx *model.Context) error {
 // objectLevels is the deepest chain of levels through the references under any font or image of ctx, capped just past
 // `maxObjectLevels`, and the font or image it was measured from.
 func objectLevels(ctx *model.Context) (deepest, from int) {
+	w := newLevelWalk(ctx)
+	for i, nr := range w.nrs {
+		if !fontOrImage(ctx.Table[nr].Object) {
+			continue
+		}
+		if w.state[i] == 0 {
+			w.from(int32(i))
+		}
+		if d := int(w.depth[i]); d > deepest {
+			deepest, from = d, nr
+		}
+	}
+	return deepest, from
+}
+
+// loopingFontsAndImages is the fonts and images of ctx, by object number, whose references under any key reach a loop:
+// objects that name each other round, or one that names itself — /pending 867. A walk that marks nothing never
+// leaves one (`duplicateLoop`, optimize.go).
+func loopingFontsAndImages(ctx *model.Context) []int {
+	w := newLevelWalk(ctx)
+	var out []int
+	for i, nr := range w.nrs {
+		if !fontOrImage(ctx.Table[nr].Object) {
+			continue
+		}
+		if w.state[i] == 0 {
+			w.from(int32(i))
+		}
+		if w.loops[i] {
+			out = append(out, nr)
+		}
+	}
+	return out
+}
+
+func newLevelWalk(ctx *model.Context) *levelWalk {
 	nrs := make([]int, 0, len(ctx.Table))
 	for nr, e := range ctx.Table {
 		if e != nil && !e.Free && e.Object != nil {
@@ -66,20 +107,9 @@ func objectLevels(ctx *model.Context) (deepest, from int) {
 	for i, nr := range nrs {
 		pos[nr] = int32(i)
 	}
-	w := &levelWalk{ctx: ctx, nrs: nrs, pos: pos, state: make([]uint8, len(nrs)), index: make([]int32, len(nrs)),
-		low: make([]int32, len(nrs)), depth: make([]int32, len(nrs)), weight: make([]int32, len(nrs))}
-	for i, nr := range nrs {
-		if !fontOrImage(ctx.Table[nr].Object) {
-			continue
-		}
-		if w.state[i] == 0 {
-			w.from(int32(i))
-		}
-		if d := int(w.depth[i]); d > deepest {
-			deepest, from = d, nrs[i]
-		}
-	}
-	return deepest, from
+	return &levelWalk{ctx: ctx, nrs: nrs, pos: pos, state: make([]uint8, len(nrs)), index: make([]int32, len(nrs)),
+		low: make([]int32, len(nrs)), depth: make([]int32, len(nrs)), weight: make([]int32, len(nrs)),
+		loops: make([]bool, len(nrs))}
 }
 
 // fontOrImage reports whether pdfcpu's optimize pass could take o for a font or an image: the two kinds it compares
@@ -105,6 +135,7 @@ type levelWalk struct {
 	low     []int32
 	depth   []int32
 	weight  []int32 // the levels an object adds to a path through it
+	loops   []bool  // the object names itself, or — once finished — is in or reaches a component that loops
 	counter int32
 	stack   []int32
 	adj     []int32 // the open objects' references, each frame's above its parent's
@@ -178,8 +209,10 @@ func (w *levelWalk) from(root int32) {
 				call = append(call, w.open(x))
 			case 1:
 				w.low[v] = min(w.low[v], w.index[x])
+				w.loops[v] = w.loops[v] || x == v
 			default:
 				w.depth[v] = max(w.depth[v], w.depth[x])
+				w.loops[v] = w.loops[v] || w.loops[x]
 			}
 			continue
 		}
@@ -192,6 +225,7 @@ func (w *levelWalk) from(root int32) {
 			p := call[len(call)-1].v
 			if w.state[v] == 2 {
 				w.depth[p] = max(w.depth[p], w.depth[v])
+				w.loops[p] = w.loops[p] || w.loops[v]
 			} else {
 				w.low[p] = min(w.low[p], w.low[v])
 			}
@@ -209,12 +243,14 @@ func (w *levelWalk) finish(v int32) {
 	members := w.stack[i:]
 	w.stack = w.stack[:i]
 	var below, sum int64
+	loops := len(members) > 1
 	for _, m := range members {
 		below = max(below, int64(w.depth[m]))
 		sum += int64(w.weight[m])
+		loops = loops || w.loops[m]
 	}
 	d := int32(min(below+sum, maxObjectLevels+1))
 	for _, m := range members {
-		w.depth[m], w.state[m] = d, 2
+		w.depth[m], w.state[m], w.loops[m] = d, 2, loops
 	}
 }
