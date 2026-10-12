@@ -230,7 +230,12 @@ func TestAnImageOnlyPageHasNoLayout(t *testing.T) {
 // tesseract's own ids and never touches a run.
 func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 	owners := map[string]bool{"textrun.go": true, "grouping.go": true}
-	idents := map[string]bool{"textRun": true, "pageRuns": true, "readPageRuns": true, "readPageDrawings": true, "lineSegments": true, "groupRuns": true}
+	// Every entry point of the reader is named, and the walker behind them: a second reader that called
+	// `readPageGlyphRuns` or walked a page itself, and then grouped by a rule of its own, named none of the
+	// first six (/pending 794).
+	idents := map[string]bool{"textRun": true, "pageRuns": true, "readPageRuns": true, "readPageDrawings": true, "lineSegments": true, "groupRuns": true,
+		"readPageGlyphRuns": true, "readPageShapes": true, "readPageRunsKeeping": true, "readPageRunsWith": true, "readPageRunsAs": true,
+		"runWalker": true, "newRunWalker": true}
 	// exempt names a file that reads runs for a purpose other than grouping them, and the identifiers
 	// it may use — each with why. ADR-009: a deliberate exemption is named, and it is narrow: the
 	// grouping identifiers stay forbidden to an exempt file, so a second grouping written there still
@@ -262,13 +267,21 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 			"textRun": "a carry deletes a paragraph's runs from one page and draws them on another, each by its own show; it groups nothing (text-reflow P07.S05)",
 		},
 		"flowregion.go": {
-			"textRun": "the flow region boxes the runs the grouping door set aside (pageLayout.loose) as obstacles to moving text; it groups nothing (text-reflow P07.S01)",
+			"textRun":   "the flow region boxes the runs the grouping door set aside (pageLayout.loose) as obstacles to moving text; it groups nothing (text-reflow P07.S01)",
+			"runWalker": "the walker's own methods for what a page paints besides text — paths, images, shadings, forms — recorded as marks beside the runs; they read no run and group nothing (text-reflow P07.S01)",
+		},
+		"pageshape.go": {
+			"runWalker": "the walker's own method for keeping a painted path's pieces for the page map; it reads no run and groups nothing (ADR-088)",
+		},
+		"ocrreplace.go": {
+			"readPageShapes": "replacing Nib's own OCR layer reads each word where the page sets it, to tell the stamp's shape from other hidden text; it joins no runs into lines or paragraphs (ADR-101)",
 		},
 		"reflow.go": {
 			"textRun": "reflow takes the runs of a paragraph the grouping door already made (readPageGlyphLayout), to delete their show operators and re-emit the paragraph in their text state; it groups nothing (text-reflow P06.S04)",
 		},
 		"pagemap.go": {
-			"textRun": "the page map reports each run where the page sets it, with its glyph boundaries — one show operator, one entry — for placing a field or a redaction; it joins no runs into lines or paragraphs (ADR-088)",
+			"readPageShapes": "the page map is the reader of what a page draws besides text (ADR-088), and reports each run as the reader set it",
+			"textRun":        "the page map reports each run where the page sets it, with its glyph boundaries — one show operator, one entry — for placing a field or a redaction; it joins no runs into lines or paragraphs (ADR-088)",
 		},
 		"structregion.go": {
 			"readPageDrawings": "a region brackets the runs, images and paths of a page that no element owns, each at its own operator, and the reader of untagged content hands the runs to the grouping door (groupUnowned); neither groups anything itself (ADR-125)",
