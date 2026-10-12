@@ -179,6 +179,7 @@ func SharedSpace(a netip.Addr) bool {
 // not "unusual". Each entry names why, so a future reader can argue with it.
 var reserved = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),       // "this network", RFC 1122
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments, RFC 6890 — DS-Lite, anycast services; never a peer (/pending 691 R7-7)
 	netip.MustParsePrefix("192.0.2.0/24"),    // documentation, RFC 5737
 	netip.MustParsePrefix("198.51.100.0/24"), // documentation
 	netip.MustParsePrefix("203.0.113.0/24"),  // documentation
@@ -211,6 +212,11 @@ var reserved = []netip.Prefix{
 	netip.MustParsePrefix("64:ff9b:1::/48"), // NAT64 local-use, RFC 8215
 	netip.MustParsePrefix("100::/64"),       // discard-only, RFC 6666
 	netip.MustParsePrefix("5f00::/16"),      // SRv6 SIDs, RFC 9602
+	// Site-local, deprecated by RFC 3879 and never routed between sites. `IsPrivate` covers
+	// fc00::/7 only and `IsGlobalUnicast` passes this one — measured: `fec0::1` was Routable
+	// (/pending 691 R7-7). It is a private network's address, which is the class a peer's
+	// candidate must not aim the dialer at.
+	netip.MustParsePrefix("fec0::/10"),
 }
 
 var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
