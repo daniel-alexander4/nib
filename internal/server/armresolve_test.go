@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -194,5 +196,55 @@ func TestABrowseWithBothArmsUpReturnsOnlyTheOneAsked(t *testing.T) {
 		t.Errorf("the browse returned %s, want the hop arm at :9001. It picked the delivery arm, "+
 			"which auto-confirms the spoken check and can never serve the contribution this dial "+
 			"is for", got[0].Addr)
+	}
+}
+
+// TestAHopMismatchIsLoggedOncePerIntervalNotPerDatagram — /pending 766.
+//
+// `resolve` refuses a sighting for another arm BEFORE the pin scan, so the sender is anyone on the
+// link, and it wrote one log line per datagram. The line stays (it is the only trace of a filter
+// that dropped a legitimate arm); what a host on the link can no longer do is set its rate.
+func TestAHopMismatchIsLoggedOncePerIntervalNotPerDatagram(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	was := hopMismatches
+	hopMismatches = &logEvery{every: hopMismatchLogEvery}
+	t.Cleanup(func() { hopMismatches = was })
+
+	fp := fpOf(7)
+	pins := []vault.PinnedPeer{{Fingerprint: fp, Label: "The convener"}}
+	const datagrams = 500
+	for i := 0; i < datagrams; i++ {
+		if _, ok := resolve(pins, seenAt(t, fp, 9), 4); ok {
+			t.Fatal("a sighting at another hop resolved; the filter this test paces is gone")
+		}
+	}
+	lines := strings.Count(logged.String(), "ignoring")
+	// STIMULUS: the refusal must still be logged at all, or "at most one" is satisfied by silence.
+	if lines == 0 {
+		t.Fatal("no line was logged for a refused sighting; the refusal is invisible again")
+	}
+	if lines != 1 {
+		t.Errorf("%d datagrams inside one interval wrote %d log lines, want 1 — a host on the link "+
+			"sets the rate this machine writes to its log", datagrams, lines)
+	}
+}
+
+// TestALogEveryLineSaysHowManyItStandsFor drives the gate on a clock of its own: the first event
+// prints, the ones inside the interval are held, and the next line carries their count.
+func TestALogEveryLineSaysHowManyItStandsFor(t *testing.T) {
+	g := &logEvery{every: time.Second}
+	t0 := time.Unix(1_700_000_000, 0)
+	if n, ok := g.allow(t0); !ok || n != 1 {
+		t.Fatalf("first event: allow = %d, %v; want 1, true", n, ok)
+	}
+	for i := 1; i <= 3; i++ {
+		if _, ok := g.allow(t0.Add(time.Duration(i) * 100 * time.Millisecond)); ok {
+			t.Fatalf("event %d inside the interval was let through", i)
+		}
+	}
+	if n, ok := g.allow(t0.Add(time.Second)); !ok || n != 4 {
+		t.Errorf("after the interval: allow = %d, %v; want 4, true (three held and this one)", n, ok)
 	}
 }
