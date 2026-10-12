@@ -174,6 +174,15 @@ test('OCR is switched off by signing mode, at the button and in the function', (
     'runOCR no longer restores its button by the lock');
 });
 
+// A name twice in a list is harmless to the loop that reads it and is how a list stops being read: `checkboxBtn`
+// sat in EDITING_TOOLS twice (/pending 830's close note), and every test above reads these lists through a Set.
+test('neither list names a control twice', () => {
+  for (const name of ['DOC_REQUIRED', 'EDITING_TOOLS']) {
+    const ids = listNamed(name);
+    assert.deepEqual(ids.filter((id, i) => ids.indexOf(id) !== i), [], `${name} names a control more than once`);
+  }
+});
+
 test('EDITING_TOOLS stays a strict subset of DOC_REQUIRED', () => {
   // app.js:2372 states this as a fact and orders two calls by it. Nothing checked it, and
   // an id in EDITING_TOOLS but not DOC_REQUIRED would be re-enabled by the editing pass

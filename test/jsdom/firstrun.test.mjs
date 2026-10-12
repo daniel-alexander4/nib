@@ -43,7 +43,8 @@ let afterEnroll = SETUP;
 const h = await boot({
   routes: {
     '/api/status': () => status,
-    '/api/ssh/enroll': () => afterEnroll,
+    // A function is called for its answer, so a test can make the request fail outright or hold it open.
+    '/api/ssh/enroll': () => (typeof afterEnroll === 'function' ? afterEnroll() : afterEnroll),
   },
 });
 const { document: doc, settle } = h;
@@ -144,4 +145,35 @@ test('a refused enrolment is reported even when its body is not JSON', async () 
   await settle();
   assert.equal(err.textContent, 'Nib could not set up the key (502).',
     `a refusal that is not JSON left the form saying ${JSON.stringify(err.textContent)}`);
+});
+
+// The setup form's half of /pending 671 #8 — the unlock path's twin is in `lockedpanel.test.mjs`, with the reason.
+test('an enrolment that cannot reach Nib says so, and a second press while one is out is not sent', async () => {
+  await showStatus(SETUP);
+  const err = doc.getElementById('authError');
+  const button = doc.getElementById('authSubmit');
+  const press = () => doc.getElementById('authForm').dispatchEvent(new h.window.Event('submit', { bubbles: true, cancelable: true }));
+  const posts = () => h.calls.filter((c) => c.url.endsWith('/api/ssh/enroll')).length;
+
+  afterEnroll = () => { throw new TypeError('Failed to fetch'); };
+  let before = posts();
+  press();
+  await settle();
+  assert.equal(posts(), before + 1, `setup: the form did not post (it says ${JSON.stringify(err.textContent)})`);
+  assert.equal(err.textContent, 'Could not reach Nib.', `a request that never arrived left the form saying ${JSON.stringify(err.textContent)}`);
+  assert.equal(button.disabled, false, 'the button stayed disabled after the failure: the user cannot try again');
+
+  let release;
+  afterEnroll = () => new Promise((r) => { release = r; });
+  before = posts();
+  press();
+  await settle();
+  assert.equal(button.disabled, true, 'the button is live while its request is out');
+  press();
+  await settle();
+  assert.equal(posts(), before + 1, 'a second press while the first was out enrolled twice');
+  release(SETUP);
+  await settle();
+  assert.equal(button.disabled, false, 'the button stayed disabled after the answer came back');
+  afterEnroll = SETUP;
 });

@@ -611,43 +611,148 @@ test('every reload names the view it lands in', () => {
 // before it reloads, or is in the list below with its reason. A tenth operation added without the door is
 // a name this test has not been told about.
 //
+// ATTRIBUTION IS LEXICAL. A reload belongs to the outermost function it is written inside — a declaration, or a
+// function assigned to something (`els.xBtn.onclick = async () => {`) — found by matching braces over the code
+// with its comments, strings and regular expressions blanked. It used to be "the last line above that starts in
+// column 0 with `function`, `els.`, `const` or `let`": the Remove-originals handler sits under a column-0 COMMENT
+// and so read as `els.applyRedactBtn.onclick`'s, an excused name, and was not checked at all; a new handler
+// written `$('newBtn').onclick = …` under any excused name would have passed the same way.
+//
 // It cannot see: whether the door is called on the right view, or early enough to stop the REQUEST (a call
-// after the request would pass). The behaviour is held in autoprereq.test.mjs.
+// after the request would pass); nor which of two reloads inside ONE excused function the reason is about. The
+// behaviour is held in autoprereq.test.mjs.
 const NO_OVERLAY_DOOR = {
   openInNewView: 'a new view: nothing was there to lose',
   installOpened: 'the first document into an empty view',
   reloadFromDisk: 'its one caller is the automatic reload, taken only when hasUnsavedWork is false',
-  save: 'bakes everything and writes it: nothing placed or typed is lost',
+  save: 'bakes everything and writes it, and carries the redaction boxes across its reload: nothing is lost (held below)',
   doUndo: 'declined #47: Undo discarding overlay edits is deliberate',
   doRedo: 'declined #47, as Undo',
   'els.staleRetry.onclick': 'loads again a document that failed to load',
   'els.applyRedactBtn.onclick': 'applies the boxes, bakes the rest, and asks its own question',
-  sessionInit: 'bakes before it signs; a redaction box not yet applied still goes (residue, in the ceremony)',
 };
 // Owed, not exempt: a sender known to lose the same edits and not yet given the door. Empty — the tag
 // editor's three senders (commitTags, sendTagEdits, removeAllTags) were the last, and have it. A name put
 // here is a debt with a date on it, never an exemption; when the site gains the door this test says so.
 const OVERLAY_DOOR_OWED = [];
 
-function reloadSites(src) {
-  const code = src.split('\n').map((l) => (l.trim().startsWith('//') ? '' : l.replace(/\s\/\/ .*$/, ''))).join('\n');
-  const heads = [...code.matchAll(/^(?:async function|function|els\.|const |let )[^\n]*/gm)];
-  const out = [];
-  const call = /(?<![.\w$])setDocumentFromServer\(/g;
-  let m;
-  while ((m = call.exec(code)) !== null) {
-    if (/function\s+$/.test(code.slice(Math.max(0, m.index - 24), m.index))) continue; // the declaration
-    const head = heads.filter((h) => h.index <= m.index).pop();
-    const line = head ? head[0] : '';
-    const named = /function\s+(\w+)/.exec(line) || /^(els\.\w+\.\w+)/.exec(line) || /^(?:const|let)\s+(\w+)/.exec(line);
-    out.push({
-      name: named ? named[1] : '(top level)',
-      door: /(?<![.\w$])confirmOverlayLoss\(/.test(code.slice(head ? head.index : 0, m.index)),
-      line: code.slice(0, m.index).split('\n').length,
-    });
+// blankNonCode returns `src` with every comment, string, template text and regular expression replaced by
+// spaces — newlines kept — so an offset or a line number in the result is the source's, and a brace, a
+// parenthesis or a call found in it is code. `${…}` inside a template is code and is kept.
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'case', 'in', 'of', 'void', 'delete', 'throw', 'new', 'else', 'do', 'await', 'yield']);
+function blankNonCode(src) {
+  const out = src.split('');
+  const blank = (from, to) => { for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' '; };
+  const holes = []; // the brace depth each open `${` closes at
+  let depth = 0, i = 0;
+  let value = false; // the last token was a value, so a `/` after it divides
+  // template blanks from `from` (just inside a template) to its end or its next `${`, and returns where code resumes.
+  const template = (from) => {
+    let k = from;
+    for (; k < src.length; k++) {
+      if (src[k] === '\\') { k++; continue; }
+      if (src[k] === '`') { blank(from, k + 1); value = true; return k + 1; }
+      if (src[k] === '$' && src[k + 1] === '{') { blank(from, k + 2); holes.push(depth); value = false; return k + 2; }
+    }
+    blank(from, k);
+    return k;
+  };
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') { const e = src.indexOf('\n', i); const to = e < 0 ? src.length : e; blank(i, to); i = to; continue; }
+    if (c === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); const to = e < 0 ? src.length : e + 2; blank(i, to); i = to; continue; }
+    if (c === '\'' || c === '"') {
+      let k = i + 1;
+      while (k < src.length && src[k] !== c && src[k] !== '\n') k += src[k] === '\\' ? 2 : 1;
+      blank(i, k + 1); i = k + 1; value = true; continue;
+    }
+    if (c === '`') { blank(i, i + 1); i = template(i + 1); continue; }
+    if (c === '/' && !value) {
+      let k = i + 1, cls = false;
+      for (; k < src.length && src[k] !== '\n'; k++) {
+        if (src[k] === '\\') { k++; continue; }
+        if (src[k] === '[') cls = true; else if (src[k] === ']') cls = false; else if (src[k] === '/' && !cls) break;
+      }
+      if (src[k] === '/') { k++; while (/[a-z]/.test(src[k] || '')) k++; blank(i, k); i = k; value = true; continue; }
+    }
+    if (c === '{') depth++;
+    if (c === '}') {
+      if (holes.length && holes[holes.length - 1] === depth) { holes.pop(); blank(i, i + 1); i = template(i + 1); continue; }
+      depth--;
+    }
+    if (/[\w$]/.test(c)) {
+      let k = i; while (k < src.length && /[\w$]/.test(src[k])) k++;
+      value = !REGEX_AFTER_WORD.has(src.slice(i, k)); i = k; continue;
+    }
+    if (!/\s/.test(c)) value = c === ')' || c === ']' || c === '}';
+    i++;
   }
+  return out.join('');
+}
+
+// functionAt says what the `{` at `brace` opens: undefined for a block or an object, else `{ name }` — the
+// function's own name, or what it is assigned to, or null for a function handed straight to a call.
+const TARGET = String.raw`((?:[\w$]+(?:\([^()]*\))?)(?:\.[\w$]+(?:\([^()]*\))?)*)\s*=\s*`;
+function functionAt(code, src, brace) {
+  let j = brace - 1;
+  const space = () => { while (j >= 0 && /\s/.test(code[j])) j--; };
+  space();
+  const arrow = code[j] === '>' && code[j - 1] === '=';
+  if (arrow) { j -= 2; space(); }
+  if (code[j] === ')') {
+    for (let d = 0; j >= 0; j--) {
+      if (code[j] === ')') d++;
+      else if (code[j] === '(' && --d === 0) break;
+    }
+    j--;
+  } else if (arrow) {
+    while (j >= 0 && /[\w$]/.test(code[j])) j--;
+  } else {
+    return undefined;
+  }
+  const from = Math.max(0, j + 1 - 240);
+  const head = code.slice(from, j + 1);
+  // The name is read from the SOURCE at the offsets matched in the blanked code: `$('newBtn').onclick` has its id in a string.
+  const target = (re) => { const m = re.exec(head); return m && { name: src.slice(from + m.index, from + m.index + m[1].length) }; };
+  if (arrow) return target(new RegExp(TARGET + String.raw`(?:async\s*)?$`)) || { name: null };
+  const decl = /function\s*\*?\s*([\w$]+)\s*$/.exec(head);
+  if (decl) return { name: decl[1] };
+  if (/function\s*\*?\s*$/.test(head)) return target(new RegExp(TARGET + String.raw`(?:async\s+)?function\s*\*?\s*$`)) || { name: null };
+  const word = /([\w$]+)\s*$/.exec(head);
+  if (word && !['if', 'for', 'while', 'switch', 'catch', 'with'].includes(word[1])) return { name: word[1] }; // a method
+  return undefined;
+}
+
+function reloadSites(src) {
+  const code = blankNonCode(src);
+  const stack = []; // every open brace: { open, fn } — fn undefined for a block
+  const out = [];
+  const call = /(?<![.\w$])setDocumentFromServer\(/y;
+  let balanced = true;
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === '{') stack.push({ open: i, fn: functionAt(code, src, i) });
+    else if (code[i] === '}') { if (!stack.pop()) balanced = false; }
+    else if (code[i] === 's') {
+      call.lastIndex = i;
+      if (!call.test(code)) continue;
+      if (/function\s+$/.test(code.slice(Math.max(0, i - 24), i))) continue; // the declaration
+      const outer = stack.find((f) => f.fn);
+      const lineStart = outer ? src.lastIndexOf('\n', outer.open) + 1 : 0;
+      out.push({
+        // A function handed straight to a call has no name of its own: it is known by the line that opens it.
+        name: !outer ? '(top level)' : outer.fn.name || src.slice(lineStart, outer.open + 1).trim(),
+        door: !!outer && /(?<![.\w$])confirmOverlayLoss\(/.test(code.slice(outer.open, i)),
+        line: code.slice(0, i).split('\n').length,
+      });
+    }
+  }
+  out.balanced = balanced && stack.length === 0;
   return out;
 }
+// bareReloads is the verdict: the sites with neither the door nor a name in the two lists.
+const bareReloads = (sites) => sites
+  .filter((s) => !s.door && !(s.name in NO_OVERLAY_DOOR) && !OVERLAY_DOOR_OWED.includes(s.name))
+  .map((s) => `${s.name} at app.js:${s.line}`);
 
 test('the overlay-door scan reports a reload with no door, and not one behind it — its own stimulus', () => {
   const tenth = 'async function runTenth() {\n  const owner = view;\n  const res = await apiFetch(\'/api/tenth\', { method: \'POST\' });\n  await setDocumentFromServer(await res.json(), owner);\n}\n';
@@ -659,11 +764,42 @@ test('the overlay-door scan reports a reload with no door, and not one behind it
   assert.equal(reloadSites(behind + said)[1].door, false);
 });
 
+test('a reload is attributed to the function it is written inside, never to an excused neighbour above it', () => {
+  const reload = '  await setDocumentFromServer(await res.json(), owner);\n';
+  // The shape that was unguarded: an excused handler, then a comment in column 0, then another handler.
+  const excused = 'els.applyRedactBtn.onclick = async () => {\n' + reload + '};\n\n';
+  const under = excused
+    + '// Remove originals: flatten every edited page.\nels.removeOriginalsBtn.onclick = async () => {\n  const owner = view;\n' + reload + '};\n'
+    + '$(\'newBtn\').onclick = async () => {\n' + reload + '};\n'
+    + 'document.addEventListener(\'paste\', async () => {\n' + reload + '});\n'
+    + 'window.onNewThing = async function () {\n  items.forEach((it) => {\n    load(it).then(async (res) => {\n  ' + reload + '    });\n  });\n};\n';
+  const sites = reloadSites(under);
+  assert.equal(sites.balanced, true);
+  assert.deepEqual(sites.map((s) => s.name), [
+    'els.applyRedactBtn.onclick', 'els.removeOriginalsBtn.onclick', '$(\'newBtn\').onclick',
+    'document.addEventListener(\'paste\', async () => {', 'window.onNewThing',
+  ]);
+  // THE GUARD, red: four reloads added without the door under an excused name, and each is reported.
+  assert.deepEqual(bareReloads(sites), [
+    'els.removeOriginalsBtn.onclick at app.js:8', '$(\'newBtn\').onclick at app.js:11',
+    'document.addEventListener(\'paste\', async () => { at app.js:14', 'window.onNewThing at app.js:19',
+  ]);
+  // …and green once each has it — the door counts from anywhere in the function before the reload.
+  const doored = under.split(excused)[1].replace(/=> \{\n(?! {4})|function \(\) \{\n/g, (m) => m + '  if (!confirmOverlayLoss(owner)) return;\n');
+  assert.deepEqual(bareReloads(reloadSites(excused + doored)), []);
+  // A brace in a string, a template, a regular expression or a comment opens nothing.
+  const noise = 'const re = /[{]\\/{/g; const s = \'}{{\'; // {{{\nconst t = `{{ ${ pick({ a: 1 }) } {`; /* { */\nconst half = a / 2; const q = b / c; // } /\n';
+  assert.deepEqual(reloadSites(noise + under).map((s) => s.name), sites.map((s) => s.name));
+  assert.equal(reloadSites(noise + under).balanced, true);
+  // A reload outside every function is nobody's, and no name can excuse it.
+  assert.deepEqual(bareReloads(reloadSites('if (boot) {\n' + reload + '}\n')), ['(top level) at app.js:2']);
+});
+
 test('every reload is behind confirmOverlayLoss, or is named with its reason', () => {
   const sites = reloadSites(APP);
+  assert.ok(sites.balanced, 'the scan lost count of app.js\'s braces — a string, template or regular expression was read as code, so no attribution below can be believed');
   assert.ok(sites.length >= 15, `only ${sites.length} reload sites found — the scan is not reading app.js properly`);
-  const bare = sites.filter((s) => !s.door && !(s.name in NO_OVERLAY_DOOR) && !OVERLAY_DOOR_OWED.includes(s.name));
-  assert.deepEqual(bare.map((s) => `${s.name} at app.js:${s.line}`), [],
+  assert.deepEqual(bareReloads(sites), [],
     'an operation loads the document back without asking: what is placed on the pages, typed into the form or marked for redaction is discarded with no question. Call confirmOverlayLoss(owner) before the request (pass true if it sends bakedBytes), or name it in NO_OVERLAY_DOOR with the reason');
   const names = new Set(sites.map((s) => s.name));
   for (const name of [...Object.keys(NO_OVERLAY_DOOR), ...OVERLAY_DOOR_OWED]) {
@@ -673,6 +809,21 @@ test('every reload is behind confirmOverlayLoss, or is named with its reason', (
     assert.ok(!(s.door && (s.name in NO_OVERLAY_DOOR || OVERLAY_DOOR_OWED.includes(s.name))),
       `${s.name} now calls confirmOverlayLoss and is still listed as not doing so — take its name out`);
   }
+});
+
+// `save` is excused above because it loses nothing — and that was not true of a redaction box: its reload
+// (taken when placed items were baked) emptied the list with everything else. The boxes are carried across it.
+// A SOURCE-SHAPE check, because jsdom cannot place an item on a page and so cannot make Save reload: that the
+// boxes are still drawn after a real Save is tier 3's.
+test('Save carries the redaction boxes across its own reload', () => {
+  const body = /\nasync function save\(\) \{\n([\s\S]*?)\n\}\n/.exec(APP);
+  assert.ok(body, 'save() was not found in app.js');
+  const reload = body[1].indexOf('await setDocumentFromServer(meta, owner);');
+  assert.ok(reload > 0, 'save() no longer reloads as this test expects — re-derive it');
+  assert.match(body[1].slice(0, reload), /const boxes = owner\.redactMarks;\s*$/,
+    'save() does not take the redaction boxes before its reload: the reload empties them and nothing was asked');
+  assert.match(body[1].slice(reload), /owner\.redactMarks = \[\.\.\.boxes, \.\.\.owner\.redactMarks\]; relayoutRedactMarks\(owner\);/,
+    'save() does not put the redaction boxes back after its reload');
 });
 
 // The idiom changed in P05.S01/S02: `docMeta` became `view.docMeta` when document state

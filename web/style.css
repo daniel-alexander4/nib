@@ -403,6 +403,8 @@ input[type="search"] { width: 100%; }
 }
 .thumbselcount { color: var(--subtext0); font-size: 12px; margin-right: auto; }
 .thumbselbar button { padding: 3px 8px; font-size: 13px; }
+.thumbselto { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-size: 12px; }
+.thumbselto input { width: 3.5em; padding: 2px 4px; font-size: 13px; }
 .thumbwrap { position: relative; margin-bottom: 10px; text-align: center; cursor: grab; }
 .thumbwrap.dragging { opacity: 0.4; cursor: grabbing; }
 .thumb {

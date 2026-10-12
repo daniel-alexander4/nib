@@ -623,6 +623,9 @@
           <button id="selRotateRightBtn" title="Rotate selected pages right">↻</button>
           <button id="selMoveFrontBtn" title="Move selected pages to the front">⤒</button>
           <button id="selMoveBackBtn" title="Move selected pages to the back">⤓</button>
+          <!-- To any position, without a drag (/pending 778): the page number the first selected page takes. -->
+          <label class="thumbselto">to page <input id="selMoveToNum" type="number" min="1" inputmode="numeric" title="The page number the selected pages move to" /></label>
+          <button id="selMoveToBtn" title="Move selected pages to that page number">Move</button>
           <button id="selDeleteBtn" title="Delete selected pages">Delete</button>
           <button id="selClearBtn" title="Clear selection">Clear</button>
         </div>
