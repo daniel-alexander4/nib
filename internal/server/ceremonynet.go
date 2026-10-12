@@ -776,6 +776,11 @@ type hsResult struct {
 	err  error
 }
 
+// errGlareSideFailed is what connect's dial side reports when it ended without a result of its own
+// — a panic the goroutine recovered from. The log carries the stack; this is the sentence a caller
+// gets instead of a wait that lasts until its deadline.
+var errGlareSideFailed = errors.New("the attempt to reach the ceremony peer stopped unexpectedly on this machine")
+
 // glareSettleWindow bounds how long connect holds a formed connection while waiting for the glare
 // PARTNER — the OTHER of the two connections symmetric racing forms. The survivor is deterministic
 // (the lower-fingerprint party's dial, glareKeepsDial), and the two ends of each connection are
@@ -815,32 +820,47 @@ func (s *Server) connect(ctx context.Context, cer *ceremonyID, hl *p2p.Handshake
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// **Each side reports from a DEFER, so a recovered panic still reports (/pending 623).** The
+	// sends were the last statement of each goroutine: a panic was recovered, the send was skipped,
+	// and the loop below waited on a side that would never answer — until the caller's deadline,
+	// which is the ceremony's life on the arm. A side that panicked now reads as a side that
+	// failed: the dial with `errGlareSideFailed`, the accept with no connection.
 	dialCh := make(chan hsResult, 1)
 	go func() {
+		// First, so it runs LAST: the report below is a deferred call that runs while a panic is
+		// still unwinding, and this then stops the panic at the goroutine's edge.
 		defer safe.Recover("glare dial")
+		res := hsResult{err: errGlareSideFailed}
 		feedCtx, feedCancel := context.WithCancel(cctx)
-		in, feedWG := s.feedCeremonyRace(feedCtx, cer, cands, peerFP, label, name)
+		var feedWG *sync.WaitGroup
+		defer func() {
+			// Stop the feed and JOIN it before reporting: this iteration's gate WRITER
+			// (feedCandidates, which calls the non-concurrent-safe cer.gate.Accept) must be
+			// quiesced before the re-race loop's NEXT connect spawns a second feed, or the two
+			// would race on the gate (P05.S11). On every exit, a panic included.
+			feedCancel()
+			if feedWG != nil {
+				feedWG.Wait()
+			}
+			dialCh <- res
+		}()
+		var in <-chan candidate
+		in, feedWG = s.feedCeremonyRace(feedCtx, cer, cands, peerFP, label, name)
 		conn, derr := raceCandidates(cctx, filterQUIC(feedCtx, in), func(ctx context.Context, c candidate) (*p2p.HandshakedConn, error) {
 			// Handshake only — the stream is deferred until the role is known after glare (S09a).
 			return p2p.QUICDialHandshakeOn(ctx, cer.end, c.Addr, cert, key, peerFP, lanDialTimeout)
 		})
-		// Stop the feed and JOIN it before reporting: this iteration's gate WRITER (feedCandidates,
-		// which calls the non-concurrent-safe cer.gate.Accept) must be quiesced before the re-race
-		// loop's NEXT connect spawns a second feed, or the two would race on the gate (P05.S11).
-		feedCancel()
-		feedWG.Wait()
-		dialCh <- hsResult{conn, derr}
+		res = hsResult{conn, derr}
 	}()
 
 	acceptCh := make(chan *p2p.HandshakedConn, 1)
 	go func() {
 		defer safe.Recover("glare accept")
-		conn, aerr := hl.Accept(cctx)
-		if aerr != nil {
-			acceptCh <- nil
-			return
+		var conn *p2p.HandshakedConn
+		defer func() { acceptCh <- conn }()
+		if c, aerr := hl.Accept(cctx); aerr == nil {
+			conn = c
 		}
-		acceptCh <- conn
 	}()
 
 	var dialed, accepted *p2p.HandshakedConn

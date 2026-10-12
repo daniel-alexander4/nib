@@ -2,8 +2,46 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"testing"
+	"time"
 )
+
+// TestAGlareSideThatPanicsStillReports — /pending 623.
+//
+// `connect`'s two goroutines sent their result as their last statement, so a recovered panic
+// skipped the send and the coordinator waited on that side until the caller's deadline — the
+// ceremony's life, on the arm. Each now reports from a defer.
+//
+// Driven with no listener: `Accept` on a nil `*HandshakeListener` panics in the accept goroutine,
+// and with no ceremony the dial side's race is exhausted at once and reports its failure. So the
+// only thing the coordinator can still be waiting for is the accept side's report: with it, both
+// sides are done and connect fails immediately; without it, connect sits out `glareSettleWindow`
+// for a side that is already dead (and, had the dial still been racing, its whole deadline).
+func TestAGlareSideThatPanicsStillReports(t *testing.T) {
+	s := &Server{epoch: "t"}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	start := time.Now()
+	conn, err := s.connect(ctx, nil, nil, nil, nil, nil, []byte{2}, []byte{1}, true, "peer", "peer")
+	took := time.Since(start)
+	if conn != nil {
+		t.Fatal("connect returned a connection from a race with no listener and no candidate")
+	}
+	if err == nil {
+		t.Fatal("connect reported success with neither side connected")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("connect waited out its whole deadline (%v) for a side that had panicked and "+
+			"would never report: %v", took, err)
+	}
+	if took >= glareSettleWindow/2 {
+		t.Errorf("connect took %v to fail with both sides finished, so the accept side that "+
+			"panicked never reported and the coordinator waited for it (glareSettleWindow is %v)",
+			took, glareSettleWindow)
+	}
+}
 
 // TestGlareConvergesOnOneConnection — P05.S09 T03. The two ends of a glare, computing from
 // opposite viewpoints, must keep the SAME physical connection, or the document runs over two
