@@ -202,7 +202,8 @@ func TestAPacketVeraPDFsReaderRefusesIsNotRead(t *testing.T) {
 		{"pdfuaid:part holding text and then an element", rdfPacket("", title+`<pdfuaid:part>1<foo:x/></pdfuaid:part>`), values, false},
 		{"pdfuaid:part holding text and then a description", rdfPacket("", title+`<pdfuaid:part>1<rdf:Description/></pdfuaid:part>`), values, false},
 		{"a property holding an element and then text", rdfPacket("", tp+`<xmp:Foo><rdf:Description/>1</xmp:Foo>`), values, false},
-		{"a property holding CDATA and then an element", rdfPacket("", tp+`<xmp:Foo><![CDATA[1]]><rdf:Description/></xmp:Foo>`), values, false},
+		// The CDATA section alone is what veraPDF refuses here, wherever in rdf:RDF it is written (`/pending 673`, measured).
+		{"a property holding CDATA and then an element", rdfPacket("", tp+`<xmp:Foo><![CDATA[1]]><rdf:Description/></xmp:Foo>`), "a CDATA section", false},
 		{"a property holding two descriptions", rdfPacket("", tp+`<xmp:Foo><rdf:Description/><rdf:Description/></xmp:Foo>`), values, false},
 		{"pdfuaid:part holding two descriptions", rdfPacket("", title+`<pdfuaid:part><rdf:Description><rdf:value>1</rdf:value></rdf:Description><rdf:Description/></pdfuaid:part>`), values, false},
 		{"an item holding text and an element", rdfPacket("", `<dc:title><rdf:Alt><rdf:li xml:lang="en">T<foo:x/></rdf:li></rdf:Alt></dc:title>`+part), values, false},

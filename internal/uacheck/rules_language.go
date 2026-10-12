@@ -569,8 +569,11 @@ func (d *Document) scanAnnotsAndFields() subjectScan {
 		return truncateAll(annotsMissed)
 	}
 	seen := map[uintptr]bool{}
-	var fields func(o types.Object, depth int)
-	fields = func(o types.Object, depth int) {
+	// parent is the partial name the fields above this one spell — their `/T`s joined with a period — so the
+	// locator names the field a person would look for, where it used to call every one "form field"
+	// (`/pending 653`).
+	var fields func(o types.Object, depth int, parent string)
+	fields = func(o types.Object, depth int, parent string) {
 		arr, err := d.Ctx.DereferenceArray(o)
 		// **A `/Fields` or `/Kids` nib cannot read TRUNCATES the population, and says so.** It used to
 		// return quietly, which made a population nib could not finish reading indistinguishable from one
@@ -608,14 +611,30 @@ func (d *Document) scanAnnotsAndFields() subjectScan {
 				return
 			}
 			seen[dictID(fd)] = true
-			add(kindFormField, fd, "form field")
-			fields(fd["Kids"], depth+1)
+			name := parent
+			if own, ok := d.text(fd["T"]); ok && own != "" {
+				name = own
+				if parent != "" {
+					name = parent + "." + own
+				}
+			}
+			add(kindFormField, fd, formFieldWhere(name))
+			fields(fd["Kids"], depth+1, name)
 		}
 	}
 	if acro := d.dict(d.Catalog["AcroForm"]); acro != nil {
-		fields(acro["Fields"], 0)
+		fields(acro["Fields"], 0, "")
 	}
 	return sc
+}
+
+// formFieldWhere is a form field's locator: its fully qualified name, which is what a form editor shows. A
+// field with no `/T` of its own (a widget under a named field) takes the name of the field it belongs to.
+func formFieldWhere(name string) string {
+	if name == "" {
+		return "a form field with no name"
+	}
+	return fmt.Sprintf("form field %q", name)
 }
 
 // mcLang is a string `/Lang` on a BDC property list the content walk reached — kept only for the first that fails.

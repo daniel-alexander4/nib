@@ -180,7 +180,7 @@ func (d *Document) mediaClips() ([]mediaClip, string) {
 	sc := d.scanAnnotsAndFields()
 	for _, sub := range sc.subjects {
 		if sub.kind == kindFormField {
-			actionsOf(sub.holder, true, fieldTriggers, "a form field")
+			actionsOf(sub.holder, true, fieldTriggers, sub.where)
 		}
 	}
 	if sc.fields != "" && d.clipsErr == "" {

@@ -385,8 +385,10 @@ const maxXFABytes = 32 << 20
 // review rounds measured eleven and each is now refused as not-a-document: a DOCTYPE, an unbound prefix, a
 // prefix bound to "", one attribute twice (by URI and local name), anything before the XML declaration, the
 // reserved name `xml` in another case — and a UTF-8 byte-order mark, which veraPDF skips and Go does not.
-// **This list is not proven complete**: it is the part of XML 1.0 + Namespaces well-formedness that Go
-// omits and three passes found, and the remainder is `/pending 673`, not an assumption.
+// **The rest was then walked constraint by constraint** (`/pending 673`): 301 packets, one per way of
+// breaking a production of XML 1.0 or Namespaces in XML, each put to veraPDF and to nib. `xmlwf.go` holds
+// what that found Go's decoder leaving out, and `TestTheXFAReaderRefusesWhatVeraPDFsParserRefuses` the rows.
+// What is still declared rather than read: XML 1.1, and an encoding outside the few measured.
 func (d *Document) xfaDynamicRender(xfa types.Object) (string, string) {
 	target := xfa
 	if arr, isArr := d.resolve(xfa).(types.Array); isArr {
@@ -427,9 +429,29 @@ var xfaPath = []string{"xdp:xdp", "config", "acrobat", "acrobat7", "dynamicRende
 func dynamicRenderIn(packet []byte) (string, string) {
 	// A UTF-8 byte-order mark is skipped, as veraPDF's parser skips it; Go's decoder calls it a syntax error,
 	// which the rule below would have turned into a Pass on a packet veraPDF FAILS (the R1 re-review, measured).
-	packet = bytes.TrimPrefix(packet, []byte("\xef\xbb\xbf"))
+	//
+	// **The whole packet is made UTF-8 before the decoder sees it** (`/pending 673`), so every offset below is
+	// an offset into `packet`: converting inside the decoder's `CharsetReader` moved the text under the
+	// offsets, and an ISO-8859-1 packet with one high byte before the value read `requi<![CDATA[red]]>` as
+	// one run — a false FAIL, measured. UTF-16, which veraPDF reads and Go's decoder calls a syntax error,
+	// was a false PASS.
+	packet, declared, how := xmlPacketText(packet)
+	switch how {
+	case xmlNotADocument:
+		return "", ""
+	case xmlUnknown:
+		return "", fmt.Sprintf("the XFA config packet is XML nib's reader cannot parse the way veraPDF's does: "+
+			"encoding %q is not one nib's XML reader supports", declared)
+	}
 	dec := xml.NewDecoder(bytes.NewReader(packet))
-	dec.CharsetReader = latin1Reader
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // already UTF-8
+	// raw is a token as the packet writes it: what Go's decoder normalised away is checked there.
+	raw := func(from int64) []byte {
+		if to := dec.InputOffset(); from >= 0 && from <= to && to <= int64(len(packet)) {
+			return packet[from:to]
+		}
+		return nil
+	}
 	// **Go's decoder accepts four shapes veraPDF's parser rejects**, each measured as a live false FAIL by the
 	// R1 re-review: a DOCTYPE, a prefix no `xmlns:` binds, anything before the XML declaration, and one attribute
 	// written twice. veraPDF's parse fails on all four and the test passes, so here they are what a syntax
@@ -488,13 +510,30 @@ func dynamicRenderIn(packet []byte) (string, string) {
 		case xml.Directive:
 			return "", "" // a DOCTYPE (or any declaration): veraPDF's parser refuses the document
 		case xml.StartElement:
+			// **Five more shapes Go's decoder reads and veraPDF's parser refuses** (`/pending 673`, each measured):
+			// attributes with no white space between them, a reference to a character XML does not have, a
+			// name ending in a colon, the prefix `xmlns` on an element, and a reserved prefix or namespace
+			// name bound to anything but its own.
+			tag := raw(off)
+			if !xmlAttributesSpaced(tag) || !xmlCharRefsLegal(tag) ||
+				t.Name.Space == "xmlns" || (t.Name.Space == "" && xmlQNameRefused(t.Name.Local)) {
+				return "", ""
+			}
 			own := map[string]string{}
 			for _, a := range t.Attr {
+				if a.Name.Space == "" && xmlQNameRefused(a.Name.Local) {
+					return "", ""
+				}
 				if a.Name.Space == "xmlns" {
 					if a.Value == "" {
 						return "", "" // `xmlns:foo=""` unbinds nothing in XML 1.0: not a document (R1 round 3)
 					}
+					if xmlBindingRefused(a.Name.Local, a.Value) {
+						return "", ""
+					}
 					own[a.Name.Local] = a.Value
+				} else if a.Name.Space == "" && a.Name.Local == "xmlns" && xmlBindingRefused("", a.Value) {
+					return "", ""
 				}
 			}
 			stack = append(stack, frame{bound: own}) // provisional, so this element's own bindings count
@@ -571,8 +610,12 @@ func dynamicRenderIn(packet []byte) (string, string) {
 			// CDATA section is a node of its own (`requi<![CDATA[red]]>` PASSES, `<![CDATA[required]]>`
 			// FAILS), and a processing instruction or an element ends the run (`requi<?pi?>red` and
 			// `<x/>required` PASS). Go reports CDATA as ordinary character data, so the input decides.
+			text := raw(off)
+			cdata := bytes.HasPrefix(text, []byte("<![CDATA["))
+			if !cdata && !xmlCharRefsLegal(text) {
+				return "", "" // `&#xD800;`: a reference to no XML character (`/pending 673`)
+			}
 			if capturing {
-				cdata := off < int64(len(packet)) && bytes.HasPrefix(packet[off:], []byte("<![CDATA["))
 				switch {
 				case kind == 0 && cdata:
 					value.Write(t)
@@ -585,12 +628,27 @@ func dynamicRenderIn(packet []byte) (string, string) {
 				default:
 					end()
 				}
-			} else if len(stack) == 0 && strings.TrimSpace(string(t)) != "" {
-				return "", "" // text outside the root element: not a document
+			} else if len(stack) == 0 && len(bytes.Trim(text, " \t\r\n")) != 0 {
+				// Anything outside the root element but XML's four white-space characters AS WRITTEN is not a
+				// document: `&#32;` and an empty CDATA section decode to white space and are refused, and so
+				// is a no-break space, which `strings.TrimSpace` took for one (`/pending 673`, measured).
+				return "", ""
 			}
 		case xml.Comment:
 			// Ignored: veraPDF's DOM carries no comment nodes, so text on either side is one run.
+			if !xmlCharsOnly(t) {
+				return "", "" // Go checks a comment's characters nowhere (`/pending 673`)
+			}
 		case xml.ProcInst:
+			if !xmlCharsOnly(t.Inst) {
+				return "", ""
+			}
+			// White space separates a target from what follows it (production 16): `<?pi=x?>` is not one.
+			if rest := raw(off); len(rest) > 2+len(t.Target) {
+				if rest = rest[2+len(t.Target):]; !bytes.HasPrefix(rest, []byte("?>")) && !isXMLSpace(rest[0]) {
+					return "", ""
+				}
+			}
 			if strings.EqualFold(t.Target, "xml") && (t.Target != "xml" || off != 0) {
 				// The declaration is exactly `xml`, at the very start; any other case of the reserved name, or
 				// the declaration anywhere else, is not a document (R1 re-review, rounds 2 and 3).
@@ -608,24 +666,6 @@ func dynamicRenderIn(packet []byte) (string, string) {
 		return "", "" // unclosed or empty: not a document
 	}
 	return value.String(), ""
-}
-
-// latin1Reader lets the decoder read an ISO-8859-1 packet, which a Java parser reads natively; any other
-// declared encoding stays an error, and `dynamicRenderIn` turns it into a refusal.
-func latin1Reader(label string, in io.Reader) (io.Reader, error) {
-	switch strings.ToLower(label) {
-	case "iso-8859-1", "latin1", "latin-1", "iso_8859-1", "us-ascii":
-		b, err := io.ReadAll(in)
-		if err != nil {
-			return nil, err
-		}
-		r := make([]rune, len(b))
-		for i, c := range b {
-			r[i] = rune(c)
-		}
-		return strings.NewReader(string(r)), nil
-	}
-	return nil, fmt.Errorf("encoding %q is not one nib's XML reader supports", label)
 }
 
 // checkReferenceXObjects evaluates ua1 7.20 t1 (P06.S03) over the forms the document DRAWS.
