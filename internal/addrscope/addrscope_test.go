@@ -31,6 +31,9 @@ func TestRoutableRefusesWhatItMust(t *testing.T) {
 		"::ffff:127.0.0.1", "::ffff:192.168.1.1", "::ffff:240.0.0.1",
 		"::7f00:1", "::a00:1", "::c0a8:101", "::e000:1", "::6440:1", "::1.2.3.4",
 		"2001:20::1",
+		// /pending 691 R7-7: site-local IPv6 (both ends of fec0::/10) and the IETF protocol
+		// block, which every stdlib predicate passes.
+		"fec0::1", "feff:ffff::1", "192.0.0.1", "192.0.0.254", "::ffff:192.0.0.9",
 	}
 	for _, s := range refuse {
 		if Routable(netip.MustParseAddr(s)) {
@@ -41,7 +44,10 @@ func TestRoutableRefusesWhatItMust(t *testing.T) {
 }
 
 func TestRoutableAcceptsOrdinaryPublicAddresses(t *testing.T) {
-	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"} {
+	// The last three sit one address either side of the prefixes /pending 691 R7-7 added, so a
+	// prefix written one bit too wide fails here by name.
+	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:4700:4700::1111",
+		"192.0.1.1", "191.255.255.1", "2a00:fec0::1"} {
 		if !Routable(netip.MustParseAddr(s)) {
 			t.Errorf("Routable(%s) = false — an ordinary public address was refused, which "+
 				"would silently remove a working tier", s)

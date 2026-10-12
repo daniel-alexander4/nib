@@ -62,6 +62,13 @@ type listenerCore struct {
 // costs Nib nothing. The residual is that sixteen simultaneous stalls delay the genuine peer
 // by up to one handshakeTimeout, which is strictly better than the one-stall-blocks-everything
 // this replaced and than the fd exhaustion the unbounded version allowed.
+//
+// **That figure is for ONE burst, and it is not the worst case** (/pending 691 R7-2). A host that
+// keeps stalling connections refills the pool as fast as it drains, so the genuine peer waits
+// behind everything queued ahead of it: N stalled connections cost about N/16 handshakeTimeouts,
+// which at N of about 160 is the whole five-minute arm. Nothing here bounds that; what bounds it
+// is the arm window, after which the listener is closed. Reach is a host on the link, or one that
+// was handed a published candidate. Declared, not fixed: a per-source limit is a decision.
 const maxConcurrentHandshakes = 16
 
 // newListenerCore builds the channels.
