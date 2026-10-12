@@ -368,10 +368,12 @@ func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWal
 	if err != nil {
 		return pageLayout{}, err
 	}
-	if pr.noText {
-		return pageLayout{noText: true, marks: pr.marks, sequences: pr.sequences}, nil
+	// A page that draws no glyph has no runs to group, and everything else a page has: its box and its annotations do
+	// not depend on text, and a destination read from a blank page is measured against them (/pending 794).
+	l := pageLayout{noText: true}
+	if !pr.noText {
+		l = groupRuns(pr.runs)
 	}
-	l := groupRuns(pr.runs)
 	l.sequences = pr.sequences
 	for _, r := range pr.runs {
 		if !joinsALine(r) {
@@ -508,51 +510,99 @@ func verticalRuns(runs []textRun) int {
 }
 
 // lineSegments joins runs into lines: same baseline, and no gap wider than joinGapEm.
+//
+// **Runs are taken left to right across the whole page, and each joins the line it continues** — the line within
+// 0.3 em of its baseline (or that it is a raised figure on, `raisedOn`) and that ends no further than joinGapEm before
+// it, the nearest in height where there are two.
+// "Within 0.3 em of each other" is not an order, so the runs cannot first be sorted into baselines by it: with a 12pt
+// bullet at y 464.4 beside 10pt text at 464.8 and another column's line at 460.8, the bullet shares a baseline with
+// both and they do not share one with each other. A sort by that comparison answered by the order the runs happened
+// to be drawn in, and a run was joined to whatever line came before it in that order with no floor on how far LEFT
+// of the line's end it began — so a paragraph re-set in place, which draws its lines at another point of the content
+// stream, read back with its line joined into the other column's, 4pt up and 279pt to its right (/pending 790; three
+// pages of the same document read that way as the producer wrote them). Left to right, a run can only be asked
+// whether it continues a line that began before it. Where "shares a baseline" does divide a page's runs into
+// classes, these are the lines that sort gave.
 func lineSegments(runs []textRun) []textLine {
 	var rs []textRun
+	reach := 0.0
 	for _, r := range runs {
 		if joinsALine(r) {
 			rs = append(rs, r)
+			reach = math.Max(reach, raisedMaxEm*r.size) // the furthest a line's baseline is from a run that joins it
 		}
 	}
-	sort.SliceStable(rs, func(i, j int) bool {
-		if !approxBaseline(rs[i], rs[j]) {
-			return rs[i].y > rs[j].y
-		}
-		return rs[i].x < rs[j].x
-	})
-	var out []textLine
+	// Runs at one x stay in the order the page draws them: Acrobat draws "Note:" and the sentence after it from one
+	// x, and only that order says which is first.
+	sort.SliceStable(rs, func(i, j int) bool { return rs[i].x < rs[j].x })
+	// lines is kept top to bottom, so the lines a run could share a baseline with are found by height and not by
+	// asking every line on the page (a page of per-glyph runs has thousands of both).
+	var lines []*textLine
 	for _, r := range rs {
-		if n := len(out); n > 0 {
-			l := &out[n-1]
+		var best *textLine
+		from := sort.Search(len(lines), func(i int) bool { return lines[i].y <= r.y+reach })
+		for i := from; i < len(lines) && lines[i].y >= r.y-reach; i++ {
+			l := lines[i]
 			em := math.Max(l.size, r.size)
-			if math.Abs(l.y-r.y) <= 0.3*em && r.x-l.x1 <= joinGapEm*em {
-				if separatesWords(r.x-l.x1, em) && !strings.HasSuffix(l.text, " ") && !strings.HasPrefix(r.text, " ") {
-					l.text += " "
-				}
-				l.text += r.text
-				l.runs = append(l.runs, r)
-				l.x1 = math.Max(l.x1, r.x+r.width)
-				l.size = em
+			if (math.Abs(l.y-r.y) > 0.3*em && !raisedOn(r, l)) || r.x-l.x1 > joinGapEm*em {
 				continue
 			}
+			if d, b := math.Abs(l.y-r.y), best; b == nil || d < math.Abs(b.y-r.y) || (d == math.Abs(b.y-r.y) && l.x1 > b.x1) {
+				best = l
+			}
 		}
-		out = append(out, textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text})
+		if best == nil {
+			at := sort.Search(len(lines), func(i int) bool { return lines[i].y < r.y })
+			lines = append(lines, nil)
+			copy(lines[at+1:], lines[at:])
+			lines[at] = &textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text}
+			continue
+		}
+		em := math.Max(best.size, r.size)
+		if separatesWords(r.x-best.x1, em) && !strings.HasSuffix(best.text, " ") && !strings.HasPrefix(r.text, " ") {
+			best.text += " "
+		}
+		best.text += r.text
+		best.runs = append(best.runs, r)
+		best.x1 = math.Max(best.x1, r.x+r.width)
+		best.size = em
 	}
-	for i := range out {
+	out := make([]textLine, len(lines))
+	for i, l := range lines {
+		out[i] = *l
 		out[i].text = strings.TrimSpace(out[i].text)
 	}
 	return out
+}
+
+// A raised figure — a footnote mark, an exponent — is set smaller than its line and above its baseline: no more than
+// raisedSizeRatio of the line's size, and no higher than raisedMaxEm of it. Word, LibreOffice and InDesign raise one a
+// third of an em at about six tenths of the size, and TeX 0.36 em at seven tenths.
+const (
+	raisedSizeRatio = 0.8
+	raisedMaxEm     = 0.5
+)
+
+// raisedOn says whether r is a raised figure on line l. A third of an em is past the 0.3 em two runs of one size may
+// differ by, so a word processor's footnote mark was a line of its own — and, set smaller, a PARAGRAPH of its own, read
+// ahead of the sentence it marks, which it also cut in two (/pending 794).
+//
+// Measured over the real-producer corpus before it was adopted: paragraphs of three characters or fewer standing alone
+// fell 3,868 → 3,397, lines in paragraphs that re-break in place rose for every producer that moved (Acrobat 2,758 →
+// 2,797, Antenna House 3,626 → 3,657, InDesign 2,060 → 2,145, Word 1,212 → 1,308) and multi-line paragraphs that do
+// not re-break in place went 45 → 44.
+//
+// **Declared limits**: a mark that OPENS its line ("¹ See…") is still a line of its own — the line would have to take
+// its baseline from a run that comes after — and in a table a small label set just above a larger one beside it reads
+// as raised on it.
+func raisedOn(r textRun, l *textLine) bool {
+	return r.size <= raisedSizeRatio*l.size && r.y > l.y && r.y-l.y <= raisedMaxEm*l.size
 }
 
 // joinsALine says whether a run belongs in a line. An artifact is text the document says is not content — a watermark, a
 // running header — so it joins no line and starts no paragraph; nor does a run that draws only white space.
 func joinsALine(r textRun) bool {
 	return !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != ""
-}
-
-func approxBaseline(a, b textRun) bool {
-	return math.Abs(a.y-b.y) <= 0.3*math.Max(a.size, b.size)
 }
 
 func sameBaseline(a, b textLine) bool {
@@ -720,21 +770,36 @@ func breaksBefore(prev, l textLine, right, typical float64, steps int) bool {
 	return right-prev.x1 > firstWordWidth(l)+0.5*em
 }
 
-// firstWordWidth estimates the width of a line's first word from its first run, by the word's share of
-// the run's characters. Glyph widths vary, so it is an estimate — and only ever compared against a
-// shortfall, where proportional spacing moves the answer by less than the half-em margin allows.
+// firstWordWidth estimates the width of a line's first word: the runs it is drawn in, up to the first white space —
+// in a run's text, or as a gap between two runs wide enough to part words (`separatesWords`, the join `lineSegments`
+// makes) — and of the run the word ends in, the word's share of its characters. Glyph widths vary, so it is an
+// estimate — and only ever compared against a shortfall, where proportional spacing moves the answer by less than
+// the half-em margin allows.
+//
+// **Across runs, not from the first run alone**: a word in two styles, or from a producer that draws a run a glyph,
+// measured as its first letter, "would have fit" on the line above, and its paragraph was split there (/pending 794).
 func firstWordWidth(l textLine) float64 {
-	r := l.runs[0]
-	text := strings.TrimLeftFunc(r.text, unicode.IsSpace)
-	n := len([]rune(text))
-	if n == 0 {
-		return 0
+	width, end := 0.0, 0.0
+	for i, r := range l.runs {
+		text := r.text
+		if i == 0 {
+			text = strings.TrimLeftFunc(text, unicode.IsSpace)
+		} else if separatesWords(r.x-end, math.Max(l.runs[i-1].size, r.size)) {
+			break
+		}
+		n := len([]rune(text))
+		if n == 0 {
+			break // only white space: the word ended before it
+		}
+		if word := strings.IndexFunc(text, unicode.IsSpace); word >= 0 {
+			if i == 0 {
+				return r.width * float64(len([]rune(text[:word]))) / float64(n)
+			}
+			return r.x + r.width*float64(len([]rune(text[:word])))/float64(n) - l.runs[0].x
+		}
+		width, end = math.Max(width, r.x+r.width-l.runs[0].x), math.Max(end, r.x+r.width)
 	}
-	word := strings.IndexFunc(text, unicode.IsSpace)
-	if word < 0 {
-		return r.width
-	}
-	return r.width * float64(len([]rune(text[:word]))) / float64(n)
+	return width
 }
 
 func median(xs []float64) float64 {

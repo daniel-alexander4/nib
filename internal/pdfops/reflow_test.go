@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -89,21 +90,114 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 	t.Logf("%d multi-line paragraphs reproduced", multi)
 }
 
+// rebreakAsProduction breaks paragraph pi's own words as `reflowParagraphIn` breaks an edit's — the alignment read, a
+// justified paragraph's words given one word spacing (`withWordSpacing`, P08.S03's C3), the spacer and the measures
+// taken from THOSE lines, a centred paragraph its width about the axis, and a justified paragraph a line of which
+// cannot be set within the flush edge broken again AT the edge — and says how the lines then read, how they read on
+// the page, and whether the paragraph is justified. A test instrument: it follows `reflowParagraphIn` step for step
+// and must be kept beside it. It rejoins no hyphenated break and keeps none (P08.S07): the words are the paragraph's
+// own, as read.
+//
+// edgeFirst is /pending 797's proposed remedy, measured and not adopted: a justified paragraph broken at its flush
+// edge from the start, at its natural spaces, never at its own measure.
+func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []string, justified bool, cause string) {
+	lines, gap, cause := paragraphWords(l.paragraphs[pi])
+	if cause != "" {
+		return nil, nil, false, cause
+	}
+	want = lineTexts(lines)
+	align := paragraphAlignment(l, pi, lines)
+	if align.justified {
+		tw := lastSpacing(lines[len(lines)-1][len(lines[len(lines)-1])-1].spacing).tw
+		if align.continues {
+			for _, ln := range lines {
+				tw = math.Min(tw, lastSpacing(ln[len(ln)-1].spacing).tw)
+			}
+		}
+		lines = withWordSpacing(lines, tw)
+		align = paragraphAlignment(l, pi, lines)
+	}
+	space := spacerOf(lines, gap)
+	var words []emitWord
+	var texts []string
+	for _, ln := range lines {
+		for _, w := range ln {
+			words = append(words, emitWord{face: w.face, tfSize: w.tfSize, spacing: w.spacing, width: w.width, seq: len(words) + 1})
+			texts = append(texts, w.text())
+		}
+	}
+	width := func(w emitWord) float64 { return w.width }
+	atEdge := func() [][]emitWord {
+		edge := make([]float64, len(lines))
+		for i, ln := range lines {
+			edge[i] = align.edge - ln[0].startX
+		}
+		return breakAt(words, edge, width,
+			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, nil, nil)
+	}
+	var broken [][]emitWord
+	if edgeFirst && align.justified {
+		broken = atEdge()
+		if _, fits := justifiedLines(align, broken, lines, space); !fits {
+			return nil, want, true, causeWordTooWide
+		}
+	} else {
+		measures := paragraphMeasures(l, pi, lines, space)
+		if align.centred {
+			for i := range measures {
+				measures[i] = align.width
+			}
+		}
+		broken = breakAt(words, measures, width, func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil)
+		if _, fits := justifiedLines(align, broken, lines, space); !fits {
+			broken = atEdge()
+			if _, fits = justifiedLines(align, broken, lines, space); !fits {
+				return nil, want, align.justified, causeWordTooWide
+			}
+		}
+	}
+	got = make([]string, len(broken))
+	for i, ln := range broken {
+		for j, w := range ln {
+			if j > 0 {
+				got[i] += " "
+			}
+			got[i] += texts[w.seq-1]
+		}
+	}
+	return got, want, align.justified, ""
+}
+
 // TestHowOftenARealProducersParagraphRebreaksInPlace is a MEASUREMENT, not an assertion: over the real-producer corpus, how
-// many multi-line paragraphs the greedy breaker reproduces at their own measure. A producer that justifies, hyphenates
-// or breaks by another rule will not reproduce, and that is P08's to handle — the number says how much of the real
-// world S03's greedy re-break already matches. Skips without the corpus.
+// many multi-line paragraphs re-break where they were broken when nothing in them changes — so an edit confined to one
+// line moves no word on another. Skips without the corpus.
+//
+// **Through PRODUCTION's path** (`rebreakAsProduction`, /pending 797). It broke with `spacerOf` over the lines as read,
+// which is the path S03 shipped and not the one production has taken since S03's own C3 gave a justified paragraph one
+// word spacing before its spacer is read: the census reported justified paragraphs in place that production moves. The
+// as-read figure is still logged beside it, and so is the remedy 797 proposed (a justified paragraph broken at its
+// flush edge from the start), by producer, justified paragraphs apart — the remedy is adopted only if it is better
+// for every producer, and the log is what says.
 func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 	corp := externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers"))
 	if corp.absent != "" {
 		t.Skip("SKIP (not a measurement): " + corp.absent)
 	}
+	type count struct{ asRead, production, edgeFirst, of int }
+	type tally struct{ all, justified count }
 	causes := map[string]int{}
-	same, differ := 0, 0
+	by := map[string]*tally{}
+	var producers []string
+	var total tally
 	for _, doc := range corp.docs {
 		ctx, err := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
 		if err != nil {
 			continue
+		}
+		producer := strings.SplitN(doc.name, "/", 2)[0]
+		if by[producer] == nil {
+			by[producer] = &tally{}
+			producers = append(producers, producer)
 		}
 		for p := 1; p <= ctx.PageCount; p++ {
 			l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
@@ -111,7 +205,7 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 				causes["unreadable page"]++
 				continue
 			}
-			for _, para := range l.paragraphs {
+			for pi, para := range l.paragraphs {
 				if len(para.lines) < 2 {
 					continue
 				}
@@ -124,15 +218,47 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 				for _, ln := range lines {
 					words = append(words, ln...)
 				}
-				if strings.Join(lineTexts(rebreak(words, lineMeasures(lines, spacerOf(lines, space)), spacerOf(lines, space))), "\n") == strings.Join(lineTexts(lines), "\n") {
-					same++
-				} else {
-					differ++
+				asRead := strings.Join(lineTexts(rebreak(words, lineMeasures(lines, spacerOf(lines, space)), spacerOf(lines, space))), "\n") == strings.Join(lineTexts(lines), "\n")
+				got, want, justified, _ := rebreakAsProduction(l, pi, false)
+				production := got != nil && strings.Join(got, "\n") == strings.Join(want, "\n")
+				got, want, _, _ = rebreakAsProduction(l, pi, true)
+				edgeFirst := got != nil && strings.Join(got, "\n") == strings.Join(want, "\n")
+				for _, c := range []*count{&by[producer].all, &total.all, &by[producer].justified, &total.justified} {
+					if (c == &by[producer].justified || c == &total.justified) && !justified {
+						continue
+					}
+					c.of++
+					if asRead {
+						c.asRead++
+					}
+					if production {
+						c.production++
+					}
+					if edgeFirst {
+						c.edgeFirst++
+					}
 				}
 			}
 		}
 	}
-	t.Logf("real producers, multi-line paragraphs: %d re-break in place, %d do not, refused by cause %v", same, differ, causes)
+	line := func(name string, c count) {
+		if c.of == 0 {
+			return
+		}
+		t.Logf("%-28s %5d paragraphs: in place %5d as production breaks them, %5d as read (the old census), %5d broken at the flush edge first (797's remedy)",
+			name, c.of, c.production, c.asRead, c.edgeFirst)
+	}
+	for _, p := range producers {
+		line(p+", multi-line", by[p].all)
+		line(p+", justified", by[p].justified)
+	}
+	line("real producers, multi-line", total.all)
+	line("real producers, justified", total.justified)
+	t.Logf("real producers, multi-line paragraphs: %d re-break in place, %d do not, refused by cause %v",
+		total.all.production, total.all.of-total.all.production, causes)
+	if total.justified.of == 0 {
+		t.Errorf("no justified paragraph was read — the path production takes for one was never measured")
+	}
 }
 
 // glyphsOf builds glyphs for s at advance per character, with kern before each glyph after the first taken from kerns
