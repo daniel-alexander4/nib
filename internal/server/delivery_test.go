@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1246,6 +1247,12 @@ func TestARoundStopsWhenTheRequestThatStartedItGoesAway(t *testing.T) {
 	if _, ierr := convenerInvitationFor(v, rec, rec.Roster[1]); ierr != nil {
 		t.Fatalf("setup: the round cannot mint this party's invitation (%v), so its leg stops "+
 			"before the race and this test would pass without the fix", ierr)
+	}
+	// A party whose fingerprint is shorter than the twelve characters the refusal quotes is refused
+	// in a sentence, never by a slice out of range (/pending 772): the record's hex is not known to
+	// be a whole fingerprint.
+	if _, ierr := convenerInvitationFor(v, rec, ceremony.Party{Fingerprint: "7a8b"}); !errors.Is(ierr, errNoCeremonySecret) {
+		t.Fatalf("a short fingerprint with no stored secret answered %v, want errNoCeremonySecret", ierr)
 	}
 
 	// STIMULUS: alive at the start, dead during the leg.

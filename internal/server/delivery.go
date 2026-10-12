@@ -1537,7 +1537,7 @@ func convenerInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.P
 	secret, ok := v.CeremonySecret(rec.ID, fp)
 	if !ok {
 		return ceremony.Invitation{}, fmt.Errorf("%w: %s, so it cannot reach them. A ceremony's "+
-			"secrets are removed when it ends.", errNoCeremonySecret, party.Fingerprint[:12])
+			"secrets are removed when it ends.", errNoCeremonySecret, fpPrefix(party.Fingerprint))
 	}
 	return ceremony.Invitation{
 		Version:             ceremony.InvitationVersion,
