@@ -143,6 +143,8 @@ type refGraph struct {
 	guarded bool
 	// followed is the edges `open` has emitted; past budget (when it is not 0) the walk refuses (`countPaths`).
 	followed, budget uint64
+	// actionIn is, for the path count, how many emitted edges name each object as an action (`sharedActions`).
+	actionIn map[int]uint64
 }
 
 // slot is n's index in state and count, or -1 for an object number the table does not hold (which names nothing).
@@ -250,7 +252,8 @@ func countPaths(ctx *model.Context, budget uint64) (paths, followed uint64, err 
 		pos[nr] = i
 	}
 	slots := len(nrs) * int(numRoles)
-	g := &refGraph{ctx: ctx, pos: pos, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots), budget: budget}
+	g := &refGraph{ctx: ctx, pos: pos, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots), budget: budget,
+		actionIn: map[int]uint64{}}
 	var roots []int
 	for _, nr := range nrs {
 		for _, r := range rootRoles(ctx.Table[nr].Object) {
@@ -274,7 +277,66 @@ func countPaths(ctx *model.Context, budget uint64) (paths, followed uint64, err 
 		}
 		total = min(total+c, saturate)
 	}
-	return total, g.followed, nil
+	return min(total+g.sharedActions(nrs), saturate), g.followed, nil
+}
+
+// sharedActions is the paths pdfcpu's validator takes from an action each further time something the walk does NOT
+// follow names it — /pending 767 (5). The walk counts an action once for every followed edge into it (an annotation's
+// `/A`, another action's `/Next`) and once more if nothing followed names it; but outline items, the catalog's
+// `/OpenAction` and `/AA`, form fields and name-tree leaves name actions too, the walk follows none of those, and
+// pdfcpu validates the action — every path under its `/Next` — once per naming. Measured: one chain of fourteen
+// actions, each naming the next twice (32,798 paths, which the door passes), validated in 0.88 s from one outline
+// item, 6.2 s from eight and 59.5 s from sixty-four, a 28 KB file whose count never moved.
+//
+// So every reference to such an action, under any key, that no followed edge accounts for is charged the action's
+// paths again. Only an action with something under it is looked at (a count above 1): one that leads nowhere costs
+// its namings, which is linear in the file — and that leaves out every structure element, which carries an `/S` and
+// is named many times over. A document with no such action is not scanned at all.
+func (g *refGraph) sharedActions(nrs []int) uint64 {
+	under := map[int]uint64{} // an action with paths under it → those paths
+	for p, nr := range nrs {
+		if i := p*int(numRoles) + int(roleAction); g.state[i] == 2 && g.count[i] > 1 {
+			under[nr] = g.count[i]
+		}
+	}
+	if len(under) == 0 {
+		return 0
+	}
+	named := map[int]uint64{}
+	var stack []types.Object
+	for _, nr := range nrs {
+		stack = append(stack[:0], g.ctx.Table[nr].Object)
+		for len(stack) > 0 {
+			o := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			switch v := o.(type) {
+			case types.IndirectRef:
+				if _, ok := under[v.ObjectNumber.Value()]; ok {
+					named[v.ObjectNumber.Value()]++
+				}
+			case types.Dict:
+				for _, x := range v {
+					stack = append(stack, x)
+				}
+			case types.StreamDict:
+				for _, x := range v.Dict {
+					stack = append(stack, x)
+				}
+			case types.Array:
+				stack = append(stack, v...)
+			}
+		}
+	}
+	var extra uint64
+	for nr, paths := range under {
+		n := named[nr]
+		n -= min(n, g.actionIn[nr])
+		if n > 0 && !g.reached[g.slot(node{nr, roleAction})] {
+			n-- // the one naming the count above already holds
+		}
+		extra = min(extra+mulSat(paths, n), saturate)
+	}
+	return extra
 }
 
 func mulSat(a, b uint64) uint64 {
@@ -492,6 +554,13 @@ func (g *refGraph) open(n node) *frame {
 		g.expand(e.Object, n.role, "", func(to node, key string) { f.edges = append(f.edges, edge{to, key}) })
 		g.opening = nil
 		g.followed += uint64(len(f.edges))
+		if g.actionIn != nil {
+			for _, e := range f.edges {
+				if e.to.role == roleAction {
+					g.actionIn[e.to.nr]++
+				}
+			}
+		}
 	}
 	return f
 }
