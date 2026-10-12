@@ -139,7 +139,11 @@ const maxPageDim = 14400
 func pageSize(ws, hs string) (w, h float64, ok bool) {
 	w, errW := strconv.ParseFloat(ws, 64)
 	h, errH := strconv.ParseFloat(hs, 64)
-	if errW != nil || errH != nil || w <= 0 || h <= 0 || w > maxPageDim || h > maxPageDim {
+	// Written as what a side MUST be, never as what it must not: `NaN` parses without error and
+	// answers false to every comparison, so "w <= 0 || w > max" let it through and a page of size
+	// NaN reached the assemble route's barrier commit (/pending 667).
+	inRange := func(v float64) bool { return v > 0 && v <= maxPageDim }
+	if errW != nil || errH != nil || !inRange(w) || !inRange(h) {
 		return 0, 0, false
 	}
 	return w, h, true
