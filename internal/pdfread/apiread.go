@@ -206,7 +206,12 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 			return nil, pdfcpu.ErrUnsupportedVersion
 		}
 		PutBackValidatorLosses(src) // before the merge renumbers its references (`write.go`)
+		layers := SourceOptionalContent(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
+			return nil, err
+		}
+		// A later part's hidden layers stay hidden (`optionalmerge.go`, ADR-131).
+		if err := UnionOptionalContent(dest, layers); err != nil {
 			return nil, err
 		}
 	}

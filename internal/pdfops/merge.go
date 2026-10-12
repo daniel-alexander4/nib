@@ -123,11 +123,14 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		}
 		var gs *graftSource
 		if host != nil {
-			gs = prepareGraft(src, host, dest.XRefTable)
+			gs = prepareGraft(src, host, dest)
 		}
 		if gs == nil {
 			stripClaims(src)
 		}
+		// Its optional-content properties are held from before the merge, as its tree is: the merge frees
+		// the catalog that names them (`pdfread/optionalmerge.go`, ADR-131).
+		layers := pdfread.SourceOptionalContent(src)
 		// Before the merge renumbers the source's references: a font pdfcpu's validator took out of it goes back
 		// into the numbering it came from (`pdfread.Write`, ADR-129).
 		pdfread.PutBackValidatorLosses(src)
@@ -138,6 +141,10 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		// != nil { return nil }`), so a lost document would otherwise arrive as a short success.
 		if dest.PageCount != want {
 			return nil, false, fmt.Errorf("pdfops: the merge produced %d pages where %d were expected", dest.PageCount, want)
+		}
+		// Not gated on the graft: a hidden layer is hidden whether or not anybody tagged the document.
+		if err := pdfread.UnionOptionalContent(dest, layers); err != nil {
+			return nil, false, err
 		}
 		if gs != nil {
 			if err := attachGraft(dest, host, gs); err != nil {
@@ -212,10 +219,11 @@ func readHostTree(ctx *model.Context) *hostTree {
 }
 
 // prepareGraft readies a source document's tree for grafting onto host, in the source's own context,
-// or returns nil when it cannot be grafted: no tree, a nested `/ParentTree`, or a role or class name
-// the host maps differently. Returning nil costs nothing — the caller strips the claims instead.
-func prepareGraft(src *model.Context, host *hostTree, hostXT *model.XRefTable) *graftSource {
-	xt := src.XRefTable
+// or returns nil when it cannot be grafted: no tree, a nested `/ParentTree`, a role or class name
+// the host maps differently, or a role map that would retype an element of either document
+// (`rolesSurviveTheUnion`). Returning nil costs nothing — the caller strips the claims instead.
+func prepareGraft(src *model.Context, host *hostTree, dest *model.Context) *graftSource {
+	xt, hostXT := src.XRefTable, dest.XRefTable
 	cat, err := xt.Catalog()
 	if err != nil {
 		return nil
@@ -238,6 +246,12 @@ func prepareGraft(src *model.Context, host *hostTree, hostXT *model.XRefTable) *
 			return nil
 		}
 	}
+	// And a name only ONE side maps, which the union would then apply to the other side's elements.
+	if len(derefDict(xt, root["RoleMap"])) > 0 || len(derefDict(hostXT, host.root["RoleMap"])) > 0 {
+		if !rolesSurviveTheUnion(src, dest) {
+			return nil
+		}
+	}
 	offset := host.nextKey
 	srcNext := parentTreeKeyFloor(src, root)
 	eachParentTreeClaim(src, func(key int, set func(int)) { set(key + offset) })
@@ -255,6 +269,50 @@ func prepareGraft(src *model.Context, host *hostTree, hostXT *model.XRefTable) *
 		tier = tagSource(s)
 	}
 	return &graftSource{root: root, nextKey: srcNext + offset, lang: readLang(xt, cat["Lang"]), tier: tier}
+}
+
+// rolesSurviveTheUnion reports whether every element of both documents still resolves to the standard
+// type it resolves to today once the two role maps are one (`/pending 632`).
+//
+// `conflicts` refuses a name both sides map differently. That is not the only way a union changes what an
+// element means: `attachGraft` copies the source's other entries into the host's map, and a reader
+// resolves EVERY element through the one map the merged document has. Measured before this was written:
+// a host of plain `/P` paragraphs merged with a document mapping `/P → /Span` came out with the map
+// `/P → /Span`, so every paragraph of the host read as a span; and a source element typed `/Para` with no
+// mapping of its own was read as a heading under a host that maps `/Para → /H1`. Neither is a conflict —
+// each name is mapped by one side only — and a merge is not the place to decide which reading is right,
+// so the answer is the one `conflicts` gives: the graft is refused and that document's claims are
+// stripped.
+//
+// The question is asked of the elements that exist, through the tree's own reader and its own resolver
+// (`readStructTree`, `standardRole`), not of the maps: a source that maps `/Para → /P` changes nothing in
+// a host with no `/Para` element, and that graft stands. A tree that cannot be read answers no — the
+// output gate would refuse it anyway.
+func rolesSurviveTheUnion(src, dest *model.Context) bool {
+	st, err := readStructTree(src, nil)
+	if err != nil {
+		return false
+	}
+	ht, err := readStructTree(dest, nil)
+	if err != nil {
+		return false
+	}
+	// The map the merged document will hold: the host's entries, and the source's where the host has none.
+	union := &structTree{roleMap: map[string]string{}}
+	for k, v := range st.roleMap {
+		union.roleMap[k] = v
+	}
+	for k, v := range ht.roleMap {
+		union.roleMap[k] = v
+	}
+	for _, t := range []*structTree{st, ht} {
+		for _, e := range t.elems {
+			if standardRole(t, e.kind) != standardRole(union, e.kind) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // conflicts reports whether a source name map gives any name a different value than the host's does.

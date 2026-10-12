@@ -1232,8 +1232,14 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) 
 		for p := rightStart; p <= n; p++ {
 			keep = append(keep, p)
 		}
+		// The output is the document itself, so what the selection reduces an extract by — the `/Info`,
+		// the `/ID`, the embedded files — is held aside and put back (`/pending 602`, splicefacts.go).
+		facts := captureDocumentFacts(ctx)
 		c, err := selectPages(ctx, keep, true, keepUnreadable)
 		carried = c
+		if err == nil {
+			facts.restore(ctx)
+		}
 		return err
 	})
 	return out, grafted, carried, err

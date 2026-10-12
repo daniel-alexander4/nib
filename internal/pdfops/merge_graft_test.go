@@ -480,3 +480,57 @@ func TestAClassMapComparisonVisitsEachPairOnce(t *testing.T) {
 		t.Error("the second document was refused the graft; its /C1 is the same graph as the host's")
 	}
 }
+
+// TestAGraftThatWouldRetypeAnElementIsRefused — `/pending 632`. The graft refused only a name BOTH maps
+// define differently and then copied the source's other entries into the host's map, and a reader
+// resolves every element through the one map the merged document has. So a name only one side maps was
+// applied to the other side's elements: the host's `/P` paragraphs read as spans under a source's
+// `/P → /Span`, and a source's unmapped `/Para` read as a heading under a host's `/Para → /H1`. Each is
+// refused the way a conflict is — that document's claims stripped, the host's map as it was.
+func TestAGraftThatWouldRetypeAnElementIsRefused(t *testing.T) {
+	refused := func(name string, out []byte) {
+		t.Helper()
+		claims := pageClaims(t, out)
+		for p := 4; p < 8; p++ {
+			if claims[p] >= 0 {
+				t.Errorf("%s: page %d (the second document's) keeps /StructParents %d; the graft was not refused", name, p+1, claims[p])
+			}
+		}
+	}
+
+	// The host holds `/P` elements and maps only `/Para`; the source also maps `/P → /Span`.
+	host := subsetFixture() // /RoleMap << /Para /P >>, elements typed /Para and /P
+	objs := subsetFixtureObjects()
+	objs[38] = "<< /Para /P /P /Span >>"
+	out, err := Append(host, assembleFixture(objs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, has := roleMapOf(t, out)["P"]; has {
+		t.Errorf("the merged role map sends /P to %q: every paragraph of the HOST now reads as that", got)
+	}
+	refused("a source-only /P → /Span", out)
+
+	// The host maps `/Para → /H1`; the source types elements `/Para` and maps nothing for it.
+	hostObjs := subsetFixtureObjects()
+	hostObjs[38] = "<< /Para /H1 >>"
+	srcObjs := subsetFixtureObjects()
+	srcObjs[38] = "<< /Other /P >>"
+	if out, err = Append(assembleFixture(hostObjs), assembleFixture(srcObjs)); err != nil {
+		t.Fatal(err)
+	}
+	refused("a host-only /Para → /H1 over a source's unmapped /Para", out)
+
+	// The control: a name only the source maps, which no host element uses, is still merged.
+	srcObjs = subsetFixtureObjects()
+	srcObjs[38] = "<< /Para /P /Aside /Note >>"
+	if out, err = Append(host, assembleFixture(srcObjs)); err != nil {
+		t.Fatal(err)
+	}
+	if got := roleMapOf(t, out)["Aside"]; got != "Note" {
+		t.Errorf("a source-only name no element of the host uses maps to %q after the merge, want Note", got)
+	}
+	if claims := pageClaims(t, out); claims[4] < 0 {
+		t.Error("the control's second document was not grafted")
+	}
+}
