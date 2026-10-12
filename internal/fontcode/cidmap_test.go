@@ -1,6 +1,11 @@
 package fontcode
 
-import "testing"
+import (
+	"math"
+	"testing"
+
+	"nib/internal/cmapres"
+)
 
 // TestCIDMapsAreReadTheWayVeraPDFReadsThem — `CMap.toCID`'s order: the last cid mapping read answers first, notdef
 // mappings in file order after every cid mapping, a used CMap's mappings after the CMap's own, and a mapping answering
@@ -88,5 +93,116 @@ func TestALookupStopsAtItsLimit(t *testing.T) {
 	}
 	if _, held, asked, done := (CIDChain{m}).Lookup(0x21, 3); asked != 3 || !done || held {
 		t.Errorf("a lookup limited to 3 asked %d, finished %v, held %v — want 3, true, false", asked, done, held)
+	}
+}
+
+// walked is the CMap with no index: every lookup of it is the walk.
+func walked(m *CIDMap) *CIDMap { return &CIDMap{cids: m.cids, notdefs: m.notdefs} }
+
+// TestACarriedCMapsIndexAnswersAsItsWalkDoes — /pending 858. A carried CMap is searched, not walked, and the search
+// is the walk's answer: both sides of every mapping's two ends and a sample of 0000-1FFFF, through every carried
+// predefined CMap, gives the same CID and the same "held" either way. The -V CMaps are the ones whose lists
+// overlap (their own entries stand in front of the -H CMap's they use), so one of them must be among the indexed.
+func TestACarriedCMapsIndexAnswersAsItsWalkDoes(t *testing.T) {
+	indexed := map[string]bool{}
+	for _, name := range cmapres.Names() {
+		_, m, ok := Predefined(name)
+		if !ok {
+			continue
+		}
+		indexed[name] = m.cidIndex != nil
+		plain := walked(m)
+		// Between two neighbouring ends the first mapping to hold a code is the same one, so the ends, the codes
+		// beside them and one code between are every case; the stride over 0000-1FFFF is a second, blind sample.
+		var codes []int
+		for c := -1; c <= 0x1FFFF; c += 37 {
+			codes = append(codes, c)
+		}
+		for _, list := range [][]cidMapping{m.cids, m.notdefs} {
+			for _, e := range list {
+				codes = append(codes, e.lo-1, e.lo, e.lo+(e.hi-e.lo)/2, e.hi, e.hi+1)
+			}
+		}
+		differ := 0
+		for _, code := range codes {
+			cid, held, asked, done := (CIDChain{m}).Lookup(code, 1<<30)
+			wantCID, wantHeld, _, _ := (CIDChain{plain}).Lookup(code, 1<<30)
+			if cid != wantCID || held != wantHeld || !done {
+				if differ++; differ <= 3 {
+					t.Errorf("%s: code %#x is CID %d (held %v) by the index, and CID %d (held %v) by the walk", name, code, cid, held, wantCID, wantHeld)
+				}
+			}
+			if m.cidIndex != nil && asked > 40 {
+				t.Fatalf("%s: code %#x cost %d asks through the index — the walk's cost, not a search's", name, code, asked)
+			}
+		}
+	}
+	for _, name := range []string{"UniGB-UCS2-H", "UniJIS-UCS2-H", "UniJIS-UCS2-V", "GBK-EUC-H"} {
+		if !indexed[name] {
+			t.Errorf("%s is held without an index: a document showing a few hundred characters through it spends its whole CMap budget", name)
+		}
+	}
+}
+
+// TestAnIndexIsTheFirstMappingInListOrder — the index over lists that overlap every way: the first mapping in list
+// order to hold a code answers it, a mapping holding no code answers none, and a list with a mapping that can
+// answer -1 (which the walk passes by) is not indexed at all.
+func TestAnIndexIsTheFirstMappingInListOrder(t *testing.T) {
+	seed := uint32(1)
+	next := func(n int) int {
+		seed = seed*1664525 + 1013904223
+		return int(seed>>8) % n
+	}
+	for round := 0; round < 200; round++ {
+		var list []cidMapping
+		for i, n := 0, indexMinimum+next(40); i < n; i++ {
+			lo := next(300)
+			e := cidMapping{lo: lo, hi: lo + next(60), cid: next(5000), notdef: next(4) == 0}
+			if next(10) == 0 {
+				e.hi = lo - 1 - next(5) // holds nothing
+			}
+			list = append(list, e)
+		}
+		idx := indexMappings(list)
+		if idx == nil {
+			t.Fatalf("round %d: a list of %d ordinary mappings was not indexed", round, len(list))
+		}
+		m := &CIDMap{cids: list, cidIndex: idx}
+		for code := -2; code <= 370; code++ {
+			cid, held, _, _ := (CIDChain{m}).Lookup(code, 1<<30)
+			wantCID, wantHeld, _, _ := (CIDChain{walked(m)}).Lookup(code, 1<<30)
+			if cid != wantCID || held != wantHeld {
+				t.Fatalf("round %d: code %d is CID %d (held %v) by the index, and CID %d (held %v) by the walk", round, code, cid, held, wantCID, wantHeld)
+			}
+		}
+	}
+	long := func(e cidMapping) []cidMapping {
+		list := []cidMapping{e}
+		for i := 0; i < indexMinimum; i++ {
+			list = append(list, cidMapping{lo: 1000 + i, hi: 1000 + i, cid: i})
+		}
+		return list
+	}
+	for name, e := range map[string]cidMapping{
+		"a range reaching CID -1":         {lo: 0, hi: 9, cid: -5},
+		"a notdef range of CID -1":        {lo: 0, hi: 9, cid: -1, notdef: true},
+		"a range running past a Java int": {lo: 0, hi: 9, cid: math.MaxInt32 - 3},
+		"a range ending at the last code": {lo: 0, hi: math.MaxInt, cid: 0, notdef: true},
+	} {
+		if indexMappings(long(e)) != nil {
+			t.Errorf("%s was indexed: the walk passes a mapping answering -1 by, and a span cannot", name)
+		}
+	}
+	if indexMappings(long(cidMapping{lo: 0, hi: 9, cid: 1})[:indexMinimum-1]) != nil {
+		t.Error("a list shorter than the minimum was indexed")
+	}
+	// A search is charged whole, and refused whole where the limit will not cover it.
+	m := &CIDMap{cids: long(cidMapping{lo: 0, hi: 9, cid: 1})}
+	m.index()
+	if _, _, asked, done := (CIDChain{m}).Lookup(5, m.cidIndex.asks-1); asked != 0 || done {
+		t.Errorf("a search past its limit asked %d and finished %v, want 0 and false", asked, done)
+	}
+	if cid, held, asked, done := (CIDChain{m}).Lookup(5, m.cidIndex.asks); cid != 6 || !held || asked != m.cidIndex.asks || !done {
+		t.Errorf("a search within its limit answered CID %d (held %v, asked %d, finished %v), want 6", cid, held, asked, done)
 	}
 }

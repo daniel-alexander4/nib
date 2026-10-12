@@ -50,6 +50,7 @@ func predefined(name string) *carriedCMap {
 			c = nil // a table nib cannot read whole is one it does not carry
 		} else {
 			c.cs.tailOwn = false
+			c.cids.index() // before it is held: nothing writes to a CMap another reader can see
 		}
 	}
 	carried.Lock()

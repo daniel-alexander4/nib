@@ -178,6 +178,38 @@ func TestAType0FontIsReadWithTheCMapsNibCarries(t *testing.T) {
 	}
 }
 
+// TestALongCJKTextThroughACarriedCMapDoesNotSpendTheCMapBudget — /pending 858. One font showing 3,000 distinct
+// ideographs through a carried UCS2 CMap, which is what a long Chinese or Japanese document does. Measured while a
+// carried CMap was walked: 500 distinct characters through UniGB-UCS2-H cost 3.8 million asks of the 4.2 million
+// (`maxCIDAsks`) and 7.21.7 t2 was refused, and at 1,500 both tests were. No clause may refuse on that budget.
+func TestALongCJKTextThroughACarriedCMapDoesNotSpendTheCMapBudget(t *testing.T) {
+	const hexDigits = "0123456789ABCDEF"
+	var show strings.Builder
+	for code := 0x4E00; code < 0x4E00+3000*7; code += 7 {
+		for shift := 12; shift >= 0; shift -= 4 {
+			show.WriteByte(hexDigits[code>>shift&15])
+		}
+	}
+	for _, c := range []struct{ enc, ordering string }{{"UniGB-UCS2-H", "GB1"}, {"UniJIS-UCS2-H", "Japan1"}, {"UniJIS-UCS2-V", "Japan1"}} {
+		pdf := glyphDoc("<< /Type /Font /Subtype /Type0 /BaseFont /SomeCID /Encoding /"+c.enc+" /DescendantFonts [11 0 R] >>",
+			"<"+show.String()+"> Tj", map[int]string{11: strings.Replace(adobeIdentity, "(Identity)", "("+c.ordering+")", 1), 12: cidDescriptor})
+		rep, err := Check(pdf)
+		if err != nil {
+			t.Fatalf("%s: Check: %v", c.enc, err)
+		}
+		for _, r := range rep.Results {
+			if strings.Contains(r.Why, "cost more than") {
+				t.Errorf("%s: %s reports %v — %s", c.enc, r.Clause, r.Verdict, r.Why)
+			}
+		}
+		for _, clause := range []string{"7.21.7 t1", "7.21.7 t2"} {
+			if got := verdictOf(t, pdf, clause); got.Verdict == CannotCheck {
+				t.Errorf("%s: %s cannot be checked (%s)", c.enc, clause, got.Why)
+			}
+		}
+	}
+}
+
 // TestTheCorpusFontOverAdobeJapan1IsAnswered: veraPDF's own 7.21.7 pass file draws KozMinPro over Identity-H and
 // Adobe-Japan1 with no /ToUnicode — the document `/pending 676` was filed on. Both tests answer, and pass.
 func TestTheCorpusFontOverAdobeJapan1IsAnswered(t *testing.T) {
