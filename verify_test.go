@@ -129,10 +129,27 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// and in a `.deb` guard satisfied by a word inside a comment. It also false-reds on
 		// the functionally identical unquoted form. So: find the actual `go test` line, read
 		// its -run pattern, and check that pattern really selects every discovered name.
-		// The packages the harness names must cover the packages the gated files live in.
+		// The packages the harness RUNS must cover the packages the gated files live in — and that
+		// is read off the invocation too (/pending 670 #10). This half was itself a whole-file
+		// `strings.Contains` under the comment above: build/dhtlive.sh's own header names packages
+		// in prose, so a package dropped from the `go test` line was still "run".
+		var invocation []string
+		inCommand := false // a line ending in a backslash carries the command onto the next
+		for _, line := range strings.Split(string(harness), "\n") {
+			l := strings.TrimSpace(line)
+			if !inCommand && (strings.HasPrefix(l, "#") || !strings.Contains(l, "go test")) {
+				continue
+			}
+			invocation = append(invocation, strings.Fields(l)...)
+			inCommand = strings.HasSuffix(l, "\\")
+		}
+		runs := map[string]bool{}
+		for _, arg := range invocation {
+			runs[strings.TrimSuffix(arg, "/")] = true
+		}
 		for _, g := range gated {
 			pkg := "./" + filepath.ToSlash(filepath.Dir(g)) + "/"
-			if !strings.Contains(string(harness), pkg) {
+			if !runs[strings.TrimSuffix(pkg, "/")] {
 				t.Errorf("%s is gated on NIB_LIVE_DHT but build/dhtlive.sh does not run %s — "+
 					"`go test ./...` skips it (variable unset) and the harness never reaches "+
 					"it, so it is executed by NOTHING and every tier stays green", g, pkg)
