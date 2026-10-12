@@ -114,6 +114,15 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	allowed := map[string]int{"textrun.go": 1}
 	// fontink.go's is a font's embedded program, read once per font for its glyphs' reach (ADR-098) — no form.
 	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1}
+	// **And an UNCAPPED decode is counted too** (`/pending 795` I3): the two counts above are of spellings, so a bare
+	// `sd.Decode()` passed them — `resourceprune.go` and `tagcarry.go` each inflated a content stream that way, and now
+	// read through the door. What is left is pinned by file so that a new one is a decision: route it through
+	// `formContent`, or name it here. The pinned ones were NOT judged safe by this guard — attachments (an embedded
+	// file's bytes, and the digest's memoised decode), metadata packets (labelua, uaid), a font's `/ToUnicode`
+	// (stampwrite, textrun's `streamContent`), and five that decode a form or a content stream outside a walk
+	// (annotcarry, stamprotation, stampwrite, structcarry, subsettag).
+	uncapped := map[string]int{"attachments.go": 2, "annotcarry.go": 1, "subsettag.go": 1, "uaid.go": 1, "textrun.go": 1,
+		"labelua.go": 1, "stampwrite.go": 2, "stamprotation.go": 1, "structcarry.go": 1}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -128,6 +137,10 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 		}
 		if n := strings.Count(string(src), "pdfread.DecodeWithin("); n != capped[f] {
 			t.Errorf("%s calls pdfread.DecodeWithin %d times, want %d — formWalkBudget.formContent is the door", f, n, capped[f])
+		}
+		if n := strings.Count(string(src), ".Decode()"); n != uncapped[f] {
+			t.Errorf("%s calls an uncapped .Decode() %d times, want %d — a stream is inflated through "+
+				"formWalkBudget.formContent, which stops at what its budget has left", f, n, uncapped[f])
 		}
 	}
 }

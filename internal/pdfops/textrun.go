@@ -239,8 +239,8 @@ func pageBudget(shared []*formWalkBudget) *formWalkBudget {
 
 // readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`), and the page's non-text marks
 // (`pageRuns.marks`) — reflow's reader.
-func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
-	return readPageRunsKeeping(ctx, pg, true, newFormWalkBudget(1))
+func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pg, true, pageBudget(shared))
 }
 
 func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keep bool, budget *formWalkBudget) (pageRuns, error) {

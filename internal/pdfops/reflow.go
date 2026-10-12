@@ -1624,7 +1624,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			return reflowOutcome{cause: causePageFull}, nil // several columns: nothing flows to another page
 		}
 		steps, cause, below, err := pushDown(ctx, pg, layout, src, region.paragraphs, float64(extra)*pitch, region.floor, region.bound,
-			para.bottom(), region.step, anchorXs(layout, region), nil)
+			para.bottom(), region.step, anchorXs(layout, region), nil, newFormWalkBudget(ctx.PageCount))
 		if err != nil {
 			return reflowOutcome{}, err
 		}

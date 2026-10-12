@@ -56,8 +56,11 @@ func flowReach(floor, top float64) [4]float64 {
 // steps from this page on, or the refusal and the text of the paragraph that caused it.
 //
 // xs is the zone's horizontal extent: the page's width on a page of one column, the column's on several (`anchorZone`).
+//
+// budget is the cascade's ONE walk budget (`/pending 795` W4): every page the flow goes on to is read against it, so a
+// cascade through many pages each just under a page's budget pays the document's allowance once, not a budget a page.
 func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte, block []int, p, floor float64, bound string,
-	top, step float64, xs [2]float64, in *carriedBlock) ([]flowStep, string, string, error) {
+	top, step float64, xs [2]float64, in *carriedBlock, budget *formWalkBudget) ([]flowStep, string, string, error) {
 	keepN := len(block)
 	for keepN > 0 && layout.paragraphs[block[keepN-1]].bottom()-p < floor-measureSlack {
 		keepN--
@@ -130,7 +133,7 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		st.keep.set = anchorsIn(ctx, pg, st.keep.zone)
 	}
 	if len(leave) > 0 {
-		next, nl, cause, err := nextPageFor(ctx, pg)
+		next, nl, cause, err := nextPageFor(ctx, pg, budget)
 		if err != nil || cause != "" {
 			return nil, cause, "", err
 		}
@@ -163,7 +166,7 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		}
 		span := first.lines[0].y - last.lines[len(last.lines)-1].y
 		rest, cause, below, err := pushDown(ctx, next, nl, nsrc, append([]int{0}, nr.paragraphs...), span+step, nr.floor, nr.bound,
-			q0.top(), step, [2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: runs, dy: dy, tags: tags})
+			q0.top(), step, [2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: runs, dy: dy, tags: tags}, budget)
 		if err != nil || cause != "" {
 			return nil, cause, below, err
 		}
@@ -199,12 +202,12 @@ func finishStep(ctx *model.Context, st flowStep, seqs []markedSeq, in *carriedBl
 // single column, or it draws no paragraph to land on. A running header set apart from the body (`runningLinesOf`) is the
 // page's first paragraph but in a cluster of its own, so its region is bounded by the margin and would take the block in
 // its place: it refuses as a running header in the body's column does (`pushDown`, `roomBelowContent`).
-func nextPageFor(ctx *model.Context, pg pdfread.Page) (pdfread.Page, pageLayout, string, error) {
+func nextPageFor(ctx *model.Context, pg pdfread.Page, budget *formWalkBudget) (pdfread.Page, pageLayout, string, error) {
 	if pg.Nr >= ctx.PageCount {
 		return pdfread.Page{}, pageLayout{}, causePageFull, nil
 	}
 	next := pageAt(ctx, nil, pg.Nr+1)
-	nl, err := readPageGlyphLayout(ctx, next)
+	nl, err := readPageGlyphLayout(ctx, next, budget)
 	if err != nil {
 		return pdfread.Page{}, pageLayout{}, "", err
 	}

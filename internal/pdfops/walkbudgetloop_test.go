@@ -155,7 +155,11 @@ func isNilIdent(e ast.Expr) bool {
 // budget (`readPageRuns`' shared argument), because a call without it is a budget per page, the measured defect.
 // ADR-009: this checks the ROUTING, so a loop added later fails here rather than in a timing.
 func TestEveryPageLoopSharesOneWalkBudget(t *testing.T) {
-	readers := map[string]bool{"readPageRuns": true, "readPageLayout": true, "readPageTableLayout": true}
+	// `readPageGlyphLayout` is reflow's reader and `nextPageFor` the cascade's step, which reads through it: each takes
+	// the budget third, as the others do.
+	readers := map[string]bool{"readPageRuns": true, "readPageLayout": true, "readPageTableLayout": true,
+		"readPageGlyphLayout": true, "nextPageFor": true}
+	inRecursion := 0
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +205,31 @@ func TestEveryPageLoopSharesOneWalkBudget(t *testing.T) {
 		if perr != nil {
 			t.Fatal(perr)
 		}
-		visit(file, false)
+		// A function that calls itself reads page after page as a loop does (`pushDown`, a reflow's cascade — /pending
+		// 795 W4, which a census of `for` statements could not see), so its whole body is a loop's.
+		for _, decl := range file.Decls {
+			fn, isFn := decl.(*ast.FuncDecl)
+			if !isFn || fn.Body == nil {
+				visit(decl, false)
+				continue
+			}
+			recursive := false
+			ast.Inspect(fn.Body, func(c ast.Node) bool {
+				if call, ok := c.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == fn.Name.Name && fn.Recv == nil {
+						recursive = true
+					}
+				}
+				return !recursive
+			})
+			if recursive {
+				inRecursion++
+			}
+			visit(fn.Body, recursive)
+		}
+	}
+	if inRecursion == 0 {
+		t.Fatalf("setup: the census found no function that calls itself, want at least pushDown — it is not seeing recursion")
 	}
 	// Stimulus: the census sees the five loops it exists for (proposer, structure view, commit, artifact, claim).
 	if inLoop < 5 {

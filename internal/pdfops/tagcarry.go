@@ -160,6 +160,7 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		sourceNrs = append(sourceNrs, nr)
 	}
 	sort.Slice(sourceNrs, func(i, j int) bool { return sources[sourceNrs[i]].page < sources[sourceNrs[j]].page })
+	budget := newFormWalkBudget(ctx.PageCount)
 	for _, pa := range pdfread.Pages(ctx) {
 		d, perr := pa.Dict, pa.Err
 		if perr != nil || d == nil {
@@ -199,11 +200,14 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 			if sub := sd.Dict.NameEntry("Subtype"); sub == nil || *sub != "Form" {
 				continue
 			}
-			if derr := sd.Decode(); derr != nil {
+			// Through the one decode door (`/pending 795` I3): a form is inflated only within the document's
+			// allowance, and one past it abandons the carry as an undecodable one does.
+			body := budget.formContent(sd, ir)
+			if body == nil || !budget.enterForm(len(body)) {
 				return nil, false
 			}
 			for _, nr := range sourceNrs {
-				if claimed[nr] || !bytes.Equal(sd.Content, sources[nr].content) {
+				if claimed[nr] || !bytes.Equal(body, sources[nr].content) {
 					continue
 				}
 				claimed[nr] = true
