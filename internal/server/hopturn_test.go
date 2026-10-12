@@ -26,6 +26,13 @@ import (
 // hopFixtureConvenerSecond convenes over the real routes with this machine second of three.
 func hopFixtureConvenerSecond(t *testing.T) *hopFixture {
 	t.Helper()
+	return hopFixtureConvenerSecondAfter(t, strings.Repeat("2b", 32))
+}
+
+// hopFixtureConvenerSecondAfter is the same ceremony with the FIRST party's fingerprint supplied,
+// so a test that holds that party's key can put their real signature on the document.
+func hopFixtureConvenerSecondAfter(t *testing.T, bob string) *hopFixture {
+	t.Helper()
 	ts, srv := startServerWith(t)
 	data, err := testpdf.Form()
 	if err != nil {
@@ -42,7 +49,7 @@ func hopFixtureConvenerSecond(t *testing.T) *hopFixture {
 	me := myFingerprint(t, c, ts.URL)
 	code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", conveneRequest{
 		Roster: []convenePartyRequest{
-			{Fingerprint: strings.Repeat("2b", 32), Label: "Bob", Signs: true},
+			{Fingerprint: bob, Label: "Bob", Signs: true},
 			{Fingerprint: me, Label: "Convener", Signs: true},
 			{Fingerprint: strings.Repeat("3c", 32), Label: "Carla", Signs: true},
 		},

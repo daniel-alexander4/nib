@@ -240,9 +240,11 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 	out.Contributes = mine && next.Signs
 	if mine {
 		// **The convener's own turn has nobody to dial**, and saying so is the honest answer rather
-		// than an error: a signing convener is FIRST in the signing order, so this is the ordinary
-		// state of a ceremony that has just been convened. The rail renders it as "sign this
-		// yourself", which is a different action and not this route's.
+		// than an error. It is the ordinary state of a ceremony just convened by a signing convener
+		// the roster names first, and it comes round later for one the roster names later
+		// (`hopCarries`). The rail renders it as "your own turn", which is a different action and
+		// not this route's — and no route a window calls performs that action yet (`/pending 869`,
+		// `convenerturn_test.go`).
 		writeJSON(w, out)
 		return
 	}
