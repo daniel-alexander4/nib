@@ -154,8 +154,12 @@ func parseXFDF(data []byte) (map[string][]string, error) {
 		return nil, fmt.Errorf("invalid XFDF: %w", err)
 	}
 	values := map[string][]string{}
+	budget := maxXFDFBytes
 	for i := range doc.Fields {
-		flattenField(&doc.Fields[i], "", values)
+		if !flattenField(&doc.Fields[i], "", values, &budget) {
+			return nil, fmt.Errorf("this XFDF's field names are too long once each nested name is joined to the " +
+				"names above it — more than 10 MiB in all, where Nib stops")
+		}
 	}
 	return values, nil
 }
@@ -186,7 +190,21 @@ func insertField(parent *xfdfField, path []string, vals []string) {
 // flattenField walks a <field> subtree, joining ancestor names with "." to rebuild
 // fully-qualified names. A name that is itself dotted needs no splitting here —
 // joining yields the same key either way, so flat-dotted documents are accepted.
-func flattenField(f *xfdfField, prefix string, out map[string][]string) {
+//
+// **Every joined name is charged to `budget`, and false is the budget spent** (/pending 769). A field's key repeats
+// every name above it, so what the keys weigh is the names times everything beneath them, not the size of the
+// file. Measured inside the 10 MiB input cap: 300 nested fields held 1.5 GiB of keys and 1,000 held 5 GiB while
+// the walk stood at its deepest, and it needs no depth at all — one field with a 1 MiB name over 3,000 children
+// held 3 GiB from a 1.1 MiB file. The budget is the input cap itself: a document with no nesting spends less than
+// its own length, so none that was read before is refused, and a nested one may weigh what a flat one may.
+func flattenField(f *xfdfField, prefix string, out map[string][]string, budget *int) bool {
+	need := len(f.Name)
+	if prefix != "" {
+		need += len(prefix) + 1
+	}
+	if *budget -= need; *budget < 0 {
+		return false
+	}
 	name := f.Name
 	if prefix != "" {
 		name = prefix + "." + f.Name
@@ -203,8 +221,11 @@ func flattenField(f *xfdfField, prefix string, out map[string][]string) {
 	// parsers do with a repeated key; stated here so it is a decision rather than an
 	// accident of document order.
 	for i := range f.Fields {
-		flattenField(&f.Fields[i], name, out)
+		if !flattenField(&f.Fields[i], name, out, budget) {
+			return false
+		}
 	}
+	return true
 }
 
 // xfdfCheckboxValue maps a checkbox's boolean state to its XFDF value — the "Yes"
