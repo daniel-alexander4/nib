@@ -1,0 +1,213 @@
+package pdfops
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
+	"nib/internal/testpdf"
+)
+
+// `/pending 870`: what a page operation whose output IS the document still took from it. Driven before the change,
+// on `spliceHost` with a metadata packet added (title, an attachment, an `/ID`, a packet naming its creator):
+//
+//	                          files   /Info title   /ID[0]   packet
+//	DuplicatePage             none    none          new      none
+//	InsertPDF, SplitPage      kept    kept          kept     none      (kept since /pending 602, the packet not)
+//	spliceWithoutStructure    host's none, none     new      none
+//	Append, InsertBlank       kept    kept          kept     kept
+//	Collect, RemovePages      none    none          new      none      — and still: see the control below
+
+// packetOf is the catalog packet of pdf, or "" where it has none.
+func packetOf(t *testing.T, pdf []byte) string {
+	t.Helper()
+	p, _ := packetIn(t, readCtx(t, pdf))
+	return p
+}
+
+// withPacket is spliceHost carrying a metadata packet that says more than the title.
+func withPacket(t *testing.T) []byte {
+	t.Helper()
+	out, err := writeMutated(spliceHost(t), func(ctx *model.Context) error {
+		root, err := ctx.XRefTable.Catalog()
+		if err != nil {
+			return err
+		}
+		sd, err := ctx.NewStreamDictForBuf([]byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF ` +
+			`xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description ` +
+			`xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">` +
+			`<xmp:CreatorTool>Quill</xmp:CreatorTool><dc:title><rdf:Alt><rdf:li xml:lang="x-default">Lease` +
+			`</rdf:li></rdf:Alt></dc:title></rdf:Description></rdf:RDF></x:xmpmeta>`))
+		if err != nil {
+			return err
+		}
+		sd.InsertName("Type", "Metadata")
+		sd.InsertName("Subtype", "XML")
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ir, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		root["Metadata"] = *ir
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestAnOperationWhoseOutputIsTheDocumentKeepsWhatDescribesIt — a duplicated page, an inserted document, a split
+// page and the splice's last resort each return the document they were given, with its title, its `/ID`, its files
+// and its packet. The last resort is driven with the insertion BEFORE page 1, where its old shape made the inserted
+// document the host.
+func TestAnOperationWhoseOutputIsTheDocumentKeepsWhatDescribesIt(t *testing.T) {
+	host := withPacket(t)
+	wantFiles, wantTitle, wantID, _ := documentFactsOf(t, host)
+	if len(wantFiles) != 1 || wantTitle != "Lease" || wantID == "" || !strings.Contains(packetOf(t, host), "Quill") {
+		t.Fatalf("setup: the fixture carries files %v, title %q, id %q and packet %q", wantFiles, wantTitle, wantID, packetOf(t, host))
+	}
+	other, err := testpdf.Text("inserted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other, err = SetTitle(other, "Theirs"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		run   func() ([]byte, error)
+		pages int
+	}{
+		{"DuplicatePage", func() ([]byte, error) { return DuplicatePage(host, 2) }, 4},
+		{"InsertPDF", func() ([]byte, error) { return InsertPDF(host, other, 2, true) }, 4},
+		{"SplitPage", func() ([]byte, error) { return SplitPage(host, 2, 2, 1, false) }, 4},
+		{"spliceWithoutStructure before page 1", func() ([]byte, error) { return spliceWithoutStructure(host, 0, 1, 3, other) }, 4},
+	} {
+		out, err := c.run()
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if n, _ := PageCount(out); n != c.pages {
+			t.Errorf("%s: %d pages, want %d", c.name, n, c.pages)
+		}
+		files, title, id, _ := documentFactsOf(t, out)
+		if strings.Join(files, " ") != "record.txt" {
+			t.Errorf("%s: embedded files %v, want the document's own record.txt", c.name, files)
+		}
+		if title != wantTitle {
+			t.Errorf("%s: /Info title %q, want %q", c.name, title, wantTitle)
+		}
+		if id != wantID {
+			t.Errorf("%s: /ID[0] %s, want the document's own %s — an edit of a file keeps its permanent identifier", c.name, id, wantID)
+		}
+		if p := packetOf(t, out); !strings.Contains(p, "Quill") || !strings.Contains(p, "Lease") {
+			t.Errorf("%s: the metadata packet reads %q, want the document's own — /Info kept its title, and the two "+
+				"describe one document", c.name, p)
+		}
+	}
+}
+
+// TestADuplicateThatLosesItsTreeIsStillTheDocument — `subsetCarrying`'s second attempt. The fixture is
+// `TestTheOutputGateFallsBackToTheHonestLoss`'s: a page drawing a form that holds the marked content, so the
+// duplicate draws it twice, the gate refuses the carry and the selection runs again with no tree. That second
+// write is the same document too.
+func TestADuplicateThatLosesItsTreeIsStillTheDocument(t *testing.T) {
+	form := "/P <</MCID 0>> BDC\nBT /F1 18 Tf 72 700 Td (ZZINFORM) Tj ET\nEMC\n"
+	src, err := SetTitle(assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 30 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " +
+			"/Resources << /XObject << /Fm1 12 0 R >> /Font << /F1 11 0 R >> >> /Contents 4 0 R >>",
+		4:  streamObj("q 1 0 0 1 0 0 cm /Fm1 Do Q\n"),
+		11: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		12: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /StructParents 0 "+
+			"/Resources << /Font << /F1 11 0 R >> >> /Length %d >>\nstream\n%s\nendstream", len(form), form),
+		30: "<< /Type /StructTreeRoot /K [31 0 R] /ParentTree 39 0 R >>",
+		31: "<< /Type /StructElem /S /P /P 30 0 R /Pg 3 0 R /K [0] >>",
+		39: "<< /Nums [0 [31 0 R]] >>",
+	}), "Lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, wantID, _ := documentFactsOf(t, src)
+	out, err := DuplicatePage(src, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := inspectTags(out); s.tree || s.marked || !inspectTags(src).tree {
+		t.Fatalf("setup: the duplicate kept its tree (tree=%v marked=%v), so the second attempt never ran", s.tree, s.marked)
+	}
+	if _, title, id, _ := documentFactsOf(t, out); title != "Lease" || id != wantID {
+		t.Errorf("the duplicate written without its tree has title %q and /ID[0] %s, want Lease and the document's own %s",
+			title, id, wantID)
+	}
+}
+
+// TestASelectionPrimitiveStillWritesAnExtract — the control, and `CarryAttachments`' recorded decision: `Collect`
+// and `RemovePages` are what an extract, a split and an export go through, so neither keeps the document's facts
+// on its own. A new file made from some pages is a new document: no title, no files, and an `/ID` of its own.
+func TestASelectionPrimitiveStillWritesAnExtract(t *testing.T) {
+	host := withPacket(t)
+	_, _, hostID, _ := documentFactsOf(t, host)
+	for name, run := range map[string]func() ([]byte, error){
+		"Collect":     func() ([]byte, error) { return Collect(host, []string{"3", "1", "2"}) },
+		"RemovePages": func() ([]byte, error) { return RemovePages(host, []string{"2"}) },
+	} {
+		out, err := run()
+		if err != nil {
+			t.Fatal(err)
+		}
+		files, title, id, _ := documentFactsOf(t, out)
+		if len(files) != 0 || title != "" || id == hostID || packetOf(t, out) != "" {
+			t.Errorf("%s carried files %v, title %q, the document's /ID (%v) or its packet (%q) — whether a selection "+
+				"is the document or an extract of it is its caller's to say", name, files, title, id == hostID, packetOf(t, out))
+		}
+	}
+}
+
+// TestAPacketPutBackNeverBringsAClaim — ADR-032. The packet a duplicate or an insert keeps is the one the document
+// had, and a labelled document's said PDF/UA: the identification must be gone from what is put back, and the rest
+// of the packet must not be.
+func TestAPacketPutBackNeverBringsAClaim(t *testing.T) {
+	labelled := labelledFixture(t)
+	if !testpdf.PacketClaimsUA(packetOf(t, labelled)) {
+		t.Fatal("setup: the labelled fixture's packet does not claim PDF/UA")
+	}
+	other, err := testpdf.Text("inserted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() ([]byte, error){
+		"DuplicatePage":          func() ([]byte, error) { return DuplicatePage(labelled, 1) },
+		"InsertPDF":              func() ([]byte, error) { return InsertPDF(labelled, other, 1, false) },
+		"spliceWithoutStructure": func() ([]byte, error) { return spliceWithoutStructure(labelled, 1, 2, 1, other) },
+	} {
+		out, err := run()
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		p := packetOf(t, out)
+		if testpdf.PacketClaimsUA(p) {
+			t.Errorf("%s: the packet put back still claims PDF/UA — any change drops the identification", name)
+		}
+		if !strings.Contains(p, "Census") {
+			t.Errorf("%s: the packet reads %q, want the document's own title still in it", name, p)
+		}
+	}
+	// And the last resort carries no tree, whatever the host had: that is all it is for.
+	out, err := spliceWithoutStructure(labelled, 1, 2, 1, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspectTags(labelled).claims() || inspectTags(out).claims() {
+		t.Errorf("the splice's last resort wrote a document that claims tagging (host claims: %v) — it exists to "+
+			"write none", inspectTags(labelled).claims())
+	}
+}

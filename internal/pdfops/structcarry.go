@@ -1347,10 +1347,13 @@ func documentTitle(ctx *model.Context, root types.Dict) string {
 	if err != nil || sd == nil {
 		return ""
 	}
-	if err := sd.Decode(); err != nil {
+	// The document's own packet, so as large as the document made it: inflated only as far as one page's allowance,
+	// and a packet past it states no title here (`/pending 795`).
+	body := newFormWalkBudget(1).formContent(sd, nil)
+	if body == nil {
 		return ""
 	}
-	return packetTitle(string(sd.Content))
+	return packetTitle(string(body))
 }
 
 // packetTitle returns a packet's `dc:title`, read BY NAMESPACE rather than by element name — a packet

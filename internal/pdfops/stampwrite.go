@@ -138,7 +138,9 @@ func fontNotNibs(ctx *model.Context, name string, d types.Dict) string {
 	if err != nil || sd == nil {
 		return "it has no ToUnicode map"
 	}
-	if err := sd.Decode(); err != nil {
+	// The DOCUMENT's font, named like nib's face — so its map is as large as the document made it, and is inflated
+	// only as far as one page's allowance (`/pending 795`). A fresh budget each: this answers about one font.
+	if newFormWalkBudget(1).formContent(sd, nil) == nil {
 		return "its ToUnicode map does not decode"
 	}
 	pairs, err := pdfcpuToUnicode(string(sd.Content))
@@ -264,7 +266,10 @@ func repairToUnicodeOf(ctx *model.Context, faces []string) {
 			continue
 		}
 		sd, isStream := entry.Object.(types.StreamDict)
-		if !isStream || sd.Decode() != nil {
+		// Any font in the document that is named like one of nib's faces, so not nib's to size: inflated only as far
+		// as one page's allowance, and one past it is left as it was (`/pending 795`). A fresh budget each, so one
+		// font's size does not decide whether another's map is repaired.
+		if !isStream || newFormWalkBudget(1).formContent(&sd, nil) == nil {
 			continue
 		}
 		if _, err := pdfcpuToUnicode(string(sd.Content)); err == nil {

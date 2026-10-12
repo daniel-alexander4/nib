@@ -207,10 +207,21 @@ func applyStructEdits(pdf []byte, edits []structEdit) ([]byte, error) {
 		for _, d := range checkStructConsistency(ctx, tree) {
 			already[d.key] = true
 		}
+		// current says the tree in hand still describes the document. It does as read, and after an `alt` edit:
+		// that one writes `/Alt` into the element's own dictionary, which the tree holds by reference and keeps
+		// no copy of. Every other edit changes something the tree HOLDS — a retype its `kind`, a table attribute
+		// its `attrs`, a move, create, delete, region or artifact its kids and parent links — and the next edit
+		// resolves through those, so the tree is read again after one.
+		//
+		// It was read again before EVERY edit and once more at the end (`/pending 653`); the numbers are in
+		// `structeditreads_test.go`.
+		current := true
 		for _, ed := range edits {
-			// Re-read before each edit: a move changes the parent links the next edit resolves through.
-			if tree, err = readStructTree(ctx, live); err != nil {
-				return err
+			if !current {
+				if tree, err = readStructTree(ctx, live); err != nil {
+					return err
+				}
+				current = true
 			}
 			if ed.kind == editPromote {
 				// The one edit that changes what a defect is CALLED: a defect about an inline element was keyed
@@ -228,9 +239,12 @@ func applyStructEdits(pdf []byte, edits []structEdit) ([]byte, error) {
 			if err := applyStructEdit(ctx, tree, ed); err != nil {
 				return err
 			}
+			current = ed.kind == editAlt
 		}
-		if tree, err = readStructTree(ctx, live); err != nil {
-			return err
+		if !current {
+			if tree, err = readStructTree(ctx, live); err != nil {
+				return err
+			}
 		}
 		for _, d := range checkStructConsistency(ctx, tree) {
 			if !already[d.key] {

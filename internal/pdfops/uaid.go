@@ -247,6 +247,18 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 	// schema in its bytes — in UTF-8 or, as XMP allows, UTF-16 — or it may spell one with a character
 	// reference (`…/ns/id&#x2F;` is the same URI to every XML reader, veraPDF's included), and then only the
 	// parse can say. A byte search for the URI alone let both through, and the claim survived every change.
+	//
+	// **And a packet that DECLARES AN ENTITY is one nib cannot rule on, so it goes whole** — measured on veraPDF
+	// 1.30.2: `<!DOCTYPE x [<!ENTITY a "http://www.aiim.org/pdfua/"><!ENTITY b "ns/id/">]>` with the namespace
+	// written `&a;&b;` is READ as the identification (`5 t1` passes, and fails on the same packet naming another
+	// URI), while its bytes never hold the URI, and Go's decoder refuses the reference, so the parse below could
+	// only say "not XML, names nothing" and keep it. A DTD can spell a URI in as many pieces as it likes, and nib
+	// does not expand entities; an XMP packet has no use for one. Every internal entity is declared by this
+	// literal, so its absence is what lets the rest of this function trust the bytes and the parse.
+	if declaresEntity(sd.Content) {
+		dropKey(xt, root, "Metadata")
+		return true, nil
+	}
 	named := namesIdentification(sd.Content)
 	if !named && !bytes.Contains(sd.Content, []byte("&#")) {
 		return false, nil
@@ -281,11 +293,17 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 // identificationSpellings is each identification URI as a packet's bytes may hold it: UTF-8, and UTF-16 in
 // both byte orders (XMP permits either; `encoding/xml` reads neither UTF-16, so such a packet is one nib
 // cannot edit and loses its `/Metadata`, as any unparsed claim does).
-var identificationSpellings = func() [][]byte {
+var identificationSpellings = spellings(pdfuaidNS, pdfaidNS)
+
+// entityDeclarations is the literal that opens an entity declaration, in the same three encodings.
+var entityDeclarations = spellings("<!ENTITY")
+
+// spellings is each text as a packet's bytes may hold it: UTF-8, and UTF-16 in both byte orders.
+func spellings(texts ...string) [][]byte {
 	var out [][]byte
-	for _, uri := range []string{pdfuaidNS, pdfaidNS} {
-		out = append(out, []byte(uri))
-		units := utf16.Encode([]rune(uri))
+	for _, text := range texts {
+		out = append(out, []byte(text))
+		units := utf16.Encode([]rune(text))
 		for _, order := range []binary.ByteOrder{binary.BigEndian, binary.LittleEndian} {
 			b := make([]byte, 2*len(units))
 			for i, u := range units {
@@ -295,7 +313,17 @@ var identificationSpellings = func() [][]byte {
 		}
 	}
 	return out
-}()
+}
+
+// declaresEntity reports whether the packet's bytes open an entity declaration.
+func declaresEntity(packet []byte) bool {
+	for _, s := range entityDeclarations {
+		if bytes.Contains(packet, s) {
+			return true
+		}
+	}
+	return false
+}
 
 // namesIdentification reports whether the packet's bytes hold an identification schema's URI.
 func namesIdentification(packet []byte) bool {

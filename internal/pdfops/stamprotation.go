@@ -121,6 +121,10 @@ func turnAboutTheCorner(ctx *model.Context, turned []turnedPage) error {
 		if done[ref.ObjectNumber.Value()] {
 			continue
 		}
+		// decode:exempt — the document's own content stream, and uncapped ON PURPOSE (`/pending 795`): pdfcpu's stamp
+		// has just inflated this same stream whole to write the prefix read below (`stamp.go`
+		// `patchFirstContentStreamForWatermark`), and it is rewritten whole here. A cap would refuse a stamp pdfcpu
+		// had already paid for, and save nothing.
 		if err := sd.Decode(); err != nil {
 			return errStampMovedPage
 		}

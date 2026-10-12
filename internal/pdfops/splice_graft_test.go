@@ -270,7 +270,7 @@ func TestAnIncompleteInsertFallsBackToTheHonestLoss(t *testing.T) {
 	}
 	// The stimulus, asserted: the grafting attempt really is refused by the gate. Without this the test
 	// passes on an insert that grafts cleanly and never reaches the fallback — which it once did.
-	grafted, _, carried, err := spliceOnce(host, 1, 2, 1, mid, true)
+	grafted, _, carried, err := spliceOnce(host, 1, 2, 1, mid, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
