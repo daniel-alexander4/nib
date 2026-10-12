@@ -28,9 +28,10 @@ type tagElementView struct {
 	Marker string `json:"marker,omitempty"`
 	List   int    `json:"list"`
 	// Parent is the id of the element this one sits under, or -1: a table's rows and cells (ADR-121).
-	Parent  int        `json:"parent"`
-	Rect    [4]float64 `json:"rect"`
-	PageBox [4]float64 `json:"pageBox"`
+	Parent int        `json:"parent"`
+	Rect   [4]float64 `json:"rect"`
+	// Place is Rect as fractions of the displayed page (ADR-088): what the window outlines the element by.
+	Place [4]float64 `json:"place"`
 }
 
 // tagPageView is a page the grouping could not read, and why.
@@ -63,7 +64,7 @@ type tagTreeElementView struct {
 	RowSpan  int        `json:"rowSpan"`
 	Headers  []int      `json:"headers"`
 	Rect     [4]float64 `json:"rect"`
-	PageBox  [4]float64 `json:"pageBox"`
+	Place    [4]float64 `json:"place"`
 }
 
 // tagRoleView is one entry of the open document's role map on the wire (ADR-127).
@@ -125,7 +126,7 @@ func (s *Server) handleTagsPropose(w http.ResponseWriter, r *http.Request) {
 	for _, e := range prop.Elements {
 		out.Elements = append(out.Elements, tagElementView{
 			ID: e.ID, Role: e.Role, Page: e.Page, Text: e.Text, Marker: e.Marker, List: e.List, Parent: e.Parent,
-			Rect: e.Rect, PageBox: e.PageBox,
+			Rect: e.Rect, Place: e.Place,
 		})
 	}
 	for _, n := range prop.Unsupported {
@@ -161,7 +162,7 @@ func (s *Server) handleTagsTree(w http.ResponseWriter, r *http.Request) {
 		out.Elements = append(out.Elements, tagTreeElementView{
 			ID: e.ID, Parent: e.Parent, Kids: e.Kids, Kind: e.Kind, Standard: e.Standard, Page: e.Page,
 			Text: e.Text, Alt: e.Alt, HasAlt: e.HasAlt, Scope: e.Scope,
-			ColSpan: e.ColSpan, RowSpan: e.RowSpan, Headers: e.Headers, Rect: e.Rect, PageBox: e.PageBox,
+			ColSpan: e.ColSpan, RowSpan: e.RowSpan, Headers: e.Headers, Rect: e.Rect, Place: e.Place,
 		})
 	}
 	writeJSON(w, out)

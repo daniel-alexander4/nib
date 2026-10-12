@@ -69,10 +69,11 @@ type viewElement struct {
 	// rect is the element's extent on its page — the union of the runs drawn under its MCIDs and its
 	// kids' boxes on that page, estimated from baselines as the proposer's outline is (0.85 em up,
 	// 0.25 em down). hasRect is false for an element that draws no text, a figure's image among them.
-	// pageBox is the page's MediaBox, so a client can place rect on the page it renders (P09.S06a).
+	// place is rect as fractions of the page as displayed — crop box, `/Rotate`, top-left — which is what a
+	// client outlines the element by (`placeOnPage`, ADR-088).
 	rect    [4]float64
 	hasRect bool
-	pageBox [4]float64
+	place   [4]float64
 }
 
 // readStructureView reads pdf's structure tree as reviewable values. A document with no tree is
@@ -150,14 +151,14 @@ func readStructureView(pdf []byte) (structureView, error) {
 			}
 		}
 	}
-	pageBoxes := map[int][4]float64{}
-	boxOfPage := func(pg int) [4]float64 {
-		if b, ok := pageBoxes[pg]; ok {
-			return b
+	pageSpaces := map[int]displaySpace{}
+	spaceOfPage := func(pg int) displaySpace {
+		if sp, ok := pageSpaces[pg]; ok {
+			return sp
 		}
-		b := mediaBoxOf(pageAt(ctx, walked, pg))
-		pageBoxes[pg] = b
-		return b
+		sp := newDisplaySpace(pageAt(ctx, walked, pg))
+		pageSpaces[pg] = sp
+		return sp
 	}
 
 	index := make(map[*structElem]int, len(tree.elems))
@@ -241,8 +242,8 @@ func readStructureView(pdf []byte) (structureView, error) {
 				v.rect, v.hasRect = pb.box, true
 			}
 		}
-		if v.page > 0 {
-			v.pageBox = boxOfPage(v.page)
+		if v.page > 0 && v.hasRect {
+			v.place = placeOnPage(spaceOfPage(v.page), v.rect)
 		}
 		if o, ok := e.dict["Alt"]; ok {
 			if s, aerr := ctx.XRefTable.DereferenceStringOrHexLiteral(o, model.V10, nil); aerr == nil {
@@ -433,9 +434,10 @@ type StructureElement struct {
 	RowSpan int   `json:"rowSpan"`
 	Headers []int `json:"headers"`
 	// Rect is the element's estimated extent on Page in PDF user space, all zero when it draws no text;
-	// PageBox is that page's MediaBox, so a client can place Rect on the page it renders.
-	Rect    [4]float64 `json:"rect"`
-	PageBox [4]float64 `json:"pageBox"`
+	// Place is Rect as fractions of the page AS DISPLAYED — left, top, right, bottom from the top-left of the
+	// crop box turned by `/Rotate` (ADR-088) — and is what a client places the element by; all zero where Rect is.
+	Rect  [4]float64 `json:"rect"`
+	Place [4]float64 `json:"place"`
 }
 
 // RoleMapping is one entry of a document's role map (ADR-127): a custom structure type and what it means.
@@ -478,7 +480,7 @@ func ReadStructure(pdf []byte) (StructureTree, error) {
 		out.Elements[i] = StructureElement{
 			ID: e.id, Parent: e.parent, Kids: append([]int{}, e.kids...), Kind: e.kind, Standard: e.standard,
 			Page: e.page, Text: e.text, Alt: e.alt, HasAlt: e.hasAlt, Scope: e.scope,
-			ColSpan: e.colSpan, RowSpan: e.rowSpan, Headers: append([]int{}, e.headers...), Rect: e.rect, PageBox: e.pageBox,
+			ColSpan: e.colSpan, RowSpan: e.rowSpan, Headers: append([]int{}, e.headers...), Rect: e.rect, Place: e.place,
 		}
 	}
 	return out, nil

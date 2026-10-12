@@ -16,6 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot } from './boot.mjs';
 import { setNextDocument } from './stub-pdfjs.mjs';
+import { PDFViewer } from './stub-viewer.mjs';
 
 const meta = (id, name) => ({
   id, name, path: `/tmp/nib-harness/${name}`,
@@ -23,9 +24,9 @@ const meta = (id, name) => ({
 });
 const ONE = meta('tree:1', 'one.pdf');
 const TWO = meta('tree:2', 'two.pdf');
-const BOX = [0, 0, 612, 792];
+const PLACE = [0.25, 0.125, 0.75, 0.375];
 const el = (id, parent, standard, page, text, kids, extra = {}) => ({
-  id, parent, kind: standard, standard, page, text, alt: '', hasAlt: false, scope: '', kids, rect: [72, 600, 300, 720], pageBox: BOX, ...extra,
+  id, parent, kind: standard, standard, page, text, alt: '', hasAlt: false, scope: '', kids, rect: [72, 600, 300, 720], place: PLACE, ...extra,
 });
 const treeOne = () => ({
   tagged: true,
@@ -141,6 +142,39 @@ test('focusing an element takes the viewer to its page, a figure with no box inc
   items()[2].focus();
   await settle();
   assert.equal(doc.querySelector('.pageNum').value, '2', 'focusing the page-2 figure did not take the viewer to page 2');
+});
+
+// /pending 653 part 4. A page is displayed from its crop box, turned by /Rotate, and `rect` is PDF user
+// space — so the outline and the reading-order number are placed by `place`, the server's
+// fractions of the page as displayed (ADR-088), and by nothing else. The stub viewer is given a page view for
+// this one test; the fixture's `rect` on a Letter page would put the outline at 11.76% / 9.09%, and `place` says 25% / 12.5%.
+test('an element is outlined, and numbered, where the server places it on the displayed page', async () => {
+  const pageDiv = doc.createElement('div');
+  doc.body.appendChild(pageDiv);
+  const real = PDFViewer.prototype.getPageView;
+  PDFViewer.prototype.getPageView = () => ({ div: pageDiv });
+  try {
+    items()[1].focus();
+    await settle();
+    const outline = pageDiv.querySelector('.tag-outline');
+    assert.ok(outline, 'focusing an element with a box drew no outline on its page');
+    assert.deepEqual([outline.style.left, outline.style.top, outline.style.width, outline.style.height], ['25%', '12.5%', '50%', '25%'],
+      'the outline is not at the element\'s place on the displayed page');
+    doc.getElementById('tagOrderToggle').click();
+    await settle();
+    const badges = [...pageDiv.querySelectorAll('.tag-order')];
+    assert.ok(badges.length > 0, 'the reading order view numbered nothing');
+    for (const b of badges) {
+      assert.deepEqual([b.style.left, b.style.top], ['25%', '12.5%'], `number ${b.textContent} is not at its element's place on the displayed page`);
+    }
+    doc.getElementById('tagOrderToggle').click();
+    await settle();
+  } finally {
+    PDFViewer.prototype.getPageView = real;
+    pageDiv.remove();
+    items()[2].focus();
+    await settle();
+  }
 });
 
 test('a document with no tree says so, and offers the way to make one', async () => {

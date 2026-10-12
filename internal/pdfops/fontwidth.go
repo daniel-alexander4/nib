@@ -79,8 +79,9 @@ type fontWidths struct {
 	standard bool
 }
 
-// readFontWidths reads a font dictionary's advance table.
-func readFontWidths(xt *model.XRefTable, fontObj types.Object) fontWidths {
+// readFontWidths reads a font dictionary's advance table. shared is the walk budget of a loop over pages, which keeps a
+// CID font's `/W` table between them (`cidWidths`); without one the table is read here.
+func readFontWidths(xt *model.XRefTable, fontObj types.Object, shared ...*formWalkBudget) fontWidths {
 	var f fontWidths
 	d, err := xt.DereferenceDict(fontObj)
 	if err != nil || d == nil {
@@ -97,7 +98,11 @@ func readFontWidths(xt *model.XRefTable, fontObj types.Object) fontWidths {
 			return f
 		}
 		f.descendant = true
-		f.w = readW(xt, desc["W"])
+		var budget *formWalkBudget
+		if len(shared) > 0 {
+			budget = shared[0]
+		}
+		f.w = budget.cidWidths(xt, kids[0], desc["W"])
 		if v, ok := pdfNumber(xt, desc["DW"]); ok {
 			f.dw, f.dwSource = v, widthFromDW
 		} else {

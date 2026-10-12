@@ -26,7 +26,7 @@ import (
 //
 // Measured at the slice grill (v1.129.134), each through `NUp(2)`:
 //
-//   - the corpus fixture: clean on all four conditions below, and its one `/ParentTree` key is owned
+//   - the corpus fixture: clean on the four conditions there were then (1–4 below), and its one `/ParentTree` key is owned
 //     by a form XObject's `/StructParents` — the carry's own write;
 //   - the census document (8 pages, 4 distinct contents): **4 of 8 `/ParentTree` keys owned by
 //     nobody, and 2 MCID-bearing form XObjects drawn 3 times each**, because pdfcpu's optimize
@@ -211,7 +211,7 @@ func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string
 				// it was found dropping such a row; this one did not, so the gate called a row the carry had
 				// correctly kept "unowned" and the operation dropped the whole tree.
 				for _, ap := range []string{"N", "R", "D"} {
-					eachFormXObject(ctx, types.Dict{"XObject": apStates(ctx.XRefTable, ad, ap)}, seenForms, 0,
+					eachFormXObject(ctx, types.Dict{"XObject": apStates(ctx.XRefTable, ad, ap)}, seenForms,
 						func(nr int, sd *types.StreamDict) {
 							claim(sd.Dict["StructParents"], fmt.Sprintf("form XObject %d", nr))
 							claim(sd.Dict["StructParent"], fmt.Sprintf("form XObject %d", nr))
@@ -222,7 +222,7 @@ func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string
 		if rec.res == nil {
 			continue
 		}
-		eachFormXObject(ctx, rec.res, seenForms, 0, func(nr int, sd *types.StreamDict) {
+		eachFormXObject(ctx, rec.res, seenForms, func(nr int, sd *types.StreamDict) {
 			claim(sd.Dict["StructParents"], fmt.Sprintf("form XObject %d", nr))
 			claim(sd.Dict["StructParent"], fmt.Sprintf("form XObject %d", nr))
 		})
@@ -233,28 +233,50 @@ func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string
 // eachFormXObject calls fn once for every DISTINCT form XObject reachable from res, including forms
 // nested inside other forms' resources. The visited set is by object number, so a form drawn twice
 // is offered once — ownership is a property of the object, not of how often it is painted.
-func eachFormXObject(ctx *model.Context, res types.Dict, seen map[int]bool, depth int,
-	fn func(nr int, sd *types.StreamDict)) {
-
-	if res == nil || depth > maxFormDrawDepth {
-		return
+//
+// **No depth bound, and it stopped silently at one** (`/pending 766` part 8). The walk was a recursion cut at
+// `maxFormDrawDepth`, so a form nested nine deep was never offered: its `/StructParents` was not a claim to the
+// completeness gate, was not renumbered by the carry, and was left in place — naming a tree that was gone — by
+// `RemoveStructure`. The depth was never what bounded the work: `seen` is, since a form is entered once however
+// it is reached. So the walk keeps its own stack on the heap, at most one frame per distinct form, and offers
+// every form there is, in the order the recursion offered them.
+func eachFormXObject(ctx *model.Context, res types.Dict, seen map[int]bool, fn func(nr int, sd *types.StreamDict)) {
+	type frame struct {
+		xobjs types.Dict
+		names []string
+		next  int
 	}
-	xobjs, err := ctx.DereferenceDict(res["XObject"])
-	if err != nil || xobjs == nil {
-		return
+	var stack []frame
+	enter := func(res types.Dict) {
+		if res == nil {
+			return
+		}
+		xobjs, err := ctx.DereferenceDict(res["XObject"])
+		if err != nil || len(xobjs) == 0 {
+			return
+		}
+		// **By SORTED name, because a Go map's iteration order is randomised** and a caller that hands
+		// out `/ParentTree` keys in visit order would then number two claimants differently run to run —
+		// measured, a page with two claiming form XObjects enumerated `[0 2 3]` on 15 of 24 reads of the
+		// same bytes and `[0 3 2]` on the other 9. The set of objects offered never varied; which key
+		// each got did.
+		names := make([]string, 0, len(xobjs))
+		for n := range xobjs {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		stack = append(stack, frame{xobjs: xobjs, names: names})
 	}
-	// **By SORTED name, because a Go map's iteration order is randomised** and a caller that hands
-	// out `/ParentTree` keys in visit order would then number two claimants differently run to run —
-	// measured, a page with two claiming form XObjects enumerated `[0 2 3]` on 15 of 24 reads of the
-	// same bytes and `[0 3 2]` on the other 9. The set of objects offered never varied; which key
-	// each got did.
-	names := make([]string, 0, len(xobjs))
-	for n := range xobjs {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		ir, isRef := xobjs[n].(types.IndirectRef)
+	enter(res)
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		if top.next == len(top.names) {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		o := top.xobjs[top.names[top.next]]
+		top.next++
+		ir, isRef := o.(types.IndirectRef)
 		if !isRef {
 			continue
 		}
@@ -271,8 +293,9 @@ func eachFormXObject(ctx *model.Context, res types.Dict, seen map[int]bool, dept
 		}
 		seen[nr] = true
 		fn(nr, sd)
+		// The form's own forms are offered before its later siblings, as the recursion offered them.
 		if inner, ierr := ctx.DereferenceDict(sd.Dict["Resources"]); ierr == nil && inner != nil {
-			eachFormXObject(ctx, inner, seen, depth+1, fn)
+			enter(inner)
 		}
 	}
 }
@@ -435,7 +458,7 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 // the same question. Its report says *"I repointed everything I found"*; this asks *"is what you
 // produced a tree the document can actually reach"*, which is the question `orphaned()` answers too
 // weakly to be the only one asked (`structureCarriedCompletely`'s own header says what it cannot
-// see). Three of the four conditions below shipped for months under a carry reporting success.
+// see). Three of the five conditions it checks shipped for months under a carry reporting success.
 func completeOrHonest(carried, raw []byte) ([]byte, error) {
 	if carryIsComplete(carried) {
 		return honest(carried)

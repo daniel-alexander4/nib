@@ -41,13 +41,10 @@ func TestProposeTagsDescribesEachElementWhereItSits(t *testing.T) {
 		if e.ID != i {
 			t.Errorf("element %d carries id %d", i, e.ID)
 		}
-		box := e.PageBox
-		if box[2]-box[0] <= 0 || box[3]-box[1] <= 0 {
-			t.Errorf("element %d names page box %v", i, box)
-		}
-		r := e.Rect
+		box := [4]float64{0, 0, 1, 1} // the displayed page, which Place is a fraction of
+		r := e.Place
 		if !(r[0] < r[2] && r[1] < r[3] && r[0] >= box[0] && r[2] <= box[2] && r[1] >= box[1] && r[3] <= box[3]) {
-			t.Errorf("element %d (%q) has rect %v, not a box inside its page %v", i, e.Text, r, box)
+			t.Errorf("element %d (%q) is placed at %v, not a box on its displayed page %v", i, e.Text, r, box)
 		}
 	}
 	if got := strings.Join(roles, " "); got != "H1 P H2 LI LI P" {

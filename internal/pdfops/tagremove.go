@@ -141,7 +141,7 @@ func RemoveStructure(pdf []byte) ([]byte, error) {
 				}
 			}
 			if rec.res != nil {
-				eachFormXObject(ctx, rec.res, seenForms, 0, func(_ int, sd *types.StreamDict) {
+				eachFormXObject(ctx, rec.res, seenForms, func(_ int, sd *types.StreamDict) {
 					delete(sd.Dict, "StructParents")
 					delete(sd.Dict, "StructParent")
 				})

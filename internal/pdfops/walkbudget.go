@@ -6,6 +6,8 @@ import (
 
 	"nib/internal/pdfread"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -34,6 +36,49 @@ type formWalkBudget struct {
 	// decoded holds each form's decoded bytes by object number for the walk's life — `formContent`.
 	decoded map[int][]byte
 	decodes int // streams actually decoded, for the test that pins decode-once
+
+	// cidW holds each CID font's expanded `/W` table by its descendant font's object number — `cidWidths`.
+	// Unlike decoded it is kept across `nextPage`: it is what a document's pages share.
+	cidW     map[int]map[int]float64
+	cidWHeld int // entries held, over every table
+	wReads   int // `/W` arrays actually expanded, for the test that pins read-once
+}
+
+// maxHeldWidths bounds how many `/W` entries a budget keeps between pages: sixteen whole 65,536-CID tables. A
+// table past it is read where it is met and not kept, which is what every table cost before.
+const maxHeldWidths = 16 * (maxCID + 1)
+
+// cidWidths is a CID font's `/W` table, read once for the pages that share a budget (`/pending 771`). desc is
+// the entry of `/DescendantFonts` as written and w its `/W`.
+//
+// The font cache is the page walker's, so a loop over pages expanded the same `/W` once a page. Measured over
+// pages sharing one font, the whole loop at 50 / 200 / 800 pages: a 20,000-width table (an unsubset CJK font)
+// 0.27 / 1.11 / 4.36 s, now 7 / 10 / 18 ms; a crafted one at `maxWWork` 4.0 / 12.5 / 72.7 s, now 75 / 224 /
+// 184 ms; a 29-entry subset, as nib writes, 27 ms and now 13 at 800 pages. Keyed by the descendant's object
+// number: a direct descendant has no identity that outlives the read and is expanded where it is met. The table is shared, and nothing writes
+// one after `readW` returns it; nothing in this package rewrites a font's `/W` in place either, which is what
+// lets a table outlive the page it was read for. A nil budget reads and keeps nothing.
+func (b *formWalkBudget) cidWidths(xt *model.XRefTable, desc, w types.Object) map[int]float64 {
+	nr := -1
+	if ir, ok := desc.(types.IndirectRef); ok && b != nil {
+		nr = ir.ObjectNumber.Value()
+		if t, hit := b.cidW[nr]; hit {
+			return t
+		}
+	}
+	t := readW(xt, w)
+	if b == nil {
+		return t
+	}
+	b.wReads++
+	if nr >= 0 && b.cidWHeld+len(t) <= maxHeldWidths {
+		if b.cidW == nil {
+			b.cidW = map[int]map[int]float64{}
+		}
+		b.cidW[nr] = t
+		b.cidWHeld += len(t)
+	}
+	return t
 }
 
 const (

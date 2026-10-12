@@ -131,7 +131,7 @@ func TestAnImageThePageDrawsIsProposedAsAFigure(t *testing.T) {
 			if fig.Rect != c.want {
 				t.Errorf("the figure's rect is %v, want the image as drawn, %v", fig.Rect, c.want)
 			}
-			if fig.Page != 1 || fig.List != -1 || fig.Marker != "" || fig.PageBox != [4]float64{0, 0, 612, 792} {
+			if fig.Page != 1 || fig.List != -1 || fig.Marker != "" {
 				t.Errorf("the figure is %+v", fig)
 			}
 			if len(pr.Unsupported) != 0 {
