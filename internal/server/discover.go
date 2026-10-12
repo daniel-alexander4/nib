@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/discovery"
@@ -188,7 +189,14 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 		// when it is wrong it removes the only one that would have worked — and both look
 		// identical from outside (a peer that was simply never found). Tier 4d found the second
 		// case within one run of this filter existing.
-		log.Printf("link: ignoring %s at hop %d — this dial wants hop %d", s.Name, s.Hop, want)
+		//
+		// **At most one line per `hopMismatchLogEvery`, with the count it stands for** (/pending
+		// 766). This runs before the pin scan, so the sender is anyone on the link: a line per
+		// datagram let any host there write to this machine's log as fast as it could send.
+		if n, ok := hopMismatches.allow(time.Now()); ok {
+			log.Printf("link: ignoring %s at hop %d — this dial wants hop %d (%d such announcement(s) "+
+				"since the last line like this)", s.Name, s.Hop, want, n)
+		}
 		return candidate{}, false
 	}
 	for _, p := range pins {
@@ -578,3 +586,33 @@ func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
 	out.Sent, out.Own, out.Peers = st.Sent, st.Own, st.Peers
 	writeJSON(w, out)
 }
+
+// hopMismatchLogEvery is the least time between two "ignoring … at hop" lines.
+const hopMismatchLogEvery = 5 * time.Second
+
+// logEvery lets one log line through per interval and counts the ones it held back, so the line
+// that does print can say how many it stands for. Safe for concurrent use.
+type logEvery struct {
+	every time.Duration
+	last  atomic.Int64 // UnixNano of the last line let through; 0 before the first
+	held  atomic.Int64
+}
+
+// allow reports whether a line may be written at `now`, and how many events that line stands for
+// (itself included).
+func (g *logEvery) allow(now time.Time) (int64, bool) {
+	held := g.held.Add(1)
+	last := g.last.Load()
+	if last != 0 && now.UnixNano()-last < int64(g.every) {
+		return 0, false
+	}
+	if !g.last.CompareAndSwap(last, now.UnixNano()) {
+		return 0, false // another goroutine took this interval's line
+	}
+	g.held.Add(-held) // not a swap to zero: an event counted since the Add above stays counted
+	return held, true
+}
+
+// hopMismatches paces `resolve`'s one log line. Process-wide on purpose: the bound is on what a
+// link can make this machine write, whichever browse heard it.
+var hopMismatches = &logEvery{every: hopMismatchLogEvery}

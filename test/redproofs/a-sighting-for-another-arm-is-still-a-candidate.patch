@@ -2,7 +2,7 @@ diff --git a/internal/server/discover.go b/internal/server/discover.go
 index 3602c5e..6b66653 100644
 --- a/internal/server/discover.go
 +++ b/internal/server/discover.go
-@@ -182,15 +182,6 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
+@@ -183,22 +183,6 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
  	}
  	// Refused BEFORE the pin scan, deliberately: this is cheaper than `pairing.Matches` per pin,
  	// and it keeps the reason for the refusal about the arm rather than about identity.
@@ -12,7 +12,14 @@ index 3602c5e..6b66653 100644
 -		// when it is wrong it removes the only one that would have worked — and both look
 -		// identical from outside (a peer that was simply never found). Tier 4d found the second
 -		// case within one run of this filter existing.
--		log.Printf("link: ignoring %s at hop %d — this dial wants hop %d", s.Name, s.Hop, want)
+-		//
+-		// **At most one line per `hopMismatchLogEvery`, with the count it stands for** (/pending
+-		// 766). This runs before the pin scan, so the sender is anyone on the link: a line per
+-		// datagram let any host there write to this machine's log as fast as it could send.
+-		if n, ok := hopMismatches.allow(time.Now()); ok {
+-			log.Printf("link: ignoring %s at hop %d — this dial wants hop %d (%d such announcement(s) "+
+-				"since the last line like this)", s.Name, s.Hop, want, n)
+-		}
 -		return candidate{}, false
 -	}
  	for _, p := range pins {
