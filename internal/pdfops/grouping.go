@@ -412,6 +412,12 @@ func groupRuns(runs []textRun) pageLayout {
 	if n := rotatedRuns(runs); n > 0 {
 		noteUnsupported(&out, fmt.Sprintf("%d run(s) of text are drawn rotated, and the grouping reads every line as upright", n))
 	}
+	// **So is vertical writing** (`/pending 795` W5, 503's sibling). An Identity-V run's matrix is upright, so it
+	// is not `rotated`, but its glyphs advance DOWN the page while the walker measured it along +x: where it
+	// sits on a line is invented. Reported the same way; how the lines are grouped is not changed.
+	if n := verticalRuns(runs); n > 0 {
+		noteUnsupported(&out, fmt.Sprintf("%d run(s) of text are written vertically, and the grouping reads every line as horizontal", n))
+	}
 	for ci, col := range columns {
 		sort.SliceStable(col, func(i, j int) bool { return col[i].y > col[j].y })
 		for i := 1; i < len(col); i++ {
@@ -484,6 +490,17 @@ func rotatedRuns(runs []textRun) int {
 	n := 0
 	for _, r := range runs {
 		if r.rotated && !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// verticalRuns counts the runs grouping would read whose font writes vertically — `rotatedRuns`' population.
+func verticalRuns(runs []textRun) int {
+	n := 0
+	for _, r := range runs {
+		if r.vertical && !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
 			n++
 		}
 	}

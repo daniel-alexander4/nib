@@ -114,6 +114,12 @@ func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spans, err := pdfops.PageSpans(r.FormValue("mode"), r.FormValue("every"), r.FormValue("ranges"), n)
+	// A range naming a page the posted document does not have is a fact about that document: 422 with
+	// its cause, as on every other route that hands pdfops a page (ADR-072, `/pending 834`). A range that
+	// cannot be read at all stays a 400.
+	if wrotePageRangeRefusal(w, err) {
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return

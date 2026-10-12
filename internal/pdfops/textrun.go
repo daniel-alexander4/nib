@@ -112,6 +112,11 @@ type textRun struct {
 	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
 	// carrying one rather than reading it as upright (`/pending 503`).
 	rotated bool
+	// vertical is whether the run's font writes vertically (Identity-V, `runFont.vertical`). Its matrix is upright,
+	// so `rotated` is false, while its `x`, `width` and line membership were measured along a baseline the glyphs
+	// do not advance on. Set for every reader (`face` is kept only with the glyphs), so grouping can report a page
+	// carrying one (`/pending 795` W5).
+	vertical bool
 	// glyphs are the run's glyphs in order, and kernAfter a `TJ` adjustment after the last of them, in user
 	// space — kept only when the walker is asked (`readPageGlyphRuns`, `PLAN-text-reflow.md` P06.S01): reflow
 	// needs each glyph's code and advance, and no other reader does. `Σ(kern + advance) + kernAfter == width`.
@@ -1345,6 +1350,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 		replaced: w.inReplacement(), propsWithoutMCID: w.inPropsWithoutMCID(), reversed: w.inReversedChars()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
+		run.vertical = gs.font.vertical
 	}
 	run.x, run.y = start.apply(0, gs.ts)
 	run.rotated = baselineTurns(start)

@@ -56,6 +56,10 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := pdfops.SetOutline(pdfBytes, items)
+	// A bookmark pointing past the document's last page: 422 with its cause (ADR-072, `/pending 834`).
+	if wrotePageRangeRefusal(w, err) {
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return

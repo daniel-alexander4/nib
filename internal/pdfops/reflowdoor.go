@@ -6,6 +6,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
+	"nib/internal/contentstream"
 	"nib/internal/pdfread"
 )
 
@@ -48,12 +49,22 @@ func Paragraphs(pdf []byte, page int) ([]Paragraph, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The page's content, read and tokenized once for every paragraph's `paragraphContentRefusal`.
+	src, err := pdfread.PageContent(ctx, pg.Dict, page)
+	if err != nil {
+		return nil, err
+	}
+	toks := contentstream.Tokenize(src)
 	out := make([]Paragraph, 0, len(l.paragraphs))
 	for i, p := range l.paragraphs {
 		para := Paragraph{Index: i, Text: p.text()}
 		para.Refusal = paragraphRefusal(ctx, pg, p)
 		if para.Refusal == "" && annotatedOver(ctx, pg, p) {
 			para.Refusal = causeAnchored // told before the user types, not after
+		}
+		// What sits among its show operators refuses any edit, so it is told now too (`/pending 792` W3).
+		if para.Refusal == "" {
+			para.Refusal = paragraphContentRefusal(src, toks, l, i)
 		}
 		out = append(out, para)
 	}
