@@ -42,25 +42,31 @@ type diskState struct {
 
 // recordDisk stamps the document with the file's current identity and content hash.
 //
-// Called at both install doors and again inside handleSave's write. **The re-record on
-// save is not optional**: WriteDurable renames, so the inode AND the mtime change on
-// every save Nib itself performs. Omit it and a document reads "changed on disk" from
-// the moment the user first saves it — a warning that is armed forever, that no other
-// test would catch, and that would teach the user to ignore the banner.
+// Called through newPathDoc at both install doors, on a document nothing else can see yet — never
+// under s.mu, because it hashes the whole document. handleSave and handleReload re-stamp a
+// REGISTERED document, so they build the stamp with stampFor before the lock and assign it under it.
+// **The re-stamp on save is not optional**: WriteDurable renames, so the inode AND the mtime change
+// on every save Nib itself performs. Omit it and a document reads "changed on disk" from the moment
+// the user first saves it — a warning that is armed forever, that no other test would catch, and
+// that would teach the user to ignore the banner.
 func recordDisk(d *document) {
 	d.disk = stampFor(d.path, d.data)
 }
 
+// saveStamp is stampFor, held in a variable so a test can observe the lock from inside handleSave's
+// hash — the one way to prove it runs outside `s.mu` without timing anything.
+var saveStamp = stampFor
+
 // stampFor builds the baseline for `path` holding `data`. It is the ONE place that says
-// what a baseline IS (ADR-009); recordDisk assigns it for a caller that already holds the
-// lock, and handleReload calls it BEFORE taking the lock.
+// what a baseline IS (ADR-009); recordDisk assigns it on a document not yet registered, and
+// handleReload and handleSave call it BEFORE taking the lock.
 //
 // That split exists for a measured reason rather than a stylistic one: the sha256 here
-// runs at roughly 0.7 GB/s, so a 200 MiB document — the maxPDFBytes ceiling — is ~0.3 s
-// of hashing, and doing it under s.mu would serialize every other route behind it. The
-// same argument docResponse makes about its own stat, and the mistake armWindowFor
-// shipped. handleSave keeps calling recordDisk under the lock because it is re-stamping
-// bytes it has just written and nothing else is contending for that document.
+// hashes the whole document — 30 ms at 50 MB and 119 ms at 200 MB on this machine — and
+// doing it under s.mu serializes every other route behind it. The same argument docResponse
+// makes about its own stat, and the mistake armWindowFor shipped. handleSave did it under
+// the lock until /pending 628, on the reasoning that nothing else contends for that
+// document; the lock is the whole server's, so everything else did.
 //
 // nil means "nothing to compare against later": a path-less document, or a file that
 // cannot be stat'd. diskChanged answers false on a nil baseline and says nothing, rather

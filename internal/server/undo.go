@@ -106,6 +106,15 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 			return err
 		}
 	}
+	// **What the operation cost, read BEFORE the lock (/pending 581).** It is two full parses, and it
+	// ran under `s.mu` on every commit: measured, every other route waited 93 ms behind a 50 MB commit
+	// and 1.16 s behind a 200 MB one. Here it needs no confirmation under the lock, because it is a
+	// fact about the OPERATION — its own input against its own result — and neither is the document's
+	// to change. After the cheap refusals above, so a refused commit does not pay for it.
+	var fate docFate
+	if doc != nil {
+		fate = fateOf(input, result, base.broughtAnnots)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// The TARGET document, passed in, not whatever happens to be active. Resolving
@@ -137,7 +146,7 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 	doc.historyEvicted = false
 	s.trimHistoryLocked(doc)
 	doc.install(result, sig)
-	noteTaggingFate(doc, input, result, base.broughtAnnots)
+	doc.note(fate)
 	return nil
 }
 
@@ -316,7 +325,26 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 			return err
 		}
 	}
-	s.mu.Lock()
+	// **The barrier's "before" is the document's OWN bytes, not a caller's input** — it takes only a
+	// result, because a barrier destroys content rather than transforming an argument. So what it
+	// cost is read against a capture of the document, outside the lock (/pending 581; commitMutation
+	// has the measurement), and CONFIRMED under it: the fate in hand is kept only if the document
+	// still holds the captured slice. If another commit landed in between, the capture is taken
+	// again; past `barrierFateAttempts` the parses run under the lock rather than spin, as
+	// `stepHistory` does with its verification.
+	var before []byte
+	var fate docFate
+	for attempt := 0; ; attempt++ {
+		if doc != nil && attempt < barrierFateAttempts {
+			before = s.docBytes(doc)
+			fate = fateOf(before, result, 0) // a barrier brings nothing in
+		}
+		s.mu.Lock()
+		if doc == nil || !s.isRegisteredLocked(doc) || attempt >= barrierFateAttempts || sameSlice(doc.data, before) {
+			break
+		}
+		s.mu.Unlock()
+	}
 	defer s.mu.Unlock()
 	// See commitMutation. It matters more here: these are the irreversible
 	// operations, so committing one into the wrong document destroys content that
@@ -327,21 +355,24 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	if err := s.byteCapLocked(doc, result); err != nil {
 		return err
 	}
+	if !sameSlice(doc.data, before) {
+		// The named fallback: the document kept moving under every capture.
+		fate = fateOf(doc.data, result, 0)
+	}
 	clearUndo(doc)
 	clearRedo(doc)
 	// A barrier is not an eviction: the history is gone because the user asked for
 	// content to be destroyed, not because memory ran short. Reporting it as an
 	// eviction would tell them their redaction cost them their undo stack.
 	doc.historyEvicted = false
-	// **The barrier's "before" is the document's OWN bytes, not a caller's input.** It takes only a
-	// result — a barrier destroys content rather than transforming an argument — so the document as
-	// it stands is what the claim is compared against. Captured before the assignment below, which
-	// is the line that makes it unavailable.
-	before := doc.data
 	doc.install(result, sig)
-	noteTaggingFate(doc, before, result, 0) // a barrier brings nothing in
+	doc.note(fate)
 	return nil
 }
+
+// barrierFateAttempts bounds commitBarrier's capture-then-confirm loop. Each retry means another
+// commit landed on this document while its fate was being read.
+const barrierFateAttempts = 4
 
 // wroteCommitFailure maps a commit door's refusal onto the reply, and exists so the mapping
 // is written once. Eight call sites hand-mirroring it is eight chances to have seven — which
@@ -832,21 +863,53 @@ func ceremonyFreeze(docBytes []byte) error {
 // comparison is what the result should hold against what it does. Form fields are still compared
 // net: appending a form to itself leaves 3 fields of 4 (measured), and whether a merged field is a
 // lost one is not this door's to say.
+//
+// # Read outside the lock, recorded under it (/pending 581)
+//
+// The reading (`fateOf`: the two parses) and the recording (`document.note`: three field writes)
+// are separate so the commit doors can do the first before they take `s.mu`. This function is the
+// two together, for a caller that has the document to itself.
 func noteTaggingFate(doc *document, input, result []byte, broughtAnnots int) {
 	if doc == nil {
 		return
 	}
-	before, after := pdfops.Inspect(input), pdfops.Inspect(result)
+	doc.note(fateOf(input, result, broughtAnnots))
+}
+
+// docFate is what one operation cost a document: see noteTaggingFate. The zero value is "nothing".
+type docFate struct {
+	taggingDropped bool
+	lostAnnots     int
+	lostFields     int
+}
+
+// inspectFacts is pdfops.Inspect, held in a variable so a test can observe the lock from inside
+// the parse — the one way to prove it runs outside `s.mu` without timing anything.
+var inspectFacts = pdfops.Inspect
+
+// fateOf reads what turning input into result cost. Two full parses and nothing else: it touches
+// no document, so it needs no lock.
+func fateOf(input, result []byte, broughtAnnots int) docFate {
+	var f docFate
+	before, after := inspectFacts(input), inspectFacts(result)
 	if !before.Readable || !after.Readable {
-		return
+		return f
 	}
-	if before.Tagged && !after.Tagged {
-		doc.taggingDropped = true
-	}
+	f.taggingDropped = before.Tagged && !after.Tagged
 	if n := before.Annotations + broughtAnnots - after.Annotations; n > 0 {
-		doc.lostAnnots += n
+		f.lostAnnots = n
 	}
 	if n := before.FormFields - after.FormFields; n > 0 {
-		doc.lostFields += n
+		f.lostFields = n
 	}
+	return f
+}
+
+// note records an operation's fate on the document. Caller holds s.mu, or has the document to itself.
+func (d *document) note(f docFate) {
+	if f.taggingDropped {
+		d.taggingDropped = true
+	}
+	d.lostAnnots += f.lostAnnots
+	d.lostFields += f.lostFields
 }

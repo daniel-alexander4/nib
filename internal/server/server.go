@@ -1281,6 +1281,11 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sig := sign.Verify(data)
+	// The baseline for the file this save just wrote, built BEFORE the lock (/pending 628): a stat
+	// and a sha256 over the whole document, which ran under `s.mu` — 28 ms at 50 MB and 114 ms at
+	// 200 MB with every other route waiting. `doc.path` is written once, and `data` is this
+	// request's own; nothing here reads the document.
+	stamp := saveStamp(doc.path, data)
 	s.mu.Lock()
 	// The narrow remainder: a close landing during the file write itself. The bytes
 	// are on disk — the user asked for them there — but the state must not be
@@ -1306,7 +1311,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// save Nib performs. Without this the document reports "changed on disk" from the
 	// moment the user first saves it — armed forever, against Nib's own write, and the
 	// banner becomes the thing the user learns to ignore.
-	recordDisk(doc)
+	doc.disk = stamp
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse(doc))
 }
