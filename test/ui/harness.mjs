@@ -4,7 +4,7 @@
 // throwaway HOME, enrolling a vault key — and hands the result over in the
 // environment. This module only opens a browser page against it, so a test file
 // stays about behaviour rather than plumbing.
-import { chromium } from 'playwright-core';
+import { chromium, firefox } from 'playwright-core';
 import { closeAllInPage } from './closeall.mjs';
 
 export const BASE = process.env.NIB_UI_BASE;
@@ -14,6 +14,14 @@ export const BASE = process.env.NIB_UI_BASE;
 export const LOCKED_BASE = process.env.NIB_UI_LOCKED_BASE;
 export const WORK = process.env.NIB_UI_WORK;
 const EXECUTABLE = process.env.NIB_UI_BROWSER;
+// NIB_UI_ENGINE=firefox drives a STOCK Firefox (NIB_UI_BROWSER names it) over WebDriver BiDi, which
+// is what Playwright's `moz-firefox` channel speaks; its own patched Firefox build is not needed and
+// is not what a user runs. The tier itself is Chromium's — build/uirepro.sh never sets this — and
+// a file that uses CDP (tabs.test.mjs) cannot run under it. It is for one file at a time, when a
+// behaviour has to be seen in the browser Ubuntu opens by default (/pending 7).
+const FIREFOX = process.env.NIB_UI_ENGINE === 'firefox';
+const ENGINE = FIREFOX ? firefox : chromium;
+const ENGINE_OPTIONS = FIREFOX ? { channel: 'moz-firefox' } : {};
 
 if (!BASE || !EXECUTABLE) {
   // Loud rather than skipped. These tests are only ever run by uirepro.sh, which
@@ -74,9 +82,10 @@ async function mintLaunchKey(base) {
 }
 
 export async function launch({ routes = null, waitFor = '#empty', base = BASE, locale = null, timezoneId = null } = {}) {
-  const browser = await chromium.launch({
+  const browser = await ENGINE.launch({
     executablePath: EXECUTABLE,
     headless: process.env.NIB_UI_HEADED !== '1',
+    ...ENGINE_OPTIONS,
   });
   const page = await browser.newPage({
     viewport: { width: 1280, height: 900 },
