@@ -300,7 +300,10 @@ fi
 # 52 since ADR-126 and ADR-127 (tagpromote.test.mjs, tagrolemap.test.mjs): on a file that really has a tag written
 # inline and a role map — the inline tag reached by the arrow keys, numbered, retyped and undone twice; and a
 # mapping changed in a native details by typing and Enter, the heading's line in the tree reading its new type.
-expect_files=52
+# 54 since /pending 876 (noticestack.test.mjs, signnow.test.mjs): the corner's notices measured for overlap at two
+# window sizes, and Sign now pressed in a ceremony convened on the real server — each its own boot, because one
+# rewrites the answer to a page operation on its way to the page and the other leaves a signed ceremony behind.
+expect_files=54
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

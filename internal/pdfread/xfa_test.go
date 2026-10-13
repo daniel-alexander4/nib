@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"compress/zlib"
 	"errors"
 	"fmt"
 	"strings"
@@ -192,5 +193,99 @@ func TestADocumentWhosePagesAreAPlaceholderIsNotWritten(t *testing.T) {
 	// A merge of a placeholder into another document is refused at the source.
 	if _, err := pdfread.MergeRaw([][]byte{xfaDocument("", plainForm), xfaDocument("/NeedsRendering true", xfaOnlyForm)}); !errors.Is(err, pdfread.ErrDynamicXFA) {
 		t.Errorf("MergeRaw with a dynamic source = %v, want ErrDynamicXFA", err)
+	}
+}
+
+// xfaFileOf assembles a one-page document from the objects after the page (object 4 onward), with catalog as
+// object 1's body.
+func xfaFileOf(catalog string, rest ...string) []byte {
+	objs := append([]string{
+		catalog,
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+	}, rest...)
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.6\n")
+	offs := make([]int, len(objs))
+	for i, o := range objs {
+		offs[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, o := range offs {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.Bytes()
+}
+
+func plainStream(body string) string {
+	return fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(body), body)
+}
+
+func flateStream(body string) string {
+	var z bytes.Buffer
+	w := zlib.NewWriter(&z)
+	w.Write([]byte(body))
+	w.Close()
+	return fmt.Sprintf("<< /Length %d /Filter /FlateDecode >>\nstream\n%s\nendstream", z.Len(), z.String())
+}
+
+// TestAFormThatSaysRenderMeDynamicallyInItsPacketIsDynamic — `/pending 876`. `/NeedsRendering` came with PDF 1.7;
+// a dynamic form saved for an older reader says it is one only inside the XFA configuration
+// (`<dynamicRender>required</dynamicRender>`). Read as static it was shown as its placeholder page, could be
+// changed, and was written back without the form. It is read as dynamic, and refused at the write, in every
+// shape the packet takes; a form that says `forbidden`, or nothing, is static as before.
+func TestAFormThatSaysRenderMeDynamicallyInItsPacketIsDynamic(t *testing.T) {
+	config := func(v string) string {
+		return `<config xmlns="http://www.xfa.org/schema/xci/2.6/"><acrobat><acrobat7><dynamicRender>` + v + `</dynamicRender></acrobat7></acrobat></config>`
+	}
+	template := `<template xmlns="http://www.xfa.org/schema/xfa-template/2.5/"/>`
+	whole := func(v string) string {
+		return `<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">` + config(v) + template + `</xdp:xdp>`
+	}
+	const oneStream = "<< /Type /Catalog /Pages 2 0 R /AcroForm << /XFA 4 0 R >> >>"
+	const packets = "<< /Type /Catalog /Pages 2 0 R /AcroForm << /XFA [(preamble) 4 0 R (config) 5 0 R (template) 6 0 R (postamble) 7 0 R] >> >>"
+	for _, c := range []struct {
+		name string
+		pdf  []byte
+		want string
+	}{
+		{"one plain stream, required", xfaFileOf(oneStream, plainStream(whole("required"))), pdfread.XFADynamic},
+		{"one compressed stream, required", xfaFileOf(oneStream, flateStream(whole("required"))), pdfread.XFADynamic},
+		{"packets, the configuration compressed, required", xfaFileOf(packets, plainStream(`<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">`),
+			flateStream(config("required")), flateStream(template), plainStream(`</xdp:xdp>`)), pdfread.XFADynamic},
+		{"required, spaced as a formatter leaves it", xfaFileOf(oneStream, plainStream(whole("\n      required\n    "))), pdfread.XFADynamic},
+		// As six real forms on the build machine write it (five USPTO, one of veraPDF's corpus): a line break
+		// inside each tag.
+		{"required, as Adobe's serializer writes it", xfaFileOf(oneStream, flateStream(
+			strings.Replace(whole("required"), "<dynamicRender>required</dynamicRender>", "<dynamicRender\n>required</dynamicRender\n>", 1))), pdfread.XFADynamic},
+		{"forbidden", xfaFileOf(oneStream, flateStream(whole("forbidden"))), pdfread.XFAStatic},
+		{"packets, forbidden", xfaFileOf(packets, plainStream(`<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">`),
+			flateStream(config("forbidden")), flateStream(template), plainStream(`</xdp:xdp>`)), pdfread.XFAStatic},
+		{"no configuration", xfaFileOf(oneStream, plainStream(`<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">`+template+`</xdp:xdp>`)), pdfread.XFAStatic},
+		{"a stream that does not decode says nothing", xfaFileOf(oneStream, "<< /Length 9 /Filter /FlateDecode >>\nstream\nnot zlib!\nendstream"), pdfread.XFAStatic},
+	} {
+		got, err := pdfread.ReadXFA(c.pdf)
+		if err != nil || got != c.want {
+			t.Errorf("%s: read as %q (%v), want %q", c.name, got, err, c.want)
+			continue
+		}
+		ctx, err := pdfread.ReadOptimized(c.pdf, model.NewDefaultConfiguration())
+		if err != nil {
+			if c.want == pdfread.XFAStatic {
+				continue // the undecodable stream is the validator's to refuse; the reading above is the subject
+			}
+			t.Errorf("%s: the document does not read: %v", c.name, err)
+			continue
+		}
+		if pdfread.XFAOf(ctx) != c.want {
+			t.Errorf("%s: the validated read remembers %q, want %q", c.name, pdfread.XFAOf(ctx), c.want)
+		}
+		_, werr := pdfread.Write(ctx)
+		if refused := errors.Is(werr, pdfread.ErrDynamicXFA); refused != (c.want == pdfread.XFADynamic) {
+			t.Errorf("%s: Write = %v", c.name, werr)
+		}
 	}
 }

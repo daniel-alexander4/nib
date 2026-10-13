@@ -3,6 +3,7 @@ package pdfread
 import (
 	"bytes"
 	"errors"
+	"regexp"
 	"runtime"
 	"sync"
 	"weak"
@@ -61,7 +62,8 @@ var xfaRead = struct {
 // the key alone says the pages are not the document), XFAStatic for an `/AcroForm` holding `/XFA`, else "".
 //
 // `ctx.Dereference` and never a typed dereference: this runs before the validator, and pdfcpu's
-// `DereferenceStreamDict` marks what it returns as validated (ADR-116). The packet itself is not looked at.
+// `DereferenceStreamDict` marks what it returns as validated (ADR-116). The packet is read for one thing: whether
+// it says of itself that it must be rendered dynamically (`xfaAsksForDynamicRender`) — XFADynamic too.
 func xfaIn(ctx *model.Context) string {
 	if ctx == nil || ctx.XRefTable == nil {
 		return ""
@@ -77,12 +79,74 @@ func xfaIn(ctx *model.Context) string {
 	}
 	if o, err := ctx.Dereference(root["AcroForm"]); err == nil {
 		if form, ok := o.(types.Dict); ok {
-			if _, has := form["XFA"]; has {
+			if packet, has := form["XFA"]; has {
+				if xfaAsksForDynamicRender(ctx, packet) {
+					return XFADynamic
+				}
 				return XFAStatic
 			}
 		}
 	}
 	return ""
+}
+
+// dynamicRenderRequired is the XFA configuration's own statement that the form is drawn from the packet and the
+// PDF's pages are a shell: `<dynamicRender>required</dynamicRender>` (XFA's `acrobat7` configuration; the other
+// value is `forbidden`).
+var dynamicRenderRequired = regexp.MustCompile(`<dynamicRender[^>]*>\s*required\s*</dynamicRender\s*>`)
+
+// maxXFAPacketScan bounds what xfaAsksForDynamicRender decodes of a document's XFA, over all its streams. The
+// configuration packet is a few kilobytes; a form's template and data can be megabytes, and are read only until
+// the bound.
+const maxXFAPacketScan = 16 << 20
+
+// xfaAsksForDynamicRender reports whether the XFA under o says of itself that it must be rendered dynamically
+// (`/pending 876`). `/NeedsRendering` is the catalog's way to say so and came with PDF 1.7; a dynamic form saved
+// for an older reader says it only inside the packet, and read as static it would be shown as its placeholder
+// page, changed, and written back without the form — the one loss ADR-145 exists to refuse.
+//
+// o is one stream or an array of name and stream pairs. `ctx.Dereference` and a COPY of each stream to decode:
+// this runs before the validator, which must find every object as the file wrote it (ADR-116). A stream that
+// does not decode says nothing.
+func xfaAsksForDynamicRender(ctx *model.Context, o types.Object) bool {
+	o, err := ctx.Dereference(o)
+	if err != nil || o == nil {
+		return false
+	}
+	var streams []types.Object
+	switch v := o.(type) {
+	case types.StreamDict:
+		streams = []types.Object{v}
+	case types.Array:
+		streams = v
+	}
+	left := maxXFAPacketScan
+	for _, e := range streams {
+		r, err := ctx.Dereference(e)
+		if err != nil {
+			continue
+		}
+		sd, ok := r.(types.StreamDict)
+		if !ok {
+			continue // a packet's name
+		}
+		if len(sd.Raw) > left {
+			return false
+		}
+		cp := sd
+		cp.Content = nil
+		if err := cp.Decode(); err != nil {
+			continue
+		}
+		if len(cp.Content) > left {
+			return false
+		}
+		left -= len(cp.Content)
+		if dynamicRenderRequired.Match(cp.Content) {
+			return true
+		}
+	}
+	return false
 }
 
 // rememberXFA records against ctx what xfaIn read before validation. Nothing is stored for a document with no XFA,

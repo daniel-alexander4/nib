@@ -1,6 +1,6 @@
 --- a/web/index.html
 +++ b/web/index.html
-@@ -496,6 +496,10 @@
+@@ -738,6 +738,10 @@
             P06.S03's, computed by the one function the server's L3 check uses, so building a second
             rule here would be a duplicate with a one-slice lifetime. -->
        <div id="ceremony" class="panel">
@@ -11,7 +11,7 @@
          <div class="ceractions">
            <button id="ceremonyConveneBtn" type="button">Convene a ceremony…</button>
            <button id="ceremonyAcceptBtn" type="button">Accept an invitation…</button>
-@@ -629,10 +633,6 @@
+@@ -1333,10 +1337,6 @@
             role="status" because it appears without a user action on the far side of a transition
             the user did ask for — the same reasoning as #staleBanner, and polite for the same reason:
             assertive is spent on "you are about to lose a signature". -->
@@ -19,6 +19,6 @@
 -        <span>Ceremony setup is open — nothing has been convened yet.</span>
 -        <button id="cerBackToSetup" type="button">Back to setup</button>
 -      </div>
-       <!-- The fit notice (P01.S03, /pending 460). It says what a bake did to edits that did
-            not fit their boxes, and it persists, because a toast cannot serve the path that
-            matters most: Save reloads the document after writing, `clearOverlays` destroys the
+       <!-- The bottom-right corner's notices, in ONE stack (/pending 876). Each is a sentence that wraps to
+            several lines, so a fixed slot per notice put them on top of each other: measured in a real window,
+            the three yellow ones stood 162, 162 and 107 px tall in slots 52 px apart, and two of the three
