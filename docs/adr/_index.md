@@ -892,3 +892,7 @@ home today.
   QUIC exactly when it carries an invitation**
   — an absent transport is TCP and a TCP ceremony arm publishes nothing, against the form's own disclosure; a plain
   LAN arm stays TCP and there is still no transport control.
+- [ADR-135](135-the-convener-signs-their-own-turn-through-one-local-route.md) — **the convener signs their own
+  turn through one local route**
+  — the hop targets the next signer, so at the convener's own turn no route the window calls signed;
+  `POST /api/ceremony/sign-turn` is a hop with the dial taken out, offered as *Sign now* on the rail.

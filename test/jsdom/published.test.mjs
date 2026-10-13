@@ -129,6 +129,9 @@ const PUBLISHED = [
   { type: 'ceremonyStopRequest', readers: ['web/app.js'] },
   { type: 'ceremonyStopResponse', readers: ['web/app.js'] },
   { type: 'ceremonyHopRequest', readers: ['web/app.js'] },
+  // The convener's own turn (/pending 869, ADR-133): the ceremony id, the block drawn from the hop
+  // quote's lines, and that quote's pinned time. `ceremonySignTurn` sends all three.
+  { type: 'ceremonySignTurnRequest', readers: ['web/app.js'] },
   // One roster member's standing in the proceeding (P04.S02, D6). Rendered by `ceremonyWorklist`
   // above `ceremony.SittingCeiling`: `label` names the party, `state` is the word beside them,
   // `capacity` the role they sign in, and `isMe` marks the user's own row. It rides on

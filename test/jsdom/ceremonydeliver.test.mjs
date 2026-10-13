@@ -90,6 +90,8 @@ const listing = {
 // options and not its URL, so every card asking gets this body — and every card but 6 must refuse
 // it on the echoed id, which is the guard `ceremonyNextLine` exists to keep.
 let hopQuote = null;
+const signTurns = [];
+let afterSigning = null;
 let nextAnswer = { ceremony: '6'.repeat(32), state: 'complete' };
 
 // Three of four: Bob is reached, Cy already had it, Dee ended the proceeding, and the fourth leg
@@ -129,6 +131,16 @@ const { document: doc, settle } = await boot({
     // The quote (GET) and the call (POST) share a route; `hopQuote` null is a quote refused with a body that is not JSON.
     '/api/ceremony/hop': (opts) => ((opts && opts.method) === 'POST' || !hopQuote
       ? new Response('<html>Bad Gateway</html>', { status: 502 }) : hopQuote),
+    // The convener's own turn (/pending 869): the press is recorded, the answer is the document's new
+    // state, and the turn moves to whoever `afterSigning` names.
+    '/api/ceremony/sign-turn': (opts) => {
+      signTurns.push({ body: JSON.parse((opts && opts.body) || '{}'), doc: opts?.headers?.['X-Nib-Doc'] });
+      if (afterSigning) nextAnswer = afterSigning;
+      return {
+        id: 'deliver:1', name: 'lease.pdf', path: '/tmp/nib-harness/lease.pdf',
+        canSave: true, canUndo: false, canRedo: false, signature: { state: 'valid' },
+      };
+    },
     '/api/open': () => ({
       id: 'deliver:1', name: 'lease.pdf', path: '/tmp/nib-harness/lease.pdf',
       canSave: true, canUndo: false, canRedo: false, signature: { state: 'unsigned' },
@@ -374,4 +386,96 @@ test('a refused quote or call says what Nib answered, and does not blame the oth
   await settle();
   const after = card.querySelector('.cercallstate').textContent;
   assert.equal(after, 'The call failed (502).', `the refused call reads: ${JSON.stringify(after)}`);
+});
+
+// /pending 869, ADR-133 — the convener's OWN turn.
+//
+// The rail said "It is your turn to sign" and offered nothing, and every signing call the window
+// makes refused a ceremony's document: a convener who signs (the setup sheet's default) could not.
+// These run after the test above, which is the one that opens the document the press is bound to.
+async function nextLineFor(id, answer) {
+  nextAnswer = { ceremony: id, state: 'waiting', meKnown: true, ...answer };
+  const host = await showPanel();
+  // The panel is redrawn on every load, so each test gets a card whose button is unpressed.
+  doc.querySelector('.sbhead[data-panel="ceremony"]')?.click();
+  await settle();
+  const card = cardFor(host, id);
+  card.querySelector('.cernextbtn').click();
+  await settle();
+  return card;
+}
+
+test('the convener is offered Sign now at their own turn, and a party who did not convene is not', async () => {
+  const mine = await nextLineFor('3'.repeat(32), { label: 'Alice Convener', isMe: true, position: 1, of: 4 });
+  // SETUP: the sentence is the own-turn one, so the absence of a call below is about this branch.
+  assert.match(mine.querySelector('.cernextline').textContent, /^It is your turn to sign/,
+    `setup: the rail does not say it is this machine's turn: ${mine.querySelector('.cernextline').textContent}`);
+  const sign = mine.querySelectorAll('.cernextline button');
+  assert.equal(sign.length, 1, `the convener's own turn offers ${sign.length} actions, want exactly one`);
+  assert.equal(sign[0].className, 'cersign');
+  assert.equal(sign[0].textContent, 'Sign now', 'the button does not say what it does in plain words');
+  assert.match(mine.querySelector('.cercallstate').textContent, /^Signing is permanent\./,
+    'the convener is not told a signature cannot be removed BEFORE the press that makes one');
+
+  // Ceremony 2 is one this machine merely joined: under D22 that party is CALLED, and signs on the
+  // consent screen the call raises. The sentence stays a sentence.
+  const joined = await nextLineFor('2'.repeat(32), { label: 'Alice Convener', isMe: true, position: 1, of: 4 });
+  assert.match(joined.querySelector('.cernextline').textContent, /^It is your turn to sign/,
+    'setup: the joined ceremony does not say it is this machine\'s turn');
+  assert.equal(joined.querySelector('.cernextline button'), null,
+    'a party who did not convene is offered a signing control the server refuses them (403)');
+
+  // And a turn that is somebody else's still offers the call, never Sign now.
+  const theirs = await nextLineFor('3'.repeat(32), { label: 'Bob Landlord', isMe: false });
+  assert.ok(theirs.querySelector('.cercall'), 'setup: the convener is not offered the call at another party\'s turn');
+  assert.equal(theirs.querySelector('.cersign'), null, 'Sign now is offered at another party\'s turn');
+});
+
+test('Sign now quotes the block, signs the document that was open at the press, and moves the rail on', async () => {
+  // jsdom draws nothing: a canvas that accepts every call and yields a PNG-shaped blob.
+  const proto = doc.defaultView.HTMLCanvasElement.prototype;
+  const was = { getContext: proto.getContext, toBlob: proto.toBlob };
+  proto.getContext = () => new Proxy({}, { get: () => () => {}, set: () => true });
+  proto.toBlob = (cb) => cb(new doc.defaultView.Blob(['png'], { type: 'image/png' }));
+  try {
+    const id = '3'.repeat(32);
+    const card = await nextLineFor(id, { label: 'Alice Convener', isMe: true, position: 1, of: 4 });
+
+    // A quote that says the turn is NOT this machine's any more: nothing is signed.
+    // (It carries a block, so `mine` alone is what stops the press.)
+    hopQuote = {
+      party: 'Bob Landlord', mine: false, contributes: true,
+      lines: ['Nib co-signing attestation'], rect: [0, 0, 280, 84], when: '2030-01-01T00:00:00Z',
+    };
+    signTurns.length = 0;
+    card.querySelector('.cersign').click();
+    await settle();
+    assert.equal(signTurns.length, 0, 'the window signed after a quote that said it was not its turn');
+
+    const again = await nextLineFor(id, { label: 'Alice Convener', isMe: true, position: 1, of: 4 });
+    hopQuote = {
+      party: 'Alice Convener', mine: true, contributes: true,
+      lines: ['Nib co-signing attestation', 'Signer: Alice Convener'], rect: [0, 0, 280, 84],
+      when: '2030-01-01T00:00:00Z',
+    };
+    afterSigning = { ceremony: id, state: 'waiting', label: 'Bob Landlord', meKnown: true, isMe: false };
+    again.querySelector('.cersign').click();
+    await settle();
+    await settle();
+    assert.equal(signTurns.length, 1, `the press reached the signing route ${signTurns.length} time(s): ${again.textContent.slice(-200)}`);
+    assert.equal(signTurns[0].body.ceremony, id);
+    assert.equal(signTurns[0].body.when, '2030-01-01T00:00:00Z',
+      'the time signed is not the time quoted — the block read and the block signed would differ');
+    assert.ok(signTurns[0].body.appearance, 'the press sent no signature block: the server refuses an invisible signature');
+    assert.equal(signTurns[0].doc, 'deliver:1',
+      'the signing request does not name the document open at the press (ADR-001)');
+    // The rail has moved on without the panel being opened again: the call to the next party.
+    assert.equal(again.querySelector('.cersign'), null, 'Sign now is still offered after the convener signed');
+    assert.equal(again.querySelector('.cercall')?.textContent, 'Call Bob Landlord to sign',
+      `after signing the rail does not offer the next party: ${again.querySelector('.cernext').textContent}`);
+  } finally {
+    proto.getContext = was.getContext;
+    proto.toBlob = was.toBlob;
+    afterSigning = null;
+  }
 });

@@ -1715,7 +1715,7 @@ body.presenting .presentbar { display: flex; }
    the elapsed figure the watcher writes, in --subtext1 because it is progress rather than an
    outcome, and it must not move the layout as the seconds tick — hence a fixed line-height and no
    font change between its states. */
-.cercall { display: block; width: 100%; margin-top: 6px; }
+.cercall, .cersign { display: block; width: 100%; margin-top: 6px; }
 .cercallstate { display: block; margin-top: 4px; color: var(--subtext1); font-size: 11px; line-height: 1.4; }
 /* The terminal refusal reads differently from an ordinary one: --peach is this file's warning
    accent, and the message carries itself in --text as .stampwarn and #staleBanner both do, because

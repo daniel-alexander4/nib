@@ -156,8 +156,8 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 		switch {
 		case errors.Is(merr, errNotTheConvener):
 			httpError(w, http.StatusForbidden,
-				"only the convener can call the next party: this machine is a party to this "+
-					"ceremony, not the one that convened it")
+				"only the convener can do this: this machine is a party to this ceremony, not "+
+					"the one that convened it — you sign when the convener calls you")
 		default:
 			httpError(w, http.StatusConflict, merr.Error())
 		}
@@ -243,8 +243,30 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 		// than an error. It is the ordinary state of a ceremony just convened by a signing convener
 		// the roster names first, and it comes round later for one the roster names later
 		// (`hopCarries`). The rail renders it as "your own turn", which is a different action and
-		// not this route's — and no route a window calls performs that action yet (`/pending 869`,
-		// `convenerturn_test.go`).
+		// not this route's: `POST /api/ceremony/sign-turn` performs it (`/pending 869`).
+		//
+		// **And the block for that action is quoted HERE**, in the shape this route already
+		// returns for a contributing hop, so the window draws both with one function and there is
+		// one quote route rather than two. The time is pinned and echoed on the POST, as below.
+		if out.Contributes {
+			cert, _, ierr := identity(vaultFrom(r))
+			if ierr != nil {
+				httpError(w, http.StatusInternalServerError, "could not read this machine's identity")
+				return
+			}
+			myFP, ferr := sign.Fingerprint(cert)
+			if ferr != nil {
+				httpError(w, http.StatusInternalServerError, "could not read this machine's fingerprint")
+				return
+			}
+			att, aok := ownTurnAttestation(w, vaultFrom(r),
+				l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent), hex.EncodeToString(myFP),
+				time.Now().UTC().Format(time.RFC3339))
+			if !aok {
+				return
+			}
+			out.Lines, out.Rect, out.When = att.AppearanceLines(), p2p.NominalBlockRect(), att.When.UTC().Format(time.RFC3339)
+		}
 		writeJSON(w, out)
 		return
 	}
@@ -317,7 +339,8 @@ func (s *Server) handleCeremonyHop(w http.ResponseWriter, r *http.Request) {
 		// hop. Refused rather than silently no-oped, because the rail offering this at all would be
 		// the defect P01.S02's block was set for: an action that does not exist behind a label.
 		httpError(w, http.StatusConflict,
-			"it is this machine's own turn to sign, so there is nobody to call — sign it here first")
+			"it is your own turn to sign, so there is nobody to call yet — press Sign now in the "+
+				"ceremony panel first")
 		return
 	}
 	// **One dial in flight per ceremony.** A hop costs a fresh socket, a DHT bootstrap and a race
