@@ -63,10 +63,11 @@ func formChainDoc(depth int) []byte {
 	return buildPDF(objs)
 }
 
-// TestTheCheckerRefusesWhereTheOptimizePassIsUnaffordable — `/pending 714`. The checker ran pdfcpu's optimize
-// pass with no budget (90 s over this document); it now reads through pdfread's budget, and REFUSES rather than
-// skipping, because its rules were measured against the optimized reading.
-func TestTheCheckerRefusesWhereTheOptimizePassIsUnaffordable(t *testing.T) {
+// TestTheCheckerReadsWhereTheOptimizePassIsUnaffordable — `/pending 714`, then ADR-148. The checker ran pdfcpu's
+// optimize pass with no budget (90 s over this document), then refused the document rather than skip a pass its
+// rules were measured against. It reads with the pass OFF now, so there is nothing to afford and nothing to
+// refuse: the document is checked.
+func TestTheCheckerReadsWhereTheOptimizePassIsUnaffordable(t *testing.T) {
 	pdf := formChainDoc(400)
 	// Stimulus first: the document is past the budget the door applies.
 	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
@@ -76,10 +77,11 @@ func TestTheCheckerRefusesWhereTheOptimizePassIsUnaffordable(t *testing.T) {
 	if why := pdfread.Unaffordable(ctx); why == "" {
 		t.Fatal("setup: a chain of 400 forms is within the optimize budget — the fixture exercises nothing")
 	}
-	if err := checkWithin(t, 20, "a chain of 400 forms", pdf); !errors.Is(err, pdfread.ErrUnaffordable) {
-		t.Errorf("Check over a chain of 400 forms returned %v, want the unaffordable pass refused", err)
+	if err := checkWithin(t, 20, "a chain of 400 forms", pdf); err != nil {
+		t.Errorf("Check over a chain of 400 forms returned %v — the checker does not run the optimize pass, so "+
+			"a document that pass cannot afford is still one it reads", err)
 	}
-	// And a short chain is optimized and checked as before.
+	// And a short chain is checked as before.
 	if err := checkWithin(t, 20, "a chain of 3 forms", formChainDoc(3)); err != nil {
 		t.Errorf("Check over a chain of 3 forms: %v", err)
 	}

@@ -1181,8 +1181,8 @@ func spDoc(pages [][2]string, extra map[int]string) map[int]string {
 // The clause's message says *"contains MCIDs and is referenced more than once"*; its test reads neither
 // MCIDs nor the structure tree, only the `/StructParents` KEY and how often veraPDF builds the form — and
 // that is once per `Do` in a stream it TRAVERSES, which it does once per object key. The rows are grouped
-// by which of those facts they pin. `CannotCheck` rows are forms pdfcpu fused on opening, where nib's
-// count is not veraPDF's (`formTwins`): veraPDF's own answer is in the row's reason.
+// by which of those facts they pin. The "equal forms" rows were `CannotCheck` while the checker read with
+// pdfcpu's fusing pass on; they are veraPDF's own answers now that it does not (ADR-148).
 func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 	X := "/XObject << /X0 10 0 R >>"
 	SP := "/StructParents 0"
@@ -1201,27 +1201,6 @@ func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 		}
 		delete(o, 23)
 		return o
-	}
-	// hasTwin reports whether form 10 has an `EqualObjects` twin in the file — the stimulus every
-	// CannotCheck row below exists to present. A refusal for some OTHER reason would pass the verdict check.
-	// (Not "pdfcpu fused the two": in the drawn-twice row it does NOT — the undrawn copy survives unfused —
-	// and the refusal there is the conservative one the rule's doc declares.)
-	hasTwin := func(t *testing.T, pdf []byte) bool {
-		t.Helper()
-		d, err := open(pdf)
-		if err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-		n, ok := d.formTwins(10)
-		return ok && n > 0
-	}
-	// because is, for each CannotCheck row, a phrase its refusal must carry — so a refusal for some other
-	// reason does not pass as this one.
-	because := map[string]string{
-		"two equal keyed forms, each drawn once":           "equal to",
-		"two equal keyed forms, one drawn twice":           "equal to",
-		"two equal outer forms each drawing a keyed inner": "equal to",
-		"two keyed forms equal only one way round":         "equal to",
 	}
 	for _, c := range []struct {
 		name string
@@ -1311,22 +1290,21 @@ func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 			return o
 		}(), Pass, "the annotation has a key, so it is visited once"},
 
-		// ── Fused on opening: nib's count is not veraPDF's.
+		// ── Equal forms are two objects, as the file holds them (ADR-148). Each was a refusal while pdfcpu's
+		// optimize pass fused them on opening; the answers are veraPDF's.
 		{"two equal keyed forms, each drawn once", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
-			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), CannotCheck,
-			"veraPDF PASSES (two keys); pdfcpu fused them into one drawn twice"},
+			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), Pass,
+			"veraPDF PASSES (two keys); fused, they read as one form drawn twice"},
 		{"two equal keyed forms, one drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
-			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), CannotCheck,
-			"veraPDF FAILS; pdfcpu does NOT fuse here, and the refusal is the conservative one — an equal copy " +
-				"anywhere in the file refuses, since nib cannot tell a copy it fused from one it did not"},
+			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), Fail,
+			"veraPDF FAILS: one key reached twice, whatever equal copy sits beside it undrawn"},
 		{"two equal outer forms each drawing a keyed inner", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
 			map[int]string{10: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"),
-				11: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"), 12: spForm(SP, spMC)}), CannotCheck,
-			"veraPDF FAILS (two outers, two traversals); fused, nib sees one — a false pass without the refusal"},
+				11: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"), 12: spForm(SP, spMC)}), Fail,
+			"veraPDF FAILS (two outers, two traversals); fused, nib saw one outer traversed once — a false pass"},
 		{"two keyed forms equal only one way round", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
-			map[int]string{10: spForm(SP+" /Foo 5", spMC), 11: spForm(SP+" /Foo 30 0 R", spMC), 30: "null"}), CannotCheck,
-			"veraPDF PASSES (2 checks); pdfcpu's EqualObjects is asymmetric on a null, so asking it one way only " +
-				"missed the twin and FAILED this on 27 of 40 runs — the review's finding 1"},
+			map[int]string{10: spForm(SP+" /Foo 5", spMC), 11: spForm(SP+" /Foo 30 0 R", spMC), 30: "null"}), Pass,
+			"veraPDF PASSES (2 checks); under the fusing pass this answer depended on map order (27 of 40 runs failed)"},
 
 		// ── A form with no /Resources inherits its invoker's, and the FIRST traversal's binding is the one
 		// veraPDF keeps — measured both ways round. pdfcpu's per-page resource step dropped the page's binding the
@@ -1358,19 +1336,11 @@ func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 			"veraPDF PASSES the page-reversed file (3 checks): A is traversed once, with page 1's binding"},
 		{"two equal keyed forms, one drawn three times", spDoc([][2]string{{"/X0 Do /X0 Do /X0 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
 			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), Fail,
-			"three reaches over two keys: one of them was reached twice whatever pdfcpu fused"},
+			"one key reached three times"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			pdf := buildPDF(c.objs)
-			if c.want == CannotCheck {
-				if because[c.name] == "equal to" && !hasTwin(t, pdf) {
-					t.Fatal("setup: form 10 has no twin, so this row does not present the shape it names")
-				}
-				if got := verdictOf(t, pdf, "7.20 t2"); because[c.name] == "" || !strings.Contains(got.Why, because[c.name]) {
-					t.Fatalf("7.20 t2 refused for another reason (%s), want one naming %q", got.Why, because[c.name])
-				}
-			}
-			// Forty runs, because a twin missed one way round made this answer depend on map order.
+			// Forty runs: under the fusing pass one of these answers depended on map order.
 			for i := 0; i < 40; i++ {
 				if got := verdictOf(t, pdf, "7.20 t2"); got.Verdict != c.want {
 					t.Fatalf("7.20 t2 reports %v (%s) on run %d, want %v — %s", got.Verdict, got.Why, i+1, c.want, c.why)
@@ -1413,13 +1383,12 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	flipped := strings.Replace(string(b), "optimizeDuplicateContentStreams: false", "optimizeDuplicateContentStreams: true", 1)
-	// And `optimize` OFF (the P06 phase-close review): it switches off the form fusion `formTwins` exists to
-	// account for, so a pin of one field alone left the answer to the machine.
-	flipped2 := strings.Replace(flipped, "optimize: true", "optimize: false", 1)
-	if flipped == string(b) || flipped2 == flipped {
+	// And `optimize` stays ON in the planted file, which is pdfcpu's own default and the OPPOSITE of the
+	// checker's pin (ADR-148): it turns on the form fusion, so a pin of one field alone would leave the answer
+	// to the machine.
+	if flipped == string(b) || !strings.Contains(flipped, "optimize: true") {
 		t.Fatal("setup: pdfcpu's default config no longer spells optimizeDuplicateContentStreams: false / optimize: true")
 	}
-	flipped = flipped2
 	if err := os.WriteFile(path, []byte(flipped), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1427,7 +1396,7 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stimulus before response: the planted config really is what `NewDefaultConfiguration` now hands out.
-	if c := model.NewDefaultConfiguration(); !c.OptimizeDuplicateContentStreams || c.Optimize {
+	if c := model.NewDefaultConfiguration(); !c.OptimizeDuplicateContentStreams || !c.Optimize {
 		t.Fatal("setup: pdfcpu did not load the planted config, so the flags this test pins are not set")
 	}
 	X := "/XObject << /X0 10 0 R >>"
@@ -1436,15 +1405,15 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 		t.Errorf("with the user's pdfcpu config merging duplicate content streams, 7.20 t2 reports %v (%s), "+
 			"want Fail — veraPDF fails a keyed form drawn once on each of two pages", got.Verdict, got.Why)
 	}
-	// Two equal outer forms, each drawing a keyed inner: fused under the pinned `optimize`, so nib refuses
-	// exactly as it does with no config at all. With `optimize` left to the planted config the outers stay
-	// apart and the answer moves — the verdict this test exists to hold still.
+	// Two equal outer forms, each drawing a keyed inner: the checker pins `optimize` OFF (ADR-148), so the
+	// outers stay apart and nib fails it as veraPDF does. The planted config turns `optimize` ON below, and
+	// with the field left to it the outers fuse and the answer moves — the verdict this test holds still.
 	twins := buildPDF(spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
 		map[int]string{10: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"),
 			11: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"), 12: spForm("/StructParents 0", spMC)}))
-	if got := verdictOf(t, twins, "7.20 t2"); got.Verdict != CannotCheck {
-		t.Errorf("with the user's pdfcpu config turning optimize off, two equal outer forms report %v (%s), "+
-			"want the same CannotCheck the default config gives", got.Verdict, got.Why)
+	if got := verdictOf(t, twins, "7.20 t2"); got.Verdict != Fail {
+		t.Errorf("with the user's pdfcpu config turning optimize ON, two equal outer forms report %v (%s), "+
+			"want the same Fail the default config gives", got.Verdict, got.Why)
 	}
 }
 

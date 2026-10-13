@@ -471,8 +471,7 @@ type walker struct {
 	// gates that tally and nothing else (`retraversal`).
 	repeat bool
 	// form is the object number of the form XObject whose content this walk is inside — itself for a form
-	// or appearance walk, inherited by a pattern or glyph procedure it enters, 0 in page content. It lets
-	// `formTwins`' caller ask whether a form draws any other, which is when a fusion could move a count.
+	// or appearance walk, inherited by a pattern or glyph procedure it enters, 0 in page content.
 	form int
 }
 
@@ -834,12 +833,6 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	// That is veraPDF's answer — it has no depth cap, so it builds the form — and a definite failure on
 	// the form in hand beats a refusal about what lies below it.
 	w.d.recordDrawnForm(sd.Dict, objNr, where, !w.repeat)
-	if w.form != 0 {
-		if w.d.drawsForms == nil {
-			w.d.drawsForms = map[int]bool{}
-		}
-		w.d.drawsForms[w.form] = true
-	}
 	// **Object 0 is no object** (R3-10): a form with no object number is not one the chain can recognise, so
 	// it is neither looked up nor added below — otherwise the first key-less form would mark every later
 	// key-less form as "drawing itself" and they would go unwalked in silence. Unreachable today (a stream is
