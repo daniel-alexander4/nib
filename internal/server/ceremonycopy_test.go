@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"nib/internal/ceremony"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
 )
@@ -119,6 +120,16 @@ func TestTheCeremonyCopyIsTheStoredOneOrNamesWhyNot(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Stored under a content-digest rule this build does not compute (ADR-143): a version difference in each
+	// direction, which was "unreadable" — a word that sends the user after a fault on their disk.
+	docOld, recOld := documentUnderDigestRule(t, pdfops.ContentDigestVersion-2)
+	docNew, recNew := documentUnderDigestRule(t, pdfops.ContentDigestVersion+1)
+	for doc, rec := range map[*[]byte]ceremony.Record{&docOld: recOld, &docNew: recNew} {
+		if _, err := ceremony.WriteMirror(root, rec, *doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	for _, tc := range []struct {
 		name  string
 		doc   []byte
@@ -126,6 +137,8 @@ func TestTheCeremonyCopyIsTheStoredOneOrNamesWhyNot(t *testing.T) {
 		facts ceremonyCopyFacts
 		cause ceremonyCopyCause
 	}{
+		{name: "stored under a digest rule this build retired", doc: docOld, cause: copyOlderNib},
+		{name: "stored under a digest rule this build does not know yet", doc: docNew, cause: copyNewerNib},
 		{name: "came back co-signed by a stranger", doc: returned, want: docA,
 			facts: ceremonyCopyFacts{Extends: true}},
 		{name: "the ceremony has ended", doc: docE, want: docE,

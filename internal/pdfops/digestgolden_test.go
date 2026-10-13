@@ -277,15 +277,42 @@ func generatedDigestCorpus(t *testing.T) []struct {
 
 // digestRules is every rule this build computes, with the golden-file suffix it is pinned under (ADR-080).
 //
-// **v4's goldens are the files v4 shipped with, unregenerated.** That is the whole of the claim that a record
-// written under v4 is still checked by v4: if the legacy arm moved one byte, these rows would say so. They are
-// never to be regenerated — a v4 row that has to move is a v4 record that would read as tampering.
+// **Rule 5's goldens are the files rule 5 shipped with, unregenerated.** That is the whole of the claim that a
+// record written under rule 5 is still checked by rule 5: if the legacy arm moved one byte, these rows would say
+// so. They are never to be regenerated — a rule-5 row that has to move is a rule-5 record that would read as
+// tampering. (Rule 4's goldens, the unsuffixed files, were removed when rule 4 was retired — ADR-143; a golden for a
+// rule nothing computes pins nothing.)
+//
+// The suffix is the rule's own number, so a retired rule's file cannot be mistaken for a readable one's.
 var digestRules = []struct {
 	rule   int
 	suffix string
 }{
-	{legacyContentDigestVersion, ""},
-	{ContentDigestVersion, "-v5"},
+	{legacyContentDigestVersion, "-v5"},
+	{ContentDigestVersion, "-v6"},
+}
+
+// TestEveryReadableRuleIsPinnedUnderItsOwnNumber holds the table above to the two constants: a bump that moved
+// the constants and not the table would pin the new rule against the old rule's file.
+func TestEveryReadableRuleIsPinnedUnderItsOwnNumber(t *testing.T) {
+	for _, r := range digestRules {
+		if want := fmt.Sprintf("-v%d", r.rule); r.suffix != want {
+			t.Errorf("rule %d is pinned under suffix %q, want %q", r.rule, r.suffix, want)
+		}
+		if !ContentDigestRuleReadable(r.rule) {
+			t.Errorf("rule %d is pinned and this build does not compute it", r.rule)
+		}
+	}
+	for v := 0; v <= ContentDigestVersion+1; v++ {
+		pinned := false
+		for _, r := range digestRules {
+			pinned = pinned || r.rule == v
+		}
+		if ContentDigestRuleReadable(v) != pinned {
+			t.Errorf("rule %d: readable %v, pinned %v — every rule this build computes is pinned, and no other",
+				v, ContentDigestRuleReadable(v), pinned)
+		}
+	}
 }
 
 func TestContentDigestIsByteIdenticalAcrossTheGeneratedCorpus(t *testing.T) {

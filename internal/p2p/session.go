@@ -578,6 +578,17 @@ const (
 	// nothing about whether a human noticed anything; an older build decodes it as
 	// `ErrRefusedUnknown`, which is D32's sentence, not a verdict.
 	refuseConsentBusy = 17
+
+	// 18 and 19 are the arrival gate's refusal of a ceremony whose record names a content-digest rule the
+	// receiving build does not compute (ADR-143, /pending 691). `ceremony.ErrDigestVersion` had no wire
+	// code, so a signer on a build two rules away from the convener's reached the dialler as a bare EOF —
+	// a 502 with a network cause, for a peer that connected and said no. Two codes, not one, because the
+	// two directions have OPPOSITE remedies and the dialler cannot tell which side is behind from a single
+	// byte: 18 says the ceremony is too old for the machine that checked it (finish it where it started, or
+	// convene again), 19 that it is too new (that machine needs updating). A build that knows neither reads
+	// both as `ErrRefusedUnknown`.
+	refuseCeremonyRuleRetired = 18
+	refuseCeremonyRuleTooNew  = 19
 )
 
 // ErrCeremonyEnded reports that the proceeding this document belongs to is over — its deadline has
@@ -622,6 +633,25 @@ var ErrCannotReadOwnRecord = errors.New("this machine could not read its own rec
 // unlike every other refusal on this list it is worth trying again — once they have answered.
 var ErrConsentBusy = errors.New("the other machine is already asking its user about another " +
 	"co-signing request, so nothing was signed — try again once they have answered it")
+
+// ErrCeremonyRuleRetired and ErrCeremonyRuleTooNew report that the machine checking a ceremony's document
+// does not compute the content-digest rule the ceremony's record was written under (ADR-143). Nobody has
+// changed anything: two builds measure the document by different rules, and the numbers were never
+// comparable. They are worded to read correctly on BOTH machines — the one that checked, where
+// `ceremony`'s skew error carries them with the rule numbers, and the dialler's, which is told by code.
+//
+// They live here, not beside `ceremony.ErrDigestVersion`, because a wire code needs a sentinel this
+// package can name and `internal/p2p` cannot import `internal/ceremony`.
+var (
+	ErrCeremonyRuleRetired = errors.New("this ceremony was started with a Nib too old for the one " +
+		"that checked it: the two measure the document by different rules, so nothing was signed — " +
+		"finish the ceremony on the Nib it was started with, or convene it again. This is a version " +
+		"difference, not a changed document")
+	ErrCeremonyRuleTooNew = errors.New("this ceremony was started with a newer Nib than the one " +
+		"that checked it: the two measure the document by different rules, so nothing was signed — " +
+		"the machine that checked it needs a newer Nib. This is a version difference, not a changed " +
+		"document")
+)
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
 var ErrDeclined = errors.New("document transfer declined")
@@ -738,6 +768,10 @@ func refusalCode(err error) byte {
 		return refuseWrongRole
 	case errors.Is(err, ErrConsentBusy):
 		return refuseConsentBusy
+	case errors.Is(err, ErrCeremonyRuleRetired):
+		return refuseCeremonyRuleRetired
+	case errors.Is(err, ErrCeremonyRuleTooNew):
+		return refuseCeremonyRuleTooNew
 	}
 	return 0
 }
@@ -779,6 +813,10 @@ func errorForCode(code byte) error {
 		return ErrRoleRefused
 	case refuseConsentBusy:
 		return ErrConsentBusy
+	case refuseCeremonyRuleRetired:
+		return ErrCeremonyRuleRetired
+	case refuseCeremonyRuleTooNew:
+		return ErrCeremonyRuleTooNew
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }

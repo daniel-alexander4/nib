@@ -85,8 +85,8 @@ func moduleFiles(t *testing.T) []moduleFile {
 // a census that stopped seeing them reads red, not green.
 func TestEveryPageContentReadRoutesThroughTheDoor(t *testing.T) {
 	exempt := map[string]string{
-		// `ContentDigest` was an exemption until ADR-080: rule 5 reads through the door, and rule 4 — kept to check v4
-		// records — reads `PageContentAsPdfcpu`, the door's own bounded copy of pdfcpu's join. The checker reads
+		// `ContentDigest` was an exemption until ADR-080: rules 5 and 6 read through the door (rule 4, which read
+		// the door's bounded copy of pdfcpu's join, was retired with the bump to rule 6). The checker reads
 		// through the door since /pending 719 measured veraPDF's join, and the n-up carries since /pending 728.
 		// Names are read per stream — the door's own meaning, since it separates only at stream boundaries and
 		// a per-stream tokenize treats every boundary as one — and memoized per object across every kept page.

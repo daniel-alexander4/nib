@@ -140,6 +140,8 @@ test('each refusal of the ceremony copy has its own sentence, and nothing opens'
     'not-on-this-machine': /holds no copy of the signing ceremony/,
     'different-proceeding': /belongs to a different ceremony/,
     'damaged': /copy of that ceremony is damaged/,
+    'older-nib': /started with an older Nib.*Open the file on the Nib the ceremony was started with/,
+    'newer-nib': /started with a newer Nib.*Update Nib and try again/,
     'unreadable': /could not read this machine's copy/,
   };
   await openSheet({ signature: { state: 'unsigned' } }, null);

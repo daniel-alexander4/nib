@@ -18575,6 +18575,11 @@ const CEREMONY_COPY_REFUSED = {
   'different-proceeding': 'The ceremony copy on this machine under that name belongs to a different ceremony, so Nib '
     + 'will not compare against it.',
   'damaged': 'This machine\'s copy of that ceremony is damaged, so Nib will not compare against it.',
+  'older-nib': 'That ceremony was started with an older Nib, which measured the document by a rule this one no '
+    + 'longer uses, so this Nib cannot check its copy. Open the file on the Nib the ceremony was started with. '
+    + 'Nothing is damaged.',
+  'newer-nib': 'That ceremony was started with a newer Nib, which measures the document by a rule this one does '
+    + 'not know yet, so this Nib cannot check its copy. Update Nib and try again. Nothing is damaged.',
   'unreadable': 'Nib could not read this machine\'s copy of that ceremony.',
 };
 
