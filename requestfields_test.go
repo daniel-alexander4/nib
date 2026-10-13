@@ -156,10 +156,6 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 				"the comment six lines above it says why: the no-address variant belongs to tier 4 " +
 				"`--lan`, where an announcement can actually be heard. The panel sends a ceremony " +
 				"id and lets the server find the party."},
-		"/api/session/arm transport": {harnessOnly,
-			"build/pairrepro.sh:1533 and build/ceremonyrepro.sh:409 force TCP or QUIC on this " +
-				"route. Same reasoning as the two `transport` rows above it, on the receiving side " +
-				"— the web client has no reason to choose a transport."},
 		"/api/session/arm ceremony": {harnessOnly,
 			"build/pairrepro.sh:2586 and :2591 drive D24's re-arm-from-a-stored-invitation, once " +
 				"with an id this machine never accepted (expects 400) and once with a real one. " +
@@ -172,10 +168,10 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 				"the defect this test was written after. session.go:2135 calls it `the manual tier " +
 				"for the arm`, and no control and no harness script offers one.\n" +
 				"**/pending 551 read it out, and the row is narrower than it looks.** The field is " +
-				"honoured in exactly one branch — a QUIC arm carrying a ceremony — and the web " +
-				"client never selects a transport, by the deliberate decision the `arm transport` " +
-				"row above records. So wiring a control for this address alone would be inert: it " +
-				"needs a transport choice the table says the client should not have. What 551 DID " +
+				"honoured in exactly one branch — a QUIC arm carrying a ceremony. The window's arm " +
+				"takes that branch since /pending 833 (it sends `transport` with an invitation, " +
+				"which is why that field has no row here any more), and still sends no address. " +
+				"What 551 DID " +
 				"fix is the half that needed nobody's decision — every arm that cannot honour the " +
 				"field now REFUSES it (TestAnArmRefusesAnAddressItCannotUse) instead of answering " +
 				"200 to a caller whose typed address was dropped on the floor. Whether the field is " +
