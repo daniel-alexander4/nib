@@ -184,3 +184,46 @@ test('a signature Nib could not check beside one it did is named, not "modified"
   const txt = await openDetails();
   assert.match(txt, /A signature is present that Nib could not check — /, `the panel does not say why: ${txt.slice(0, 400)}`);
 });
+
+// ── /pending 831, ADR-147 ────────────────────────────────────────────────────
+// A signer is named by what Nib KNOWS, in a pinned order: the pinned peer's name, then what the certificate
+// says, then the fingerprint's words. `/Name` is text the signer typed (ADR-051): it never leads.
+test('a signer row leads with what Nib knows, and the typed name comes last', async () => {
+  const signer = { name: 'The Queen of England', subject: 'Mallory Cert', valid: true, timeBacking: 'none', fingerprint: 'a'.repeat(64) };
+  const lines = async (signers, signerNamed) => {
+    nextOpen = {
+      id: 'refused:1', name: 'lease.pdf', path: '/tmp/nib-harness/lease.pdf',
+      canSave: true, canUndo: false, canRedo: false, unverifiedSigners: 0,
+      signature: { state: 'valid', signers }, signerNamed,
+    };
+    setNextDocument({ numPages: 1 });
+    doc.getElementById('pathInput').value = nextOpen.path;
+    doc.getElementById('openGo').click();
+    await settle();
+    await openDetails();
+    const row = doc.querySelector('#sigDetailsBody .sigrow');
+    return [...row.querySelectorAll('.sigrow-who, .sigrow-id')].map((n) => `${n.className}|${n.textContent}`);
+  };
+
+  // Pinned, with a subject and words: all three, in the pinned order, then the typed name.
+  assert.deepEqual(await lines([signer], [{ pinned: 'Bob Landlord', words: 'ash birch cedar elm fir oak' }]), [
+    'sigrow-who|Bob Landlord',
+    'sigrow-id|Certificate says: Mallory Cert',
+    'sigrow-id|Fingerprint: ash birch cedar elm fir oak',
+    'sigrow-id|Calls themselves: The Queen of England',
+  ]);
+  // Not pinned: the certificate's claim leads, and is labelled as the certificate's.
+  assert.deepEqual(await lines([signer], [{ words: 'ash birch cedar elm fir oak' }]), [
+    'sigrow-who|Certificate says: Mallory Cert',
+    'sigrow-id|Fingerprint: ash birch cedar elm fir oak',
+    'sigrow-id|Calls themselves: The Queen of England',
+  ]);
+  // No subject either: the fingerprint's words lead.
+  assert.deepEqual(await lines([{ ...signer, subject: '' }], [{ words: 'ash birch cedar elm fir oak' }]), [
+    'sigrow-who|ash birch cedar elm fir oak',
+    'sigrow-id|Calls themselves: The Queen of England',
+  ]);
+  // Nothing Nib knows: it says so, and the typed name still does not lead.
+  const bare = await lines([{ name: 'The Queen of England', valid: false, timeBacking: 'none' }], [{}]);
+  assert.deepEqual(bare, ['sigrow-who|Nib could not tell who signed', 'sigrow-id|Calls themselves: The Queen of England']);
+});

@@ -715,7 +715,10 @@ type docResponse struct {
 	// (`signerKin`) — and it is what the returned-document sheet asks the signed version for (PLAN-returned-document
 	// P03.S02): "you" is the server's to say, because the client's own fingerprint is loaded only by a route that
 	// CREATES an identity.
-	SignerWhose []string        `json:"signerWhose,omitempty"`
+	SignerWhose []string `json:"signerWhose,omitempty"`
+	// SignerNamed is, for each of `Signature.Signers` in the same order, what THIS MACHINE can call that signer
+	// (ADR-147, `/pending 831`) — see signerNamed. Present whenever there are signers.
+	SignerNamed []signerNamed   `json:"signerNamed,omitempty"`
 	Flags       json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
 	CanUndo     bool            `json:"canUndo"`         // an undoable operation is on the stack
 	CanRedo     bool            `json:"canRedo"`         // an undone operation can be re-applied
@@ -1922,6 +1925,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		s.mu.Unlock()
 	}
 	resp.UnverifiedSigners, resp.SignerWhose = signerKin(vlt, resp.Signature)
+	resp.SignerNamed = signersNamed(vlt, resp.Signature)
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
@@ -2067,6 +2071,44 @@ func signerKin(v *vault.Vault, st sign.Status) (*int, []string) {
 		}
 	}
 	return &n, out
+}
+
+// signerNamed is what this machine can call one signer, beside what the signature itself carries
+// (ADR-147, `/pending 831`). A signer is named by what Nib KNOWS, in this order: the name the user gave a
+// pinned peer; else the certificate's subject (`sign.SignerInfo.Subject`), shown as the certificate's own
+// claim; else the fingerprint's words. `/Name` — text the signer typed (ADR-051) — is never the lead.
+type signerNamed struct {
+	// Pinned is the label of the pinned peer whose fingerprint signed, or "" — not pinned, pinned with no
+	// label, or the vault is locked and cannot say.
+	Pinned string `json:"pinned,omitempty"`
+	// Words is the six-word name of the fingerprint that signed (`pairing.Name`), the same words every peer
+	// control shows for it; "" where Nib could not establish who signed.
+	Words string `json:"words,omitempty"`
+}
+
+// signersNamed answers signerNamed for every signer, in order. The words need no vault; the pinned name
+// does, and is matched through `p2p.SameParty`, the one door `signerKin` reads the same list through.
+func signersNamed(v *vault.Vault, st sign.Status) []signerNamed {
+	if len(st.Signers) == 0 {
+		return nil
+	}
+	var pinned []vault.PinnedPeer
+	if v != nil {
+		pinned = v.PinnedPeers()
+	}
+	out := make([]signerNamed, len(st.Signers))
+	for i, sg := range st.Signers {
+		if fp, err := hex.DecodeString(sg.Fingerprint); err == nil && len(fp) > 0 {
+			out[i].Words = nameOrEmpty(fp)
+		}
+		for _, p := range pinned {
+			if p2p.SameParty(sg.Fingerprint, hex.EncodeToString(p.Fingerprint)) {
+				out[i].Pinned = strings.TrimSpace(p.Label)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // docName is the document's display name, and it is EMPTY for a path-less document

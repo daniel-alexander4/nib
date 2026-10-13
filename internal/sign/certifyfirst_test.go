@@ -1,6 +1,9 @@
 package sign
 
 import (
+	"bytes"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"strings"
 	"testing"
@@ -122,5 +125,78 @@ func TestACertificationNestedUnderKidsIsSeen(t *testing.T) {
 	doc := fillSig(t, synthRevision(t, nil, objs, 1), "1", nil, detached(t, a))
 	if certificationOf(t, doc) {
 		t.Errorf("a nested approval signature reads as a certification")
+	}
+}
+
+// TestASignerCarriesItsCertificatesSubjectAndNotTheTypedName — ADR-147, `/pending 831`: the subject a surface
+// leads with is the CERTIFICATE's, from the certificate the fingerprint is of, and it is not `/Name`, which
+// the signer typed (ADR-051). A signature that does not verify carries neither a fingerprint nor a subject.
+func TestASignerCarriesItsCertificatesSubjectAndNotTheTypedName(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, key, err := GenerateIdentity("Alice Certificate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := SignApproval(base, cert, key, Options{Name: "The Queen of England", When: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := Verify(signed)
+	if st.State != Valid || len(st.Signers) != 1 {
+		t.Fatalf("setup: %s with %d signers", st.State, len(st.Signers))
+	}
+	got := st.Signers[0]
+	if got.Name != "The Queen of England" {
+		t.Fatalf("setup: /Name reads %q — the typed name is what this test tells apart from the subject", got.Name)
+	}
+	if got.Fingerprint == "" {
+		t.Fatal("setup: the signer has no fingerprint")
+	}
+	if got.Subject != "Alice Certificate" {
+		t.Errorf("the signer's subject reads %q, want the certificate's common name %q", got.Subject, "Alice Certificate")
+	}
+	// The record is the one home (ADR-058): the same subject, beside the same fingerprint.
+	revs, err := Revisions(signed)
+	if err != nil || len(revs) != 1 {
+		t.Fatalf("revisions: %d (err %v)", len(revs), err)
+	}
+	if revs[0].Subject != got.Subject || revs[0].Fingerprint != got.Fingerprint {
+		t.Errorf("the record says %q/%q and the signer %q/%q", revs[0].Subject, revs[0].Fingerprint, got.Subject, got.Fingerprint)
+	}
+
+	// A byte changed inside the signed range: the signature fails, and nothing is said about who made it.
+	broken := bytes.Replace(signed, []byte("/Type /Catalog"), []byte("/Type /Catalog "), 1)
+	if bytes.Equal(broken, signed) {
+		broken = append([]byte(nil), signed...)
+		broken[len(broken)/4] ^= 0x01
+	}
+	for _, sg := range Verify(broken).Signers {
+		if !sg.Valid && (sg.Subject != "" || sg.Fingerprint != "") {
+			t.Errorf("a signature that does not verify names %q (%q): nothing reports an identity it has not established", sg.Subject, sg.Fingerprint)
+		}
+	}
+}
+
+// TestACertificateSubjectIsOneBoundedLine — the subject is a stranger's text: control characters and
+// direction overrides become spaces, and a long one is cut.
+func TestACertificateSubjectIsOneBoundedLine(t *testing.T) {
+	cases := []struct{ cn, want string }{
+		{"Alice", "Alice"},
+		{"Alice\nNib says: verified", "Alice Nib says: verified"},
+		{"evil\u202Egnp.exe", "evil gnp.exe"},
+		{strings.Repeat("x", maxSubjectRunes+50), strings.Repeat("x", maxSubjectRunes) + "…"},
+	}
+	for _, c := range cases {
+		cert := &x509.Certificate{Subject: pkix.Name{CommonName: c.cn}}
+		if got := subjectOf(cert); got != c.want {
+			t.Errorf("subjectOf(%q) = %q, want %q", c.cn, got, c.want)
+		}
+	}
+	// No common name: the whole subject, so an organisation-only certificate is not shown as nothing.
+	if got := subjectOf(&x509.Certificate{Subject: pkix.Name{Organization: []string{"Acme Ltd"}}}); got != "O=Acme Ltd" {
+		t.Errorf("a subject with no common name reads %q, want %q", got, "O=Acme Ltd")
 	}
 }

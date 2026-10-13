@@ -2,10 +2,13 @@ package sign
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"unicode"
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
@@ -72,6 +75,11 @@ type Revision struct {
 	// verified record with no fingerprint still bounds coverage — the hash was checked, whoever made
 	// it — and never stands for a person.
 	Fingerprint string
+	// Subject is what that same certificate says its holder is called — its subject's common name, or the
+	// whole subject where it has none (`subjectOf`) — and it is set exactly when Fingerprint is, from the
+	// same certificate (ADR-147, `/pending 831`). It is the CERTIFICATE's claim: a self-signed certificate
+	// says whatever its maker typed, so a surface shows it as what the certificate says, never as who signed.
+	Subject string
 	// Verified is the library's `ValidSignature` for this record's position in its enumeration.
 	// A record outside that enumeration is false by definition, never by index.
 	Verified bool
@@ -105,8 +113,9 @@ type Revision struct {
 	offset int64
 	// bag is `bagKey` over the certificate bag, for the per-position cross-check.
 	bag string
-	// named is the fingerprint the SignerInfo names, before anything has verified it.
-	named string
+	// named is the fingerprint the SignerInfo names, before anything has verified it; namedSubject is that
+	// certificate's subject, held back on the same terms.
+	named, namedSubject string
 	// proof is a small COPY of what `SignedRevisionFor` needs from the SignerInfo — never the parsed blob, which aliases
 	// `/Contents`: M dictionaries sharing one indirect `/Contents` held M decoded copies, +804 MB on a 4 MB file
 	// (P02.S01's review), on the path every install, mutation and undo runs. Nil where there is no single signer.
@@ -254,6 +263,7 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 		// multi-SignerInfo shape a PDF signature never has. Either way nib cannot say who signed.
 		if cert := p7.GetOnlySigner(); cert != nil {
 			rev.named = hex.EncodeToString(fingerprintOf(cert))
+			rev.namedSubject = subjectOf(cert)
 		}
 		rev.conjunct, rev.gapStart, rev.gapEnd = structureOf(pdf, v, br, rev.ByteRange, allInts, stream.GetID() != 0, memo)
 		revs = append(revs, rev)
@@ -807,9 +817,35 @@ func joinLibrary(revs []Revision, signers []verify.Signer) ([]int, error) {
 		// by fingerprint — a refused copy carrying the victim's would be selected as the victim.
 		if revs[j].Verified && revs[j].Cause == "" {
 			revs[j].Fingerprint = revs[j].named
+			revs[j].Subject = revs[j].namedSubject
 		}
 	}
 	return idx, nil
+}
+
+// maxSubjectRunes bounds a certificate subject as nib carries it for display. A subject is text from a
+// certificate inside an untrusted document; a common name is at most 64 characters by X.520, and a whole
+// subject is longer, so the bound is generous for either and still one line.
+const maxSubjectRunes = 200
+
+// subjectOf is what a certificate says its holder is called, as one line of display text: the subject's
+// common name, or the whole subject (RFC 2253 form) where it has none. Control characters become spaces —
+// the text is a stranger's — and anything past `maxSubjectRunes` is cut and marked.
+func subjectOf(cert *x509.Certificate) string {
+	s := cert.Subject.CommonName
+	if strings.TrimSpace(s) == "" {
+		s = cert.Subject.String()
+	}
+	s = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, s))
+	if r := []rune(s); len(r) > maxSubjectRunes {
+		s = string(r[:maxSubjectRunes]) + "…"
+	}
+	return s
 }
 
 // Revisions returns one record per signature-shaped dictionary in pdf, in xref order, each saying

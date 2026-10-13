@@ -103,3 +103,55 @@ func selfSignedCert(t *testing.T) ([]byte, string) {
 	}
 	return certPEM, hex.EncodeToString(fp)
 }
+
+// TestSignersAreNamedByWhatThisMachineKnows — ADR-147, `/pending 831`: beside each signer, the label of the
+// pinned peer whose fingerprint signed and the fingerprint's six words, in the signers' order. The words need
+// no vault; the pinned name does. A signer nobody could establish gets neither.
+func TestSignersAreNamedByWhatThisMachineKnows(t *testing.T) {
+	peer, stranger := strings.Repeat("bb", 32), strings.Repeat("cc", 32)
+	st := sign.Status{State: sign.Valid, Signers: []sign.SignerInfo{
+		{Valid: true, Fingerprint: stranger, Name: "Typed Name"},
+		{Valid: true, Fingerprint: strings.ToUpper(peer)},
+		{Valid: false},
+	}}
+	if got := signersNamed(nil, sign.Status{State: sign.Unsigned}); got != nil {
+		t.Fatalf("an unsigned document names %v", got)
+	}
+	strangerFP, _ := hex.DecodeString(stranger)
+	peerFP, _ := hex.DecodeString(peer)
+	wantWords := nameOrEmpty(strangerFP)
+	if wantWords == "" {
+		t.Fatal("setup: a 32-byte fingerprint has no six-word name")
+	}
+
+	// Locked: the words are still there, and no pinned name is claimed.
+	locked := signersNamed(nil, st)
+	if len(locked) != 3 || locked[0].Words != wantWords || locked[1].Words != nameOrEmpty(peerFP) {
+		t.Fatalf("with no vault: %+v — want each fingerprint's words, in order", locked)
+	}
+	if locked[1].Pinned != "" {
+		t.Errorf("with no vault a pinned name is given: %q", locked[1].Pinned)
+	}
+	if locked[2] != (signerNamed{}) {
+		t.Errorf("a signer with no fingerprint is named %+v", locked[2])
+	}
+
+	ts, srv := startServerWith(t)
+	authedClient(t, ts)
+	srv.mu.Lock()
+	v := srv.vault
+	srv.mu.Unlock()
+	if err := v.AddCeremonyPeer(peerFP, "  A counterparty ", "c"); err != nil {
+		t.Fatal(err)
+	}
+	got := signersNamed(v, st)
+	if got[1].Pinned != "A counterparty" {
+		t.Errorf("the pinned peer's signature is named %q, want the label the user gave it", got[1].Pinned)
+	}
+	if got[0].Pinned != "" {
+		t.Errorf("a stranger is given a pinned name: %q — and never the name they typed", got[0].Pinned)
+	}
+	if got[2] != (signerNamed{}) {
+		t.Errorf("a signer with no fingerprint is named %+v", got[2])
+	}
+}
