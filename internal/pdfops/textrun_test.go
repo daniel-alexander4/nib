@@ -86,6 +86,10 @@ func TestTheTextStateMachine(t *testing.T) {
 			[]want{{" A", 0, 0, 10, (helv(" ")/100+2+3)*0.5 + (helv("A")/100+2)*0.5, true, widthFromStd14}}},
 		{"TJ kerning is applied, in one run", "BT /F1 10 Tf [(A) -500 (B)] TJ ET",
 			[]want{{"AB", 0, 0, 10, helv("A")/100 + 5 + helv("B")/100, true, widthFromStd14}}},
+		// /pending 871: Acrobat sets the rest of a word from the line's start with one adjustment ahead of it.
+		{"a TJ adjustment ahead of the first glyph moves the run and is not its width", "BT /F1 10 Tf 100 700 Td [-500 (A) -200 (B) -300] TJ (C) Tj ET",
+			[]want{{"AB", 105, 700, 10, helv("A")/100 + 2 + helv("B")/100 + 3, true, widthFromStd14},
+				{"C", 105 + helv("A")/100 + 2 + helv("B")/100 + 3, 700, 10, helv("C") / 100, true, widthFromStd14}}},
 		{"' and \" move to the next line, and \" sets its spacing", "BT /F1 10 Tf 12 TL 0 700 Td (A) Tj (B) ' 1 2 (C) \" ET",
 			[]want{{"A", 0, 700, 10, helv("A") / 100, true, widthFromStd14},
 				{"B", 0, 688, 10, helv("B") / 100, true, widthFromStd14},

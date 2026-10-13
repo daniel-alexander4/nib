@@ -1519,10 +1519,11 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		setFont(l[0].looks[0].font, l[0].looks[0].tfSize)
 		setSpacing(l[0].spacing[0])
 		openArray()
-		// The line's lead: where its first word began, past the origin of its first run (a leading kern or space). A new
-		// line takes the last line's.
+		// The line's lead: where its first word began, past where its first run's operator stood — the run's origin less
+		// an adjustment ahead of its first glyph (`textRun.lead`), plus a leading space. A new line takes the last line's.
 		li := min(i, n-1)
-		if lead := lines[li][0].startX - para.lines[li].runs[0].x; math.Abs(lead) > 1e-9 {
+		first := para.lines[li].runs[0]
+		if lead := lines[li][0].startX - (first.x - first.lead); math.Abs(lead) > 1e-9 {
 			fmt.Fprintf(&buf, "%s ", adj(lead, size, cur))
 		}
 		for wi, w := range l {
