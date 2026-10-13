@@ -304,9 +304,10 @@ type DocumentFacts struct {
 	Readable    bool
 	Tagged      bool
 	Annotations int
-	FormFields  int
 	// FieldNames is every terminal form field by its fully qualified name, in the form's order — the
-	// fields themselves, where FormFields is only the length of the form's top-level array.
+	// fields themselves. The length of the form's top-level array was published here as `FormFields`
+	// until `/pending 582`: it is not a count of fields (a merge files two incoming fields under one
+	// new parent), and nothing outside this package read it once the commit door compared names.
 	FieldNames []string
 }
 
@@ -317,7 +318,6 @@ func Inspect(pdf []byte) DocumentFacts {
 		Readable:    s.readable,
 		Tagged:      s.claims(),
 		Annotations: s.annots,
-		FormFields:  s.formFields,
 		FieldNames:  s.fieldNames,
 	}
 }

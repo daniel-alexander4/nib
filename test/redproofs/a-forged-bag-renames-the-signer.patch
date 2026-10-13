@@ -1,13 +1,15 @@
 --- a/internal/sign/revisions.go
 +++ b/internal/sign/revisions.go
-@@ -193,8 +193,8 @@
+@@ -193,9 +193,9 @@
  		rev.bag = bagKey(rawsOf(p7.Certificates))
  		// GetOnlySigner is nil for a bag that names no certificate it carries, and for the
  		// multi-SignerInfo shape a PDF signature never has. Either way nib cannot say who signed.
 -		if cert := p7.GetOnlySigner(); cert != nil {
 -			rev.named = hex.EncodeToString(fingerprintOf(cert))
+-			rev.namedSubject = subjectOf(cert)
 +		if len(p7.Certificates) > 0 {
 +			rev.named = hex.EncodeToString(fingerprintOf(p7.Certificates[0]))
++			rev.namedSubject = subjectOf(p7.Certificates[0])
  		}
  		rev.conjunct, rev.gapStart, rev.gapEnd = structureOf(pdf, v, br, rev.ByteRange, allInts, stream.GetID() != 0, memo)
  		revs = append(revs, rev)

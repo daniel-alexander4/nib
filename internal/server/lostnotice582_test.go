@@ -122,9 +122,8 @@ func TestFormFieldsAreComparedByNameNotByCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, after := pdfops.Inspect(form), pdfops.Inspect(doubled)
-	if len(before.FieldNames) != 2 || len(after.FieldNames) != 4 || after.FormFields != 3 {
-		t.Fatalf("setup: the form reads %q and its self-append %q (top-level %d) — want 2 fields, then 4 "+
-			"under a top-level array of 3, which is the count the old comparison read", before.FieldNames, after.FieldNames, after.FormFields)
+	if len(before.FieldNames) != 2 || len(after.FieldNames) != 4 {
+		t.Fatalf("setup: the form reads %q and its self-append %q — want 2 fields, then 4", before.FieldNames, after.FieldNames)
 	}
 	_, broughtFields := broughtIn(form)
 	if f := fateOf(form, doubled, 0, broughtFields); f.lostFields != 0 {

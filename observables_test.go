@@ -366,11 +366,14 @@ var published = map[string][]string{
 	// `Readable:` / `Tagged:` and never selects `.Readable` off one, so the scan is right that it
 	// reads none of these fields — and an entry naming a file that reads nothing is what
 	// `/pending 558` calls laundering the outside-the-package arm.
-	"pdfops.DocumentFacts": {"internal/server/undo.go"},
-	"vault.KeyInfo":        {"internal/server/keys.go", "web/app.js"},
-	"vault.PinnedPeer":     {"internal/server/peers.go", "internal/vault/vault.go"},
-	"vault.Settings":       {"internal/server/settings.go", "internal/vault/vault.go"},
-	"vault.Image":          {"internal/server/images.go", "internal/vault/vault.go"},
+	"pdfops.DocumentFacts": {"internal/server/undo.go", "internal/server/pages.go"},
+	// What the server reads off a document for every answer it gives about it (ADR-147): the flags and
+	// XFA it always read, and whether it is labelled and tagged. `docResponse` is its one reader.
+	"pdfops.AnswerFacts": {"internal/server/server.go"},
+	"vault.KeyInfo":      {"internal/server/keys.go", "web/app.js"},
+	"vault.PinnedPeer":   {"internal/server/peers.go", "internal/vault/vault.go"},
+	"vault.Settings":     {"internal/server/settings.go", "internal/vault/vault.go"},
+	"vault.Image":        {"internal/server/images.go", "internal/vault/vault.go"},
 	// **`ImageMeta` is the listing's shape and `Image` is the fetch's** (/pending 567). Splitting
 	// them is what let the accessors deep-copy: `handleImagesList` renders id, name and MIME, so it
 	// reads this one, and `handleImageGet` and `overlay.go` still read `Image` for its `Data`. Both

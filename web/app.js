@@ -14140,11 +14140,11 @@ function xfaNoticeWords(state) {
 function signingLabelWords(state) {
   switch (state) {
     case 'removed':
-      return 'This document carries a PDF/UA or PDF/A conformance label. Signing removes the label, because '
-        + 'Nib has not checked that the signed document conforms.';
+      return 'This document is labelled PDF/UA or PDF/A. Signing removes the label, because Nib has not '
+        + 'checked that the signed document still meets that standard.';
     case 'kept':
-      return 'This document carries a PDF/UA or PDF/A conformance label and is already signed. Signing it '
-        + 'again keeps the label, which Nib has not checked.';
+      return 'This document is labelled PDF/UA or PDF/A and is already signed. Signing it again keeps the '
+        + 'label, which Nib has not checked.';
     default:
       return '';
   }

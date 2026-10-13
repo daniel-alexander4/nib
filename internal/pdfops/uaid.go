@@ -508,10 +508,10 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 // `nib sign` prints them; the window's own copies (`signingLabelWords`, web/app.js) are held equal to these by
 // a jsdom test. They say what signing does and no more: no signing path runs a conformance check.
 const (
-	LabelRemovedBySigning = "This document carries a PDF/UA or PDF/A conformance label. Signing removes the " +
-		"label, because Nib has not checked that the signed document conforms."
-	LabelKeptBySigning = "This document carries a PDF/UA or PDF/A conformance label and is already signed. " +
-		"Signing it again keeps the label, which Nib has not checked."
+	LabelRemovedBySigning = "This document is labelled PDF/UA or PDF/A. Signing removes the label, because " +
+		"Nib has not checked that the signed document still meets that standard."
+	LabelKeptBySigning = "This document is labelled PDF/UA or PDF/A and is already signed. Signing it again " +
+		"keeps the label, which Nib has not checked."
 )
 
 // SigningLabelNote is the sentence for pdf, or "" when it carries no label (or cannot be read — and then

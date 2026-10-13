@@ -96,6 +96,9 @@ func TestEveryClaimOfTaggingGoesThroughTheOneDoor(t *testing.T) {
 		door:          true,
 		"inspectTags": true,
 		"selectPages": true,
+		// The READ `inspectTags` used to hold inline, moved out so the server's per-answer read
+		// (`ReadAnswerFacts`, ADR-147) asks the same two keys the same way. It writes nothing.
+		"taggingClaimOf": true,
 	}
 	var offenders []string
 	for fn, file := range funcsWriting {

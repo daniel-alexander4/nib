@@ -918,3 +918,5 @@ home today.
   — `pdfread.Write` drops `/XFA` and `/NeedsRendering` together and refuses a document read with `/NeedsRendering true` (422 `dynamic-xfa`); the reading is taken before validation, the window announces it, and a ceremony is not convened over XFA (422 `xfa`).
 - [ADR-146](146-a-document-counts-its-installs-and-a-posted-operation-names-the-count-it-was-built-on.md) — **a document counts its installs, and a posted operation names the count it was built on**
   — `document.install` is the one writer of `document.data` and moves `rev`; the window echoes it as `baseRev` on the page and outline routes, and a stale echo is `errDocChanged` (409), as a stale snapshot is.
+- [ADR-147](147-a-document-says-what-a-step-will-do-before-the-step.md) — **a document says what a step will do before the step**
+  — facts on the document's own answer (`conformanceLabel`, `tagged`, `signerNamed`, the hop quote's `block`) are said on the surface where the step is taken: what signing does to a PDF/UA or PDF/A label, that a crop on a tagged document only hides, who a signer is by what this machine knows, and where Sign now will place the block.
