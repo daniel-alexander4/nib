@@ -125,7 +125,7 @@ func QUICListenOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, pinnedSPKI
 	if e == nil {
 		return nil, fmt.Errorf("p2p: no shared endpoint")
 	}
-	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	cfg, refused, err := listenTLS(identityCertPEM, identityKeyPEM, pinnedSPKI)
 	if err != nil {
 		return nil, err
 	}
@@ -134,5 +134,7 @@ func QUICListenOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, pinnedSPKI
 	if err != nil {
 		return nil, err
 	}
-	return newQUICListener(e.mux, e.tr, ln, false), nil
+	l := newQUICListener(e.mux, e.tr, ln, false)
+	l.refused = refused
+	return l, nil
 }

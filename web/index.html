@@ -2567,6 +2567,15 @@
           <summary class="libhint">Technical detail</summary>
           <p id="srvWaitWhyDetail" class="libhint"></p>
         </details>
+        <!-- Who this arm turned away, or was turned away by, while it waits (ADR-156). A line of
+             its own beside the diagnosis: that one says why nobody has REACHED this computer, this
+             one that somebody did and was refused. Polite, like its neighbours — it updates while
+             somebody waits. -->
+        <p id="srvWaitTurnedAway" class="libhint" role="status" aria-live="polite" hidden></p>
+        <details id="srvWaitTurnedAwayMore" hidden>
+          <summary class="libhint">What was turned away</summary>
+          <p id="srvWaitTurnedAwayDetail" class="libhint"></p>
+        </details>
         <div class="nettest">
           <button id="srvNetTestGo" type="button">Check this network</button>
           <p id="srvNetTestOut" class="libhint" role="status" aria-live="polite" hidden></p>

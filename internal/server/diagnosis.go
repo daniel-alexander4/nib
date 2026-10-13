@@ -346,6 +346,18 @@ func (s *Server) writeConnectDiagnosis(w http.ResponseWriter, cer *ceremonyID, e
 		})
 		return
 	}
+	// **Turned away at the pinned-peer check is lifted before D19 too (ADR-156).** Something
+	// answered, so every D19 cause — each of them about reaching the peer — would be the wrong one.
+	if named, ok := dialRefusalSentence(err); ok {
+		writeJSONStatus(w, http.StatusBadGateway, diagnosisResponse{
+			Error:   named,
+			Cause:   "turned-away",
+			Summary: named,
+			Detail: "The connection was made and then refused while the two machines were proving " +
+				"who they are. Nothing is wrong with either machine's network. Reason: " + err.Error(),
+		})
+		return
+	}
 	d := cer.diagnose()
 	if d.cause == causeUndiagnosed {
 		httpError(w, http.StatusBadGateway, connectFailure(err))

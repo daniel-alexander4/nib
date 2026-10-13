@@ -388,7 +388,7 @@ func localWildcardFor(remote *net.UDPAddr) string {
 // SessionTLS is reused unchanged, and P02.S02's spike measured that it fires under QUIC
 // on both ends.
 func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Listener, error) {
-	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	cfg, refused, err := listenTLS(identityCertPEM, identityKeyPEM, pinnedSPKI)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +406,9 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 		mux.Close()
 		return nil, err
 	}
-	return newQUICListener(mux, tr, ln, true), nil
+	l := newQUICListener(mux, tr, ln, true)
+	l.refused = refused
+	return l, nil
 }
 
 // newQUICListener wires a quic listener onto the shared termination protocol.
@@ -635,7 +637,13 @@ func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
 // leaves the shared endpoint's transport and mux, which the DHT and the racing dials ride.
 type HandshakeListener struct {
 	ln *quic.Listener
+	// refused counts what the pinned-peer check turned away — see Refusals. This listener does not
+	// embed listenerCore, so it carries its own.
+	refused *Refusals
 }
+
+// Refusals is what this listener's pinned-peer check has refused, the same reading Listener gives.
+func (l *HandshakeListener) Refusals() *Refusals { return l.refused }
 
 // QUICListenHandshakeOn arms a HandshakeListener on the shared endpoint (P05.S09). A wrong peer
 // fails the handshake inside quic-go and never surfaces from Accept, exactly as QUICListenOn's
@@ -644,7 +652,7 @@ func QUICListenHandshakeOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, p
 	if e == nil {
 		return nil, errors.New("p2p: no shared endpoint")
 	}
-	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	cfg, refused, err := listenTLS(identityCertPEM, identityKeyPEM, pinnedSPKI)
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +661,7 @@ func QUICListenHandshakeOn(e *SharedEndpoint, identityCertPEM, identityKeyPEM, p
 	if err != nil {
 		return nil, err
 	}
-	return &HandshakeListener{ln: ln}, nil
+	return &HandshakeListener{ln: ln, refused: refused}, nil
 }
 
 // Accept blocks for the next handshaked connection, or until ctx is cancelled (the coordinator

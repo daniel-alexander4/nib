@@ -1,11 +1,11 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1831,7 +1831,7 @@
+@@ -2889,7 +2889,7 @@
  	//
  	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
  	// a re-delivery hands back the same bytes, never a second signature.
 -	overallDeadline := time.Now().Add(armWindowFor(armInteractive, cer))
 +	overallDeadline := time.Now().Add(sessionAcceptTimeout)
- 	var postSignDeadline time.Time
- 	opened := false // the co-signed document opens once, not per re-delivery
- 	for {
+ 	// **Who this arm turns away is named, and is the reason if the wait runs out (ADR-156)** — see
+ 	// runSession's twin. This arm also DIALS, so what its own dials meet is noted on the same count.
+ 	refused := hl.Refusals()

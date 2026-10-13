@@ -195,6 +195,10 @@ type Listener interface {
 	// tiers will be the next — needs both halves, and carrying the transport
 	// alongside the listener as a separate string is how the two come to disagree.
 	Transport() string
+	// Refusals is what this listener's pinned-peer check has turned away (ADR-156). Accept never
+	// surfaces a refused peer — a stranger must not be able to spend or end an arm — so this is
+	// the only place a refusal can be read, and it is a count.
+	Refusals() *Refusals
 	Close() error
 }
 

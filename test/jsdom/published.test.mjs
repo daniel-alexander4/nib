@@ -142,6 +142,9 @@ const PUBLISHED = [
   // What each tier of the connection ladder is doing (P06.S05). Published while armed and NOT
   // behind the diagnosis's bootstrap gate, which is the gate that made this screen blank.
   { type: 'armProgress', readers: ['web/app.js'] },
+  // Who an arm turned away at the pinned-peer check while it waits (ADR-156). `reflectTurnedAway`
+  // renders the summary, puts the detail behind a disclosure and the time in the line's title.
+  { type: 'turnedAwayView', readers: ['web/app.js'] },
   // Convene and accept (P06.S04), after four slices parked in EXCLUDED.
   { type: 'conveneResponse', readers: ['web/app.js'] },
   { type: 'conveneInvite', readers: ['web/app.js'] },

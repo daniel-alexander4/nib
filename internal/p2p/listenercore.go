@@ -53,7 +53,15 @@ type listenerCore struct {
 	// capLoopback makes the per-source cap bind loopback too. False everywhere but a test of the
 	// cap itself: see `handshakeSource`.
 	capLoopback bool
+	// refused counts what the pinned-peer check turned away on this listener (ADR-156). Set by the
+	// constructor that built the TLS config, because the check runs inside that config; nil on a
+	// core a test wired to a fake listener, which `Refusals.Report` reads as nothing refused.
+	refused *Refusals
 }
+
+// Refusals is what this listener's pinned-peer check has refused — the ONE reading both transports
+// give, because both embed this core.
+func (l *listenerCore) Refusals() *Refusals { return l.refused }
 
 // maxConcurrentHandshakes bounds the in-flight handshakes.
 //
