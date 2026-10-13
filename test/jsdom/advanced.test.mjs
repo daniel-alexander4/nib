@@ -130,6 +130,12 @@ test('the invitation field and its disclosure follow the ceremonies switch, and 
   assert.deepEqual([shown('#srvInviteRow'), shown('#srvInviteNote')], [true, true], 'with ceremonies on the invitation field or its disclosure is not offered');
   doc.getElementById('srvInvite').value = 'nib-invite-v1:typed-while-on';
   assert.equal((await arm()).invitation, 'nib-invite-v1:typed-while-on', 'setup: with ceremonies on the invitation typed is not what is sent');
+  // /pending 833: the server reads an absent transport as TCP, and a ceremony armed over TCP
+  // publishes nothing — against the paragraph beside the field, which says Nib finds the other
+  // person over the public DHT.
+  assert.equal(armed.transport, 'quic',
+    'an arm with an invitation named no QUIC transport, so the server arms it over TCP and nobody '
+    + 'off the local network can find it');
 
   await set(false);
   assert.deepEqual([shown('#srvInviteRow'), shown('#srvInviteNote')], [false, false],
@@ -139,5 +145,13 @@ test('the invitation field and its disclosure follow the ceremonies switch, and 
     'an invitation typed before ceremonies were switched off was sent from a field the user can no longer see');
   // Ordinary co-signing is untouched: the arm itself still went.
   assert.equal(armed.fingerprint, 'ab'.repeat(32));
+  assert.equal('transport' in armed, false,
+    'an arm that sent no invitation named a transport: the plain arm is the TCP one, and an invitation '
+    + 'the user can no longer see must not leave its transport behind either');
+  // And with ceremonies on but nothing typed, the arm is the plain one too.
   doc.getElementById('srvInvite').value = '';
+  await set(true);
+  assert.deepEqual(['invitation' in (await arm()), 'transport' in armed], [false, false],
+    'an arm with an empty invitation field sent an invitation or a transport');
+  await set(false);
 });

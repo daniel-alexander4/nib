@@ -888,3 +888,7 @@ home today.
   previous session only after a grace older than two reconnects**
   — amends ADR-085 decision 1: a grace also runs for a stream reconnect or a reload, and a launch landing in it
   closed every document under a window still on screen.
+- [ADR-134](134-the-windows-arm-names-quic-exactly-when-it-carries-an-invitation.md) — **the window's arm names
+  QUIC exactly when it carries an invitation**
+  — an absent transport is TCP and a TCP ceremony arm publishes nothing, against the form's own disclosure; a plain
+  LAN arm stays TCP and there is still no transport control.

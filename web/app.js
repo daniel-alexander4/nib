@@ -1803,6 +1803,10 @@ async function armRecv() {
   // two Nibs on one machine, since the second cannot take the same port. The typed address is the
   // manual fallback, behind the Advanced disclosure.
   const bind = els.srvBind.value.trim();
+  // **Only while ceremonies are on (ADR-113).** The field is hidden with the switch, and a
+  // hidden field keeps what was typed in it: text pasted before the switch went off would
+  // otherwise ride along on an arm the user believes is the plain, nothing-leaves-the-LAN one.
+  const invitation = (advanced.ceremony && els.srvInvite && els.srvInvite.value.trim()) || undefined;
   recvArmedLabel = opt.dataset.label;
   els.srvArmGo.disabled = true;
   const res = await apiFetch('/api/session/arm', {
@@ -1812,10 +1816,13 @@ async function armRecv() {
     // LAN path, and nothing reaches the internet.
     body: JSON.stringify({
       fingerprint: opt.value, bind, mode: recvMode,
-      // **Only while ceremonies are on (ADR-113).** The field is hidden with the switch, and a
-      // hidden field keeps what was typed in it: text pasted before the switch went off would
-      // otherwise ride along on an arm the user believes is the plain, nothing-leaves-the-LAN one.
-      invitation: (advanced.ceremony && els.srvInvite && els.srvInvite.value.trim()) || undefined,
+      invitation,
+      // **QUIC exactly when there is an invitation (/pending 833).** The server reads an absent
+      // transport as TCP, and a ceremony armed over TCP is reached but never found: it publishes
+      // nothing — while the form says that with an invitation Nib finds the other person over the
+      // public DHT. It is also the transport the machine's own accept-time arm uses, which this
+      // arm replaces. A plain arm sends none and stays the TCP, nothing-leaves-the-LAN one.
+      transport: invitation ? 'quic' : undefined,
     }),
   });
   els.srvArmGo.disabled = false;

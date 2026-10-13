@@ -291,9 +291,9 @@ type sessionDecision struct {
 // tears nothing down. The refusal must be atomic with the mutation, so it belongs in the door and
 // not at the route: the 409 is the rendering of this answer, never a second copy of it.
 //
-// Not reachable from any shipped surface TODAY — `armCeremony` needs `transport: "quic"` and
-// neither `web/` nor `cmd/` ever sends one — so this is a latent trap rather than a live user
-// defect, and it goes live the moment anything selects QUIC.
+// Reachable from a shipped surface since /pending 833: `armCeremony` needs `transport: "quic"`,
+// and the window's arm sends one whenever it sends an invitation. Until then it was a latent trap,
+// reached only by the harness and the accept-time sweep.
 func (se *session) armedLocked() bool {
 	for _, a := range se.arms {
 		if a != nil {
@@ -3752,11 +3752,13 @@ func readJSON(r *http.Request, v any) error {
 // transportQUIC is the only value that selects the QUIC path. Everything else — the
 // empty string above all — is TCP, so every caller that predates D14 keeps working.
 //
-// The choice is deliberately not in the interface. D8's connection ladder attempts
+// The choice is deliberately not a CONTROL in the interface. D8's connection ladder attempts
 // every tier concurrently and picks the first that completes, which means the user
 // should never be choosing a transport at all; a toggle shipped now would be a control
-// the ladder exists to remove. It is selectable over the API because that is what the
-// multi-instance harness drives.
+// the ladder exists to remove. It is selectable over the API, and two callers select it: the
+// multi-instance harness, and the window's own arm, which sends "quic" exactly when it sends an
+// invitation and nothing otherwise (/pending 833) — a ceremony armed over TCP publishes nothing,
+// and the form beside that field says Nib finds the other person over the public DHT.
 const (
 	// Aliases of internal/p2p's, not copies. The string that selects a dialer, the
 	// string a listener reports and the string this package compares against a
