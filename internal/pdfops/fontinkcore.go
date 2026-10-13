@@ -41,14 +41,33 @@ import (
 //     codes 0x20–0x7E are the same ninety-five glyphs, so the code itself says which glyph is drawn.
 //   - **A font with a program** (`/FontFile`, `/FontFile2`, `/FontFile3`), read or refused: it is not substituted,
 //     and its own points are the only bound (fontink.go).
-//   - **Symbol and ZapfDingbats**, a subset tag, and any name not listed below, however close.
+//   - **Symbol and ZapfDingbats** (below), a subset tag, and any name not listed below, however close.
+//
+// # The family name with its spaces (`/pending 851`)
+//
+// Word names an unembedded Times New Roman `/Times#20New#20Roman`, `…,Bold`, `…,Italic`, `…,BoldItalic` — the
+// Reference's alternative name with the spaces of the family's own name left in (29 words of the accuracy corpus,
+// all in one Word-made document). It is the same font as `TimesNewRoman`, and a viewer reads it as that: pdf.js
+// strips white space and turns a comma into a hyphen before it looks a name up (`normalizeFontName`), so both
+// spellings reach its one `TimesNewRoman → Times-Roman` entry and draw the same substitute. Only these four are
+// listed. `Courier New` with spaces is the same shape and is NOT listed: the corpus holds no word in it, so
+// nothing would have judged it.
+//
+// # Symbol and ZapfDingbats stay out, and for different reasons
+//
+// The rule rests on a substitute being drawn to stand in for Adobe's letters in the same ninety-five codes. A pi
+// font has no letters: its codes are its own built-in encoding, the glyphs differ in height by design, and what a
+// viewer substitutes is whichever symbol font it has. For Symbol the box also bounds nothing — its top is 1.010
+// of a size, above the full size the reach already covers. ZapfDingbats' is 0.820 and would tighten, but nothing
+// has laid a substitute's ornaments against it, and a bound nothing measured is the one ADR-139 refused.
 //
 // Declared: a viewer substituting a font whose ASCII glyphs stand taller than Adobe's whole-font box plus the
 // reader's one-point pad would leave ink above the box. None of the four renderings does.
 
 // coreFontAlias is every name read as a standard text font, to the Core 14 name whose box it takes: the twelve
-// themselves, the alternative names the PDF Reference lists for them (1.7, implementation note 62), and the
-// PostScript names of the fonts those alternatives are. Exact, case and punctuation included.
+// themselves, the alternative names the PDF Reference lists for them (1.7, implementation note 62), the
+// PostScript names of the fonts those alternatives are, and Times New Roman's four names as Word spells them.
+// Exact, case and punctuation included.
 var coreFontAlias = map[string]string{
 	"Helvetica": "Helvetica", "Arial": "Helvetica", "ArialMT": "Helvetica",
 	"Helvetica-Bold": "Helvetica-Bold", "Arial,Bold": "Helvetica-Bold", "Arial-BoldMT": "Helvetica-Bold",
@@ -59,6 +78,10 @@ var coreFontAlias = map[string]string{
 	"Times-Bold": "Times-Bold", "TimesNewRoman,Bold": "Times-Bold", "TimesNewRomanPS-BoldMT": "Times-Bold",
 	"Times-Italic": "Times-Italic", "TimesNewRoman,Italic": "Times-Italic", "TimesNewRomanPS-ItalicMT": "Times-Italic",
 	"Times-BoldItalic": "Times-BoldItalic", "TimesNewRoman,BoldItalic": "Times-BoldItalic", "TimesNewRomanPS-BoldItalicMT": "Times-BoldItalic",
+	// Times New Roman as Word writes it: the family name with its spaces (`/Times#20New#20Roman,Bold` in the
+	// file; pdfcpu hands a name over decoded). See "The family name with its spaces" above.
+	"Times New Roman": "Times-Roman", "Times New Roman,Bold": "Times-Bold",
+	"Times New Roman,Italic": "Times-Italic", "Times New Roman,BoldItalic": "Times-BoldItalic",
 
 	"Courier": "Courier", "CourierNew": "Courier", "CourierNewPSMT": "Courier",
 	"Courier-Bold": "Courier-Bold", "CourierNew,Bold": "Courier-Bold", "CourierNewPS-BoldMT": "Courier-Bold",
