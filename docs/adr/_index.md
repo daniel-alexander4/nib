@@ -906,3 +906,5 @@ home today.
   — extends ADR-098/132: a simple font with no program, named as a Core text font, tightens the top of the box to the font's FontBBox; per-glyph bounds were refused by measurement — they leak under a substitute.
 - [ADR-140](140-a-returned-document-is-what-was-sent-plus-one-signature-and-ends-there.md) — **a returned document is what was sent plus one signature, and ends there**
   — supersedes ADR-060 §Consequences for a RETURNED document only: `returnedWithOneSignature` is the one door for `Initiate` and `Carry`; all three `AddedAfter` causes are refused, and a carry goes only to the roster's next signer.
+- [ADR-141](141-nib-checks-at-most-64-signatures-on-one-document-and-says-so-past-that.md) — **Nib checks at most 64 signatures on one document, and says so past that**
+  — the library's cost is records × signed bytes; the ceiling counts only records the library processes, refuses the document whole with `Unchecked: too-many-signatures`, and makes a cross-record total redundant.

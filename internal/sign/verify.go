@@ -150,6 +150,10 @@ const (
 	// lets one document cost it (`libraryLookupCost`, /pending 751, 758, 760), so it was refused
 	// before the signature reader read anything and the signature it carries was never checked.
 	UncheckedLookupCost UncheckedCause = "lookup-cost"
+	// UncheckedTooManySignatures: the document carries more signatures than nib hands its signature
+	// reader for one document (`maxLibrarySignatures`, /pending 735, ADR-141), so it was refused before
+	// any of them was hashed and none was checked.
+	UncheckedTooManySignatures UncheckedCause = "too-many-signatures"
 )
 
 // AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
@@ -302,6 +306,14 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 // enumerated (revs) — both of them already paid, with no error. Its one other caller is the boundary walk, which has
 // just read a prefix exactly this way to screen it (`boundaryCandidate`) and used to pay both again (/pending 803).
 func verifySwept(data []byte, ctx *model.Context, revs []Revision) (Status, []Revision, error) {
+	// **No more than `maxLibrarySignatures` records reach the library** (ADR-141, /pending 735): its
+	// cost is records × signed bytes, and `libraryWouldOverread` below bounds each record and not their number.
+	// Refused whole and in its own words — `Unchecked` says the count was the reason, because a
+	// reader told only `could-not-check` cannot tell this document from a damaged one. No signer is
+	// listed: none was checked, and a list of the first 64 would read as the document's signers.
+	if libraryRecords(revs) > maxLibrarySignatures {
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs), Timestamps: timestampsOf(revs), Unchecked: UncheckedTooManySignatures}, revs, errTooManySignatures
+	}
 	// **The population the verdict is over is checked against the one pdfcpu read** (/pending 749).
 	// The sweep enumerates as the library does, so a signature the library's reader never reaches
 	// — a hybrid file's `/XRefStm`-only object, the /pending 733 shape — is missing from both, and
