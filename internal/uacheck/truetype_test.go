@@ -299,7 +299,6 @@ func ttFixtures() []ttFixture {
 	noCmap := sfnt(ttTable{"head", ttHead()}, ttTable{"hhea", ttHhea(ttGlyphs)}, ttTable{"hmtx", ttHmtx(ttGlyphs)}, ttTable{"maxp", ttMaxp(ttGlyphs)})
 	winDiffs := "/Encoding << /BaseEncoding /WinAnsiEncoding /Differences [65 /A /B /C] >>"
 	shared := "fonts share one TrueType program"
-	fused := "merged identical font dictionaries"
 	fx := []ttFixture{
 		{name: "non-symbolic, WinAnsi, (3,1) and (1,0)", pdf: ttDoc("/Flags 32", "/Encoding /WinAnsiEncoding", "(ABC) Tj", std)},
 		{name: "non-symbolic, MacRoman", pdf: ttDoc("/Flags 32", "/Encoding /MacRomanEncoding", "(ABC) Tj", std)},
@@ -359,8 +358,7 @@ func ttFixtures() []ttFixture {
 			ttFontDict("/Encoding /MacExpertEncoding"), mergeObjs(ttObjects("/Flags 32", "FontFile2", std, ""),
 				map[int]string{11: strings.Replace(ttFontDict("/Encoding /MacExpertEncoding"), "/BaseFont /Probe", "/BaseFont /ProbeTwo", 1)})),
 			refused: []string{".", ".", ".", ".", shared, ".", "."}},
-		{name: "two identical fonts share a program, both named MacExpert", pdf: ttShared("/Encoding /MacExpertEncoding", "/Encoding /MacExpertEncoding", true, std),
-			refused: []string{fused, ".", ".", fused, fused, ".", "."}},
+		{name: "two identical fonts share a program, both named MacExpert", pdf: ttShared("/Encoding /MacExpertEncoding", "/Encoding /MacExpertEncoding", true, std)},
 	}
 	// The P07.S03 review's shapes. /Flags is read as a long, a real cast (4.0 and 36.7 are symbolic); a /FontFile3
 	// program's name-table throw leaves EVERY sharing font unparsed; the subset flag in the OpenType key is "six

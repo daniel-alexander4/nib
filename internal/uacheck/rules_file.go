@@ -724,18 +724,13 @@ func checkReferenceXObjects(d *Document) Result {
 // stream it TRAVERSES and every appearance entry of an annotation it visits — and it traverses a stream
 // once per object key. `retraversal` has the rule and the measurements.
 //
-// # And the count may not be nib's to give
+// # The object numbers are the file's own (ADR-148)
 //
-// pdfcpu fuses equal form XObjects when it opens the file, so the object numbers the walk sees are not
-// always veraPDF's. `formTwins` asks pdfcpu's own predicate which reached forms could have been fused. A
-// keyed form with no twin reached twice is exact. One reached more times than it has twins is a definite
-// failure, since some one of them was reached twice. Anything else touched by a twin is a count nib knows
-// is not veraPDF's, and the answer is a refusal.
-//
-// **The refusal is deliberately wider than the fusion.** A twin is any equal form in the xref table,
-// including an unreferenced copy pdfcpu never fused — so one orphaned duplicate turns a real failure into
-// `CannotCheck`. Telling a fused copy from an unfused one would need the file's references before the
-// optimize pass rewrote them, and a refusal is never a wrong verdict. On veraPDF's corpus it costs nothing.
+// The checker reads with pdfcpu's optimize pass OFF, so two equal forms are two objects here as they are in
+// veraPDF, and a keyed form reached twice is exact. With the pass on pdfcpu fused them, and this rule carried
+// a second count of what could have been fused (`formTwins`) and refused wherever one touched a keyed form
+// or a form that draws another: two equal keyed forms drawn once each (veraPDF passes), and two equal outer
+// forms each drawing a keyed inner (veraPDF fails), were both `CannotCheck`. Both are answered now.
 //
 // # Two declared gaps
 //
@@ -758,20 +753,10 @@ func checkUniqueSemanticParent(d *Document) Result {
 		nrs = append(nrs, nr)
 	}
 	sort.Ints(nrs)
-	var unsure string
 	for _, nr := range nrs {
 		r := d.formReaches[nr]
-		twins, ok := d.formTwins(nr)
-		if !ok {
-			if unsure == "" {
-				unsure = fmt.Sprintf("the document holds more equal-length form XObjects than nib will compare (%d pairs), so "+
-					"which of them pdfcpu fused when it opened the file — and so how often each was drawn — was never "+
-					"established", maxTwinCompares)
-			}
-			continue
-		}
 		keyed := r.dict["StructParents"] != nil
-		if keyed && r.count > twins+1 {
+		if keyed && r.count > 1 {
 			return Result{
 				Verdict: Fail,
 				Why: fmt.Sprintf("form XObject (object %d) carries /StructParents and is drawn %d times, so its "+
@@ -780,23 +765,10 @@ func checkUniqueSemanticParent(d *Document) Result {
 				Where: r.first + "; and " + r.second,
 			}
 		}
-		// **A twin moves nothing when neither the key nor a drawn form is involved**: fusing two forms that
-		// carry no `/StructParents` and draw no other form changes how often an unkeyed form is counted and
-		// how often content with no `Do` is traversed, and neither can fail the clause. Measured on veraPDF's
-		// corpus, five annotation files hold exactly such twins — identical appearance streams — and were
-		// refused before this line and are settled after it, agreeing with veraPDF on every one.
-		if twins > 0 && (keyed || d.drawsForms[nr]) && unsure == "" {
-			unsure = fmt.Sprintf("form XObject (object %d) is equal to %d other form XObject(s) in the file, which "+
-				"pdfcpu fuses into one when it opens it, so how many times each of them is drawn — and so whether "+
-				"one carrying /StructParents is drawn twice — is not something nib can count", nr, twins)
-		}
 	}
-	// A definite failure beats a refusal, so both refusals come after the scan.
+	// A definite failure beats a refusal, so the refusal comes after the scan.
 	if ferr != "" {
 		return Result{Verdict: CannotCheck, Why: ferr}
-	}
-	if unsure != "" {
-		return Result{Verdict: CannotCheck, Why: unsure}
 	}
 	if len(forms) == 0 {
 		return Result{

@@ -336,16 +336,11 @@ func (d *Document) resolveShareGroup(members []*ttFont) {
 	// inner TrueType parse returns, so a name table that throws leaves EVERY font sharing it unparsed, not only the
 	// first (read at the P07.S03 review; nib had applied /FontFile2's rule and failed t1 where veraPDF had no subject).
 	openType := members[0].kind == "OpenType"
-	// **How many fonts share the parse can be unknown** — pdfcpu fuses byte-identical font dictionaries (the optimizer
-	// `open` runs), and a font that does not resolve may be one more TrueType font. Where a name table throws, the count
-	// decides whether the parse counts.
-	if !noneThrow && unknown == "" {
-		if d.Ctx.Optimize != nil && len(d.Ctx.Optimize.DuplicateFonts) > 0 {
-			unknown = "nib's reader merged identical font dictionaries, so how many fonts share this program in veraPDF's " +
-				"reading — which decides whether its parse counts — is not known"
-		} else if d.ttUnresolved != "" {
-			unknown = "a font nib could not resolve may share this program, which decides whether its parse counts"
-		}
+	// **How many fonts share the parse can be unknown** — a font that does not resolve may be one more TrueType
+	// font. Where a name table throws, the count decides whether the parse counts. (Byte-identical font dictionaries
+	// are counted as the file holds them: the checker reads with pdfcpu's fusing pass off, ADR-148.)
+	if !noneThrow && unknown == "" && d.ttUnresolved != "" {
+		unknown = "a font nib could not resolve may share this program, which decides whether its parse counts"
 	}
 	sharedWhy := func(what string) string {
 		return fmt.Sprintf("%d fonts share one TrueType program, and %s depends on which of them veraPDF opens first — "+

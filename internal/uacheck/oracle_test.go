@@ -643,15 +643,10 @@ var knownCannotCheck = map[string]string{
 	"truetype: two fonts share a program, WinAnsi then MacExpert / 7.21.5 t1":                         "which font veraPDF opens first",
 	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.4.1 t2":    "which font veraPDF opens first",
 	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.5 t1":      "which font veraPDF opens first",
-	"truetype: two identical fonts share a program, both named MacExpert / 7.21.4.1 t2":               "pdfcpu fused the twin fonts",
-	"truetype: two identical fonts share a program, both named MacExpert / 7.21.5 t1":                 "pdfcpu fused the twin fonts",
 	"metrics: MacExpert-named, mode 0 on the page and 2 in a pattern / 7.21.5 t1":                     "a second font object inside a pattern: not measured",
 	"metrics: MacExpert-named, mode 0 on the page and 2 in a pattern / 7.21.4.1 t2":                   "a second font object inside a pattern: not measured",
 	"metrics: MacExpert-named, mode 0 on the page and 2 in a form / 7.21.5 t1":                        "a second font object inside a form: not measured-explained",
 	"metrics: MacExpert-named, mode 0 on the page and 2 in a form / 7.21.4.1 t2":                      "a second font object inside a form: not measured-explained",
-	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t1":                 "pdfcpu fused the twin fonts",
-	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t4":                 "pdfcpu fused the twin fonts",
-	"truetype: two identical fonts share a program, both named MacExpert / 7.21.4.1 t1":               "pdfcpu fused the twin fonts",
 
 	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
 	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.

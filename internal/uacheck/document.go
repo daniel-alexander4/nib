@@ -222,12 +222,6 @@ type Document struct {
 	formReaches   map[int]*formReach
 	traversed     map[int]bool
 	reachedAnnots map[int]bool
-	// twinsOf memoises `formTwins` per object number; formsByLength and twinCompares are its index and budget.
-	twinsOf map[int]int
-	// drawsForms is every form XObject whose content draws another form (`walker.form`).
-	drawsForms    map[int]bool
-	formsByLength map[int64][]int
-	twinCompares  int
 }
 
 // nextStream hands out the next content-stream number.
@@ -258,23 +252,35 @@ type roleResolution struct {
 // and a checker whose answer depends on which machine asks is not a checker. Measured at P06.S05's review:
 // `optimizeDuplicateContentStreams: true` there fused two pages' content streams and turned a keyed form
 // drawn once on each from Fail to Pass (`TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer`). The P06
-// phase-close review then found the pin covered that one field: `optimize: false` would switch off the
-// form fusion `formTwins` exists to account for, and `validationMode` decides which files open at all.
+// phase-close review then found the pin covered that one field, and `validationMode` decides which files open
+// at all.
+//
+// **`Optimize` is OFF** (ADR-148, `/pending 672`, superseding ADR-074 decision 3). pdfcpu's optimize pass FUSES
+// equal form XObjects and byte-identical font dictionaries into one object, and veraPDF reads the file's own
+// objects: with the pass on, two equal keyed forms drawn once each read as one form drawn twice, two equal
+// outer forms each drawing a keyed inner read as one outer traversed once, and how many fonts shared a program
+// was not knowable — so the checker carried a second count of pdfcpu's fusions (`formTwins`) and refused
+// wherever one could have moved an answer. With the pass off the object numbers the walk sees are the file's,
+// the counts are veraPDF's, and those refusals are answers. Measured on this tree before and after: the oracle
+// 73,605 of 73,605 pairs strict, the real producers 3,780 of 3,780 with per-clause reach identical, veraPDF's
+// corpus 30,931 pairs with 0 false pass and 0 false fail — both ways — and five `knownCannotCheck` rows answered.
+// The pass also had no budget of its own, so the checker refused a document it was unaffordable on
+// (`pdfread.ErrUnaffordable`); with no pass there is nothing to refuse.
 //
 // **`OptimizeResourceDicts` is OFF** (`/pending 782`). That step prunes each page's `/Resources` to the names
 // pdfcpu's own content scan sees (`consolidateResources`), and that scan does not decode a name's `#xx` escapes:
 // `/X#30 Do` kept a resource called `X#30`, which does not exist, and DELETED `/X0`, the one it draws — so no reader
 // here could find it, however it decoded the name. Every reader here looks a resource up by the name the content
 // uses, so the unpruned dictionary answers every lookup the pruned one did; the step's other half, putting
-// inherited `/Resources` on the page, is done by `open` (`pdfread.InheritResources`). The form and font fusion is not this step's
-// (`optimizeFontAndImages`, which no setting gates), so `formTwins` still sees it.
+// inherited `/Resources` on the page, is done by `open` (`pdfread.InheritResources`). With `Optimize` off the
+// step would not run anyway; the field stays pinned so the reading does not depend on that.
 func checkerConfig() *model.Configuration {
 	conf := model.NewDefaultConfiguration()
 	conf.Reader15 = true
 	conf.DecodeAllStreams = false
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.ValidateLinks = false
-	conf.Optimize = true
+	conf.Optimize = false
 	conf.OptimizeResourceDicts = false
 	conf.OptimizeDuplicateContentStreams = false
 	conf.Limits = model.DefaultResourceLimits()
@@ -293,8 +299,8 @@ func open(pdf []byte) (*Document, error) {
 	}
 	conf := checkerConfig()
 	// Through nib's one read door (`/pending 675`: a /UseCMap loop is refused before pdfcpu's validator recurses
-	// on it and kills the process) and its optimize budget, refusing rather than skipping the pass
-	// (`/pending 714`: the rules were measured against the optimized reading — see ReadOptimizedOrRefuse).
+	// on it and kills the process). The door's optimize pass does not run: `checkerConfig` has it off (ADR-148),
+	// so nothing is fused and nothing is refused as unaffordable.
 	// …and with the four text entries veraPDF reads whatever their type set aside for the validator, which refuses
 	// the whole document over one (`setAsideForValidator`, `/pending 612`).
 	//
