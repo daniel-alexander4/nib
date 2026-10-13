@@ -17159,10 +17159,12 @@ function ceremonyCard(c, mayAct) {
     btn.className = 'cernextbtn';
     btn.type = 'button';
     btn.textContent = 'What happens next?';
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
+    // **One function reads the answer and draws it, and the convener's own signature calls it again**
+    // (`/pending 869`): after Sign now the turn has moved, and the line that said "your turn" must
+    // become the call to the next party without the user re-opening the panel to find it.
+    const showNext = async () => {
       next.textContent = '';
-      const line = await ceremonyNextLine(c, mayAct);
+      const line = await ceremonyNextLine(c, mayAct, showNext);
       next.appendChild(line);
       // **A finished document with no end state on record offers delivery here (/pending 497).**
       // The server now attests `completed` at the last hop, so `c.ended` is the ordinary way the
@@ -17181,7 +17183,8 @@ function ceremonyCard(c, mayAct) {
       // on every panel load and the two renderings should differ only in height.
       const roster = card.querySelector('.cerroster');
       if (roster) roster.hidden = !!next.querySelector('.cerworklist');
-    });
+    };
+    btn.addEventListener('click', () => { btn.disabled = true; return showNext(); });
     next.appendChild(btn);
     card.appendChild(next);
   }
@@ -17893,7 +17896,10 @@ async function loadCeremonyPanel(host, canAct) {
 // **`c` is the ceremony row, not just its id, since P01.S02b.** The action this renders is gated on
 // who convened — `convenedHere(c)` — and on `mayAct`, and neither is derivable from an id. Passing
 // the row rather than adding a second fetch keeps the rail's one-request-per-open shape.
-async function ceremonyNextLine(c, mayAct) {
+//
+// `refresh` redraws this line from a fresh answer; the convener's own signature calls it, because
+// that is the one action here after which the turn is known to have moved.
+async function ceremonyNextLine(c, mayAct, refresh) {
   const id = c.id;
   const p = document.createElement('p');
   p.className = 'cernextline';
@@ -17936,6 +17942,14 @@ async function ceremonyNextLine(c, mayAct) {
   } else if (d.isMe) {
     p.textContent = `It is your turn to sign${cap}${where}.`;
     p.classList.add('certurn');
+    // **The convener signs their own turn HERE (`/pending 869`, ADR-133).** Until this control the
+    // sentence above was all a signing convener was offered — at any roster position, the default
+    // first one included — and every signing call the window makes refused the document.
+    //
+    // Gated on `convenedHere`, as the call below is, and for D22's reason: a party who did not
+    // convene is CALLED, and signs on the consent screen that call raises. For them this sentence
+    // stays a sentence.
+    if (mayAct && convenedHere(c)) p.appendChild(ceremonySignTurn(c, refresh));
   } else {
     p.textContent = `Waiting for ${who}${cap}${where}.`;
     // **The action binds HERE, on the ELSE branch, and binding it to `isMe` would have been the
@@ -18005,10 +18019,10 @@ function ceremonyCallNext(c, who) {
       const q = await qr.json();
       if (q.error) { say.textContent = q.error; btn.disabled = false; return; }
       if (q.mine) {
-        // The convener's own turn: nobody to call. Said rather than dialled — the ordinary state of a
-        // ceremony just convened by a signing convener the roster names first, and a later hop for
-        // one it names later. Nothing in the window signs that turn yet (/pending 869).
-        say.textContent = 'It is your own turn to sign — there is nobody to call yet.';
+        // The convener's own turn: nobody to call. Said rather than dialled — the turn moved to this
+        // machine between the rail's answer and this press. `ceremonySignTurn` is the control for
+        // it, and the panel offers it when it is read again.
+        say.textContent = 'It is your own turn to sign — there is nobody to call yet. Open the panel again to sign.';
         return;
       }
       // 2. The block, rasterised HERE because nothing in the server can draw one: `renderAttestation`
@@ -18049,6 +18063,73 @@ function ceremonyCallNext(c, who) {
       }
     } catch (e) {
       say.textContent = 'Nib could not reach that party. Nothing was signed.';
+      btn.disabled = false;
+    }
+  });
+  const wrap = document.createDocumentFragment();
+  wrap.appendChild(btn);
+  wrap.appendChild(say);
+  return wrap;
+}
+
+// ceremonySignTurn is the convener's own signature, at their own turn (`/pending 869`, ADR-133).
+//
+// **The same three steps as the call above with the dial taken out**: the quote (the same route —
+// it answers `mine` with the block's lines), the block rasterised here, and one POST. Nothing leaves
+// this machine and there is no spoken check, because there is no other party at this turn.
+//
+// **One press signs, and the sentence beside the button says what that means before it is
+// pressed** — the permanence statement every other signing surface shows. The recital on the block
+// is the one this convener wrote at setup; the server takes it from the record, not from here.
+//
+// **Both requests name the document open at the press, and the reload names the view it was pressed
+// in** (ADR-001): the server signs the ADDRESSED document, and the signed result comes back as that
+// document's new bytes.
+function ceremonySignTurn(c, refresh) {
+  const btn = document.createElement('button');
+  btn.className = 'cersign';
+  btn.type = 'button';
+  btn.textContent = 'Sign now';
+  const say = document.createElement('span');
+  say.className = 'cercallstate';
+  say.textContent = PERMANENCE_SIGNATURE;
+  btn.addEventListener('click', async () => {
+    const owner = view;
+    const opDoc = owner.docMeta;
+    if (!opDoc || !opDoc.id) { say.textContent = 'Open the ceremony’s document first.'; return; }
+    // The signed document is loaded back into this view, so anything placed on its pages and not
+    // yet part of it would be discarded: asked first, before anything is signed.
+    if (!confirmOverlayLoss(owner)) return;
+    btn.disabled = true;
+    say.textContent = 'Preparing your signature block…';
+    try {
+      const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
+      if (!qr.ok) { say.textContent = await errText(qr, `Nib could not prepare your signature (${qr.status}).`); btn.disabled = false; return; }
+      const q = await qr.json();
+      if (!q.mine || !q.contributes || !Array.isArray(q.lines) || !q.lines.length) {
+        // The turn moved, or there is no block to draw: never sign without one. Read it again.
+        say.textContent = 'It is not your turn to sign any more. Nothing was signed.';
+        if (refresh) await refresh();
+        return;
+      }
+      const appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
+      say.textContent = 'Signing…';
+      const res = await apiFetch('/api/ceremony/sign-turn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
+        docId: opDoc.id,
+      });
+      if (!res.ok) { say.textContent = await errText(res, `Nib could not sign (${res.status}). Nothing was signed.`); btn.disabled = false; return; }
+      say.textContent = 'You have signed.';
+      // The signed bytes are the document's now; the view that was pressed in shows them.
+      const meta = await res.json();
+      if (meta && meta.id === opDoc.id) await setDocumentFromServer(meta, owner);
+      else await openArrivalInNewView();
+      // And the rail moves on: the next party to call, or the finished ceremony.
+      if (refresh) await refresh();
+    } catch (e) {
+      say.textContent = 'Nib could not sign. Check the document — if your signature is not on it, press Sign now again.';
       btn.disabled = false;
     }
   });

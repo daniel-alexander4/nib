@@ -954,6 +954,12 @@ its roster, your position in it, and a *"what happens next"* control that asks N
 — the same question the software itself refuses out-of-order contributions with, rather than a
 second answer computed for the screen.
 
+**The convener moves it on from that control.** With the ceremony's document open, *What happens
+next?* offers exactly one action: **Sign now** when the turn is your own — it puts your signature
+block on the document on this machine, and nothing is sent anywhere — or **Call … to sign** when it
+is somebody else's, which reaches that person and runs the spoken check with them. Everyone who did
+not convene waits to be called, and signs on the request that call raises.
+
 **You can give a ceremony a name.** The recital — *"We agree to the lease of 14 Elm Row, Edinburgh,
 for a term of five years"* — is the sentence every party signs, and it is the wrong thing to scan a
 list of proceedings by. A name is the handle: it heads the card, the recital stays underneath it,
