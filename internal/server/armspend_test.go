@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/p2p"
 	"nib/internal/sign"
 )
@@ -196,6 +197,44 @@ func TestAnEndedArmsNoticeIsOnlyForAnArmStillArmed(t *testing.T) {
 	n := s.sess.status().Notice
 	if n == nil || n.What != "arm-ended-unanswered" {
 		t.Fatalf("a live arm ended by an unanswered consent left notice %+v", n)
+	}
+}
+
+// TestAnUnansweredArmSaysWhichSigningItWasFor — /pending 884: a machine resumes an arm for every
+// ceremony it accepted, so the notice names the one that stopped waiting, and names nothing for an
+// arm with no ceremony.
+func TestAnUnansweredArmSaysWhichSigningItWasFor(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	for _, c := range []struct {
+		name, intent, want string
+		named              bool
+	}{
+		{"a ceremony", "We agree to the lease of 4 Mill Lane", "It was for the signing \u201cWe agree to the lease of 4 Mill Lane\u201d.", true},
+		{"a long recital is cut", long, "\u201c" + long[:80] + "…\u201d", true},
+		{"a blank recital names nothing", "  ", "", false},
+	} {
+		s := &Server{}
+		cer := &ceremonyID{inv: ceremony.Invitation{Intent: c.intent}}
+		s.sess.arms[armInteractive] = &arm{kind: armInteractive, cer: cer}
+		s.armSpentBy(consentAnchor{cer: cer, kind: armInteractive}, cer, p2p.ErrConsentTimedOut)
+		n := s.sess.status().Notice
+		if n == nil {
+			t.Fatalf("%s: no notice", c.name)
+		}
+		if got := strings.Contains(n.Detail, "It was for the signing"); got != c.named {
+			t.Errorf("%s: names a signing = %t, want %t: %q", c.name, got, c.named, n.Detail)
+		}
+		if !strings.Contains(n.Detail, c.want) {
+			t.Errorf("%s: the notice does not carry %q: %q", c.name, c.want, n.Detail)
+		}
+	}
+	// No ceremony at all: the plain two-party arm.
+	s := &Server{}
+	cer := &ceremonyID{}
+	s.sess.arms[armInteractive] = &arm{kind: armInteractive, cer: cer}
+	s.armSpentBy(consentAnchor{cer: cer, kind: armInteractive}, nil, p2p.ErrConsentTimedOut)
+	if n := s.sess.status().Notice; n == nil || strings.Contains(n.Detail, "It was for") || strings.Contains(n.Detail, "answer.  ") {
+		t.Errorf("an arm with no ceremony: %+v", n)
 	}
 }
 

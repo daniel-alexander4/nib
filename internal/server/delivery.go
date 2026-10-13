@@ -392,6 +392,13 @@ func deliveredAt(intent, id string) bool {
 // it, a pinned-peer listener, and the publish that lets the convener find this machine off-LAN.
 // Everything about the tier ladder is reused rather than rebuilt — see `deliveryCeremony`.
 //
+// **It does NOT start the end-state pull, on purpose** (`pullEndStateBeforeSigning`; /pending 884,
+// ADR-009's named exemption). That pull is for a party who has not signed, the one the round cannot
+// reach. Both callers here hold a verified record — `rearmDeliveries` admits only `LoadOK`, and
+// `armDeliveryAfterHop` runs after this party's own hop — so this is the party the round DOES reach.
+// Do not add the call: `hasSigned` reads this process's memory, a delivery ceremony's is empty, and
+// the door would send every signed party to the DHT for what it is about to be handed.
+//
 // **It takes S05c's delivery SLOT**, so it coexists with whatever the user has open. Before that
 // slice this could only have run by displacing the interactive arm, which is why the round and the
 // second slot were split apart in the first place.
