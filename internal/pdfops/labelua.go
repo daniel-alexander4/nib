@@ -73,7 +73,7 @@ func LabelUA(pdf []byte, langAsserted bool) ([]byte, error) {
 			return ErrUANoPacket
 		}
 		sd, _, err := xt.DereferenceStreamDict(obj)
-		if err != nil || sd == nil || sd.Decode() != nil {
+		if err != nil || sd == nil || decodePacket(sd) != nil {
 			return ErrUANoPacket
 		}
 		packet := string(sd.Content)

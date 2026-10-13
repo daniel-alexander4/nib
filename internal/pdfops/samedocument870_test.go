@@ -7,6 +7,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 )
 
@@ -209,5 +210,102 @@ func TestAPacketPutBackNeverBringsAClaim(t *testing.T) {
 	if !inspectTags(labelled).claims() || inspectTags(out).claims() {
 		t.Errorf("the splice's last resort wrote a document that claims tagging (host claims: %v) — it exists to "+
 			"write none", inspectTags(labelled).claims())
+	}
+}
+
+// TestDeletingOrReorderingPagesIsTheSameDocument — the app's delete and reorder (`sameDocument`): the document
+// with a page gone or its pages moved keeps its title, its `/ID`, its files and its packet, in one write.
+func TestDeletingOrReorderingPagesIsTheSameDocument(t *testing.T) {
+	host := withPacket(t)
+	_, wantTitle, wantID, _ := documentFactsOf(t, host)
+	for _, c := range []struct {
+		name  string
+		run   func() ([]byte, int, error)
+		pages int
+	}{
+		{"DeletePages", func() ([]byte, int, error) { return DeletePages(host, []string{"2"}) }, 2},
+		{"ReorderPages", func() ([]byte, int, error) { return ReorderPages(host, []string{"3", "1", "2"}) }, 3},
+	} {
+		out, dropped, err := c.run()
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if n, _ := PageCount(out); n != c.pages || dropped != 0 {
+			t.Errorf("%s: %d pages and %d file(s) dropped, want %d and 0", c.name, n, dropped, c.pages)
+		}
+		files, title, id, _ := documentFactsOf(t, out)
+		if strings.Join(files, " ") != "record.txt" || title != wantTitle || id != wantID {
+			t.Errorf("%s: files %v, title %q, /ID[0] %s — want record.txt, %q and the document's own %s",
+				c.name, files, title, id, wantTitle, wantID)
+		}
+		if p := packetOf(t, out); !strings.Contains(p, "Quill") || !strings.Contains(p, "Lease") {
+			t.Errorf("%s: the metadata packet reads %q, want the document's own", c.name, p)
+		}
+	}
+}
+
+// TestAFileThatReachesADeletedPageIsCarriedFromItsBytes — `documentFacts` withholds the embedded files when an
+// entry reaches a page the selection dropped (putting the tree back would write the deleted page out). For the
+// app's delete that must not be a silent loss — the ceremony record is an embedded file — so the door re-adds
+// each file from its bytes, and the copy points at nothing but its own streams.
+func TestAFileThatReachesADeletedPageIsCarriedFromItsBytes(t *testing.T) {
+	host, err := writeMutated(withPacket(t), func(ctx *model.Context) error {
+		xt := ctx.XRefTable
+		entries, err := treeEntries(xt)
+		if err != nil || len(entries) != 1 {
+			return fmt.Errorf("setup: %d entries, %v", len(entries), err)
+		}
+		fs, err := xt.DereferenceDict(entries[0].fs)
+		if err != nil || fs == nil {
+			return fmt.Errorf("setup: the filespec does not resolve: %v", err)
+		}
+		pages := pdfread.Pages(ctx)
+		if len(pages) != 3 || pages[1].Ref == nil {
+			return fmt.Errorf("setup: %d pages", len(pages))
+		}
+		fs["NibProbe"] = *pages[1].Ref
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the reference survived the write, or the door below is never asked the question.
+	probe := func(pdf []byte) bool {
+		ctx := readCtx(t, pdf)
+		e, err := treeEntries(ctx.XRefTable)
+		if err != nil || len(e) != 1 {
+			t.Fatalf("%d embedded-file entries, %v", len(e), err)
+		}
+		fs, _ := ctx.XRefTable.DereferenceDict(e[0].fs)
+		return fs["NibProbe"] != nil
+	}
+	if !probe(host) {
+		t.Fatal("setup: the filespec's reference to page 2 did not survive the write")
+	}
+	out, dropped, err := DeletePages(host, []string{"2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, title, _, _ := documentFactsOf(t, out)
+	if strings.Join(files, " ") != "record.txt" || dropped != 0 {
+		t.Fatalf("deleting the page a file reaches left files %v with %d dropped, want record.txt carried from its bytes", files, dropped)
+	}
+	if title != "Lease" {
+		t.Errorf("title %q, want Lease — only the files take the second way back", title)
+	}
+	if probe(out) {
+		t.Error("the carried file still points at the deleted page, so the page was written into the output")
+	}
+	if got, err := ExtractAttachment(out, "record.txt"); err != nil || string(got) != "the record" {
+		t.Errorf("the carried file reads %q (%v), want its own bytes", got, err)
+	}
+	// CONTROL: the same file through a reorder that drops no page takes the first way — the tree as it stood.
+	kept, _, err := ReorderPages(host, []string{"3", "1", "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !probe(kept) {
+		t.Error("a reorder that drops no page rebuilt the file instead of keeping the document's own entry")
 	}
 }

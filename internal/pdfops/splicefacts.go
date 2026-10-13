@@ -82,8 +82,9 @@ func captureDocumentFacts(ctx *model.Context) documentFacts {
 }
 
 // restore puts the captured facts back after `selectPages`, each group only when nothing in it reaches a
-// page the selection dropped.
-func (f documentFacts) restore(ctx *model.Context) {
+// page the selection dropped. filesWithheld is true when the document had embedded files and they were NOT put
+// back for that reason — the one group whose loss a caller may have another way to make good (`sameDocument`).
+func (f documentFacts) restore(ctx *model.Context) (filesWithheld bool) {
 	xt := ctx.XRefTable
 	dropped := map[int]bool{}
 	for nr := range f.pages {
@@ -109,7 +110,7 @@ func (f documentFacts) restore(ctx *model.Context) {
 		}
 	}
 	if f.files == nil {
-		return
+		return false
 	}
 	seen := map[int]bool{}
 	safe := true
@@ -119,9 +120,10 @@ func (f documentFacts) restore(ctx *model.Context) {
 		}
 		return nil
 	}); err != nil || !safe {
-		return
+		return true
 	}
 	// The cache is what `BindNameTrees` writes onto the catalog, making `/Names` where the selection
 	// left none.
 	xt.Names["EmbeddedFiles"] = f.files
+	return false
 }

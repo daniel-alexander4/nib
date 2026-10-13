@@ -233,7 +233,13 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 	if err != nil || sd == nil {
 		return false, nil
 	}
-	if err := sd.Decode(); err != nil {
+	if err := decodePacket(sd); errors.Is(err, pdfread.ErrDecodeLimit) {
+		// A packet nib will not inflate is one it cannot rule on, so it goes whole, as an unparsed claim does
+		// (`/pending 795`): the read door set it aside from the validator for the same reason, and keeping it
+		// would let an identification ride through every change behind twenty megabytes of padding.
+		dropKey(xt, root, "Metadata")
+		return true, nil
+	} else if err != nil {
 		// Not a silent retention, measured (`/pending 503`): a caller reaches here only after a read that
 		// decodes the catalog's `/Metadata` itself and refuses the whole document when it cannot — `/Filter
 		// /Crypt` fails the read with "Invalid filter", a stream that is not the Flate it declares with
@@ -288,6 +294,14 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 	}
 	root["Metadata"] = *sd
 	return true, nil
+}
+
+// decodePacket decodes the catalog's metadata packet into sd.Content, as far as `pdfread.MaxPacketBytes` and no
+// further (`/pending 795`). It is the one decode of that packet for the two functions that edit it — the drop
+// above and `LabelUA` — which each inflated whatever the document declared: measured on a packet inflating to
+// 20 / 64 / 200 MiB, 64 / 256 / 512 MiB allocated by this decode alone, on every change to the document.
+func decodePacket(sd *types.StreamDict) error {
+	return pdfread.DecodeWithin(sd, pdfread.MaxPacketBytes)
 }
 
 // identificationSpellings is each identification URI as a packet's bytes may hold it: UTF-8, and UTF-16 in

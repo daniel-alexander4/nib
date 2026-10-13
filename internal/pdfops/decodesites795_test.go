@@ -98,3 +98,60 @@ func TestADocumentSizedStreamIsInflatedOnlyWithinABudget(t *testing.T) {
 		t.Errorf("control: an ordinary font program read %q, want it whole", got)
 	}
 }
+
+// TestThePacketAndAToUnicodeMapAreInflatedOnlyWithinALimit — `/pending 795`, the last four pinned decodes. The
+// packet's (`dropUAIdentification`, and `LabelUA` through the same `decodePacket`) and the run reader's
+// `/ToUnicode` inflated whatever the document declared: 512 MiB allocated each over a stream inflating to 200 MiB.
+func TestThePacketAndAToUnicodeMapAreInflatedOnlyWithinALimit(t *testing.T) {
+	doc := func(catalogExtra string, objs map[int]string) *model.Context {
+		objs[1] = "<< /Type /Catalog /Pages 2 0 R " + catalogExtra + " >>"
+		objs[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
+		objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 8 0 R >> >> /Contents 4 0 R >>"
+		objs[4] = optStream("BT /F1 12 Tf <0041> Tj ET", "")
+		if objs[8] == "" {
+			objs[8] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+		}
+		return optimizedCtx(t, assembleFixture(objs))
+	}
+	const type0 = "<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Face /Encoding /Identity-H /ToUnicode 9 0 R >>"
+	bomb := func(extra string) string { return optStream(flatedSpaces(decodeBomb), extra+" /Filter /FlateDecode") }
+
+	// The packet: one nib will not inflate is one it cannot rule on, so the drop takes it whole.
+	ctx := doc("/Metadata 9 0 R", map[int]string{9: bomb("/Type /Metadata /Subtype /XML")})
+	var dropped bool
+	var err error
+	alloc := allocated(func() { dropped, err = dropUAIdentification(ctx) })
+	if err != nil || !dropped {
+		t.Errorf("a packet inflating to %d MiB: dropped %v, %v — want it dropped whole, as a claim nib cannot read is", decodeBomb>>20, dropped, err)
+	}
+	if root, _ := ctx.XRefTable.Catalog(); root["Metadata"] != nil {
+		t.Error("the catalog still names a packet nib did not read")
+	}
+	if alloc > mostToRefuse {
+		t.Errorf("the identification drop allocated %d MiB over a packet inflating to %d MiB, want under %d MiB — it "+
+			"decodes through decodePacket", alloc>>20, decodeBomb>>20, mostToRefuse>>20)
+	}
+
+	// The map: past a page's allowance it reads as no map.
+	ctx = doc("", map[int]string{8: type0, 9: bomb("")})
+	var f *runFont
+	alloc = allocated(func() { f = loadRunFont(ctx.XRefTable, *types.NewIndirectRef(8, 0)) })
+	if f == nil || len(f.toUni) != 0 {
+		t.Errorf("a font whose ToUnicode inflates to %d MiB read as %v, want the font with no map", decodeBomb>>20, f)
+	}
+	if alloc > mostToRefuse {
+		t.Errorf("the run reader allocated %d MiB over a ToUnicode map inflating to %d MiB, want under %d MiB — it "+
+			"decodes through formWalkBudget.formContent", alloc>>20, decodeBomb>>20, mostToRefuse>>20)
+	}
+
+	// Control: an ordinary packet is kept and an ordinary map is read, so the refusals above are the limit's.
+	ctx = doc("/Metadata 9 0 R", map[int]string{9: optStream(`<x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>`, "/Type /Metadata /Subtype /XML")})
+	if dropped, err := dropUAIdentification(ctx); dropped || err != nil {
+		t.Errorf("control: an ordinary packet claiming nothing: dropped %v, %v", dropped, err)
+	}
+	ctx = doc("", map[int]string{8: type0, 9: optStream("1 begincodespacerange <0000> <FFFF> endcodespacerange\n"+
+		"1 beginbfchar <0041> <0041> endbfchar", "")})
+	if f := loadRunFont(ctx.XRefTable, *types.NewIndirectRef(8, 0)); f == nil || len(f.toUni) == 0 {
+		t.Errorf("control: an ordinary ToUnicode map read as %v, want its one mapping", f)
+	}
+}

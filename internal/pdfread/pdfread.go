@@ -58,6 +58,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		return nil, err
 	}
 	restore := escapeInfoKeys(ctx)
+	putPacket := setAsideOversizedPacket(ctx)
 	putBack := func() {}
 	if aside != nil {
 		putBack = aside(ctx)
@@ -68,6 +69,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		rememberValidatorLosses(ctx, pdf)
 	}
 	putBack()
+	putPacket()
 	restore()
 	if err != nil {
 		return nil, err
@@ -84,6 +86,57 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		}
 	}
 	return ctx, nil
+}
+
+// MaxPacketBytes is the most a catalog `/Metadata` packet may decode to and still be READ — by pdfcpu's validator
+// (`setAsideOversizedPacket`) and by nib's own packet readers, which decode within the same figure so the two
+// agree on which packets are read. It is one page's form allowance in `pdfops` (`newFormWalkBudget(1)`), which is
+// what that package's title read was already held to.
+const MaxPacketBytes = 20 << 20
+
+// setAsideOversizedPacket takes the catalog's `/Metadata` out of the validator's sight when it decodes to more than
+// MaxPacketBytes, and returns what puts it back (`/pending 795`).
+//
+// pdfcpu's validator inflates the catalog packet whole and parses it as XML to learn a title and an author
+// (`validate/metaData.go:79` and `:88`, `catalogMetaData`, v0.13.0) — with no limit but pdfcpu's own 512 MiB decode
+// ceiling, and before any of nib's code has the context. Measured on a one-page file whose packet is flate over
+// spaces, every read through this door: 1 / 20 / 64 / 200 MiB of packet allocated 6 / 128 / 384 / 1,024 MiB and
+// took 0.04 / 0.46 / 1.4 / 7.2 s, from a file of 1 / 20 / 64 / 199 KB. With the packet set aside the last two read
+// in 64 MiB and about 0.1 s.
+//
+// Set aside, not refused: the document is still read, and the validator sees what it sees for a document with no
+// packet — exactly what it makes of a packet that is not XML in the relaxed mode nib reads in (`metadata parse
+// error`, no title or author taken from it). The stream itself is untouched and is written back out as it was.
+// A packet that does not decode at all is NOT set aside: the validator refuses that document, as it always has.
+//
+// The size is asked with the capped decode, on a COPY of the stream (`ctx.Dereference`, never
+// `DereferenceStreamDict`, which marks the object validated before the validator has seen it — ADR-116), so a
+// packet within the figure is inflated twice: once here, once by the validator (measured: the 1 MiB read 6 → 10 MiB,
+// the 20 MiB one 128 → 192 MiB and 0.46 → 0.70 s; a packet of a few kilobytes, which is what documents carry, a few
+// kilobytes more).
+func setAsideOversizedPacket(ctx *model.Context) (restore func()) {
+	restore = func() {}
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return restore // the validator reports a document with no catalog itself
+	}
+	held, ok := root["Metadata"]
+	if !ok {
+		return restore
+	}
+	o, err := ctx.Dereference(held)
+	if err != nil {
+		return restore
+	}
+	sd, ok := o.(types.StreamDict)
+	if !ok {
+		return restore
+	}
+	if !errors.Is(DecodeWithin(&sd, MaxPacketBytes), ErrDecodeLimit) {
+		return restore
+	}
+	delete(root, "Metadata")
+	return func() { root["Metadata"] = held }
 }
 
 // escapeInfoKeys re-escapes, for the validator only, every document-information key holding a `#`, and returns what

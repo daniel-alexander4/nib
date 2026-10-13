@@ -113,7 +113,8 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	// The door decodes through pdfread's capped decode (/pending 748), and no other pdfops file does.
 	allowed := map[string]int{"textrun.go": 1}
 	// fontink.go's is a font's embedded program, read once per font for its glyphs' reach (ADR-098) — no form.
-	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1}
+	// uaid.go's is the catalog packet's (`decodePacket`), bounded by the figure pdfread's read door sets a packet aside at.
+	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1, "uaid.go": 1}
 	// **And an UNCAPPED decode is counted too** (`/pending 795` I3): the two counts above are of spellings, so a bare
 	// `sd.Decode()` passed them — `resourceprune.go` and `tagcarry.go` each inflated a content stream that way, and now
 	// read through the door. What is left is pinned by file so that a new one is a decision: route it through
@@ -126,7 +127,11 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	// form (annotcarry), the `/ToUnicode` of a font named like nib's face (stampwrite, both reads), the catalog packet
 	// read for its title (structcarry), a subset's font program (subsettag) — and now read through the door. The one
 	// left, stamprotation's, is exempt and says why at the site: pdfcpu's stamp has already inflated that same stream.
-	uncapped := map[string]int{"attachments.go": 2, "uaid.go": 1, "textrun.go": 1, "labelua.go": 1, "stamprotation.go": 1}
+	//
+	// **And the last four** (`/pending 795`): the packet's two decodes (uaid, labelua) go through `decodePacket` and the
+	// run reader's `/ToUnicode` through the door. attachments.go's two are exempt and say why at each site — an
+	// embedded file's whole bytes are the answer, and the digest is of the decoded bytes.
+	uncapped := map[string]int{"attachments.go": 2, "stamprotation.go": 1}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

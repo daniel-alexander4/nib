@@ -10,28 +10,20 @@ import (
 	"nib/internal/pdfops"
 )
 
-// carryAttachments re-adds the source's embedded files after a REARRANGEMENT.
+// sameDocument answers for a page operation whose output IS the open document — delete and reorder.
 //
-// Only delete and reorder: those produce the same document with its pages moved, and the
-// ceremony record is an attachment, so losing it there destroys the record and returns 200.
-// Every other op through the same primitives — redact, split, export — produces a derived
-// artifact somebody is about to be handed, and carrying an embedded un-redacted original into
-// one of those is a leak. See pdfops.CarryAttachments.
+// Those go through `pdfops.DeletePages` / `pdfops.ReorderPages`, the same-document door, which keeps what
+// describes the document (title, `/ID`, metadata packet, embedded files). Every other op through the selection
+// primitives — redact, split-to-files, export — produces a derived artifact somebody is about to be handed, and
+// carrying an embedded un-redacted original into one of those is a leak; they call `Collect` / `RemovePages`.
 //
-// A drop is logged rather than swallowed: the record this preserves is exactly what a silent
-// miss loses.
-func carryAttachments(src, dst []byte, err error) ([]byte, error) {
-	if err != nil {
-		return dst, err
-	}
-	out, dropped, cerr := pdfops.CarryAttachments(src, dst)
-	if cerr != nil {
-		return dst, cerr
-	}
-	if dropped > 0 {
+// A dropped file is logged rather than swallowed: the ceremony record is an embedded file, and it is exactly
+// what a silent miss loses.
+func sameDocument(out []byte, dropped int, err error) ([]byte, error) {
+	if err == nil && dropped > 0 {
 		log.Printf("page operation: %d attachment(s) could not be carried across", dropped)
 	}
-	return out, nil
+	return out, err
 }
 
 // optionalInt reads a whole-number form field that may be left out: "" is 0, anything else must
@@ -87,11 +79,9 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = pdfops.Rotate(pdfBytes, pages, deg)
 	case "delete":
-		result, err = pdfops.RemovePages(pdfBytes, pages)
-		result, err = carryAttachments(pdfBytes, result, err)
+		result, err = sameDocument(pdfops.DeletePages(pdfBytes, pages))
 	case "reorder":
-		result, err = pdfops.Collect(pdfBytes, pages)
-		result, err = carryAttachments(pdfBytes, result, err)
+		result, err = sameDocument(pdfops.ReorderPages(pdfBytes, pages))
 	case "insertblank":
 		page, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
