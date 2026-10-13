@@ -213,11 +213,14 @@ func runSign(pdfBytes []byte, data sign.SignData, refuse func(*dpdf.Reader) erro
 			return nil, err
 		}
 	}
+	// The text is handed to the library already escaped, and read back as typed (ADR-163).
+	asked := data.Signature.Info
+	data.Signature.Info = throughLibraryText(asked)
 	var out bytes.Buffer
 	if err := containedLibrarySign(in, &out, rdr, data); err != nil {
 		return nil, describeSignFailure(err, data.TSA.URL)
 	}
-	if err := signedAsIntended(in, out.Bytes(), data.Certificate); err != nil {
+	if err := signedAsIntended(in, out.Bytes(), data.Certificate, asked); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -276,6 +279,9 @@ var ErrSignedOutputUnreadable = errors.New("the signed document failed nib's own
 //     eleven conjuncts), in the library's enumeration (`libPos`), not a document timestamp, and
 //     names the certificate it was asked to sign with.
 //  4. Its PKCS#7 verifies over its own `/ByteRange` — one hash of the output, of that signature only.
+//  5. Its `/Name` and `/Reason` read back as the text nib asked for (`textAsAsked`, ADR-163) — they
+//     are inside the coverage, and the library once wrote a text in some scripts as a string that
+//     read back as other text, or as none.
 //
 // **A full `Verify` of the output was built first and refused on cost** (/pending 747): it re-hashes
 // every earlier signature's revision, and at 100 MB it took signing from 0.33 s to 1.10 s and peak
@@ -290,7 +296,7 @@ var ErrSignedOutputUnreadable = errors.New("the signed document failed nib's own
 // `pdfsign verify/signature.go` `processByteRange` + `verifySignature`) over ranges the sweep has
 // already proved well-formed. It decides nothing any reader is shown — only whether nib hands its
 // own output back — so it cannot disagree with a verdict.
-func signedAsIntended(in, out []byte, cert *x509.Certificate) error {
+func signedAsIntended(in, out []byte, cert *x509.Certificate, asked sign.SignDataSignatureInfo) error {
 	fail := func(format string, a ...any) error {
 		return fmt.Errorf("%w (%s)", ErrSignedOutputUnreadable, fmt.Sprintf(format, a...))
 	}
@@ -340,6 +346,9 @@ func signedAsIntended(in, out []byte, cert *x509.Certificate) error {
 	p7.Content = content
 	if err := p7.Verify(); err != nil {
 		return fail("the new signature does not verify: %v", err)
+	}
+	if err := textAsAsked(added, asked); err != nil {
+		return fail("%v", err)
 	}
 	return nil
 }

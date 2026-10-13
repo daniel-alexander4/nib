@@ -315,9 +315,9 @@ func TestABlockThatDoesNotFitItsFrameIsRefusedNotShrunkOrClipped(t *testing.T) {
 func TestTheSameLinesAreTheSamePictureAndItIsTheOneEmbedded(t *testing.T) {
 	a := l3Identity(t, "A")
 	when := time.Date(2026, 10, 12, 14, 30, 0, 0, time.UTC)
-	// Latin throughout, because this attestation is SIGNED below: the signing library cannot yet write
-	// a /Reason holding a character whose UTF-16 form has a parenthesis or backslash byte (most CJK,
-	// some Arabic) — a fault outside the drawing, found while this test was written and reported.
+	// Latin throughout. When this was written the signing library could not write a /Reason holding
+	// a character whose UTF-16 form has a parenthesis or backslash byte (most CJK, some Arabic);
+	// ADR-163 closed that, and `TestAContributionInAnyScriptIsSignedAsWritten` signs the other scripts.
 	att := Attestation{Signer: "Margaret O'Hanlon-Šimůnek", AcceptedPeer: strings.Repeat("ab12", 16),
 		AcceptedPeerLabel: "Dieter Müller (Kanzlei Müller & Søn)", Intent: "I agree to the lease of 14 Harbour Road.", When: when}
 	one, err := att.BlockImage()
