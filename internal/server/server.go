@@ -247,6 +247,9 @@ type Server struct {
 	//
 	// Carries its own mutex, so it stays out of the `mu` block below.
 	dl downloadState
+	// vaultWake wakes the window streams when the open vault has put itself back over an older
+	// copy; see vaultrestored.go (ADR-159). Its own mutex, like dl.
+	vaultWake vaultRestoreWake
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it

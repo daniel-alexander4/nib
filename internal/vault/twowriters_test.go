@@ -311,7 +311,9 @@ func TestEveryVaultMutatorBeginsAWrite(t *testing.T) {
 	mutators := 0
 	for _, d := range f.Decls {
 		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Body == nil || fd.Name.Name == "mutateLocked" {
+		// restoreOverOlderCopy is beginWrite's own second half (ADR-159): it runs with the lock
+		// taken and the file read, and writes memory back with an empty change.
+		if !ok || fd.Body == nil || fd.Name.Name == "mutateLocked" || fd.Name.Name == "restoreOverOlderCopy" {
 			continue
 		}
 		calls := map[string]token.Pos{}
@@ -341,5 +343,178 @@ func TestEveryVaultMutatorBeginsAWrite(t *testing.T) {
 	}
 	if mutators < 19 {
 		t.Errorf("the scan saw %d mutators; there are at least nineteen — it has stopped matching", mutators)
+	}
+}
+
+// An older copy written over a vault a key was removed from (ADR-159, /pending 873 part 2).
+//
+// The older writer is stood for by the file's own bytes from before the removal, written back with
+// no lock — which is all a build that predates the generation and the lock does.
+
+// olderCopyOver removes key B from a three-key vault and then puts the pre-removal file back over
+// it. It returns the vault that did the removal, its directory, the removed key's public line and
+// the content key the removal replaced.
+func olderCopyOver(t *testing.T) (v *Vault, dir, removedPub string, oldKey []byte) {
+	t.Helper()
+	v, dir, pubs, _ := threeKeyVault(t)
+	preRotation, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey = append([]byte(nil), v.key...)
+	if err := v.RemoveKey(pubs[1]); err != nil {
+		t.Fatal(err)
+	}
+	if n, at := v.OlderCopyRestored(); n != 0 || !at.IsZero() {
+		t.Fatalf("setup: a vault nothing has written over reports %d restore(s) at %v", n, at)
+	}
+	if err := os.WriteFile(Path(dir), preRotation, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if env := mustEnvelope(t, dir); env.Gen != 0 || len(env.SSH) != 3 {
+		t.Fatalf("setup: the older copy is generation %d with %d slot(s), want 0 and 3", env.Gen, len(env.SSH))
+	}
+	return v, dir, pubs[1], oldKey
+}
+
+// restoredOnDisk fails unless the file is the rotated vault again: generation 1, the removed key's
+// slot gone, and not under the content key the removal replaced.
+func restoredOnDisk(t *testing.T, v *Vault, dir, removedPub string, oldKey []byte) {
+	t.Helper()
+	env := mustEnvelope(t, dir)
+	if env.Gen != 1 || len(env.SSH) != 2 {
+		t.Fatalf("the file is generation %d with %d slot(s), want the rotated vault (1 and 2) — the "+
+			"older copy was left on disk", env.Gen, len(env.SSH))
+	}
+	for _, s := range env.SSH {
+		if keyID(s.PubKey) == keyID(removedPub) {
+			t.Error("the removed key's slot is in the file again")
+		}
+	}
+	if plain, err := decrypt(oldKey, env.Nonce, env.Cipher); err == nil {
+		zero(plain)
+		t.Error("the file opens with the content key the removal replaced")
+	}
+	plain, err := decrypt(v.key, env.Nonce, env.Cipher)
+	if err != nil {
+		t.Fatalf("the file does not open with the rotated key: %v", err)
+	}
+	zero(plain)
+}
+
+// TestAnOlderCopyWrittenOverTheVaultIsRestoredAndCounted — seam B1: the restore, and its record.
+func TestAnOlderCopyWrittenOverTheVaultIsRestoredAndCounted(t *testing.T) {
+	v, dir, removedPub, oldKey := olderCopyOver(t)
+	told := 0
+	v.NotifyOlderCopyRestored(func() { told++ })
+
+	before := time.Now()
+	if err := v.AddRecent("/after-the-overwrite.pdf"); err != nil {
+		t.Fatalf("a write over an older copy: %v", err)
+	}
+	restoredOnDisk(t, v, dir, removedPub, oldKey)
+	n, at := v.OlderCopyRestored()
+	if n != 1 {
+		t.Errorf("after one older copy was written over the vault and put right, the vault reports "+
+			"%d restore(s), want 1 — nothing can tell the user another Nib is writing an old vault", n)
+	}
+	if at.Before(before.Add(-time.Second)) || at.After(time.Now().Add(time.Second)) {
+		t.Errorf("the restore is recorded at %v, outside the write that made it", at)
+	}
+	if told != 1 {
+		t.Errorf("the holder was told %d time(s), want 1", told)
+	}
+
+	// One event, one count: the writes that follow find their own file and report nothing more.
+	if err := v.AddRecent("/another.pdf"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := v.OlderCopyRestored(); n != 1 || told != 1 {
+		t.Errorf("an ordinary write after the restore moved the count to %d (told %d), want 1 and 1", n, told)
+	}
+	fresh, err := OpenSSH(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := fresh.Recent(); len(r) < 2 || r[0] != "/another.pdf" || r[1] != "/after-the-overwrite.pdf" {
+		t.Errorf("recent files on disk = %v, want both writes made after the restore", r)
+	}
+}
+
+// TestAWriteThatChangesNothingStillRestoresTheOlderCopy — a mutator that returns before it saves
+// used to leave the older copy on disk: the removed key authorized, the file under the old key,
+// until some later write happened to change something.
+func TestAWriteThatChangesNothingStillRestoresTheOlderCopy(t *testing.T) {
+	v, dir, removedPub, oldKey := olderCopyOver(t)
+	if n, err := v.PruneCeremonyPeers("no-such-ceremony"); err != nil || n != 0 {
+		t.Fatalf("a prune with nothing to prune = %d, %v", n, err)
+	}
+	restoredOnDisk(t, v, dir, removedPub, oldKey)
+	if n, _ := v.OlderCopyRestored(); n != 1 {
+		t.Errorf("the vault reports %d restore(s) after a write that changed nothing, want 1", n)
+	}
+}
+
+// TestARestoreThatFailsIsTheWritesErrorAndIsNotCounted — seam B3. The mutator answers the save's
+// error, nothing is recorded, and the next write finds the older copy and restores it.
+func TestARestoreThatFailsIsTheWritesErrorAndIsNotCounted(t *testing.T) {
+	v, dir, removedPub, oldKey := olderCopyOver(t)
+	real := writeFileAtomic
+	disk := errors.New("no space left on device")
+	writeFileAtomic = func(string, []byte, func(string) error) error { return disk }
+	t.Cleanup(func() { writeFileAtomic = real })
+
+	if err := v.AddRecent("/while-the-disk-is-full.pdf"); !errors.Is(err, disk) {
+		t.Fatalf("a write whose restore could not be written = %v, want the save's own error", err)
+	}
+	if n, at := v.OlderCopyRestored(); n != 0 || !at.IsZero() {
+		t.Errorf("a restore that did not land is recorded (%d at %v)", n, at)
+	}
+	if len(v.Recent()) != 1 {
+		t.Errorf("the refused write stayed in memory: %v", v.Recent())
+	}
+	writeFileAtomic = real
+	if err := v.AddRecent("/once-there-is-room.pdf"); err != nil {
+		t.Fatal(err)
+	}
+	restoredOnDisk(t, v, dir, removedPub, oldKey)
+	if n, _ := v.OlderCopyRestored(); n != 1 {
+		t.Errorf("the vault reports %d restore(s) once the write landed, want 1", n)
+	}
+}
+
+// TestAnImportByThisProcessIsNotAnOlderCopy — a backup made before a removal, imported HERE, is the
+// user's own act: the value that did the removal is retired, and the vault opened from the import
+// starts at the import's generation, so nothing is restored over it and nothing is reported.
+func TestAnImportByThisProcessIsNotAnOlderCopy(t *testing.T) {
+	v, dir, pubs, _ := threeKeyVault(t)
+	backup, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.RemoveKey(pubs[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := Replace(v.path, v, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddRecent("/from-the-retired-value.pdf"); !errors.Is(err, ErrReplaced) {
+		t.Errorf("a write from the value the import retired = %v, want ErrReplaced", err)
+	}
+	opened, err := OpenSSH(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.AddRecent("/after-the-import.pdf"); err != nil {
+		t.Fatal(err)
+	}
+	if env := mustEnvelope(t, dir); env.Gen != 0 || len(env.SSH) != 3 {
+		t.Errorf("after an import here the file is generation %d with %d slot(s), want the backup's "+
+			"0 and 3 — the import was written over", env.Gen, len(env.SSH))
+	}
+	for name, val := range map[string]*Vault{"the retired value": v, "the vault opened from the import": opened} {
+		if n, _ := val.OlderCopyRestored(); n != 0 {
+			t.Errorf("%s reports %d restore(s) after this process's own import, want 0", name, n)
+		}
 	}
 }

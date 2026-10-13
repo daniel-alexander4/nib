@@ -1629,6 +1629,34 @@ function reflectNotice(n) {
   els.sessionNotice.hidden = false;
 }
 
+// VAULT_RESTORED_KEY is where the tab keeps the time of the vault restore it last said.
+const VAULT_RESTORED_KEY = 'nib.vaultRestoredAt';
+let vaultRestoredShownAt = '';
+
+// reflectVaultRestored says, once, that an older copy of the vault was written over it and Nib put
+// the current one back (ADR-159). It arrives on the window stream (`event: vault`), in the shape
+// of a session notice, and is shown where one is: the app's one alert, which stays until dismissed.
+// A toast is gone in seconds and this asks the user to go and close another program.
+//
+// **Its own key, never `noticeShownAt`.** That one is the session poll's: sharing it would let the
+// poll's next answer — the same older session notice, every 1.5 s — read as new and replace this.
+// The key is the restore's time, kept for the life of the tab (a reload re-reads the stream, which
+// sends the last restore again, and must not repeat it); where the tab keeps nothing, it is said
+// once per load.
+function reflectVaultRestored(n) {
+  if (!els.sessionNotice || !n || n.what !== 'vault-restored' || !n.summary || !n.at) return;
+  let stored = '';
+  try { stored = sessionStorage.getItem(VAULT_RESTORED_KEY) || ''; } catch { /* said once per load */ }
+  if (n.at === vaultRestoredShownAt || n.at === stored) return;
+  vaultRestoredShownAt = n.at;
+  try { sessionStorage.setItem(VAULT_RESTORED_KEY, n.at); } catch { /* as above */ }
+  rescueDocId = '';
+  els.sessionNoticeText.textContent = n.detail ? n.summary + ' — ' + n.detail : n.summary;
+  els.sessionNoticeAction.hidden = true;
+  els.sessionNoticeAction.textContent = '';
+  els.sessionNotice.hidden = false;
+}
+
 let diagnosisShownFor = '';
 
 // runNetworkTest asks this machine whether local discovery works at all, and says so in a sentence
@@ -17095,6 +17123,10 @@ try {
   // A launch handed Nib a document while this window was open (ADR-086).
   windowStream.addEventListener('handoff', (e) => {
     try { applyHandoffEvent(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
+  });
+  // The open vault put itself back over an older copy another Nib wrote (ADR-159).
+  windowStream.addEventListener('vault', (e) => {
+    try { reflectVaultRestored(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
   });
   windowStream.addEventListener('armed', (e) => {
     try {

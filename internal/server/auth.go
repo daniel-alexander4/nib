@@ -95,6 +95,10 @@ func (s *Server) ensureUnlocked() {
 // The nil check is the guard that makes it idempotent: a second unlock must not run the drain
 // and the sweeps twice.
 func (s *Server) adoptVault(v *vault.Vault) {
+	// Before the vault can be reached by a writer, so no restore lands with nobody to wake
+	// (ADR-159). Harmless on a vault that turns out not to be adopted: it wakes the streams, and
+	// they read the vault that IS open.
+	v.NotifyOlderCopyRestored(s.vaultWake.announce)
 	s.mu.Lock()
 	fresh := s.vault == nil
 	if fresh {

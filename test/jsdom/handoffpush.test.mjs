@@ -77,3 +77,32 @@ test('the title is marked until the window is next focused', async () => {
   win.dispatchEvent(new win.Event('focus'));
   assert.equal(doc.title, base, 'the mark outlived the user coming back');
 });
+
+// ADR-159 — the same stream carries "an older copy of the vault was written over it, and put back".
+test('a vault restore pushed to this window is said once, in the alert that stays', async () => {
+  const box = doc.getElementById('sessionNotice');
+  const text = () => doc.getElementById('sessionNoticeText').textContent;
+  assert.equal(box.hidden, true, 'setup: the alert is already showing');
+  const first = { what: 'vault-restored', summary: 'Another Nib wrote an older copy', detail: 'close it', at: '2026-10-12T20:00:00Z' };
+  assert.ok(h.pushWindowEvent('vault', JSON.stringify(first)), 'no listener took the vault event: the window never hears that another Nib is writing an old vault');
+  assert.equal(box.hidden, false, 'the restore was pushed and nothing is shown');
+  assert.equal(text(), 'Another Nib wrote an older copy — close it');
+  assert.equal(doc.getElementById('sessionNoticeAction').hidden, true, 'the notice offers "Save a copy…", which has nothing to do with it');
+
+  // Dismissed, then the stream reconnects and sends the same restore again: not said twice.
+  doc.getElementById('sessionNoticeDismiss').click();
+  assert.equal(box.hidden, true, 'setup: Dismiss did not dismiss');
+  h.pushWindowEvent('vault', JSON.stringify(first));
+  assert.equal(box.hidden, true, 'one restore was announced twice — every reconnect of the stream would bring it back');
+  assert.equal(win.sessionStorage.getItem('nib.vaultRestoredAt'), first.at, 'the restore said is not remembered for the tab, so a reload says it again');
+
+  // A second restore is a second event.
+  h.pushWindowEvent('vault', JSON.stringify({ ...first, at: '2026-10-12T20:05:00Z' }));
+  assert.equal(box.hidden, false, 'a later restore was swallowed as the one already said');
+
+  // Anything else on this event is not shown as a vault notice.
+  doc.getElementById('sessionNoticeDismiss').click();
+  h.pushWindowEvent('vault', JSON.stringify({ what: 'something-else', summary: 'x', at: '2026-10-12T21:00:00Z' }));
+  h.pushWindowEvent('vault', 'not json');
+  assert.equal(box.hidden, true);
+});
