@@ -23,8 +23,9 @@ import (
 //
 // # The question, precisely
 //
-// `handleCeremonies` already pays one `ReadMirror` per stored ceremony (its header says it opens no
-// document; `closeOutEnded` opens every one and discards the bytes — that is `/pending 360`).
+// When this was measured `handleCeremonies` paid one `ReadMirror` per stored ceremony (its header said
+// it opened no document; `closeOutEnded` opened every one and discarded the bytes). `/pending 360`
+// closed that: the sweep now opens a document only for a ceremony that might close out.
 // `ReadMirror` runs `sign.Verify` once, plus `ContentDigest` while the document is unsigned.
 // `NextContributor` ran `sign.Verify` TWICE more until /pending 711 R5-7 and runs it ONCE now.
 // So the marginal cost of progress is that pass, and whether that matters depends on the split between `sign.Verify` and `ContentDigest`

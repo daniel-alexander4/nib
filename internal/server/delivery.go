@@ -272,8 +272,13 @@ func (s *Server) checkDelivered(cer *ceremonyID, pdf []byte) error {
 // the record's own intent, so a finished lease is distinguishable from Monday's copy by name alone
 // rather than by opening it. The id goes LAST and in full: a truncated id is a collision nobody
 // can see, and the human half is the part a user scans.
-func deliveredName(rec ceremony.Record) string {
-	return fileSlug(rec.Intent, "ceremony") + "-" + rec.ID + ".pdf"
+//
+// **It takes the two fields it reads and not the record (/pending 360).** The close-out sweep asks
+// "has the finished document arrived" from the listing's row before it opens anything, so the name
+// must be answerable from an intent and an id alone — and a signature that cannot see the rest of
+// the record cannot start depending on it without that caller failing to compile.
+func deliveredName(intent, id string) string {
+	return fileSlug(intent, "ceremony") + "-" + id + ".pdf"
 }
 
 // saveDelivered writes the delivered document under ~/nib, OUTSIDE ~/nib/ceremonies/.
@@ -362,11 +367,22 @@ func deliveryParty(inv ceremony.Invitation, me, peer string) string {
 // arriving through a door the prune does not watch. The deterministic name S05d built is what
 // makes "already delivered" answerable from the filesystem alone, with no extra bookkeeping.
 func deliveredPathFor(rec ceremony.Record) string {
-	return filepath.Join(defaultOutputDir(), "signed", deliveredName(rec))
+	return deliveredPath(rec.Intent, rec.ID)
+}
+
+// deliveredPath is deliveredPathFor's body, over the two fields the name is made of.
+func deliveredPath(intent, id string) string {
+	return filepath.Join(defaultOutputDir(), "signed", deliveredName(intent, id))
 }
 
 func alreadyDelivered(rec ceremony.Record) bool {
-	_, err := os.Stat(deliveredPathFor(rec))
+	return deliveredAt(rec.Intent, rec.ID)
+}
+
+// deliveredAt is alreadyDelivered for a caller holding the listing's row and not the record — the
+// close-out sweep's cheap test (`mightCloseOut`). One stat on one path, for both callers.
+func deliveredAt(intent, id string) bool {
+	_, err := os.Stat(deliveredPath(intent, id))
 	return err == nil
 }
 

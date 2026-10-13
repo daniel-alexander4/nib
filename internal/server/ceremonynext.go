@@ -72,7 +72,8 @@ type ceremonyNextResponse struct {
 	// `internal/p2p/railcost_test.go` measured `NextContributor` at 26.6 ms on a 200-page signed
 	// document — two to four times a single `sign.Verify` — so per-party progress on
 	// `/api/ceremonies` would be tens of milliseconds per ceremony per request, on a route that
-	// already pays a `ReadMirror` each (`/pending 360`). Here the document is already open and
+	// otherwise opens a document only for a ceremony that might close out (`/pending 360`). Here
+	// the document is already open and
 	// already walked, so this costs nothing that was not already spent.
 	//
 	// **In ROSTER order, so the client never joins an index.** `Position` above is 1-based within

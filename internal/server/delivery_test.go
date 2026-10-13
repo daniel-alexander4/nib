@@ -125,33 +125,33 @@ func TestADeliveredNameIsDeterministicAndDoesNotCollideWithinASecond(t *testing.
 	b := ceremony.Record{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Intent: "Office lease 2026"}
 
 	// Deterministic: the same record names the same file, however often it is asked.
-	if deliveredName(a) != deliveredName(a) {
+	if deliveredName(a.Intent, a.ID) != deliveredName(a.Intent, a.ID) {
 		t.Fatal("deliveredName is not deterministic for one record")
 	}
 	// STIMULUS: the name is not a constant. Without this, every assertion here is satisfied by a
 	// builder that returns "x.pdf".
-	if deliveredName(a) == "" || !strings.HasSuffix(deliveredName(a), ".pdf") {
-		t.Fatalf("setup: deliveredName produced %q, which is not a filename", deliveredName(a))
+	if deliveredName(a.Intent, a.ID) == "" || !strings.HasSuffix(deliveredName(a.Intent, a.ID), ".pdf") {
+		t.Fatalf("setup: deliveredName produced %q, which is not a filename", deliveredName(a.Intent, a.ID))
 	}
 	// **The collision case, and it is the one `receivedName` fails.** Same intent, same instant,
 	// different ceremony: two documents a round can deliver to one machine inside a second.
-	if deliveredName(a) == deliveredName(b) {
+	if deliveredName(a.Intent, a.ID) == deliveredName(b.Intent, b.ID) {
 		t.Errorf("two ceremonies with the same intent produce one filename (%q) — the second "+
 			"delivery silently overwrites the first, which is /pending 342 one layer up",
-			deliveredName(a))
+			deliveredName(a.Intent, a.ID))
 	}
 	// The human half survives, or the name is an id nobody can scan.
-	if !strings.Contains(deliveredName(a), "office-lease-2026") {
+	if !strings.Contains(deliveredName(a.Intent, a.ID), "office-lease-2026") {
 		t.Errorf("deliveredName(%q) = %q and carries no readable half — a user cannot tell this "+
-			"from Monday's copy without opening it", a.Intent, deliveredName(a))
+			"from Monday's copy without opening it", a.Intent, deliveredName(a.Intent, a.ID))
 	}
 	// And the id survives in full: a truncated id is a collision nobody can see.
-	if !strings.Contains(deliveredName(a), a.ID) {
-		t.Errorf("deliveredName dropped or truncated the ceremony id: %q", deliveredName(a))
+	if !strings.Contains(deliveredName(a.Intent, a.ID), a.ID) {
+		t.Errorf("deliveredName dropped or truncated the ceremony id: %q", deliveredName(a.Intent, a.ID))
 	}
 	// An empty intent still yields a usable name rather than a bare dash.
 	empty := ceremony.Record{ID: a.ID}
-	if got := deliveredName(empty); !strings.HasPrefix(got, "ceremony-") {
+	if got := deliveredName(empty.Intent, empty.ID); !strings.HasPrefix(got, "ceremony-") {
 		t.Errorf("a record with no intent produced %q; it must still name a file", got)
 	}
 }

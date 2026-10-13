@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"nib/internal/ceremony"
 )
 
 // TestEveryNameInSignedTakesTheSlugDoor — /pending 821. Three writers name files in ~/nib/signed from
@@ -25,7 +23,7 @@ func TestEveryNameInSignedTakesTheSlugDoor(t *testing.T) {
 	}
 	names := map[string]string{
 		"receivedName":  receivedName(long, []byte{1, 2, 3, 4}, []byte("doc")),
-		"deliveredName": deliveredName(ceremony.Record{ID: "0123456789abcdef0123456789abcdef", Intent: long}),
+		"deliveredName": deliveredName(long, "0123456789abcdef0123456789abcdef"),
 		"keptName":      keptName(long, []byte("doc"), time.Now()),
 	}
 	for fn, name := range names {

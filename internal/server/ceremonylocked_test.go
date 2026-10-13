@@ -172,7 +172,7 @@ func TestALockedReadRunsNoCloseOutSweep(t *testing.T) {
 	if err := os.WriteFile(path, []byte("the finished document"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st := ceremony.Stored{ID: rec.ID, State: ceremony.LoadOK, Expires: time.Now().Add(48 * time.Hour)}
+	st := ceremony.Stored{ID: rec.ID, State: ceremony.LoadOK, Intent: rec.Intent, Expires: time.Now().Add(48 * time.Hour)}
 	if _, closed := closeOutReason(st, rec, rec.Roster[1].Fingerprint, time.Now()); !closed {
 		t.Fatal("setup: this ceremony would NOT be closed out even by an unlocked sweep, so its " +
 			"survival below says nothing about the lock")
