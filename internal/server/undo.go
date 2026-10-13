@@ -905,16 +905,40 @@ func fateOf(input, result []byte, broughtAnnots, broughtFields int) docFate {
 		return f
 	}
 	f.taggingDropped = before.Tagged && !after.Tagged
-	if n := before.Annotations + broughtAnnots - after.Annotations; n > 0 {
-		f.lostAnnots = n
-	}
+	f.lostAnnots = lostAnnotations(before, after, broughtAnnots)
 	f.lostFields = lostFieldsByName(before.FieldNames, after.FieldNames, broughtFields)
 	return f
+}
+
+// lostAnnotations is how many annotations an operation cost, BY WHAT THEY ARE where both sides could be
+// keyed (/pending 875) and by totals where one could not.
+//
+// The totals were a net figure inside one document, as they had been across two until `/pending 582`: an
+// operation that dropped a link and wrote a note left the count where it was and the notice silent. The key
+// is `pdfops`' (subtype, `/NM`, contents, `/T` — never the page or the rectangle, which operations move),
+// counted as a multiset by the rule the fields use, so the answer is never below what the totals gave and
+// is above it only for an annotation that is gone while another arrived.
+func lostAnnotations(before, after pdfops.DocumentFacts, brought int) int {
+	if len(before.AnnotationKeys) == before.Annotations && len(after.AnnotationKeys) == after.Annotations {
+		return lostFieldsByName(before.AnnotationKeys, after.AnnotationKeys, brought)
+	}
+	if n := before.Annotations + brought - after.Annotations; n > 0 {
+		return n
+	}
+	return 0
 }
 
 // lostFieldsByName is how many form fields an operation cost: the document's own fields that the result
 // no longer holds under their names, and any of the `brought` fields another document carried in that did
 // not arrive. Names are counted as a multiset — two fields may share a name in a file nobody validated.
+// `lostAnnotations` counts annotation keys by the same rule.
+//
+// **Measured, not assumed, for two DIFFERENT forms sharing a name (/pending 875).** pdfcpu files every
+// incoming form under a new parent named by its ordinal, whether or not a name collides: `fullName, agree`
+// plus `fullName, email` is `fullName, agree, 2.fullName, 2.email`, a third document's are `3.…`, and a host
+// that already has a field called `2` keeps it beside the new parent. So the document's own names never
+// change, nothing merges, and what arrived is exactly the names the result holds that the document did not —
+// which is what this counts. `TestTwoFormsSharingAFieldNameLoseNothing` goes red if pdfcpu starts merging.
 func lostFieldsByName(before, after []string, brought int) int {
 	left := map[string]int{}
 	for _, n := range after {
