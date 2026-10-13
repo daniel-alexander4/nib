@@ -11,9 +11,12 @@
 #
 # It checks, and does not fix: it never stages, commits, stashes or cleans anything.
 #
-# What it does NOT refuse: files git is told to ignore (`.gitignore`, `.git/info/exclude`). The
-# repository keeps local-only files that way on purpose, so an ignored file that is compiled in is
-# outside this check by construction. `TestThePublishPreflightRefuses` drives each refusal.
+# An IGNORED file the build would read is refused too (/pending 522): `go build` and the embed read
+# the directory, not the index, so a `.go` file held out by `.gitignore` or `.git/info/exclude` is
+# compiled into the published binary and is in no clone of the tag. A file under a directory the go
+# tool skips (a name starting `.` or `_`, or `testdata`) is not a build input and is left alone —
+# except under web/, which is embedded whole (`//go:embed all:web`).
+# `TestThePublishPreflightRefuses` drives each refusal.
 #
 # It also refuses a publish this machine cannot finish (/pending 670) — no nfpm, no gh, or gh signed
 # out — and one that would replace the binaries of a release whose tag names another commit
@@ -35,6 +38,18 @@ fi
 # file: a scratch note in the root changes nothing the build reads.
 stray="$(git ls-files --others --exclude-standard -- '*.go' 'go.mod' 'go.sum' 'web/' 'build/nfpm.yaml' | head -5)"
 [ -z "$stray" ] || refuse "untracked files the build would read: $(printf '%s' "$stray" | tr '\n' ' ')— commit or remove them first."
+
+# The same files when git is told to IGNORE them: ignoring a file hides it from git, not from the
+# compiler. Paths the go tool itself skips are not build inputs.
+hidden=""
+while IFS= read -r f; do
+  case "$f" in
+    web/*) ;; # embedded with `all:`, so a dot or underscore name under web/ ships too
+    *) case "/$f" in */.*|*/_*|*/testdata/*) continue ;; esac ;;
+  esac
+  hidden="$hidden$f "
+done < <(git ls-files --others --ignored --exclude-standard -- '*.go' 'go.mod' 'go.sum' 'web/' 'build/nfpm.yaml')
+[ -z "$hidden" ] || refuse "ignored files the build would read: $(printf '%s' "$hidden" | cut -d' ' -f1-5) — git ignores them (.gitignore or .git/info/exclude) and the compiler does not, so the release would hold code no clone of its tag has. Track them or move them out of the tree first."
 
 # The version being published is the one the tagged commit carries.
 head_version="$(git show HEAD:VERSION 2>/dev/null | tr -d '[:space:]')" || true
