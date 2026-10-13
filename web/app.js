@@ -97,6 +97,7 @@ const els = {
   viewStandardBtn: $('viewStandardBtn'), viewContinuousBtn: $('viewContinuousBtn'),
   viewPresentBtn: $('viewPresentBtn'), fullScreenBtn: $('fullScreenBtn'),
   readAloudBtn: $('readAloudBtn'),
+  handBtn: $('handBtn'),
   advCeremonyChk: $('advCeremonyChk'), advDiscoveryChk: $('advDiscoveryChk'),
   advRendezvousChk: $('advRendezvousChk'), advTimestampChk: $('advTimestampChk'),
   advError: $('advError'),
@@ -10745,6 +10746,12 @@ function pageAt(x, y) {
 // **The middle button pans from anywhere**, text included, because on a page that is mostly text
 // there may be nowhere else to take hold.
 //
+// **And so does the left button while the hand tool is on** (ADR-147, /pending 846). Measured at 201% on
+// six real documents, text is 58–90% of what is on screen, and a middle button is not on every trackpad or
+// in anyone's first guess. The bar's hand button is a toggle for the window: on, a drag that starts on text
+// moves the page and selects nothing; off, a drag on text is a selection, as before. A field, a link and an
+// overlay keep their own drags either way, and an armed tool still owns the pointer.
+//
 // **Nothing is cancelled at pointerdown for the left button, and that is deliberate.** Cancelling
 // it would also cancel what a plain click does — moving focus out of a form field, dropping a
 // text selection — and a click that never becomes a drag must stay a click. The one default a
@@ -10755,6 +10762,14 @@ const PAN_NEVER = '.ovl, input, textarea, select, button, a, [contenteditable="t
   + '.annotationLayer section, .annotationEditorLayer > *';
 const PAN_TEXT = '.textLayer span:not(.markedContent), .textLayer br';
 let pan = null; // { id, box, x, y, left, top, moved }
+let handTool = false; // the bar's hand toggle: a left drag pans from text too
+
+function setHandTool(on) {
+  handTool = !!on;
+  els.viewerWrap.toggleAttribute('data-hand', handTool);
+  $('handBtn').setAttribute('aria-pressed', String(handTool));
+}
+$('handBtn').onclick = () => setHandTool(!handTool);
 
 function canPan(box) {
   return box.scrollWidth > box.clientWidth || box.scrollHeight > box.clientHeight;
@@ -10805,12 +10820,13 @@ function watchPannable(v, pagesEl) {
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
   const anywhere = e.button === 1;
+  const fromText = anywhere || handTool;
   if (e.button !== 0 && !anywhere) return;
   if (e.pointerType && e.pointerType !== 'mouse') return; // touch and pen scroll natively
   if (panBlocked()) return;
   if (!startedInActiveView(e)) return;
   if (e.target.closest(PAN_NEVER)) return;
-  if (!anywhere && e.target.closest(PAN_TEXT)) return;
+  if (!fromText && e.target.closest(PAN_TEXT)) return;
   const box = view.container;
   if (!canPan(box)) return;
   pan = { id: e.pointerId, box, x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop, moved: false };
@@ -13856,6 +13872,8 @@ all('[data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).cl
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
+  // The hand tool (ADR-147) moves the open document's pages; with nothing open there is nothing to move.
+  'handBtn',
   // A document that came back (P03.S01): the sheet is ABOUT the open document, and has no subject without one.
   'returnedBtn',
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
@@ -16074,12 +16092,15 @@ setMode('file');
 // **Re-measured for the icon bar (ADR-087, 2026-10-06, Chromium, the tier-3 harness).** The widths
 // with their 4px gaps: Find 40, Page 161, History 93, View 200, Zoom 233; the three rank-0 groups
 // 199; the sidebar toggle and margins 74; the title at its 22ch cap 145; the More trigger 87. Each
-// rung is the sum of what is still in the bar at that point, plus 15. The order is what goes first:
+// rung is the sum of what is still in the bar at that point, plus 15.
+// **Rung 1 is DERIVED since the hand button joined View (ADR-147), not re-measured**: one more `.tbicon`
+// and its 4px gap is 40px, so View is 240 and the rung 1165 + 40. View is the first group to go, so no
+// other rung holds it. Re-measure with `test/ui/toolbaricons.test.mjs` (it prints every group's width). The order is what goes first:
 // View (1), Page (2 — the Pages tab and PageUp/PageDown still page), History (3), Zoom (4), Find (5).
 // The armed-tool group is NOT in the sums: it is there only while a tool is armed, and in the
 // ~110px above each rung the bar takes a second row for as long as it is. Ranks 6 and 7 belong to
 // no group in the bar.
-const foldThresholds = { 1: 1165, 2: 1050, 3: 890, 4: 795, 5: 565, 6: 499, 7: 449 };
+const foldThresholds = { 1: 1205, 2: 1050, 3: 890, 4: 795, 5: 565, 6: 499, 7: 449 };
 
 function buildOverflowMenus() {
   [...all('.tbtab'), ...all('#toolbar .tbfixed')].forEach((pane) => {
