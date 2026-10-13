@@ -182,6 +182,9 @@ const PUBLISHED = [
   // signature lands before the signer decides (P02.S03). Both fields are read by
   // `loadPendingPreview`/`markBlock`.
   { type: 'pendingBlock', readers: ['web/app.js'] },
+  // What this machine can call a signer (ADR-147, /pending 831): the pinned peer's label and the
+  // fingerprint's six words, per signer. Both fields are read by `signerRow`.
+  { type: 'signerNamed', readers: ['web/app.js'] },
   // The convener's setup draft, an opaque blob the server neither parses nor validates
   // (P03.S02, D4). `restoreCeremonyDraft` reads it; `saveCeremonyDraft` writes it.
   { type: 'draftResponse', readers: ['web/app.js'] },

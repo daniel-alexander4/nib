@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 )
 
 // TestAGainDoesNotMaskALoss — /pending 582.
@@ -53,7 +54,7 @@ func TestAnAppendThatCarriesEverythingReportsNoLoss(t *testing.T) {
 		openRequest{Path: writeTemp(t, src)}); code != http.StatusOK {
 		t.Fatalf("setup: open returned %d: %s", code, body)
 	}
-	if got := annotationsIn(other); got != 2 {
+	if got, _ := broughtIn(other); got != 2 {
 		t.Fatalf("setup: the appended document is counted as carrying %d annotations, want 2", got)
 	}
 
@@ -81,5 +82,57 @@ func TestAnAppendThatCarriesEverythingReportsNoLoss(t *testing.T) {
 	}
 	if meta.LostAnnots != 0 {
 		t.Errorf("an append that carried all 5 annotations reported %d lost", meta.LostAnnots)
+	}
+}
+
+// TestFormFieldsAreComparedByNameNotByCount — /pending 582, ADR-147.
+//
+// The door compared the LENGTH of the form's top-level field array before and after. That figure cannot
+// see a field dropped beside one added, and it is not the number of fields at all: a form appended to
+// itself goes from 2 entries to 3 because pdfcpu puts the incoming two under one new parent, while all four
+// fields stand. So nothing merged, nothing is reported as merged, and the comparison is by name.
+func TestFormFieldsAreComparedByNameNotByCount(t *testing.T) {
+	cases := []struct {
+		name          string
+		before, after []string
+		brought, want int
+	}{
+		{"nothing changed", []string{"a", "b"}, []string{"a", "b"}, 0, 0},
+		{"one dropped", []string{"a", "b"}, []string{"a"}, 0, 1},
+		{"one dropped and another added — the totals are equal", []string{"a", "b"}, []string{"a", "c"}, 0, 1},
+		{"two brought in and both arrived under new names", []string{"a", "b"}, []string{"a", "b", "2.a", "2.b"}, 2, 0},
+		{"two brought in, one arrived", []string{"a", "b"}, []string{"a", "b", "2.a"}, 2, 1},
+		{"two brought in while one of the document's own went", []string{"a", "b"}, []string{"a", "2.a", "2.b"}, 2, 1},
+		{"two fields sharing a name, one gone", []string{"a", "a"}, []string{"a"}, 0, 1},
+		{"fields added and none brought is not a loss", []string{"a"}, []string{"a", "b"}, 0, 0},
+	}
+	for _, c := range cases {
+		if got := lostFieldsByName(c.before, c.after, c.brought); got != c.want {
+			t.Errorf("%s: %d lost, want %d", c.name, got, c.want)
+		}
+	}
+
+	// The door, on real bytes: a form appended to itself loses nothing, and the route is told what came in.
+	form, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doubled, err := pdfops.Append(form, form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, after := pdfops.Inspect(form), pdfops.Inspect(doubled)
+	if len(before.FieldNames) != 2 || len(after.FieldNames) != 4 || after.FormFields != 3 {
+		t.Fatalf("setup: the form reads %q and its self-append %q (top-level %d) — want 2 fields, then 4 "+
+			"under a top-level array of 3, which is the count the old comparison read", before.FieldNames, after.FieldNames, after.FormFields)
+	}
+	_, broughtFields := broughtIn(form)
+	if f := fateOf(form, doubled, 0, broughtFields); f.lostFields != 0 {
+		t.Errorf("a form appended to itself reports %d fields lost — all four are there", f.lostFields)
+	}
+	// And the same append where the document's own fields did not survive is a loss the totals hid:
+	// 2 before, 2 brought, and a result holding only the 2 that came in.
+	if f := fateOf(doubled, form, 0, 0); f.lostFields != 2 {
+		t.Errorf("a result missing two of the document's four fields reports %d lost, want 2", f.lostFields)
 	}
 }
