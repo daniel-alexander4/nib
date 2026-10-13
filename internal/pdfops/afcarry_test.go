@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 )
 
@@ -18,6 +20,13 @@ import (
 // specification with an embedded stream. listed also enters the catalog's and the page's specifications in
 // /Names /EmbeddedFiles, where PDF/A-3 requires every embedded file to be.
 func associatedFilesPDF(version string, listed bool) []byte {
+	return associatedFilesShape(version, listed, "catalog page")
+}
+
+// associatedFilesShape is associatedFilesPDF with the catalog's and the page's `/AF` each present only when
+// where names it, and — with "annot" in where — the page's specification also named by a file attachment
+// annotation's `/FS` on that page.
+func associatedFilesShape(version string, listed bool, where string) []byte {
 	spec := func(name string, stream int) string {
 		return fmt.Sprintf("<< /Type /Filespec /F (%s) /UF (%s) /AFRelationship /Source /EF << /F %d 0 R >> >>", name, name, stream)
 	}
@@ -28,11 +37,22 @@ func associatedFilesPDF(version string, listed bool) []byte {
 	if listed {
 		names = " /Names << /EmbeddedFiles << /Names [(catalog.csv) 20 0 R (page.csv) 21 0 R] >> >>"
 	}
+	catAF, pageAF, annots := "", "", ""
+	if strings.Contains(where, "catalog") {
+		catAF = " /AF [20 0 R]"
+	}
+	if strings.Contains(where, "page") {
+		pageAF = " /AF [21 0 R]"
+	}
+	if strings.Contains(where, "annot") {
+		annots = " /Annots [40 0 R]"
+	}
 	content := "/P << /MCID 0 >> BDC BT /F1 12 Tf 20 100 Td (hi) Tj ET EMC"
 	out := testpdf.Assemble(map[int]string{
-		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 30 0 R /AF [20 0 R]" + names + " >>",
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 30 0 R" + catAF + names + " >>",
 		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /StructParents 0 /Resources << /Font << /F1 5 0 R >> >> /AF [21 0 R] >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /StructParents 0 /Resources << /Font << /F1 5 0 R >> >>" + pageAF + annots + " >>",
+		40: "<< /Type /Annot /Subtype /FileAttachment /Rect [10 10 30 30] /FS 21 0 R /Contents (page.csv) >>",
 		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
 		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
 		20: spec("catalog.csv", 23),
@@ -90,16 +110,15 @@ func associatedFiles(t *testing.T, pdf []byte) (catalog, page, elem string) {
 	return reach(root), reach(first(pages["Kids"])), reach(first(str["K"]))
 }
 
-// TestWhatARewriteDoesToAnAssociatedFile — `/pending 655`, MEASURED on a document that already carries `/AF` (the
-// entry's own probe built the specification in the pass that wrote it). This test fixes nothing: it holds what
-// was measured, so that the day pdfcpu's writer learns the key, the declaration on `pdfread.Write` is taken down
-// with it.
+// TestWhatARewriteDoesToAnAssociatedFile — `/pending 655`, MEASURED on a document that already carries `/AF`.
 //
 // pdfcpu's writer serialises the catalog and each page dictionary whole and then writes what a FIXED LIST of
 // their keys reaches (`write.go:276-322`, `writePages.go:75-102`, v0.13.0). `/AF` is on neither list, so the key
 // is written and the object it names is not. The validator and the optimize pass are not the cause — the objects
 // are in the context after `pdfread.ReadOptimized`, and pdfcpu's own unvalidated read followed by its write loses
-// them the same way — so there is nothing for `pdfread.Write` to put back as it does a font (ADR-129).
+// them the same way — so there is nothing for `pdfread.Write` to put back as it does a font (ADR-129): it refuses
+// the write instead (`pdfread.ErrAssociatedFileLost`), and this test holds both the refusal and the measurement
+// under it, so that the day pdfcpu's writer learns the key the refusal is taken down with it.
 func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 	noop := func(pdf []byte) ([]byte, error) { return writeMutated(pdf, func(*model.Context) error { return nil }) }
 	facts := func(pdf []byte) string {
@@ -112,15 +131,31 @@ func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 	if got := facts(src); got != whole {
 		t.Fatalf("setup: the fixture reads as %q, want %q", got, whole)
 	}
-	// Named by /AF alone: a structure element's file is carried (the structure tree is written by walking
-	// it), the catalog's and the page's are lost, and each of those keys is left naming nothing.
-	out, err := noop(src)
+	// Named by /AF alone, on the catalog or on a page: the write is refused, by name, whatever the operation.
+	for _, where := range []string{"catalog page", "catalog", "page"} {
+		if _, err := noop(associatedFilesShape("1.7", false, where)); !errors.Is(err, pdfread.ErrAssociatedFileLost) {
+			t.Errorf("/AF on the %s naming a file nothing else reaches: error %v, want the associated-file refusal", where, err)
+		}
+	}
+	if _, err := Rotate(src, []string{"1"}, 90); !errors.Is(err, pdfread.ErrAssociatedFileLost) {
+		t.Errorf("a page of such a document rotated: error %v, want the associated-file refusal", err)
+	}
+
+	// THE MEASUREMENT the refusal rests on, taken past the refusal: pdfcpu's own read and write.
+	// A structure element's file is carried (the structure tree is written by walking it), the catalog's and the
+	// page's are lost, and each of those keys is left naming nothing.
+	ctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
+	var raw bytes.Buffer
+	if err := api.WriteContext(ctx, &raw); err != nil {
+		t.Fatal(err)
+	}
+	out := raw.Bytes()
 	if got, want := facts(out), "catalog: dangling; page: dangling; element: ELEM-BYTES"; got != want {
-		t.Errorf("after a rewrite that changes nothing: %q, measured %q — if the files are now carried, "+
-			"pdfcpu's writer has changed and the declared gap on pdfread.Write is out of date", got, want)
+		t.Errorf("pdfcpu's writer on such a document: %q, measured %q — if the files are now carried, "+
+			"pdfcpu's writer has changed and pdfread.Write's refusal is out of date", got, want)
 	}
 	for _, lost := range []string{"CATALOG-BYTES", "PAGE-BYTES", "catalog.csv", "page.csv"} {
 		if bytes.Contains(out, []byte(lost)) {
@@ -129,13 +164,31 @@ func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 	}
 
 	// Entered in /Names /EmbeddedFiles as well — as PDF/A-3 requires of every embedded file — the same
-	// specifications are written by that road and each /AF still reaches its file.
+	// specifications are written by that road, each /AF still reaches its file, and nothing is refused.
 	out, err = noop(associatedFilesPDF("1.7", true))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := facts(out); got != whole {
 		t.Errorf("with the files also in /EmbeddedFiles: %q, want %q", got, whole)
+	}
+
+	// A page's file that a file attachment annotation on a page also names is written by the annotation's road.
+	out, err = noop(associatedFilesShape("1.7", false, "page annot"))
+	if err != nil {
+		t.Fatalf("a page /AF whose file an annotation's /FS also names: %v", err)
+	}
+	if got, want := facts(out), "catalog: no key; page: PAGE-BYTES; element: ELEM-BYTES"; got != want {
+		t.Errorf("with the page's file also named by an annotation: %q, want %q", got, want)
+	}
+
+	// A structure element's /AF alone is carried and refused by nothing.
+	out, err = noop(associatedFilesShape("1.7", false, ""))
+	if err != nil {
+		t.Fatalf("a structure element's /AF alone: %v", err)
+	}
+	if got, want := facts(out), "catalog: no key; page: no key; element: ELEM-BYTES"; got != want {
+		t.Errorf("a structure element's /AF alone: %q, want %q", got, want)
 	}
 
 	// A PDF 2.0 document with /AF on its catalog is refused at the read, by name, so nothing rewrites it.

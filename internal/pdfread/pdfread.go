@@ -67,6 +67,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	err = api.ValidateContext(ctx)
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
+		rememberAssociatedFiles(ctx)
 	}
 	putBack()
 	putPacket()
