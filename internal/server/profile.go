@@ -19,7 +19,7 @@ func (s *Server) handleProfileSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := vaultFrom(r).SetProfile(p); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not save profile")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not save profile")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})

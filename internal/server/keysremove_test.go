@@ -67,7 +67,7 @@ func TestRemovingAKeyOverTheRouteSaysWhyItWasRefused(t *testing.T) {
 		s.vault = stale
 		s.mu.Unlock()
 		rec := removeKeyOver(t, s, second)
-		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "another running Nib") {
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "running Nib removed an authorized key") {
 			t.Errorf("a removal by a Nib holding the old key answered %d %s, want 409 saying another "+
 				"running Nib changed the vault", rec.Code, rec.Body)
 		}

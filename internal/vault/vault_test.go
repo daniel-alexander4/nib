@@ -826,7 +826,7 @@ func TestSaveWritesTheVersionItDeclares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.persist(); err != nil {
+	if err := v.persist(nil); err != nil {
 		t.Fatal(err)
 	}
 	env, err := readEnvelope(dir)

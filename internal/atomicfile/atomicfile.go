@@ -399,7 +399,8 @@ func WriteDurable(path string, data []byte, perm os.FileMode) error {
 // **What the second question does NOT buy**: check and the rename are two steps, and nothing holds
 // `path` between them. Another process that renames its own file into place after check has
 // answered and before this rename is replaced without being seen. The window is this function's
-// last few lines; a caller for whom that matters needs a lock, and this is not one.
+// last few lines; a caller for whom that matters needs a lock, and this is not one. The vault holds
+// one across its read, this check and the rename (ADR-154).
 //
 // A nil check is WriteDurable.
 func WriteDurableChecked(path string, data []byte, perm os.FileMode, check func(staged string) error) error {

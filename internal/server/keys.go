@@ -124,7 +124,7 @@ func (s *Server) handleKeysAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "not a valid SSH public key")
 		return
 	default:
-		httpError(w, http.StatusInternalServerError, "could not authorize key")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not authorize key")
 		return
 	}
 	writeJSON(w, s.keysPayload(vaultFrom(r)))
@@ -157,11 +157,8 @@ func (s *Server) handleKeysRemove(w http.ResponseWriter, r *http.Request) {
 		// them is not a key that can be sealed to. The vault names it; nothing was changed.
 		httpError(w, http.StatusConflict, err.Error()+". Remove that key first.")
 		return
-	case errors.Is(err, vault.ErrKeyChanged):
-		httpError(w, http.StatusConflict, err.Error())
-		return
 	default:
-		httpError(w, http.StatusInternalServerError, "could not remove key")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not remove key")
 		return
 	}
 	writeJSON(w, s.keysPayload(vaultFrom(r)))

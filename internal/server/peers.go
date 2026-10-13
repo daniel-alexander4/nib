@@ -133,7 +133,7 @@ func (s *Server) handlePeersPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := v.AddPinnedPeer(fp, label); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not pin peer")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not pin peer")
 		return
 	}
 	s.respondPeers(w, v)
@@ -156,7 +156,7 @@ func (s *Server) handlePeersRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := v.RemovePinnedPeer(fp); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not unpin peer")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not unpin peer")
 		return
 	}
 	s.respondPeers(w, v)

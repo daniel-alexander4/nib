@@ -821,6 +821,9 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		// browser is a gap the file declares.
 		"internal/browser/sysfolders_windows.go": "KnownFolderPath",
 		"internal/browser/sysfolders_other.go":   "xdgUserDir",
+		// The vault's cross-process lock (ADR-154): the kernel's own on both, never a marker file.
+		"internal/vault/filelock_other.go":   "unix.Flock",
+		"internal/vault/filelock_windows.go": "windows.LockFileEx",
 	}
 	for path, want := range must {
 		b, err := os.ReadFile(path)

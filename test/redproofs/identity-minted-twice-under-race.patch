@@ -1,10 +1,10 @@
 diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 --- a/internal/vault/vault.go
 +++ b/internal/vault/vault.go
-@@ -1046,10 +1046,6 @@
- func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, err error) {
- 	v.mu.Lock()
- 	defer v.mu.Unlock()
+@@ -1367,10 +1367,6 @@
+ 		return nil, nil, err
+ 	}
+ 	defer end()
 -	if id := v.contents.Identity; id != nil {
 -		// Somebody else won. Hand back theirs, not the caller's.
 -		return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), nil

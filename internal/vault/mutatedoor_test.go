@@ -57,6 +57,9 @@ func TestEveryVaultMutationGoesThroughOneDoor(t *testing.T) {
 		"save": "stamps Contents.Version, and clears unproven, inside the write the door performs",
 		// The door itself: it takes the snapshot and puts it back.
 		door: "is the door",
+		// The read half of a write (ADR-154): memory becomes what another process stored in the
+		// file. Nothing is persisted from it, so there is no failed save for memory to be ahead of.
+		"refresh": "replaces memory with the file's own contents before a write; persists nothing",
 	}
 	// persist() writes what is already in memory, so there is nothing for it to roll back.
 	exemptSaveCallers := map[string]string{
