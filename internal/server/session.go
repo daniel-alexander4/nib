@@ -318,7 +318,7 @@ func (se *session) collidesLocked(kind armKind) bool { return se.arms[kind] != n
 // armedChangedLocked wakes every window stream waiting on the armed state (P01.S05, D5).
 //
 // **One door called from the three places that write `arms`, which is ADR-009's shape rather than
-// three copies of a notify.** Those three are `armIn`, `displacePolicyArm` and `disarmWhen`; every
+// three copies of a notify.** Those three are `armIn`, `yieldPolicyArmLocked` and `disarmWhen`; every
 // other disarm routes through the last of them. A site added without this call is a window whose
 // close prompt is stale, which nothing else would notice — so the door is named at each of them.
 //
@@ -386,6 +386,14 @@ func (se *session) slotTaken(kind armKind) bool {
 	return se.collidesLocked(kind)
 }
 
+// slotRefuses is `slotTaken` as the arm `a` would meet it: taken, and not by a policy arm that `a` is
+// entitled to displace (`yieldsToLocked`). The same check-never-a-lock footing — `armIn` decides.
+func (se *session) slotRefuses(a *arm) bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	return se.collidesLocked(a.kind) && !se.yieldsToLocked(a)
+}
+
 // deliverySlotHeldFor reports whether the delivery slot is held by an arm for THIS ceremony id
 // (/pending 500).
 //
@@ -427,8 +435,16 @@ func (se *session) armIn(a *arm) bool {
 	// cheaper of the two — but it is still I/O, and it is still outside the lock for this reason.
 	a.until = time.Now().Add(armWindowFor(a.kind, a.cer))
 	se.mu.Lock()
-	defer se.mu.Unlock()
+	// **An explicit arm takes the slot from this machine's own policy arm HERE, in the one critical
+	// section that installs it** (`/pending 623` part 2). The displacement used to be the route's first
+	// act, before the listener it was making room for had been opened — so a bind that failed, an
+	// address that did not resolve or an endpoint that would not open left the slot EMPTY until the
+	// next sweep, on a request that had been refused. Now the caller arrives with everything open, and
+	// the incumbent goes only in the breath its replacement is installed: a refusal displaces nothing,
+	// and the slot is never empty in between for a second arm to take.
+	teardown := se.yieldPolicyArmLocked(a)
 	if se.collidesLocked(a.kind) {
+		se.mu.Unlock()
 		return false
 	}
 	se.arms[a.kind] = a
@@ -438,6 +454,12 @@ func (se *session) armIn(a *arm) bool {
 	}
 	if se.noticeBy == a.kind {
 		se.notice = nil // and its own prior failure: the user is trying again on this arm
+	}
+	se.mu.Unlock()
+	// OUTSIDE the lock, on `disarmCeremony`'s stated footing: the cancel stops a goroutine that may
+	// itself take `se.mu`.
+	if teardown != nil {
+		teardown()
 	}
 	return true
 }
@@ -597,15 +619,17 @@ func (se *session) armCeremony(cer *ceremonyID, addr string, cancel context.Canc
 }
 
 // armCeremonyByPolicy is the accept-time sweep's door (D14). Same slot, same window, marked so an
-// explicit request can displace it — see `arm.byPolicy` and `displacePolicyArm`.
+// explicit request can displace it — see `arm.byPolicy` and `yieldPolicyArmLocked`.
 func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel context.CancelFunc) bool {
 	return se.armIn(&arm{kind: armInteractive, cer: cer, addr: addr, cerCancel: cancel, byPolicy: true})
 }
 
-// displacePolicyArm tears down a policy-raised interactive arm so an explicit request can take the
-// slot, and reports whether it did.
+// yieldsToLocked reports whether the arm holding `a`'s slot is one `a` displaces: `a` is an explicit
+// interactive arm, the incumbent is this machine's own policy arm, and nothing is in flight on it.
 //
-// **Two conditions, and each is a different way displacing would be wrong.** The incumbent must be
+// **Three conditions, and each is a different way displacing would be wrong.** The newcomer must be
+// EXPLICIT — a second sweep never takes the slot from the first, which is the scheduling race
+// `rearmCeremoniesPreferring` records having tried. The incumbent must be
 // `byPolicy` — a user's own arm is never displaced by another request, which is the rule
 // `setVerify` already keeps for gates and for the same reason: the incumbent wins. And nothing may
 // be in flight on it: a consent request or a spoken check on screen means a peer is mid-exchange,
@@ -629,36 +653,43 @@ func (se *session) armCeremonyByPolicy(cer *ceremonyID, addr string, cancel cont
 // D22 is untouched: the tripwire is what an armed listener ACCEPTS — one pinned peer, one session
 // — and it is enforced where the listener is opened, not by which of this machine's own arms holds
 // the slot a moment earlier.
-//
-// The cancel runs OUTSIDE the lock, on `disarmCeremony`'s stated footing: it stops a goroutine that
-// may itself take `se.mu`.
-//
-// **The displaced ceremony's network is closed here, because nothing else can (/pending 615).**
-// Once the slot is emptied the displaced goroutine's `defer disarmCeremony(cer)` matches nothing,
-// so its rendezvous server, shared UDP socket and port-mapping refresh lived until the process
-// exited, one set per displacement. The arm that follows cannot be using that endpoint:
-// `handleSessionArm` builds its own `ceremonyID` (`ceremonyFor`) and `armCeremonyHop` opens a NEW
-// endpoint on it (`setupSharedEndpoint`), a TCP arm opens none, and an endpoint that was lent is
-// left to its owner by `close()` itself. Last and in `disarmWhen`'s order, for the reason it gives.
-func (se *session) displacePolicyArm() bool {
-	se.mu.Lock()
-	a := se.arms[armInteractive]
-	if a == nil || !a.byPolicy || se.pending != nil || se.verify != nil {
-		se.mu.Unlock()
+func (se *session) yieldsToLocked(a *arm) bool {
+	if a.kind != armInteractive || a.byPolicy {
 		return false
 	}
-	cancel, ln, cer := a.cerCancel, a.ln, a.cer
+	in := se.arms[armInteractive]
+	return in != nil && in.byPolicy && se.pending == nil && se.verify == nil
+}
+
+// yieldPolicyArmLocked empties the interactive slot of a policy arm that yields to `a`
+// (`yieldsToLocked`) and returns the displaced arm's teardown, or nil when nothing was displaced.
+// `armIn` is its one caller, with the lock held, and runs the teardown after releasing it.
+//
+// **The displaced ceremony's network is closed by that teardown, because nothing else can
+// (/pending 615).** Once the slot is emptied the displaced goroutine's `defer disarmCeremony(cer)`
+// matches nothing, so its rendezvous server, shared UDP socket and port-mapping refresh lived until
+// the process exited, one set per displacement. The arm that replaces it is not using that endpoint:
+// `handleSessionArm` builds its own `ceremonyID` (`ceremonyFor`) and `armCeremonyHop` opened a NEW
+// endpoint on it (`setupSharedEndpoint`) before this ran, a TCP arm opens none, and an endpoint that
+// was lent is left to its owner by `close()` itself. Last and in `disarmWhen`'s order, for the reason
+// it gives.
+func (se *session) yieldPolicyArmLocked(a *arm) func() {
+	if !se.yieldsToLocked(a) {
+		return nil
+	}
+	in := se.arms[armInteractive]
+	cancel, ln, cer := in.cerCancel, in.ln, in.cer
 	se.arms[armInteractive] = nil
 	se.armedChangedLocked() // P01.S05
-	se.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	return func() {
+		if cancel != nil {
+			cancel()
+		}
+		if ln != nil {
+			ln.Close()
+		}
+		cer.close()
 	}
-	if ln != nil {
-		ln.Close()
-	}
-	cer.close()
-	return true
 }
 
 // noteFailure records something that went wrong where no response could carry it (P08.S08).
@@ -2644,9 +2675,9 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// wants an invitation, and a TCP ceremony arm wants `"transport":"quic"`. A single "cannot name
 	// an address here" would leave the caller to guess which.
 	//
-	// Placed after the ceremony resolves and BEFORE `displacePolicyArm`, so a refusal costs no
-	// socket and displaces no arm this machine is already holding — the ordering this handler's own
-	// invitation refusal already uses, for the reason it states there.
+	// Placed after the ceremony resolves and before anything is opened, so a refusal costs no socket
+	// — the ordering this handler's own invitation refusal already uses, for the reason it states
+	// there. (No refusal on this route displaces an arm: see `armIn`.)
 	if req.Address != "" {
 		switch {
 		case cer == nil:
@@ -2676,16 +2707,19 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 	// success for a request this machine did not honour is the silent downgrade `checkTransport`
 	// spends sixteen lines refusing.
 	//
-	// **Here rather than inside either transport branch, because the rule is one rule** (ADR-009).
-	// The QUIC arm and the plain listener below are two doors onto the same slot, and a
+	// **In `armIn` rather than inside either transport branch, because the rule is one rule**
+	// (ADR-009). The QUIC arm and the plain listener below are two doors onto the same slot, and a
 	// displacement written at one of them holds for half the requests — which is the shape this
-	// repo keeps finding. It runs before either opens a socket, so a displaced arm is never
-	// replaced by one that then fails to bind.
+	// repo keeps finding.
+	//
+	// **And AFTER the new arm's listener is open, never before** (`/pending 623` part 2). It used to
+	// be a call on this line, ahead of `peerAddresses`, `armCeremonyHop` and `listenPeer`, each of
+	// which can refuse — so its own sentence, "a displaced arm is never replaced by one that then
+	// fails to bind", was false: a bind that failed left the slot empty until the next sweep.
 	//
 	// **Not conditioned on the request naming a ceremony either.** A manual arm is as explicit as
 	// a ceremony one, and a machine whose sweep is holding the slot must not refuse the user's
 	// plain co-sign because of a proceeding they did not mention.
-	s.sess.displacePolicyArm()
 
 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The

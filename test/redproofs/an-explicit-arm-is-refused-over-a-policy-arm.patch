@@ -1,11 +1,11 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -2094,7 +2094,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
- 	// **Not conditioned on the request naming a ceremony either.** A manual arm is as explicit as
- 	// a ceremony one, and a machine whose sweep is holding the slot must not refuse the user's
- 	// plain co-sign because of a proceeding they did not mention.
--	s.sess.displacePolicyArm()
-+	_ = cer
- 
- 	// P05.S09: a QUIC ceremony arm both LISTENS and DIALS over the one shared endpoint, joined by
- 	// the glare — so a peer we reach by dialing is co-signed here, not only one that dials us. The
+@@ -442,7 +442,7 @@
+ 	// next sweep, on a request that had been refused. Now the caller arrives with everything open, and
+ 	// the incumbent goes only in the breath its replacement is installed: a refusal displaces nothing,
+ 	// and the slot is never empty in between for a second arm to take.
+-	teardown := se.yieldPolicyArmLocked(a)
++	var teardown func()
+ 	if se.collidesLocked(a.kind) {
+ 		se.mu.Unlock()
+ 		return false

@@ -375,7 +375,7 @@ func TestAnExplicitArmDisplacesTheAcceptTimeArm(t *testing.T) {
 // TestAUsersOwnArmIsNeverDisplaced — the other half, and the one that keeps the fix from becoming a
 // way for any request to take a live session's slot.
 //
-// `displacePolicyArm` yields only a `byPolicy` arm. An arm a user asked for is the incumbent and
+// Only a `byPolicy` arm yields (`yieldsToLocked`). An arm a user asked for is the incumbent and
 // wins, which is the rule `setVerify` already keeps for gates and for the same reason.
 func TestAUsersOwnArmIsNeverDisplaced(t *testing.T) {
 	ts, _ := startServerWith(t)
@@ -404,7 +404,7 @@ func TestAUsersOwnArmIsNeverDisplaced(t *testing.T) {
 	}
 }
 
-// TestAPolicyArmWithSomethingOnScreenIsNotDisplaced — the third of `displacePolicyArm`'s three
+// TestAPolicyArmWithSomethingOnScreenIsNotDisplaced — the last of `yieldsToLocked`'s
 // conditions, and the one a mutation showed was untested.
 //
 // **Found by a probe, not by review.** Removing the `se.pending != nil || se.verify != nil` guard

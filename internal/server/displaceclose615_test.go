@@ -9,7 +9,7 @@ import (
 
 // TestADisplacedPolicyArmReleasesItsEndpoint — /pending 615.
 //
-// `displacePolicyArm` emptied the slot, cancelled and closed the listener, and never closed the
+// The displacement (`yieldPolicyArmLocked`, inside `armIn` since `/pending 623`) emptied the slot, cancelled and closed the listener, and never closed the
 // ceremony: the displaced goroutine's `defer disarmCeremony(cer)` then matched nothing, so the
 // shared UDP socket, the rendezvous server and the port-mapping refresh lived until the process
 // exited — one set per displacement.
@@ -36,8 +36,15 @@ func TestADisplacedPolicyArmReleasesItsEndpoint(t *testing.T) {
 	if !se.armCeremonyByPolicy(cer, addr, func() { cancelled = true }) {
 		t.Fatal("setup: the policy arm was refused, so there is nothing to displace")
 	}
-	if !se.displacePolicyArm() {
-		t.Fatal("setup: the policy arm was not displaced")
+	// A second POLICY arm does not displace the first: which sweep ran last would then decide what
+	// the machine is armed for (`rearmCeremoniesPreferring`).
+	if se.armCeremonyByPolicy(&ceremonyID{}, "127.0.0.1:4", func() {}) || cancelled {
+		t.Fatal("a policy arm displaced another policy arm")
+	}
+	// An explicit arm is what displaces: the user's own, installed over the policy arm.
+	mine := &ceremonyID{}
+	if !se.armCeremony(mine, "127.0.0.1:1", func() {}) {
+		t.Fatal("setup: the user's explicit arm did not take the slot from the policy arm")
 	}
 	if !cancelled {
 		t.Error("the displaced arm's goroutine was not cancelled")
@@ -49,13 +56,13 @@ func TestADisplacedPolicyArmReleasesItsEndpoint(t *testing.T) {
 	}
 	pc.Close()
 
-	// A user's own arm is not displaced, so its ceremony is not closed either.
-	mine := &ceremonyID{}
-	if !se.armCeremony(mine, "127.0.0.1:1", func() {}) {
-		t.Fatal("setup: the user's arm was refused")
+	// A user's own arm is not displaced — by another explicit arm or by a policy one — so its
+	// ceremony is not closed either.
+	if se.armCeremony(&ceremonyID{}, "127.0.0.1:2", func() {}) {
+		t.Fatal("a user's own arm was displaced by a second explicit arm")
 	}
-	if se.displacePolicyArm() {
-		t.Fatal("a user's own arm was displaced")
+	if se.armCeremonyByPolicy(&ceremonyID{}, "127.0.0.1:3", func() {}) {
+		t.Fatal("a user's own arm was displaced by a policy arm")
 	}
 	mine.mu.Lock()
 	closed := mine.closed

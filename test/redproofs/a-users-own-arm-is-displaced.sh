@@ -1,6 +1,7 @@
 # docs/red-proofs.md, tier 1: "a user's own arm is displaced" (P02 close, v1.128.14)
 #
-# The defect: `displacePolicyArm` stops requiring the incumbent to be `byPolicy`, so ANY arm
+# The defect: the displacement (`yieldsToLocked`, inside `armIn` since /pending 623) stops requiring the
+# incumbent to be `byPolicy`, so ANY arm
 # request tears down a live session's slot.
 #
 # The rule it breaks is the one `setVerify` already keeps for gates and for the same reason: the

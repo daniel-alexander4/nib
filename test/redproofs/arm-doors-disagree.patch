@@ -1,11 +1,11 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -275,7 +275,7 @@
- 	a.until = time.Now().Add(armWindowFor(a.kind, a.cer))
- 	se.mu.Lock()
- 	defer se.mu.Unlock()
+@@ -443,7 +443,7 @@
+ 	// the incumbent goes only in the breath its replacement is installed: a refusal displaces nothing,
+ 	// and the slot is never empty in between for a second arm to take.
+ 	teardown := se.yieldPolicyArmLocked(a)
 -	if se.collidesLocked(a.kind) {
 +	if a.ln == nil && se.collidesLocked(a.kind) {
+ 		se.mu.Unlock()
  		return false
  	}
- 	se.arms[a.kind] = a
