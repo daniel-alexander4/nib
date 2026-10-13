@@ -9,7 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot } from './boot.mjs';
-import { setNextDocument } from './stub-pdfjs.mjs';
+import * as pdfjs from './stub-pdfjs.mjs';
+const { setNextDocument } = pdfjs;
 
 const DOC = '/tmp/nib-harness/insert.pdf';
 const posted = [];
@@ -109,4 +110,31 @@ test('a refused operation reloads a view the document has moved past, and the ne
   assert.match(toastText, /reloaded/, `the refusal did not say the document was reloaded: ${toastText}`);
   const again = await lastPost(() => doc.getElementById('insertBlankBtn').click());
   assert.equal(again.baseRev, String(serverRev - 1), 'the reloaded view still names the old revision — "run it again" is refused for ever');
+});
+
+// The reload above discards what was typed into the view since it loaded — it was built on the document
+// before. A page operation asks about typed text nowhere else (it bakes it into what it posts), so this
+// reload is the one place it is lost, and it is behind the overlay question like every other reload.
+test('a refused operation asks before its reload discards what was typed, and a No leaves the view as it is', async () => {
+  const typedIn = pdfjs.lastDocument;
+  typedIn.annotationStorage.set('field-1', { value: 'typed' }); // pdf.js tells the app, as for a real fill
+  serverRev += 2; // another window edited the document
+  refuseNext = true;
+  h.confirms.length = 0;
+  h.setConfirmAnswer(false);
+  const refused = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  h.setConfirmAnswer(true);
+  assert.equal(h.confirms.length, 1, `the reload after a refusal asked ${h.confirms.length} questions, want 1`);
+  assert.match(h.confirms[0], /typed into the form/, 'the question did not name what would be lost');
+  assert.equal(pdfjs.lastDocument, typedIn, 'the view was reloaded after the answer was No');
+  assert.equal(typedIn.annotationStorage.size, 1, 'what was typed is gone after the answer was No');
+  const toastText = doc.getElementById('toast').textContent;
+  assert.match(toastText, /not applied/, `the refusal was not said: ${toastText}`);
+  assert.doesNotMatch(toastText, /reloaded/, 'the toast says the document was reloaded, and it was not');
+  // Still stale, so the next operation names the same revision: nothing was adopted by the No.
+  refuseNext = true;
+  h.setConfirmAnswer(false);
+  const again = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  h.setConfirmAnswer(true);
+  assert.equal(again.baseRev, refused.baseRev, 'a declined reload moved the revision the view names');
 });
