@@ -58,6 +58,15 @@ const TOKENS = {
 // DOC_OPEN runs in the page: the viewer has a document. See `hasDocument`.
 const DOC_OPEN = () => document.getElementById('viewerWrap').classList.contains('has-doc');
 
+// ACTIVE_VIEW runs in the page: the id of the view container the strip's active DOCUMENT tab names, or null when
+// no document is in front (nothing open, or a Settings/Signing page in front of one). `was`, when given, is the id
+// to compare with, and the answer is then whether a DIFFERENT view is in front now. See `openDocument`.
+const ACTIVE_VIEW = (was) => {
+  const t = document.querySelector('#tabstrip .tab.active[aria-controls^="viewerContainer-"]');
+  const now = t ? t.getAttribute('aria-controls') : null;
+  return was === undefined ? now : now !== null && now !== was.id;
+};
+
 async function mintLaunchKey(base) {
   const res = await fetch(base + '/api/launch/key', { method: 'POST', headers: { 'X-CSRF-Token': TOKENS[base] || '' } });
   if (!res.ok) throw new Error(`could not mint a launch key on ${base}: ${res.status} — uirepro.sh exports NIB_UI_CSRF / NIB_UI_LOCKED_CSRF`);
@@ -280,7 +289,22 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       await this.card('Open a Document');
       await page.click('#openMenuItem');
       await page.fill('#pathInput', file);
+      // **Which view was in front before the press, so the wait below is for a DIFFERENT one** (/pending 475).
+      // The page count was the transition check, and it is one only when the count CHANGES: a one-page document
+      // opened over a one-page document found `has-doc`, "/ 1" and a page div already there, so this helper
+      // returned while `/api/open` was still on its way, and whatever the test pressed next acted on the OLD
+      // document. Idle, the open usually won that race by a few round trips; beside another suite it lost —
+      // `autoprereq`'s Save as fillable form… ran Detect fields on the scan the test before it had left in
+      // front, found nothing, opened no naming dialog, and the test reported a 30 s timeout three nights running.
+      //
+      // A document in front has the strip's active tab, and the tab names its view's container
+      // (`aria-controls`); container ids are numbered and never reused (app.js `viewSeq`). An opened document
+      // comes to the front only once it has loaded (`openInNewView` → `activateView`), and with nothing open
+      // there is no tab at all (`syncTabs`). So "a different container is in front" is true exactly when THIS
+      // open has landed — whatever the two page counts are, and when both are the same file.
+      const before = { id: await page.evaluate(ACTIVE_VIEW) };
       await page.click('#openGo');
+      await page.waitForFunction(ACTIVE_VIEW, before);
       await page.waitForFunction(DOC_OPEN);
       await page.waitForFunction(
         (n) => document.querySelector('.pageCount').textContent === `/ ${n}`,
