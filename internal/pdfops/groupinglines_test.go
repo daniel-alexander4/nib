@@ -274,6 +274,39 @@ func TestARunDoesNotContinueALineAcrossAGutter(t *testing.T) {
 	}
 }
 
+// TestALeaderJoinsItsPageNumberAcrossAGutter — /pending 871, with the numbers of the page that showed it
+// (`antennahouse/irs-p15.pdf` p8): a contents list sets most of its page numbers past joinGapEm of their titles' dots, so
+// the numbers' left edge is a gutter, and the gutter parted the one number set within joinGapEm from its title. A line
+// that ends in a leader is not parted from what the leader leads to; the same line without one still is.
+func TestALeaderJoinsItsPageNumberAcrossAGutter(t *testing.T) {
+	list := []textRun{
+		run("Verify work eligibility of new employees .......", 64.3, 671.1, 200, 9), run("5", 300, 671.1, 5, 9),
+		run("social security cards ....................", 64.3, 646.1, 180, 9), run("16", 300, 646.1, 10, 9),
+		run("Ask employees for Form W-4 ..............", 64.3, 633.6, 190, 9), run("24", 300, 633.6, 10, 9),
+	}
+	number := run("25", 300, 597.6, 10, 9)
+	for _, c := range []struct {
+		name, title, want string
+	}{
+		{"a leader of dots", "withholding ..............................", "withholding .............................. 25"},
+		{"a leader of dots set apart by spaces", "withholding . . . . . . . . . .", "withholding . . . . . . . . . . 25"},
+		{"a leader of dots, then a space", "withholding .............................. ", "withholding .............................. 25"},
+		{"no leader", "withholding and the taxes withheld with it", "withholding and the taxes withheld with it|25"},
+		{"an ellipsis, which is not a leader", "withholding and the taxes withheld . . .", "withholding and the taxes withheld . . .|25"},
+		{"dots inside the line and none at its end", "withholding .......... and the taxes", "withholding .......... and the taxes|25"},
+	} {
+		var got []string
+		for _, l := range lineSegments(append(append([]textRun(nil), list...), run(c.title, 64.3, 597.6, 223.5, 9), number)) {
+			if l.y == 597.6 {
+				got = append(got, l.text)
+			}
+		}
+		if strings.Join(got, "|") != c.want {
+			t.Errorf("%s: the row reads %q, want %q", c.name, strings.Join(got, "|"), c.want)
+		}
+	}
+}
+
 // TestAHeadingInTheNextColumnDoesNotJoinTheLineBesideIt — /pending 871 (`antennahouse/irs-p15.pdf` p11): two 10pt
 // columns 18pt apart are parted by joinGapEm, but the gap is measured in ems of the LARGER run, so a 14pt heading
 // opening the right-hand column joined the body line beside it — and one line across both made the page one column,
