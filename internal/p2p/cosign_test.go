@@ -1,11 +1,7 @@
 package p2p
 
 import (
-	"bytes"
 	"encoding/hex"
-	"image"
-	"image/color"
-	"image/png"
 	"strings"
 	"testing"
 	"time"
@@ -14,27 +10,6 @@ import (
 	"nib/internal/sign"
 	"nib/internal/testpdf"
 )
-
-// appearancePNG stands in for the client-rendered attestation block: a bordered
-// block sized to the placement rect. (In the app the browser renders the text;
-// the backend only bakes the image, like flatten/redact.)
-func appearancePNG(p Placement) []byte {
-	w := int((p.Rect[2] - p.Rect[0]) * 2)
-	h := int((p.Rect[3] - p.Rect[1]) * 2)
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if x < 4 || y < 4 || x >= w-4 || y >= h-4 {
-				img.Set(x, y, color.RGBA{0, 0, 0, 255})
-			} else {
-				img.Set(x, y, color.RGBA{245, 245, 245, 255})
-			}
-		}
-	}
-	var b bytes.Buffer
-	_ = png.Encode(&b, img)
-	return b.Bytes()
-}
 
 func fp(t *testing.T, certPEM []byte) string {
 	t.Helper()
@@ -52,7 +27,7 @@ func contribute(t *testing.T, pdf, cert, key []byte, att Attestation) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := Contribute(pdf, cert, key, att, appearancePNG(p), p)
+	out, err := Contribute(pdf, cert, key, att, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +122,7 @@ func TestCoSignRefusesCertified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Contribute(certified, certB, keyB, Attestation{Signer: "Bob", AcceptedPeer: fp(t, certA), AcceptedPeerLabel: "Certifier", When: time.Now()}, nil, Placement{}); err == nil {
+	if _, err := Contribute(certified, certB, keyB, Attestation{Signer: "Bob", AcceptedPeer: fp(t, certA), AcceptedPeerLabel: "Certifier", When: time.Now()}, Placement{}); err == nil {
 		t.Error("Contribute should refuse to co-sign a certified document")
 	}
 }

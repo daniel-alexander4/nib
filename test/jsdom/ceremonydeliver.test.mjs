@@ -436,7 +436,8 @@ test('the convener is offered Sign now at their own turn, and a party who did no
 });
 
 test('Sign now quotes the block, signs the document that was open at the press, and moves the rail on', async () => {
-  // jsdom draws nothing: a canvas that accepts every call and yields a PNG-shaped blob.
+  // jsdom draws nothing: a canvas that accepts every call (the preview draws the PAGE on one; the block
+  // itself is the server's picture, `image` on the quote — ADR-158 — and this window draws none).
   const proto = doc.defaultView.HTMLCanvasElement.prototype;
   const was = { getContext: proto.getContext, toBlob: proto.toBlob };
   proto.getContext = () => new Proxy({}, { get: () => () => {}, set: () => true });
@@ -449,7 +450,7 @@ test('Sign now quotes the block, signs the document that was open at the press, 
     // (It carries a block, so `mine` alone is what stops the press.)
     hopQuote = {
       party: 'Bob Landlord', mine: false, contributes: true,
-      lines: ['Nib co-signing attestation'], rect: [0, 0, 280, 84], when: '2030-01-01T00:00:00Z',
+      lines: ['Nib co-signing attestation'], rect: [0, 0, 280, 84], image: 'QUJD', when: '2030-01-01T00:00:00Z',
     };
     signTurns.length = 0;
     card.querySelector('.cersign').click();
@@ -460,7 +461,7 @@ test('Sign now quotes the block, signs the document that was open at the press, 
     hopQuote = {
       party: 'Alice Convener', mine: true, contributes: true,
       lines: ['Nib co-signing attestation', 'Signer: Alice Convener'], rect: [0, 0, 280, 84],
-      when: '2030-01-01T00:00:00Z',
+      image: 'U0VSVkVS', when: '2030-01-01T00:00:00Z',
     };
     afterSigning = { ceremony: id, state: 'waiting', label: 'Bob Landlord', meKnown: true, isMe: false };
     hopQuote.block = { page: 1, rect: [100, 100, 380, 184] };
@@ -477,6 +478,13 @@ test('Sign now quotes the block, signs the document that was open at the press, 
     assert.equal(preview.hidden, false, 'the first press showed no preview of the block');
     assert.ok(preview.textContent || preview.querySelector('.srvpage'),
       'the preview is empty: neither the page with the outline nor a sentence saying why not');
+    // What is in the outline is the SERVER's picture of the block, as quoted (ADR-158) — where the
+    // page drew at all. A window drawing its own would show a block Nib does not sign.
+    const pic = preview.querySelector('.srvblock img');
+    if (preview.querySelector('.srvpage')) {
+      assert.equal(pic?.getAttribute('src'), 'data:image/png;base64,U0VSVkVS',
+        'the block shown in the preview is not the picture the server quoted');
+    }
     assert.equal(signBtn.textContent, 'Sign', `after the preview the button reads ${signBtn.textContent}`);
     assert.equal(back.hidden, false, 'there is no way back from the preview');
     assert.match(again.querySelector('.cercallstate').textContent, /Signing is permanent/,
@@ -520,7 +528,8 @@ test('Sign now quotes the block, signs the document that was open at the press, 
     assert.equal(signTurns[0].body.ceremony, id);
     assert.equal(signTurns[0].body.when, '2030-01-01T00:00:00Z',
       'the time signed is not the time quoted — the block read and the block signed would differ');
-    assert.ok(signTurns[0].body.appearance, 'the press sent no signature block: the server refuses an invisible signature');
+    assert.equal('appearance' in signTurns[0].body, false,
+      'the press sent a picture of the block: the server draws it and refuses a request that carries one (ADR-158)');
     assert.equal(signTurns[0].doc, 'deliver:1',
       'the signing request does not name the document open at the press (ADR-001)');
     // The rail has moved on without the panel being opened again: the call to the next party.

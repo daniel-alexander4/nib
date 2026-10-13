@@ -210,9 +210,9 @@ func DeliveryLegBudget(g PeerGates) time.Duration {
 
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
 // attestation (their identity, accepted-peer, and intent, read from the document
-// they signed) and the document itself, it returns whether to co-sign, this user's
-// own intent, and the rendered appearance image for this user's visible block (nil
-// for an invisible signature). The live UI (P2P 11) implements it; tests inject an
+// they signed) and the document itself, it returns whether to co-sign and this user's
+// own intent. It returns no picture: the block is drawn by `Contribute` from the
+// attestation (ADR-158). The live UI (P2P 11) implements it; tests inject an
 // auto-confirmer.
 type Confirmer interface {
 	// Confirm asks the local user whether to co-sign, and returns WHEN they were asked.
@@ -226,7 +226,7 @@ type Confirmer interface {
 	// A zero `when` means the implementation has none to offer and the signing clock is used,
 	// which is what every implementation did before this and what a caller with no quote step
 	// still does.
-	Confirm(peer SignerAttestation, doc []byte) (accept bool, intent string, appearance []byte, when time.Time, err error)
+	Confirm(peer SignerAttestation, doc []byte) (accept bool, intent string, when time.Time, err error)
 }
 
 // Initiate runs the dialing side of a session: it sends the document this user has
@@ -1185,7 +1185,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		}
 	}
 
-	accept, intent, appearance, when, err := c.Confirm(peer, inbound)
+	accept, intent, when, err := c.Confirm(peer, inbound)
 	if err != nil {
 		return nil, err
 	}
@@ -1230,7 +1230,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// both contribution paths use. A no-op outside a ceremony, where there is no proceeding to
 	// name and the certificate's own common name is the honest answer for the signer.
 	StampCommitment(&att, roster, hex.EncodeToString(myFP))
-	final, err := Contribute(inbound, myCertPEM, myKeyPEM, att, appearance, place)
+	final, err := Contribute(inbound, myCertPEM, myKeyPEM, att, place)
 	if err != nil {
 		return nil, err
 	}

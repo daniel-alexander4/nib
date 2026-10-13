@@ -901,7 +901,10 @@ Nothing is checked until you open the sheet; opening a document never runs it.
 
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
-cryptographically-signed reason — that they accept the other's identity. Nib names
+cryptographically-signed reason — that they accept the other's identity. Nib itself draws
+that block from the words it signs, in typefaces it carries, so the block on the page is the
+same on every machine; a name or sentence holding a character it has no typeface for (an
+emoji, a line break) is refused where you type it rather than drawn as an empty box. Nib names
 each identity with **six words** derived from its signing key. Read yours aloud once over a
 channel you both trust — a call, or in the room — and pin theirs under **Identity & peers**.
 The full key fingerprint is there too, under *Fingerprint (advanced)*, for pinning by hand.
@@ -1700,7 +1703,9 @@ one to review it; use `nib tag propose` and `nib tag commit`. Run `nib <command>
 Nib is a small Go server that embeds the entire single-page UI and the
 [pdf.js](https://mozilla.github.io/pdf.js/) engine. Your browser renders and
 fills the PDF; [pdfcpu](https://pdfcpu.io) stamps, flattens, and redacts;
-[pdfsign](https://github.com/digitorus/pdfsign) signs and verifies. Pure Go, no
+[pdfsign](https://github.com/digitorus/pdfsign) signs and verifies;
+[go-text/typesetting](https://github.com/go-text/typesetting) shapes the text of a
+co-signing block. Pure Go, no
 cgo, permissive dependencies only — so it builds to one portable binary per
 platform.
 

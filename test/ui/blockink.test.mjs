@@ -24,7 +24,7 @@
 //
 // So the question this file answers — does that /AP paint ink at that rect on the composited
 // page — is reachable through `POST /api/cosign/sign`, which is entirely local: a multipart PDF
-// and an appearance PNG, no peer session, no network. Its one precondition is a pinned peer
+// and nothing else — no picture (the server draws the block, ADR-158), no peer session, no network. Its one precondition is a pinned peer
 // fingerprint, and `POST /api/peers/pin` takes any 64 hex characters.
 //
 // What stays owed is narrower than the item said and is recorded rather than implied: a NINE
@@ -67,17 +67,20 @@ import { makePDF, writeRawFixture } from './fixtures.mjs';
 // vault, and nothing on this path dials it.
 const PEER_FP = 'ab'.repeat(32);
 
-// The appearance is a SOLID MAGENTA field with a GREEN marker square in its top-left corner,
-// and both choices are load-bearing.
+// **The block measured is the one the SERVER draws (ADR-158, /pending 367).** This file used to post
+// its own picture — a solid magenta field with a green corner marker — because a block nobody could
+// mistake for the readme made "is this pixel the block's" a question about the pixel. The signing
+// routes refuse a picture now, so there is no such stimulus to supply: the block is white, framed in
+// black, with black text, on a page of black prose on white paper. What replaces the colour test:
 //
-// Magenta because the readme is black prose on white paper: "is this pixel the block's" is
-// then a question about the pixel and not about a threshold. The green marker is the
-// ORIENTATION control — an image placed into a PDF rect can arrive flipped, which is the
-// defect class stamplace.test.mjs exists for one level down ("baked a few points high", and
-// pdf.js's own stamp editor was dropped over it). A solid field cannot tell a flip from a
-// correct placement; a field with a corner can.
-const MAGENTA = { r: 255, g: 0, b: 255 };
-const GREEN = { r: 0, g: 255, b: 0 };
+//   - the FRAME, read on all four edges of the widget rect (a clipped appearance loses an edge);
+//   - the prose under the block being GONE (an appearance that is not opaque leaves it legible);
+//   - the block on the page compared with the picture the quote returned, upright against mirrored
+//     and upside down (the orientation control the green marker was).
+//
+// **Rewritten without a browser to run it in** — the worker that made ADR-158 could not start tier 3.
+// The thresholds below are reasoned, not measured; the first run's `MEASURED` line is what to set
+// them from.
 
 const SRC = writeRawFixture('blockink-src.pdf', makePDF({ pages: 1, label: 'agreement' }));
 const srcBytes = [...fs.readFileSync(SRC)];
@@ -94,7 +97,7 @@ after(async () => {
   await shutdown(h);
 });
 
-// measure does the whole drive inside the page: pin, quote, build the appearance, co-sign
+// measure does the whole drive inside the page: pin, quote, co-sign
 // twice, render the readme page of both results, and reduce to numbers.
 //
 // It runs in the page rather than from node for two reasons. The CSRF token and the loopback
@@ -102,7 +105,7 @@ after(async () => {
 // vendored pdf.js the app itself loads, so the renderer measuring the document is the renderer
 // shipping in the product (compare-align.test.mjs is the precedent for both).
 async function measure() {
-  return page.evaluate(async ([src, peerFP, magenta, green]) => {
+  return page.evaluate(async ([src, peerFP]) => {
     const csrf = sessionStorage.getItem('nib-token');
     const post = (url, body, extra = {}) => fetch(url, {
       method: 'POST', headers: { 'X-CSRF-Token': csrf, ...(extra.headers || {}) }, body,
@@ -114,33 +117,16 @@ async function measure() {
     const pinned = await json('/api/peers/pin', { fingerprint: peerFP, label: 'Test Counterparty' });
     if (!pinned.ok) throw new Error('pin failed: ' + pinned.status + ' ' + await pinned.text());
 
-    // /quote gives the block's size template, which is what app.js rasterises against. Read
-    // rather than copied: a literal rect here would be a second implementation of
-    // `NominalBlockRect`, which is the ADR-009 shape that function was written to remove.
+    // /quote pins the time and returns the picture of the block as the server will draw it
+    // (`image`, a PNG). Nothing here draws a block and nothing posts one.
     const qr = await json('/api/cosign/quote', { fingerprint: peerFP, intent: 'approve' });
     if (!qr.ok) throw new Error('quote failed: ' + qr.status + ' ' + await qr.text());
     const q = await qr.json();
-    const wPt = q.rect[2] - q.rect[0], hPt = q.rect[3] - q.rect[1];
-
-    const appearance = await new Promise((resolve) => {
-      const s = 4; // rasterise above page resolution, as the client does
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(wPt * s); cv.height = Math.round(hPt * s);
-      const ctx = cv.getContext('2d');
-      ctx.fillStyle = `rgb(${magenta.r},${magenta.g},${magenta.b})`;
-      ctx.fillRect(0, 0, cv.width, cv.height);
-      // Top-left quarter-height square, in IMAGE coordinates where y grows downward.
-      const m = Math.round(cv.height / 4);
-      ctx.fillStyle = `rgb(${green.r},${green.g},${green.b})`;
-      ctx.fillRect(0, 0, m, m);
-      cv.toBlob(resolve, 'image/png');
-    });
 
     const cosign = async (pdfBytes) => {
       const form = new FormData();
       form.append('pdf', new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' }), 'doc.pdf');
       form.append('params', JSON.stringify({ fingerprint: peerFP, intent: 'approve', when: q.when }));
-      form.append('appearance', appearance, 'attestation.png');
       const r = await post('/api/cosign/sign', form);
       if (!r.ok) throw new Error('sign failed: ' + r.status + ' ' + await r.text());
       return [...new Uint8Array(await r.arrayBuffer())];
@@ -150,7 +136,7 @@ async function measure() {
     //
     // `stackPlacement` puts block i at y = 40 + i*96, 84 pt tall, so the first two blocks sit
     // in the readme page's blank bottom margin — MEASURED: zero non-paper pixels under block 1.
-    // A differential there would be magenta painted on white, and D25's clause is about a block
+    // A differential there would be a white block painted on white, and D25's clause is about a block
     // painted over the readme's PROSE. Block 5 lands at y 520..604, in the body text, which is
     // the overlap D25 named and the reason placement_test.go drives n=4.
     //
@@ -198,13 +184,7 @@ async function measure() {
     await sp.render({ canvasContext: scv.getContext('2d'), viewport: svp }).promise;
     const sd = scv.getContext('2d').getImageData(0, 0, scv.width, scv.height).data;
 
-    const near = (d, i, c, tol = 60) =>
-      Math.abs(d[i] - c.r) < tol && Math.abs(d[i + 1] - c.g) < tol && Math.abs(d[i + 2] - c.b) < tol;
-    const countColour = (d, c) => {
-      let n = 0;
-      for (let i = 0; i < d.length; i += 4) if (near(d, i, c)) n++;
-      return n;
-    };
+    const whiteAt = (d, i) => d[i] > 235 && d[i + 1] > 235 && d[i + 2] > 235;
 
     if (A.w !== B.w || A.h !== B.h) {
       return { mismatch: { a: [A.w, A.h], b: [B.w, B.h] } };
@@ -239,25 +219,60 @@ async function measure() {
     // Inside the added widget's box: how much is the block's own ink, and where is the
     // orientation marker's centroid.
     const box = added.length === 1 ? rectToBox(added[0]) : null;
-    let inBlock = 0, inTotal = 0, greenN = 0, gx = 0, gy = 0, changedInBox = 0, proseUnder = 0;
+    let inTotal = 0, changedInBox = 0, proseUnder = 0, proseCovered = 0;
+    const edge = { top: 0, bottom: 0, left: 0, right: 0, w: 0, h: 0 };
+    let match = null;
     if (box) {
       for (let y = box.y0; y < box.y1; y++) {
         for (let x = box.x0; x < box.x1; x++) {
           const i = (y * B.w + x) * 4;
           inTotal++;
-          if (near(B.data, i, magenta) || near(B.data, i, green)) inBlock++;
           const wasWhite = A.data[i] > 240 && A.data[i + 1] > 240 && A.data[i + 2] > 240;
-          if (!wasWhite) proseUnder++;
-          if (near(B.data, i, green)) { greenN++; gx += x; gy += y; }
+          if (!wasWhite) { proseUnder++; if (whiteAt(B.data, i)) proseCovered++; }
           const d = Math.abs(A.data[i] - B.data[i]) + Math.abs(A.data[i + 1] - B.data[i + 1]) +
             Math.abs(A.data[i + 2] - B.data[i + 2]);
           if (d >= 24) changedInBox++;
         }
       }
+      // The frame: along each edge of the rect, how much of its length carries ink within a pixel
+      // of the edge line. The frame is a third of a point wide at this scale, so it antialiases to
+      // grey across one or two pixels — "not white" rather than "dark".
+      const ink = (x, y) => x >= 0 && y >= 0 && x < B.w && y < B.h && !whiteAt(B.data, (y * B.w + x) * 4);
+      edge.w = box.x1 - box.x0; edge.h = box.y1 - box.y0;
+      for (let x = box.x0; x < box.x1; x++) {
+        if (ink(x, box.y0 - 1) || ink(x, box.y0) || ink(x, box.y0 + 1)) edge.top++;
+        if (ink(x, box.y1 - 2) || ink(x, box.y1 - 1) || ink(x, box.y1)) edge.bottom++;
+      }
+      for (let y = box.y0; y < box.y1; y++) {
+        if (ink(box.x0 - 1, y) || ink(box.x0, y) || ink(box.x0 + 1, y)) edge.left++;
+        if (ink(box.x1 - 2, y) || ink(box.x1 - 1, y) || ink(box.x1, y)) edge.right++;
+      }
+      // The block on the page against the picture the quote returned, scaled to the rect: upright,
+      // mirrored left to right, and upside down. Mean absolute difference of the red channel.
+      if (q.image) {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + q.image;
+        await img.decode();
+        const bw = edge.w, bh = edge.h;
+        const qc = document.createElement('canvas');
+        qc.width = bw; qc.height = bh;
+        const qx = qc.getContext('2d');
+        qx.drawImage(img, 0, 0, bw, bh);
+        const qd = qx.getImageData(0, 0, bw, bh).data;
+        const diff = (mirror, flip) => {
+          let sum = 0;
+          for (let y = 0; y < bh; y++) {
+            for (let x = 0; x < bw; x++) {
+              const sx = mirror ? bw - 1 - x : x, sy = flip ? bh - 1 - y : y;
+              sum += Math.abs(qd[(sy * bw + sx) * 4] - B.data[((box.y0 + y) * B.w + box.x0 + x) * 4]);
+            }
+          }
+          return sum / (bw * bh);
+        };
+        match = { upright: diff(false, false), mirrored: diff(true, false), flipped: diff(false, true) };
+      }
     }
 
-    // Did any changed pixel land inside the FIRST block's box? That is the incremental-update
-    // property, visually: contributing a second signature must not disturb the first's mark.
     let changedInOld = 0;
     for (const r of A.sigRects) {
       const ob = rectToBox(r);
@@ -276,16 +291,14 @@ async function measure() {
     let prose = 0;
     for (let i = 0; i < A.data.length; i += 4) {
       const white = A.data[i] > 240 && A.data[i + 1] > 240 && A.data[i + 2] > 240;
-      if (!white && !near(A.data, i, magenta) && !near(A.data, i, green)) prose++;
+      if (!white) prose++;
     }
 
     return {
       pageW: B.w, pageH: B.h, pagesA: A.pages, pagesB: B.pages,
       sigsA: A.sigRects.length, sigsB: B.sigRects.length,
       addedRects: added, box, changed, changedInBox, changedInOld,
-      inBlock, inTotal, prose, proseUnder,
-      greenCentroid: greenN ? { n: greenN, x: gx / greenN, y: gy / greenN } : { n: 0 },
-      srcMagenta: countColour(sd, magenta), srcGreen: countColour(sd, green),
+      inTotal, prose, proseUnder, proseCovered, edge, match, quoted: !!q.image,
       // **Chunked, because a spread pushes one ARGUMENT PER BYTE** (`/pending 474`).
       // `String.fromCharCode(...bytes)` over a whole co-signed PDF overflowed the stack —
       // `RangeError: Maximum call stack size exceeded` — and took the file's whole run with it
@@ -300,7 +313,7 @@ async function measure() {
         return btoa(out);
       })(),
     };
-  }, [srcBytes, PEER_FP, MAGENTA, GREEN]);
+  }, [srcBytes, PEER_FP]);
 }
 
 // /api/cosign/quote answers 400 without an open document, by design — quoting a block for no
@@ -316,11 +329,7 @@ test('a signature block paints ink inside its own widget rect, and nowhere else 
     'a pixel-for-pixel difference is meaningless across different canvases');
 
   // ── Setup assertions: the stimulus happened, and the control is clean ──────
-  assert.equal(m.srcMagenta, 0,
-    `setup: the source document already renders ${m.srcMagenta} magenta pixel(s) — the ink ` +
-    'measured below would not be the block\'s own');
-  assert.equal(m.srcGreen, 0,
-    `setup: the source document already renders ${m.srcGreen} green pixel(s)`);
+  assert.ok(m.quoted, 'setup: the quote carried no picture of the block (`image`), so there is nothing to compare the page with');
   assert.equal(m.pagesA, 2, `setup: co-signing produced ${m.pagesA} pages, want source + readme`);
   assert.equal(m.pagesB, 2,
     `setup: the sixth contribution changed the page count to ${m.pagesB} — it must be an ` +
@@ -369,37 +378,39 @@ test('a signature block paints ink inside its own widget rect, and nowhere else 
   // ── A3. The ink FILLS the rect ────────────────────────────────────────────
   // A BBox or Matrix that clips the appearance to a sliver satisfies A1 and A2 and still
   // leaves a block a reader cannot read.
-  const fill = m.changedInBox / m.inTotal;
-  assert.ok(fill > 0.85,
-    `the block's ink covers ${(fill * 100).toFixed(1)}% of its own widget rect — an ` +
-    'appearance clipped to part of its rectangle is placed, drawn, and unreadable');
+  // The frame is on all four edges of the rect. A BBox or Matrix that clips the appearance to a
+  // sliver satisfies the two assertions above and loses at least one edge.
+  const e = m.edge;
+  for (const [side, got, len] of [['top', e.top, e.w], ['bottom', e.bottom, e.w], ['left', e.left, e.h], ['right', e.right, e.h]]) {
+    assert.ok(got / len > 0.9,
+      `the block's frame covers ${got} of the ${len} pixels of its ${side} edge — an appearance ` +
+      'clipped to part of its rectangle is placed, drawn, and unreadable');
+  }
 
-  // ── A4. Nothing shows through it ──────────────────────────────────────────
-  // D25's clause, literally: this block is over the readme's body text (the setup assertion
-  // above measured how much), and the block's field is opaque, so that prose is COVERED rather
-  // than overlaid. A semi-transparent or undersized appearance leaves it legible underneath.
-  const opaque = m.inBlock / m.inTotal;
-  assert.ok(opaque > 0.95,
-    `only ${(opaque * 100).toFixed(1)}% of the block's rect renders in the block's own ` +
-    `colours — ${m.proseUnder} pixel(s) of readme prose sit beneath it and it is not covering them`);
+  // The block is opaque: the readme's prose that sat under it is gone. A semi-transparent or
+  // undersized appearance leaves it legible underneath. (Not all of it turns white — the block's own
+  // text falls on some of the same pixels.)
+  const covered = m.proseCovered / m.proseUnder;
+  assert.ok(covered > 0.7,
+    `only ${(covered * 100).toFixed(1)}% of the ${m.proseUnder} pixel(s) of readme prose under the ` +
+    'block were painted out by it — the block is not covering what it sits on');
 
-  // ── A5. The first block is undisturbed ────────────────────────────────────
-  // `Contribute`'s premise is that a later contribution is an incremental update that never
-  // disturbs an earlier signature. That is asserted structurally today — `sign.Verify`
-  // reports both signers — and never visually.
   assert.equal(m.changedInOld, 0,
     `contributing a sixth signature changed ${m.changedInOld} pixel(s) inside the five EARLIER ` +
     'blocks\' rects: an incremental update repainted a mark that was already signed for');
 
   // ── A6. It is the right way up ────────────────────────────────────────────
-  // The marker is drawn in the appearance image's top-left, where y grows DOWNWARD. In the
-  // page it must land at the rect's top-left, where PDF y grows upward — the one place those
-  // two conventions meet, and the seam a wrong-but-self-consistent transform passes.
-  const g = m.greenCentroid;
-  assert.ok(g.n > 0, 'the orientation marker did not render at all inside the block');
-  assert.ok(g.x < (b.x0 + b.x1) / 2 && g.y < (b.y0 + b.y1) / 2,
-    `the orientation marker's centroid is at (${g.x.toFixed(0)}, ${g.y.toFixed(0)}) in a rect ` +
-    `of x ${b.x0}..${b.x1}, y ${b.y0}..${b.y1} — the appearance is mirrored or rotated on the page`);
+  // The picture's top-left, where y grows DOWNWARD, must land at the rect's top-left, where PDF y
+  // grows upward — the one place those two conventions meet, and the seam a
+  // wrong-but-self-consistent transform passes.
+  // The block on the page is the picture the quote returned, the right way up. An image placed into
+  // a PDF rect can arrive flipped — the defect class stamplace.test.mjs exists for one level down.
+  const q = m.match;
+  assert.ok(q, 'the page could not be compared with the quoted picture');
+  assert.ok(q.upright < 0.75 * q.mirrored && q.upright < 0.75 * q.flipped,
+    `the block on the page differs from the quoted picture by ${q.upright.toFixed(1)} upright, ` +
+    `${q.mirrored.toFixed(1)} mirrored and ${q.flipped.toFixed(1)} upside down (mean of 255) — it is ` +
+    'not the quoted picture the right way up: mirrored, rotated, or another block altogether');
 });
 
 // The measurement above is the receiving reader's view (annotationMode ENABLE). Nib's own
@@ -417,18 +428,31 @@ test('Nib\'s own viewer shows the block on the page it was placed on', async () 
     return cvs.length >= 2 && cvs[1].width > 0;
   }, null, { timeout: 20000 });
 
-  const seen = await page.evaluate(() => {
+  // The block is white with a black frame, on a page of black prose: what the viewer must show is
+  // the FRAME, read on the two vertical edges of the widget rect — prose does not draw an unbroken
+  // vertical line there, a block does.
+  const seen = await page.evaluate(([box, pageW]) => {
     const cv = document.querySelectorAll('.viewerContainer:not([hidden]) .page canvas')[1];
     const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-    let n = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > 195 && d[i + 1] < 60 && d[i + 2] > 195) n++;
+    const s = cv.width / pageW;
+    const inkNear = (xc, y) => {
+      for (let x = Math.max(0, xc - 3); x <= Math.min(cv.width - 1, xc + 3); x++) {
+        const i = (y * cv.width + x) * 4;
+        if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) return true;
+      }
+      return false;
+    };
+    let rows = 0, left = 0, right = 0;
+    for (let y = Math.round(box.y0 * s) + 3; y < Math.round(box.y1 * s) - 3; y++) {
+      rows++;
+      if (inkNear(Math.round(box.x0 * s), y)) left++;
+      if (inkNear(Math.round(box.x1 * s) - 1, y)) right++;
     }
-    return { n, w: cv.width, h: cv.height };
-  });
+    return { rows, left, right, w: cv.width, h: cv.height };
+  }, [m.box, m.pageW]);
 
-  assert.ok(seen.n > 0,
-    `the readme page renders ${seen.n} of the block's magenta pixels in Nib's own viewer on a ` +
-    `${seen.w}x${seen.h} canvas: the document carries six visible signature blocks and the ` +
-    'user checking their own work before sending it sees none of them');
+  assert.ok(seen.rows > 0 && seen.left / seen.rows > 0.8 && seen.right / seen.rows > 0.8,
+    `the sixth block's frame shows on ${seen.left} and ${seen.right} of the ${seen.rows} rows of its ` +
+    `left and right edges in Nib's own viewer, on a ${seen.w}x${seen.h} canvas: the document carries ` +
+    'six visible signature blocks and the user checking their own work before sending it does not see this one');
 });

@@ -54,8 +54,6 @@ func outsideCeremonyDoors(t *testing.T, f *hopFixture, pdf []byte, peer, intent 
 		fw.Write(pdf)
 		pj, _ := json.Marshal(cosignParams{Fingerprint: peer, Intent: intent})
 		mw.WriteField("params", string(pj))
-		aw, _ := mw.CreateFormFile("appearance", "att.png")
-		aw.Write(tinyPNG(t))
 		// An address nothing listens on: a request that got as far as dialling fails as
 		// unreachable, which is a different answer from the refusal asserted below.
 		mw.WriteField("address", "127.0.0.1:1")
@@ -165,11 +163,12 @@ func convenedAs(t *testing.T, parties func(me string) []convenePartyRequest) *ho
 	return &hopFixture{c: c, csrf: csrf, base: ts.URL, id: out.Ceremony, me: me, pdfPath: pdfPath, srv: srv}
 }
 
-// signTurn presses the own-turn route as the window does: the quote's time, and a drawn block.
+// signTurn presses the own-turn route as the window does: the ceremony and the quote's time. No
+// picture — the server draws the block (ADR-158).
 func (f *hopFixture) signTurn(t *testing.T, when string) (int, string) {
 	t.Helper()
 	return postForCode(t, f.c, f.csrf, f.base+"/api/ceremony/sign-turn", ceremonySignTurnRequest{
-		Ceremony: f.id, Appearance: base64.StdEncoding.EncodeToString(tinyPNG(t)), When: when})
+		Ceremony: f.id, When: when})
 }
 
 // openBytes is every open document's bytes, in registry order.
@@ -286,7 +285,7 @@ func TestAConvenerNamedSecondSignsTheirOwnTurn(t *testing.T) {
 	w := httptest.NewRecorder()
 	bobSigned, ok := f.srv.buildCoSigned(w, convened, bobCert, bobKey,
 		p2p.Attestation{Signer: "Bob", AcceptedPeer: f.me, Intent: rec.Intent, When: time.Now()},
-		tinyPNG(t), roster)
+		roster)
 	if !ok {
 		t.Fatalf("setup: the first party was refused at their own turn: %d %s", w.Code, w.Body.String())
 	}
@@ -299,15 +298,16 @@ func TestAConvenerNamedSecondSignsTheirOwnTurn(t *testing.T) {
 	//    refuse, and the quote carries the block to draw.
 	q := ownTurnAsTheWindowSeesIt(t, f, bobSigned, carla, rec.Intent, 2, 3)
 
-	// 2. A press with no block is refused BEFORE anything is signed: an empty appearance is an
-	//    invisible signature, and a signature cannot be taken back off.
+	// 2. A press that CARRIES a picture of the block is refused BEFORE anything is signed (ADR-158):
+	//    the server draws the block from what it signs, and a signature cannot be taken back off.
 	code, body = postForCode(t, f.c, f.csrf, f.base+"/api/ceremony/sign-turn",
-		ceremonySignTurnRequest{Ceremony: f.id, When: q.When})
-	if code != http.StatusBadRequest || !strings.Contains(body, "invisible signature") {
-		t.Errorf("a press with no signature block answered %d %s, want 400 naming the invisible signature", code, body)
+		ceremonySignTurnRequest{Ceremony: f.id, When: q.When,
+			Appearance: base64.StdEncoding.EncodeToString(tinyPNG(t))})
+	if code != http.StatusBadRequest || !strings.Contains(body, "does not accept a picture") {
+		t.Errorf("a press carrying a picture of the block answered %d %s, want 400 saying Nib does not accept one", code, body)
 	}
 	if got := f.theOneOpenDocument(t); !bytes.Equal(got, bobSigned) {
-		t.Fatal("a press with no signature block changed the document")
+		t.Fatal("a press carrying a picture of the block changed the document")
 	}
 
 	// 3. The route. The time echoed is one the convener read the block at three hours ago — inside
@@ -448,7 +448,7 @@ func TestAConvenerNamedLastSignsAndFinishesTheCeremony(t *testing.T) {
 	w := httptest.NewRecorder()
 	bobSigned, ok := f.srv.buildCoSigned(w, convened, bobCert, bobKey,
 		p2p.Attestation{Signer: "Bob", AcceptedPeer: f.me, Intent: rec.Intent, When: time.Now()},
-		tinyPNG(t), roster)
+		roster)
 	if !ok {
 		t.Fatalf("setup: the first party was refused at their own turn: %d %s", w.Code, w.Body.String())
 	}

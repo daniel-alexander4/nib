@@ -27,8 +27,8 @@ import (
 // screen's intent box.
 type intentConfirmer struct{ intent string }
 
-func (c intentConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
-	return true, c.intent, nil, time.Time{}, nil
+func (c intentConfirmer) Confirm(SignerAttestation, []byte) (bool, string, time.Time, error) {
+	return true, c.intent, time.Time{}, nil
 }
 
 const recital = "We agree to be bound by the lease of 14 Elm Row"

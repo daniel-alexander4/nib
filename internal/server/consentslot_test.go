@@ -84,7 +84,7 @@ func TestASecondArmCannotDisplaceTheConsentOnScreen(t *testing.T) {
 	srv.sess.pending = se2.pending
 	var saw reached
 	sc := sessionConfirmer{s: srv, saw: &saw, anchor: consentAnchor{cer: cerB2, kind: armDelivery}}
-	_, _, _, _, err := sc.Confirm(p2p.SignerAttestation{}, []byte("not a pdf"))
+	_, _, _, err := sc.Confirm(p2p.SignerAttestation{}, []byte("not a pdf"))
 	if !errors.Is(err, errConsentBusy) {
 		t.Errorf("Confirm for B with A on screen returned %v, want errConsentBusy", err)
 	}
@@ -387,7 +387,7 @@ func TestAnAcceptedRequestIsSettledAfterItsSession(t *testing.T) {
 		var sawC reached
 		sc := sessionConfirmer{s: s, saw: &sawC, anchor: consentAnchor{ln: ln}}
 		idc = answerWhenParked()
-		if _, _, _, _, err := sc.Confirm(p2p.SignerAttestation{}, []byte("not a pdf")); err != nil {
+		if _, _, _, err := sc.Confirm(p2p.SignerAttestation{}, []byte("not a pdf")); err != nil {
 			t.Fatalf("co-sign accept=%t: %v", accept, err)
 		}
 		check("co-sign", &sawC, <-idc)

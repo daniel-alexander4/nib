@@ -41,7 +41,8 @@ import (
 type ceremonySignTurnRequest struct {
 	// Ceremony is the id — the only thing the client chooses, as on the hop.
 	Ceremony string `json:"ceremony"`
-	// Appearance is the rendered signature block, base64 PNG, drawn from the quote's lines.
+	// Appearance is REFUSED when present (ADR-158): the server draws the block from the attestation
+	// it signs. Read only so that a window still sending a picture is told so.
 	Appearance string `json:"appearance"`
 	// When echoes the quote's timestamp, so the block the convener read is the block signed.
 	When string `json:"when,omitempty"`
@@ -82,6 +83,9 @@ func ownTurnAttestation(w http.ResponseWriter, v *vault.Vault, roster p2p.Roster
 				"to read and nothing was signed. The longest part is %s.", lines, limit, worst))
 		return p2p.Attestation{}, false
 	}
+	if refusedUndrawable(w, att) {
+		return p2p.Attestation{}, false
+	}
 	return att, true
 }
 
@@ -90,6 +94,9 @@ func (s *Server) handleCeremonySignTurn(w http.ResponseWriter, r *http.Request) 
 	var req ceremonySignTurnRequest
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if refusedClientPicture(w, req.Appearance != "") {
 		return
 	}
 	// The ceremony, the PINNED document's bytes (ADR-001, ADR-004), the convener entitlement and
@@ -162,20 +169,7 @@ func (s *Server) handleCeremonySignTurn(w http.ResponseWriter, r *http.Request) 
 	if !aok {
 		return
 	}
-	appearance, derr := decodeAppearance(req.Appearance)
-	if derr != nil {
-		httpError(w, http.StatusBadRequest, "the signature block could not be read: "+derr.Error())
-		return
-	}
-	// Refused rather than defaulted, as on the hop: an empty appearance is an invisible signature,
-	// and that is a silent downgrade for a window whose render failed.
-	if len(appearance) == 0 {
-		httpError(w, http.StatusBadRequest,
-			"your signature block was not sent, so Nib will not sign: an empty block would put an "+
-				"invisible signature on the document and there is no way to take one back off")
-		return
-	}
-	signed, ok := s.buildCoSigned(w, pdf, cert, key, att, appearance, cer.l3Roster())
+	signed, ok := s.buildCoSigned(w, pdf, cert, key, att, cer.l3Roster())
 	if !ok {
 		return
 	}

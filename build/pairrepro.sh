@@ -874,14 +874,9 @@ printf '# Lease agreement\n\nBoth parties agree to the terms above.\n' > "$WORK/
 "$WORK/nib" office "$WORK/doc.md" -o "$WORK/doc.pdf" >/dev/null 2>&1 || fail "could not build the fixture PDF"
 [ -s "$WORK/doc.pdf" ] || fail "the fixture PDF is empty"
 
-# A 1x1 PNG for the visible signature block. Bytes rather than a file in the
-# repo: it is scaffolding, not content.
-python3 - "$WORK/sig.png" <<'PYPNG'
-import base64, sys
-open(sys.argv[1], "wb").write(base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
-PYPNG
-[ -s "$WORK/sig.png" ] || fail "could not write the appearance PNG"
+# No picture of the signature block is posted anywhere below: the server draws the block from the
+# attestation it signs and refuses a request that carries one (ADR-158). This harness used to post a
+# 1x1 PNG as `appearance` on every signing call, which the server embedded as the block.
 
 # assert_spoken_check grades L2's stimulus for ONE hop, and it is the one door for that rule.
 #
@@ -1146,7 +1141,7 @@ print(json.dumps({'id':'$pid','accept':True,'intent':'I accept','when':q.get('wh
   echo "initiating the ceremony over $transport…"
   local init_out="$WORK/initiate.$transport.json"
   curl -sS -X POST "$A/api/session/initiate" -H "X-CSRF-Token: $CSRF_A" \
-    -F "pdf=@$indoc" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$indoc" \
     -F "params={\"fingerprint\":\"$FP_B\",\"intent\":\"I agree to co-sign\"}" \
     $( [ -z "$inv" ] || printf %s "-F invitation=$inv" ) \
     $( [ "$port" = "lan" ] || [ -z "$armaddr" ] || printf %s "-F address=$armaddr" ) \
@@ -1614,7 +1609,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   local d3=$!
 
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$WORK/decoy.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$WORK/decoy.pdf" \
     -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
     -F "address=$CEREMONY_HOST:${daddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
     -o "$WORK/decoy.hop.json" -w '%{http_code}')"
@@ -1798,7 +1793,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   local wk=$!
 
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$WORK/int.hop0.pdf" \
     -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
     -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
     -o "$WORK/int.hop1.json" -w '%{http_code}')"
@@ -1856,7 +1851,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   # `carries()` was false, and the NON-SIGNING convener silently applied its own signature. The far
   # end then refused with a prefix mismatch naming a signer nobody expected. See /pending 356.
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$WORK/int.hop0.pdf" \
     -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
     -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
     -o "$WORK/int.hop1b.json" -w '%{http_code}')"
@@ -1903,7 +1898,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/int.words_f" &
   local w6=$!
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$WORK/int.hop0.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$WORK/int.hop0.pdf" \
     -F "params={\"fingerprint\":\"${FPS[1]}\",\"intent\":\"hop 1\"}" \
     -F "address=$CEREMONY_HOST:${iaddr##*:}" -F "transport=$transport" -F "invitation=$inv" \
     -o "$WORK/int.hop1c.json" -w '%{http_code}')"
@@ -2075,7 +2070,7 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   ) &
   local dw=$!
   code="$(curl -sS -X POST "${URLS[0]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[0]}" \
-    -F "pdf=@$prev" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$prev" \
     -F "params={\"fingerprint\":\"${FPS[3]}\",\"intent\":\"hop 3\"}" \
     -F "address=$CEREMONY_HOST:${DADDR[4]##*:}" -F "transport=$transport" -F "invitation=${DINV[4]}" \
     -o "$WORK/decline.hop3.json" -w '%{http_code}')"
@@ -2700,7 +2695,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     || fail "could not fetch the convened document for hop 2"
   [ -s "$WORK/convened.pdf" ] || fail "the convened document is empty"
   hop2code="$(curl -sS -X POST "${URLS[2]}/api/session/initiate" -H "X-CSRF-Token: ${CSRFS[2]}" \
-    -F "pdf=@$WORK/convened.pdf" -F "appearance=@$WORK/sig.png" \
+    -F "pdf=@$WORK/convened.pdf" \
     -F "params={\"fingerprint\":\"${FPS[0]}\",\"intent\":\"hop 2\"}" \
     -F "address=127.0.0.1:${SESSION_PORTS[0]}" -F "transport=tcp" -F "invitation=$inv3" \
     -o "$WORK/hop2.json" -w '%{http_code}')"

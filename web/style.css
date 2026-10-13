@@ -2239,6 +2239,12 @@ body.presenting .presentbar { display: flex; }
   color: var(--base);
   background: var(--blue);
 }
+/* The block's own picture in its outline (ADR-158): the server's PNG, stretched to the place it will fill. */
+.srvblock .srvblockpic {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 
 /* Naming a proceeding on THIS machine. Same disclosure shape as .cerreissue — a button that
    opens a body — because it is the same kind of act: something you do occasionally, on one card,

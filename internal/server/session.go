@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -273,6 +272,11 @@ type pendingReq struct {
 	// teardown releases the request exactly when the arm it names goes — see `disarmWhen` — and
 	// the quote reads that arm's roster, not whichever ceremony arm happens to be first.
 	anchor consentAnchor
+	// signs is whether accepting this request puts this machine's SIGNATURE on the document: true
+	// for a co-sign consent (`sessionConfirmer`), false for a one-way transfer, which only keeps a
+	// file. `/api/session/respond` asks the block's questions of an acceptance only where there
+	// will be a block (ADR-158).
+	signs bool
 }
 
 // receivedInfo reports where an accepted one-way transfer was saved, so the poller
@@ -300,9 +304,8 @@ type sessionDecision struct {
 	// rather than `(false, nil)`, *"collapsing the two here means the peer is told a person
 	// declined when nobody was at the machine"* — and this is the same fact arriving through a
 	// different door.
-	torn       bool
-	intent     string
-	appearance []byte
+	torn   bool
+	intent string
 	// when is the time the responder's quote pinned, carried through to the signature.
 	//
 	// **The block a party consents to must be the block that is signed (P06.S06, /pending 317).**
@@ -1409,7 +1412,7 @@ func (sc sessionConfirmer) blockFor(doc []byte, me []byte) *pendingBlock {
 	return &pendingBlock{Page: place.Page, Rect: place.Rect}
 }
 
-func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, []byte, time.Time, error) {
+func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool, string, time.Time, error) {
 	// **C17, and it runs BEFORE anything is put in front of the user (P07.S02b).**
 	//
 	// The order is the clause: a party reconciles the document against the invitation its arm
@@ -1433,7 +1436,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			// the user on this machine sees nothing and goes on waiting for a proceeding their
 			// own build has just declared over.
 			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
-			return false, "", nil, time.Time{}, err
+			return false, "", time.Time{}, err
 		}
 	}
 	// Park the received document for review (served via /api/session/pending-pdf)
@@ -1454,9 +1457,9 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	view.Block = sc.blockFor(doc, sc.me)
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
-	req := &pendingReq{view: view, doc: doc, resp: ch}
+	req := &pendingReq{view: view, doc: doc, resp: ch, signs: true}
 	if err := sc.s.sess.setPending(sc.anchor, req); err != nil {
-		return false, "", nil, time.Time{}, err
+		return false, "", time.Time{}, err
 	}
 	// **After the slot is won, for `ConfirmVerification`'s reason (P08.S05c):** a request refused
 	// with `errConsentBusy` was put in front of nobody, so it must not spend the arm.
@@ -1469,7 +1472,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 		// wire, which the convener turns into a signed `Termination` naming them. Nothing was
 		// signed and nobody refused, which is what `ackTimedOut` already says.
 		if d.torn {
-			return false, "", nil, time.Time{}, p2p.ErrConsentTimedOut
+			return false, "", time.Time{}, p2p.ErrConsentTimedOut
 		}
 		if d.accept {
 			sc.saw.accepted(req.view.ID)
@@ -1488,12 +1491,12 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			// stepping away from the desk revoke a relationship.
 			sc.s.declineCeremony(sc.cer)
 		}
-		return d.accept, d.intent, d.appearance, d.when, nil
+		return d.accept, d.intent, d.when, nil
 	case <-time.After(consentWait(sessionConsentTimeout)):
 		// **Not `(false, nil)`.** That is what a user who read the document and refused it
 		// returns, and collapsing the two here means the peer is told a person declined
 		// when nobody was at the machine. See p2p.ErrConsentTimedOut.
-		return false, "", nil, time.Time{}, p2p.ErrConsentTimedOut
+		return false, "", time.Time{}, p2p.ErrConsentTimedOut
 	}
 }
 
@@ -3185,10 +3188,12 @@ func (s *Server) handleSessionVerify(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		// ID names the pending request this answers — `pendingView.ID`, as the page received it.
-		ID         string `json:"id"`
-		Accept     bool   `json:"accept"`
-		Intent     string `json:"intent"`
-		Appearance string `json:"appearance"` // base64 PNG, optional
+		ID     string `json:"id"`
+		Accept bool   `json:"accept"`
+		Intent string `json:"intent"`
+		// Appearance is REFUSED when present (ADR-158): the block is drawn by the server from the
+		// attestation it signs. Read only so that a window still sending a picture is told so.
+		Appearance string `json:"appearance"`
 		// When is the time `/api/session/quote` pinned, echoed back so the signature carries the
 		// time the party saw (P06.S06). Optional: absent falls back to the signing clock.
 		When string `json:"when"`
@@ -3197,14 +3202,8 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	var appearance []byte
-	if req.Appearance != "" {
-		b, err := base64.StdEncoding.DecodeString(req.Appearance)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "invalid appearance image")
-			return
-		}
-		appearance = b
+	if refusedClientPicture(w, req.Appearance != "") {
+		return
 	}
 	// **Bounded exactly as the initiating side bounds its own, through the same door (ADR-009).**
 	// `when` is signed into the attestation, so an unbounded value lets a caller mint a
@@ -3227,21 +3226,31 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "the answer does not name the request it is for")
 		return
 	}
+	// An acceptance that signs is asked whether its block can be drawn, of the words it will sign
+	// (ADR-158; `refusedAnswerBlock`). A request that is no longer the one parked is left to
+	// `respond` below, which says so.
+	if req.Accept {
+		if p, roster, out := s.sess.pendingNamed(req.ID); out == respondDelivered && p.signs {
+			if s.refusedAnswerBlock(w, vaultFrom(r), p, roster, req.Intent) {
+				return
+			}
+		}
+	}
 	if !writePendingRefusal(w, s.sess.respond(req.ID, sessionDecision{
-		accept: req.Accept, intent: req.Intent, appearance: appearance, when: when,
+		accept: req.Accept, intent: req.Intent, when: when,
 	}), http.StatusConflict) {
 		return
 	}
 	writeJSON(w, s.sess.status())
 }
 
-// handleSessionQuote returns the appearance lines for the responder's own visible
-// attestation block, accepting the peer whose request is pending. Unlike
-// /api/cosign/quote it never reads the open document: the responder's block is
-// placed server-side on the *received* document (coSignExchange recomputes the
-// placement), so the client needs only the canonical lines and a nominal rect to
-// size the rasterized image — the same single-source guarantee, without binding to
-// the wrong (open) document's page geometry.
+// handleSessionQuote returns the responder's own visible attestation block — its
+// lines and the picture drawn from them (ADR-158) — accepting the peer whose request
+// is pending. Unlike /api/cosign/quote it never reads the open document: the
+// responder's block is placed server-side on the *received* document (coSignExchange
+// recomputes the placement), so the answer is the block's content and nominal size
+// only — the same single-source guarantee, without binding to the wrong (open)
+// document's page geometry.
 func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
 	var req struct {
@@ -3284,11 +3293,11 @@ func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, cosignQuote{
-		Lines: att.AppearanceLines(),
-		Rect:  p2p.NominalBlockRect(),
-		When:  att.When.UTC().Format(time.RFC3339),
-	})
+	q, ok := quoteFor(w, att)
+	if !ok {
+		return
+	}
+	writeJSON(w, q)
 }
 
 // handleDoc returns metadata for the open document — name, path, save-ability, and
@@ -3329,6 +3338,9 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	if refusedClientPicture(w, multipartCarries(r, "appearance")) {
+		return
+	}
 	// An empty address is the LAN path, not a mistake. It is resolved further down,
 	// AFTER the peer's fingerprint is parsed and its pin confirmed: a browse needs the
 	// pin to match against, and asking the link about a peer this user has not pinned
@@ -3354,10 +3366,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	peerFP, err := parseFingerprint(p.Fingerprint)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "not a valid fingerprint")
-		return
-	}
-	appearance, ok := formFileBytes(w, r, "appearance")
-	if !ok {
 		return
 	}
 	cert, key, err := identity(v)
@@ -3413,16 +3421,15 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	//
 	// **What DIFFERS between the two doors is only how the four inputs are obtained**, which is why
 	// they are parameters here rather than re-read from the request. `/api/session/initiate` takes
-	// them from a multipart form — the document, the peer's fingerprint, the rendered appearance and
-	// a pasted invitation. `/api/ceremony/hop` takes a ceremony id, resolves the turn from the open
+	// them from a multipart form — the document, the peer's fingerprint and a pasted invitation. `/api/ceremony/hop` takes a ceremony id, resolves the turn from the open
 	// document, and mints the invitation itself. The dial cannot tell them apart and must not.
-	s.runHopDial(w, r, v, cer, cert, key, myFP, peerFP, pdfBytes, appearance, att, address, peerLabel)
+	s.runHopDial(w, r, v, cer, cert, key, myFP, peerFP, pdfBytes, att, address, peerLabel)
 }
 
 // runHopDial is the second half of a hop: sign if this party contributes, then reach the far end
 // and run the exchange. See the call site above for why it is its own function.
 func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vault,
-	cer *ceremonyID, cert, key, myFP, peerFP, pdfBytes, appearance []byte,
+	cer *ceremonyID, cert, key, myFP, peerFP, pdfBytes []byte,
 	att p2p.Attestation, address, peerLabel string) {
 	// `err` and `final` are the race's accumulators: both branches below assign into them across
 	// iterations, so they are declared once here rather than inside either arm.
@@ -3479,26 +3486,11 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 	}
 	signed := pdfBytes
 	if !carrying {
-		// **Required exactly when this party CONTRIBUTES, and that is a change (P01.S02b).**
-		// `/api/session/initiate` used to demand the `appearance` part unconditionally, so even a
-		// carry hop — which never reaches `buildCoSigned` — had to upload a PNG it would not use.
-		// The requirement belongs to the signature, not to the request, and putting it here is
-		// what lets the hop route send nothing on the carry path.
-		//
-		// **Refused rather than defaulted, because the default is silent.** `p2p.Contribute`
-		// treats an empty appearance as "the signature is invisible but still carries the
-		// machine-readable attestation in its signed /Reason" — legitimate for a caller that meant
-		// it, and a silent downgrade for a client whose render failed. A signature cannot be taken
-		// back off a document, so this is the last moment the distinction can be made.
-		if len(appearance) == 0 {
-			httpError(w, http.StatusBadRequest,
-				"this hop needs your signature block and none was sent, so Nib will not sign: an "+
-					"empty block would put an invisible signature on the document and there is no "+
-					"way to take one back off")
-			return
-		}
+		// The block is drawn inside `buildCoSigned` -> `p2p.Contribute`, from `att` (ADR-158). This
+		// site used to refuse an EMPTY picture, because an empty one made the signature invisible and
+		// a window whose render failed sent exactly that; there is no picture to be empty now.
 		var ok bool
-		signed, ok = s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, cer.l3Roster())
+		signed, ok = s.buildCoSigned(w, pdfBytes, cert, key, att, cer.l3Roster())
 		if !ok {
 			return
 		}

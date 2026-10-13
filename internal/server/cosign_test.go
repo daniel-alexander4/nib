@@ -37,8 +37,6 @@ func cosignSignForm(t *testing.T, fp, intent string) (*bytes.Buffer, string) {
 	fw.Write(pdf)
 	pj, _ := json.Marshal(cosignParams{Fingerprint: fp, Intent: intent})
 	mw.WriteField("params", string(pj))
-	aw, _ := mw.CreateFormFile("appearance", "att.png")
-	aw.Write(tinyPNG(t))
 	mw.Close()
 	return &buf, mw.FormDataContentType()
 }
@@ -200,9 +198,9 @@ func TestAttestationsEndpoint(t *testing.T) {
 	now := time.Now()
 	prep, _ := p2p.PrepareDocument(base)
 	pa, _ := p2p.NextPlacement(prep)
-	dA, _ := p2p.Contribute(prep, cA, kA, p2p.Attestation{Signer: "Alice", AcceptedPeer: hex.EncodeToString(fB), AcceptedPeerLabel: "Bob", When: now}, tinyPNG(t), pa)
+	dA, _ := p2p.Contribute(prep, cA, kA, p2p.Attestation{Signer: "Alice", AcceptedPeer: hex.EncodeToString(fB), AcceptedPeerLabel: "Bob", When: now}, pa)
 	pb, _ := p2p.NextPlacement(dA)
-	dB, _ := p2p.Contribute(dA, cB, kB, p2p.Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(fA), AcceptedPeerLabel: "Alice", When: now}, tinyPNG(t), pb)
+	dB, _ := p2p.Contribute(dA, cB, kB, p2p.Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(fA), AcceptedPeerLabel: "Alice", When: now}, pb)
 
 	// Pin only Alice in the viewer's vault.
 	pinPeer(t, c, csrf, ts.URL, hex.EncodeToString(fA))

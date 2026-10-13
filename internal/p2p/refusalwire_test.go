@@ -417,7 +417,7 @@ func TestATwoPartyCEREMONYHopCompletes(t *testing.T) {
 		aSigned, err := Contribute(base, aCert, aKey, Attestation{
 			Signer: "A", AcceptedPeer: PredecessorOf(roster, hexOf(aFP)),
 			Intent: "I agree", When: time.Now(),
-		}, nil, place)
+		}, place)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -864,16 +864,16 @@ func TestTheConsentGateIsGivenTheRightSignature(t *testing.T) {
 // recordingConfirmer accepts and remembers what it was shown.
 type recordingConfirmer struct{ seen SignerAttestation }
 
-func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, []byte, time.Time, error) {
+func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, time.Time, error) {
 	c.seen = peer
-	return true, "I accept", nil, time.Time{}, nil
+	return true, "I accept", time.Time{}, nil
 }
 
 // busyConfirmer is a consent gate already occupied by another request (/pending 744).
 type busyConfirmer struct{}
 
-func (busyConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
-	return false, "", nil, time.Time{}, fmt.Errorf("local sentence: %w", ErrConsentBusy)
+func (busyConfirmer) Confirm(SignerAttestation, []byte) (bool, string, time.Time, error) {
+	return false, "", time.Time{}, fmt.Errorf("local sentence: %w", ErrConsentBusy)
 }
 
 // TestABusyConsentGateReachesTheInitiatorByName — /pending 744 (4). The receiving machine refused

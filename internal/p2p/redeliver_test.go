@@ -16,9 +16,9 @@ type countingConfirmer struct {
 	n      *int
 }
 
-func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+func (c countingConfirmer) Confirm(SignerAttestation, []byte) (bool, string, time.Time, error) {
 	*c.n++
-	return true, c.intent, nil, time.Time{}, nil
+	return true, c.intent, time.Time{}, nil
 }
 
 // mapReDeliverer is a test cache keyed on sha256(inbound), the same key the server's ceremonyID uses.

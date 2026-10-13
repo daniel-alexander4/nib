@@ -321,7 +321,7 @@ func TestTheNextActionMovesOnAfterAHopIsSigned(t *testing.T) {
 	}
 	att := p2p.Attestation{Signer: "Alice Tenant", AcceptedPeer: other, Intent: rec.Intent, When: time.Now()}
 	w := httptest.NewRecorder()
-	signed, ok := srv.buildCoSigned(w, pdf, meCert, meKey, att, nil, roster)
+	signed, ok := srv.buildCoSigned(w, pdf, meCert, meKey, att, roster)
 	if !ok {
 		t.Fatalf("setup: the party whose turn it IS was refused by the signing door: %d %s",
 			w.Code, w.Body.String())

@@ -630,7 +630,7 @@ func TestAnUnsignedArrivalIsAnchoredToItsOwnRecord(t *testing.T) {
 	// VISIBLE signature adding a widget annot — and the production path signs visibly, which is
 	// what makes the limit real rather than theoretical.
 	signed, cerr := p2p.Contribute(out.Document, sCert, sKey,
-		p2p.Attestation{Signer: "B", When: now}, onePixelPNG(t), place)
+		p2p.Attestation{Signer: "B", When: now}, place)
 	if cerr != nil {
 		t.Fatal(cerr)
 	}

@@ -19,10 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"nib/internal/sign"
-
-	"nib/mdpdf"
 )
 
 // defaultIntent is the agreement an attestation records when the caller gives none.
@@ -33,14 +32,10 @@ const defaultIntent = "I agree to sign this document."
 // in the signature: which counterparty the signer accepts (by SHA-256 SPKI
 // fingerprint, see sign.Fingerprint) and the intent.
 //
-// It is the source of BOTH the visible appearance block (AppearanceLines) and the signed
-// /Reason (reason). It is not, however, ENFORCED to be: Contribute takes an already
-// rasterised appearance image from its caller and signs it alongside a /Reason built here,
-// and no code compares the two — a bitmap cannot be checked against a string. This comment
-// used to assert that the two "cannot disagree", which was a promise nothing kept. What is
-// true: the client renders the appearance from AppearanceLines, so they agree by
-// construction on the path Nib actually uses, and a caller that supplied something else
-// would produce a document whose picture and whose signed text differ.
+// It is the source of BOTH the visible appearance block (AppearanceLines, drawn by BlockImage) and
+// the signed /Reason (reason), and since ADR-158 nothing else is: `Contribute` draws the picture from
+// the attestation it signs and takes none from its caller. A bitmap still cannot be compared with a
+// string, so the agreement is by construction — one input, two renderings, both made here.
 type Attestation struct {
 	Signer            string    // signer's identity common name (-> signature Name)
 	AcceptedPeer      string    // hex SHA-256 SPKI of the accepted counterparty (-> /Reason)
@@ -206,12 +201,11 @@ func (a Attestation) reason() string {
 	// the capacity reached the block, which a reader can see, and never the signed text, which is
 	// what a dispute relies on. The phase-close ledger is what asked.
 	//
-	// It matters because the two halves say different things. A block is a picture: `Contribute`
-	// takes an already-rasterised appearance from its caller and nothing compares it to the
-	// /Reason (this file says so at `Attestation`'s own doc). So a capacity that appears only on
-	// the block is a claim about a party's AUTHORITY that their key never signed — exactly the
-	// asymmetry D20's capacity amendment exists to remove, since capacity is inside the
-	// commitment precisely because "it is what a third party relies on".
+	// It matters because the two halves say different things. A block is a picture and the /Reason
+	// is what the key signs; a capacity that appears only on the block is a claim about a party's
+	// AUTHORITY that their key never signed — exactly the asymmetry D20's capacity amendment exists
+	// to remove, since capacity is inside the commitment precisely because "it is what a third party
+	// relies on".
 	//
 	// Placed AFTER the recital and before nothing, so the recital stays the verbatim tail C15
 	// asserts, and bracket-stripped like every other user-controlled field.
@@ -224,8 +218,8 @@ func (a Attestation) reason() string {
 		safeText(a.intent()), capacity)
 }
 
-// AppearanceLines is the visible attestation block text, one entry per line — the
-// canonical content a client renders into the signature's appearance image. The
+// AppearanceLines is the visible attestation block text, one entry per line — what `BlockImage`
+// draws into the signature's appearance image and what a quote shows. The
 // full fingerprint lives in the signed /Reason; here it is shortened for the eye.
 //
 // # Two shapes, because a ceremony block may not say what a two-party block says (C09, P07.S07a)
@@ -264,8 +258,9 @@ func (a Attestation) AppearanceLines() []string {
 //
 // # Why a line count is the same thing as a font size here
 //
-// The block is 280x84pt and the client sizes text at `min(lineH*0.7, 9pt)` with
-// `lineH = (height - 2*pad) / len(lines)` (`web/app.js`, renderAttestation). So the 9pt cap binds
+// The block is 280x84pt and `drawBlock` sizes text at `min(lineH*0.7, 9pt)` with
+// `lineH = (height - 2*pad) / len(lines)` (the rule the window's canvas used before ADR-158, kept so
+// an existing block's size does not move). So the 9pt cap binds
 // through six lines and the count IS the size after that — measured, not estimated:
 //
 //	<=6 lines  9.00-8.87pt   what blocks render at today
@@ -286,14 +281,17 @@ const maxBlockLines = 8
 
 // wrapBlockLine renders `prefix+value` across as many block lines as it needs.
 //
-// Greedy on spaces, measured with the same `CoreWidth` the bounds use, so a wrap and a bound can
-// never disagree about what fits. Continuation lines are NOT indented: an indent costs width on
+// Greedy on spaces, measured with `blockLineWidth` — the shaped advance of the faces the block is
+// DRAWN in (ADR-158) — which the bounds use too, so a wrap, a bound and the drawing can never
+// disagree about what fits. It was a Helvetica estimate of a browser's sans-serif, and measured
+// against the faces drawn that estimate was 0.97-1.02 of a Latin line, 1.2-1.5 of an Arabic,
+// Devanagari, Thai or Hebrew one and 2-3.6 of a CJK or Hangul one: those lines ran past the frame. Continuation lines are NOT indented: an indent costs width on
 // every line after the first, and the prefix already marks where a field begins.
 //
 // **A single word wider than the line is HARD-BROKEN rather than allowed to overflow**, which is
 // the case a greedy wrapper silently gets wrong — an unbroken 400-character token has no space to
 // break at, and a wrapper that only splits on spaces emits one line that the canvas then clips at
-// its edge. That is the exact silent truncation this whole bound exists to prevent, reintroduced
+// its edge (the server's drawing now refuses it instead). That is the exact silent truncation this whole bound exists to prevent, reintroduced
 // inside the thing meant to fix it. The rune-at-a-time fallback also guarantees termination: it
 // consumes at least one rune per iteration even when a single glyph does not fit.
 //
@@ -321,13 +319,22 @@ func wrapBlockLine(prefix, value string) []string {
 // terminate.
 func longestPrefixThatFits(s string) int {
 	rs := []rune(s)
-	// Bisection on rune count: `CoreWidth` is monotone in a prefix, the same property
-	// the deleted `MaxIntentRunes` relied on, and a linear walk here is the denial of service that
-	// function's own comment records at 77 seconds for 50,000 runes.
-	lo, hi := 1, len(rs)
+	fits := func(n int) bool { return blockLineWidth(string(rs[:n])) <= blockTextWidth() }
+	// Gallop, then bisect. A width is a SHAPING now, and its cost grows with the prefix, so the search
+	// may not start from the whole remainder: a 4,096-rune recital would be shaped whole a dozen times
+	// for every line it yields. Doubling from `blockGallopRunes` keeps every prefix measured within
+	// twice the line it finds. (The bisection it replaces was itself the repair of a linear walk
+	// measured at 77 seconds for 50,000 runes.)
+	lo, hi := 1, blockGallopRunes
+	for hi < len(rs) && fits(hi) {
+		lo, hi = hi, hi*2
+	}
+	if hi > len(rs) {
+		hi = len(rs)
+	}
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if mdpdf.CoreWidth(string(rs[:mid]), blockProxyFont, blockTextPt) <= blockTextWidth() {
+		if fits(mid) {
 			lo = mid
 		} else {
 			hi = mid - 1
@@ -347,8 +354,25 @@ func longestPrefixThatFits(s string) int {
 				return len(string(rs[:i]))
 			}
 		}
+		// A hard break may not part a letter from the marks that sit on it: the next line would begin
+		// with a bare vowel sign or accent, which a shaper draws on a dotted circle the signer never
+		// typed. Back off to the start of the cluster; at least one rune is always taken.
+		for lo > 1 && continuesCluster(rs[lo-1], rs[lo]) {
+			lo--
+		}
 	}
 	return len(string(rs[:lo]))
+}
+
+// blockGallopRunes is where the search for a line's end starts: about a line of Latin at the block's
+// size, so the common case is settled in a few short shapings.
+const blockGallopRunes = 64
+
+// continuesCluster reports whether next belongs with prev: a combining mark, a joiner, or whatever
+// follows a zero-width joiner.
+func continuesCluster(prev, next rune) bool {
+	const zwnj, zwj = '\u200c', '\u200d'
+	return unicode.Is(unicode.M, next) || next == zwj || next == zwnj || prev == zwj
 }
 
 // BlockLineCount is how many lines this attestation's block will occupy once wrapped. It is
@@ -364,7 +388,40 @@ func BlockLineCount(a Attestation) int { return len(a.AppearanceLines()) }
 // a recital that fits beside a short capacity does not fit beside a long one. So the question can
 // only be asked of a whole block, and asking it per field is how two separately-legal values
 // combine into a block nobody can read.
-func BlockFits(a Attestation) bool { return BlockLineCount(a) <= maxBlockLines }
+func BlockFits(a Attestation) bool {
+	return !pastMeasuring(a) && BlockLineCount(a) <= maxBlockLines
+}
+
+// blockMeasureCap is the most characters of one field the block's measurements will shape.
+//
+// A width is a shaping since ADR-158 — measured at 44 ms to wrap a 4,096-character recital and 113 ms
+// for the refusal's bisection on top — and the manual co-sign routes put no bound of their own on the
+// recital they are posted. A field this long cannot fit eight lines of 272 points, so it is answered
+// without being measured: `BlockFits` says no, and `BlockOverflow` measures its first
+// `blockMeasureCap` characters, which is enough to name the field and quote what fits. Convene's own
+// `maxIntentInput` is the same figure for the same reason.
+const blockMeasureCap = 4096
+
+// pastMeasuring reports whether any field of a is longer than `blockMeasureCap`.
+func pastMeasuring(a Attestation) bool {
+	for _, f := range []string{a.Signer, a.Capacity, a.AcceptedPeerLabel, a.Intent} {
+		if len(f) > blockMeasureCap && len([]rune(f)) > blockMeasureCap {
+			return true
+		}
+	}
+	return false
+}
+
+// measurable is s cut to `blockMeasureCap` characters.
+func measurable(s string) string {
+	if len(s) <= blockMeasureCap {
+		return s
+	}
+	if rs := []rune(s); len(rs) > blockMeasureCap {
+		return string(rs[:blockMeasureCap])
+	}
+	return s
+}
 
 // BlockOverflow describes a block that does not fit, for a refusal that tells the user what to do.
 //
@@ -377,6 +434,11 @@ func BlockFits(a Attestation) bool { return BlockLineCount(a) <= maxBlockLines }
 // is exactly defined for ONE field with the others held as they are — which is the question the
 // user actually has, since they are about to edit one box. `fits` is that number, bisected.
 func BlockOverflow(a Attestation) (lines, limit int, worst string, fits int) {
+	// Each field is measured to `blockMeasureCap` characters and no further — see there. For a field
+	// past it `lines` is then a floor rather than a count, which a refusal reading "needs N lines and
+	// 8 is the limit" survives; `worst` and `fits` are exact.
+	a.Signer, a.Capacity = measurable(a.Signer), measurable(a.Capacity)
+	a.AcceptedPeerLabel, a.Intent = measurable(a.AcceptedPeerLabel), measurable(a.Intent)
 	lines, limit = BlockLineCount(a), maxBlockLines
 	type field struct {
 		name string
@@ -753,36 +815,21 @@ func markOneProceeding(ats []SignerAttestation, want string) {
 	}
 }
 
-// blockTextPt is the point size the attestation block's text renders at.
+// blockTextPt is the largest point size the attestation block's text is drawn at, and the size a line
+// is WRAPPED at whatever size it is then drawn at.
 //
-// The block is rasterised by the client (web/app.js renderAttestation) onto a canvas sized
-// rect × 3, at `min(lineH*0.7, 9*scale)` pixels — so the effective size in PDF points, once
-// the image is stretched back to fill the rect, is capped at 9. Named here rather than left
-// implicit because the intent bound below is computed from it, and a bound derived from a
-// number nobody wrote down is a bound that drifts when the canvas changes.
+// `drawBlock` rasterises onto a picture of rect × 3 at `min(lineH*0.7, 9*scale)` pixels — so the
+// effective size in PDF points, once the image fills the rect, is capped at 9. A block of seven or
+// eight lines is drawn smaller than it was wrapped, which only leaves room: a line that fits at 9pt
+// fits at 6.65pt. Named here rather than left implicit because the bounds below are computed from
+// it, and a bound derived from a number nobody wrote down is a bound that drifts.
 const blockTextPt = 9
 
-// blockProxyFont is the face the block's width estimates are measured against — and it is **not a
-// font any PDF is drawn in**, which is why it is here and not shared with the readme's.
-//
-// The block is rasterised by the browser onto a canvas at `px sans-serif` (`web/app.js`,
-// `renderAttestation`) and stretched into the rect as an IMAGE. Nothing about it is a PDF text run,
-// so it embeds no font and PDF/UA's font rule has nothing to say about it. What these measurements
-// need is a stand-in with sane Latin metrics for "what will the browser's sans-serif fit", and
-// Helvetica is that.
-//
-// **It was `readmeFont` until P04.S05**, which moved the readme's own face to an embedded Roboto so
-// the page could satisfy 7.21.4.1. Following it here would have re-measured a browser canvas
-// against a font the browser is not using, silently changing which acceptance lines get truncated
-// in a document people sign.
-const blockProxyFont = "Helvetica"
-
 // blockTextWidth is the drawable width of one block line, in points: the rect's width less
-// the padding the rasteriser leaves on each side (4 canvas px at scale 3 ≈ 4 points once
-// stretched back).
+// the padding `drawBlock` leaves on each side.
 func blockTextWidth() float64 {
 	r := NominalBlockRect()
-	return (r[2] - r[0]) - 2*4
+	return (r[2] - r[0]) - 2*blockPadPt
 }
 
 // AcceptsLabelFits bounds the PINNED-PEER label, which a two-party block renders as
@@ -805,6 +852,9 @@ func blockTextWidth() float64 {
 // The fingerprint is part of the measurement because the suffix is rendered with the label: a
 // bound on the label alone passes one that pushes the fingerprint off the block.
 func AcceptsLabelFits(label, hexFP string) bool {
+	if measurable(label) != label {
+		return false // past `blockMeasureCap`: it cannot fit, and is not shaped to find out
+	}
 	return len(wrapBlockLine("Accepts: ", label+acceptsSuffix(hexFP))) <= maxAcceptsShare
 }
 
@@ -819,7 +869,7 @@ const maxAcceptsShare = maxBlockLines - 2 /* header + Time */ - 1 /* Signer */ -
 // a 64 KiB body limit. The predicate is monotone in the label's length — a prefix of a fitting
 // label fits — so the bisection is exact rather than an approximation.
 func MaxAcceptsLabelRunes(label, hexFP string) int {
-	rs := []rune(label)
+	rs := []rune(measurable(label))
 	lo, hi := 0, len(rs)
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
@@ -839,5 +889,5 @@ func acceptsSuffix(hexFP string) string { return "  [" + shortFingerprint(hexFP)
 
 // blockLineFits is the one measurement: does `prefix+value` render in full on one block line.
 func blockLineFits(prefix, value string) bool {
-	return mdpdf.CoreWidth(prefix+value, blockProxyFont, blockTextPt) <= blockTextWidth()
+	return blockLineWidth(prefix+value) <= blockTextWidth()
 }

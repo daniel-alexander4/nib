@@ -152,6 +152,11 @@ var (
 	ErrNoIntent = errors.New("a ceremony needs a recital saying what the parties are agreeing to")
 	// ErrIntentTooLong: longer than a signature block renders verbatim.
 	ErrIntentTooLong = errors.New("that recital is longer than a signature block can show in full")
+	// ErrUndrawable: the recital, a party's name or a capacity holds a character none of the
+	// typefaces Nib ships can draw (ADR-158). Refused HERE, where the text is typed, because every
+	// party's block carries it and the server draws that block: convened, it would be a ceremony in
+	// which nobody could sign.
+	ErrUndrawable = errors.New("a signature block could not show this ceremony's text in full")
 	// ErrDeadlineTooTight: the deadline does not admit every hop AND the delivery round that
 	// follows it (C20, widened at P08.S05b).
 	//
@@ -528,6 +533,12 @@ func checkBlocksFit(roster []Party, intent string) error {
 		att := p2p.Attestation{
 			Signer: signer, Capacity: p.Capacity, Intent: intent,
 			Position: 1, RosterSize: signing,
+		}
+		// Every character, before the height: a block is drawn by the server from these words
+		// (ADR-158), and one it has no typeface for is refused rather than drawn as a box. The same
+		// door the quote and the signature ask, so what is admitted here can be signed.
+		if err := p2p.BlockDrawable(att); err != nil {
+			return fmt.Errorf("%w: in %s's block, %v", ErrUndrawable, who, err)
 		}
 		if p2p.BlockFits(att) {
 			continue

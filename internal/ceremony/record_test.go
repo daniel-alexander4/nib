@@ -826,7 +826,7 @@ func TestARecordSurvivesIncrementalSignatures(t *testing.T) {
 	// Rather than delete the test or pretend the clause holds, the limit is now MEASURED here,
 	// so the next reader finds the boundary instead of a green they will trust.
 	visible, err := p2p.Contribute(doc, aCert, aKey,
-		p2p.Attestation{Signer: "A", When: time.Now()}, onePixelPNG(t),
+		p2p.Attestation{Signer: "A", When: time.Now()},
 		p2p.Placement{Page: 1, Rect: [4]float64{40, 40, 320, 124}})
 	if err != nil {
 		t.Fatal(err)
@@ -1040,7 +1040,7 @@ func signWithRoster(t *testing.T, pdf, certPEM, keyPEM []byte, myFP, peerFP, ros
 		// day the record format moves while the real thing produced an uninterpretable token.
 		RosterVersion: FormatVersion,
 	}
-	out, err := p2p.Contribute(pdf, certPEM, keyPEM, att, nil, place)
+	out, err := p2p.Contribute(pdf, certPEM, keyPEM, att, place)
 	if err != nil {
 		t.Fatal(err)
 	}

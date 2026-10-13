@@ -64,7 +64,7 @@ func TestTheInitiatingSideIsGatedToo(t *testing.T) {
 		{Fingerprint: bFP, Signs: true},
 	}}
 	w := httptest.NewRecorder()
-	signed, good := s.buildCoSigned(w, doc, aCert, aKey, att, nil, ok)
+	signed, good := s.buildCoSigned(w, doc, aCert, aKey, att, ok)
 	if !good {
 		t.Fatalf("the party whose turn it IS was refused: %d %s", w.Code, w.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestTheInitiatingSideIsGatedToo(t *testing.T) {
 
 	// And the refusal.
 	w2 := httptest.NewRecorder()
-	out, good2 := s.buildCoSigned(w2, doc, aCert, aKey, att, nil, roster)
+	out, good2 := s.buildCoSigned(w2, doc, aCert, aKey, att, roster)
 	if good2 {
 		t.Fatal("a party signed out of roster order through the initiating door")
 	}
@@ -142,7 +142,7 @@ func TestTheManualCoSignPathIsNotGated(t *testing.T) {
 	s := &Server{epoch: "test-epoch"}
 	att := p2p.Attestation{Signer: "A", AcceptedPeer: strings.Repeat("bb", 32), Intent: "ok", When: time.Now()}
 	w := httptest.NewRecorder()
-	signed, ok := s.buildCoSigned(w, doc, aCert, aKey, att, nil, p2p.Roster{})
+	signed, ok := s.buildCoSigned(w, doc, aCert, aKey, att, p2p.Roster{})
 	if !ok {
 		t.Fatalf("a manual co-sign with no ceremony was refused: %d %s", w.Code, w.Body.String())
 	}
@@ -175,7 +175,7 @@ func TestTheManualCoSignPathIsNotGated(t *testing.T) {
 		t.Fatal(err)
 	}
 	w2 := httptest.NewRecorder()
-	twice, ok2 := s.buildCoSigned(w2, signed, bCert, bKey, att, nil, p2p.Roster{})
+	twice, ok2 := s.buildCoSigned(w2, signed, bCert, bKey, att, p2p.Roster{})
 	if !ok2 {
 		t.Fatalf("a second manual co-sign was refused: %d %s", w2.Code, w2.Body.String())
 	}
@@ -787,7 +787,7 @@ func TestASigningConvenerCarriesOnceTheyHaveSigned(t *testing.T) {
 	// the bytes the product would produce.
 	rec := httptest.NewRecorder()
 	att := p2p.Attestation{Signer: "Nib User", When: time.Now()}
-	signed, ok := (&Server{epoch: "test-epoch"}).buildCoSigned(rec, out.Document, cert, key, att, nil, roster)
+	signed, ok := (&Server{epoch: "test-epoch"}).buildCoSigned(rec, out.Document, cert, key, att, roster)
 	if !ok {
 		t.Fatalf("setup: the convener could not sign hop 1: %d %s", rec.Code, rec.Body.String())
 	}

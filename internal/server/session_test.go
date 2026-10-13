@@ -104,7 +104,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return
@@ -329,7 +329,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return
@@ -465,7 +465,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return
@@ -832,19 +832,17 @@ func attCount(t *testing.T, c *http.Client, url string) int {
 // autoConfirm is the peer's consent gate in tests: it always accepts.
 type autoConfirm struct{ intent string }
 
-func (a autoConfirm) Confirm(p2p.SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
-	return true, a.intent, nil, time.Time{}, nil
+func (a autoConfirm) Confirm(p2p.SignerAttestation, []byte) (bool, string, time.Time, error) {
+	return true, a.intent, time.Time{}, nil
 }
 
 // initiateForm builds the multipart body /api/session/initiate expects.
-func initiateForm(t *testing.T, pdf, appearance []byte, params map[string]string, address string) (*bytes.Buffer, string) {
+func initiateForm(t *testing.T, pdf []byte, params map[string]string, address string) (*bytes.Buffer, string) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	pf, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	pf.Write(pdf)
-	af, _ := mw.CreateFormFile("appearance", "appearance.png")
-	af.Write(appearance)
 	pj, _ := json.Marshal(params)
 	mw.WriteField("params", string(pj))
 	mw.WriteField("address", address)
@@ -904,7 +902,7 @@ func TestSessionInitiate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, ct := initiateForm(t, base, pageImage(t, 120, 40),
+	body, ct := initiateForm(t, base,
 		map[string]string{"fingerprint": bFP, "intent": "I agree"}, ln.Addr().String())
 
 	// Same shape as the send test: the initiating handler blocks on the local user's
@@ -1564,7 +1562,7 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 			return
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return
@@ -1727,7 +1725,7 @@ func redeliveryAfterReconnect(t *testing.T, transport string) {
 	// hits on the reconnect.
 	place, _ := p2p.NextPlacement(prepared)
 	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-	aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+	aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, place)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1893,7 +1891,7 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFP, bFP)
 	place, _ := p2p.NextPlacement(prepared)
 	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-	aSigned, _ := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+	aSigned, _ := p2p.Contribute(prepared, aCert, aKey, att, place)
 
 	var armed sessionStatus
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/arm", "application/json",

@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"image"
-	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -83,10 +81,6 @@ func TestTheClientsOwnPayloadReachesTheConvenedDocumentRefusal(t *testing.T) {
 	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
 	fw.Write(pdf)
 	mw.WriteField("params", `{"fingerprint":"`+them+`","intent":"I agree to sign this document."}`)
-	// The appearance the client renders and posts — omitting it is refused earlier, at
-	// "missing appearance", which is a different gate and would make this test about that one.
-	iw, _ := mw.CreateFormFile("appearance", "attestation.png")
-	png.Encode(iw, image.NewRGBA(image.Rect(0, 0, 240, 60)))
 	mw.WriteField("address", "127.0.0.1:1")
 	mw.Close()
 

@@ -74,9 +74,12 @@ func TestEveryQuoteRouteSizesFromTheOneDoor(t *testing.T) {
 
 	// SETUP: the scan found the quote routes at all. Without this, an empty `bad` is satisfied by
 	// a parse that read nothing — the vacuous green this repo keeps finding in its own guards.
-	if sites < 2 {
-		t.Fatalf("setup: the scan found %d cosignQuote construction(s); there are two routes, so "+
-			"it is not reading this package and an empty finding list proves nothing", sites)
+	// One construction since ADR-158: every quote route builds through `quoteFor`, which is what
+	// this guard wanted of them. More than one is a route building its own again.
+	if sites != 1 {
+		t.Fatalf("setup: the scan found %d cosignQuote construction(s); `quoteFor` is the one "+
+			"builder, so either it is not reading this package (an empty finding list then proves "+
+			"nothing) or a route builds a quote of its own", sites)
 	}
 	if len(bad) > 0 {
 		t.Fatalf("a quote route sizes its block by some other rule than p2p.NominalBlockRect(): "+

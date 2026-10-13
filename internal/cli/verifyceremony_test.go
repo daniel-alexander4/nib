@@ -38,6 +38,14 @@ var convenedNames = []string{"Alice Tenant", "Bob Landlord", "Carol Guarantor", 
 	"Erin Trustee", "Frank Director", "Grace Attorney", "Heidi Executor", "Ivan Surveyor"}
 
 // convenedFixture writes a real convened ceremony of n parties with `signedBy` of them signing.
+// convenedWitness is the index of a party `convenedFixture` writes as NOT signing, or -1 for none.
+//
+// It exists for the hostile-label fixture (`termtext_test.go`): a signing party's label is drawn on
+// that party's block, and since ADR-158 convene refuses one holding a character no typeface can draw
+// — an escape byte among them. A party who does not sign has no block, so their label is still
+// whatever the convener typed, and `nib verify` still has to print it safely.
+var convenedWitness = -1
+
 func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 	t.Helper()
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
@@ -46,6 +54,7 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 		fp        string
 	}
 	names := convenedNames
+	signs := func(i int) bool { return i != convenedWitness }
 	if n > len(names) {
 		t.Fatalf("fixture supports at most %d parties", len(names))
 	}
@@ -62,7 +71,7 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 		}
 		fp := hex.EncodeToString(f)
 		ps = append(ps, party{c, k, fp})
-		roster = append(roster, ceremony.Party{Fingerprint: fp, Label: names[i], Signs: true})
+		roster = append(roster, ceremony.Party{Fingerprint: fp, Label: names[i], Signs: signs(i)})
 	}
 	base, err := testpdf.Text("the lease")
 	if err != nil {
@@ -92,7 +101,7 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 	}
 	for i := range ps {
 		pr.Entries = append(pr.Entries, p2p.RosterEntry{
-			Fingerprint: ps[i].fp, Signs: true, Label: names[i],
+			Fingerprint: ps[i].fp, Signs: signs(i), Label: names[i],
 		})
 	}
 	for i := 0; i < signedBy; i++ {
@@ -102,7 +111,7 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 		}
 		att := p2p.Attestation{AcceptedPeer: p2p.PredecessorOf(pr, ps[i].fp), When: now}
 		p2p.StampCommitment(&att, pr, ps[i].fp)
-		doc, err = p2p.Contribute(doc, ps[i].cert, ps[i].key, att, nil, place)
+		doc, err = p2p.Contribute(doc, ps[i].cert, ps[i].key, att, place)
 		if err != nil {
 			t.Fatalf("party %d could not contribute: %v", i, err)
 		}
@@ -207,7 +216,7 @@ func TestVerifyOnAnOrdinaryDocumentSaysNothingAboutCeremonies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signed, err := p2p.Contribute(prepared, cert, key, p2p.Attestation{When: time.Now()}, nil, place)
+	signed, err := p2p.Contribute(prepared, cert, key, p2p.Attestation{When: time.Now()}, place)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +336,7 @@ func TestTheCeremonyVerdictRefusesWhatItUsedToCallComplete(t *testing.T) {
 		att.RosterHash = hex.EncodeToString(rh)
 		att.RosterVersion = ceremony.FormatVersion
 		att.Intent = rec.Intent
-		out, err := p2p.Contribute(doc, sc, sk, att, nil, p2p.Placement{})
+		out, err := p2p.Contribute(doc, sc, sk, att, blockPlace(t, doc))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,7 +375,7 @@ func TestTheCeremonyVerdictRefusesWhatItUsedToCallComplete(t *testing.T) {
 		att.RosterHash = strings.Repeat("ab", 32)
 		att.RosterVersion = ceremony.FormatVersion
 		att.Intent = rec.intent
-		out, err := p2p.Contribute(doc, ps[1].cert, ps[1].key, att, nil, p2p.Placement{})
+		out, err := p2p.Contribute(doc, ps[1].cert, ps[1].key, att, blockPlace(t, doc))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -502,7 +511,7 @@ func twoPartyCeremony(t *testing.T, dir string, now time.Time) (string, []ceremo
 	}
 	att := p2p.Attestation{AcceptedPeer: p2p.PredecessorOf(pr, ps[0].fp), When: now}
 	p2p.StampCommitment(&att, pr, ps[0].fp)
-	doc, err := p2p.Contribute(got.Document, ps[0].cert, ps[0].key, att, nil, place)
+	doc, err := p2p.Contribute(got.Document, ps[0].cert, ps[0].key, att, place)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,4 +650,15 @@ func TestVerifySaysWhenItCouldNotLookForTheEndState(t *testing.T) {
 		t.Errorf("`nib verify` could not look for this machine's records and said nothing, which "+
 			"reads as \"no record\":\n%s", strings.Join(c.lines(), "\n"))
 	}
+}
+
+// blockPlace is where the next block goes on doc. Every contribution carries a visible block
+// (ADR-158), so a contribution needs a real place for one; these fixtures do not care which.
+func blockPlace(t *testing.T, doc []byte) p2p.Placement {
+	t.Helper()
+	place, err := p2p.NextPlacement(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return place
 }

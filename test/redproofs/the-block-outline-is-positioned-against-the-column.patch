@@ -1,11 +1,12 @@
+diff --git a/web/app.js b/web/app.js
 --- a/web/app.js
 +++ b/web/app.js
-@@ -1618,7 +1618,7 @@ function markBlock(wrap, vp, rect, scale) {
-   const tag = document.createElement('span');
-   tag.textContent = 'your signature goes here';
-   box.appendChild(tag);
+@@ -2213,7 +2213,7 @@
+     tag.textContent = 'your signature goes here';
+     box.appendChild(tag);
+   }
 -  wrap.appendChild(box);
 +  document.getElementById('srvPreview').appendChild(box);
  }
  
- async function loadPendingPreview(token, block) {
+ // loadPendingPreview renders the received document in its own pdf.js instance,

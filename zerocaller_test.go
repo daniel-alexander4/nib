@@ -91,6 +91,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
+		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +
+			"compare the signature block a party was shown with the one embedded (ADR-158, /pending 367).",
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
 			"fixtures (P02.S03); `sign` keeps its own `synthRevision` because testpdf feeds sign's tests.",
 		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
@@ -179,6 +181,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*side).SetWriteDeadline":       "interface — net.Conn. Its three siblings on the same type are called; this one is not, and dropping it would stop the type satisfying the interface.",
+		"(blockFontmap).ResolveFace":     "interface — go-text/typesetting's shaping.Fontmap, dispatched by its segmenter when a line of a signature block is split by face (ADR-158).",
 		"AgreementFigures":               "test-support — the phrases the README and parity-ledger guards (root package) require, from the one door that states law 2's figure (P08.S05).",
 		"(firstInOrder).Less":            "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for a carried CMap's index (/pending 858).",
 		"(firstInOrder).Swap":            "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for a carried CMap's index (/pending 858).",

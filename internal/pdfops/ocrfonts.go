@@ -442,3 +442,13 @@ func drawnFace(core string, embedded bool) string {
 	}
 	return core
 }
+
+// ShippedFace returns the bytes of one face nib ships, by its file name under `fonts/` without the
+// extension (`Roboto-Regular`, `NotoSansArabic-Regular`), exactly as upstream published it.
+//
+// It exists for the signature block (`internal/p2p`, ADR-158), which draws glyph outlines into a
+// picture: nothing is installed, no font enters a PDF, so the bytes are NOT renamed (ADR-150's rename
+// is for a face a document embeds by name). The bytes are in the binary, so this reads no file.
+func ShippedFace(file string) ([]byte, error) {
+	return ocrFontFS.ReadFile("fonts/" + file + ".ttf")
+}

@@ -1,13 +1,8 @@
 package p2p
 
 import (
-	"bytes"
-
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"testing"
 	"time"
 
@@ -345,7 +340,7 @@ func drawnWherePlaced(t *testing.T, n int) {
 		// A real appearance: 1x1 opaque PNG is enough — the question is whether an /AP stream
 		// reaches the page at the placed rect, not what the picture shows.
 		next, cerr := Contribute(signed, []byte(signer.cert), []byte(signer.key),
-			Attestation{Signer: fmt.Sprintf("Party %d", i), When: time.Now()}, onePixelPNG(), place)
+			Attestation{Signer: fmt.Sprintf("Party %d", i), When: time.Now()}, place)
 		if cerr != nil {
 			t.Fatalf("contributing with an appearance failed at party %d: %v", i, cerr)
 		}
@@ -413,17 +408,4 @@ func drawnWherePlaced(t *testing.T, n int) {
 				"fits the box", readme, total)
 		}
 	}
-}
-
-// onePixelPNG is an opaque 1x1 image — enough to make Contribute attach an appearance stream. The
-// question this fixture serves is whether an /AP reaches the page at the placed rect, never what
-// the picture shows.
-func onePixelPNG() []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	img.Set(0, 0, color.RGBA{0, 0, 0, 255})
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
 }

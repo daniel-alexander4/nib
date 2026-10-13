@@ -104,7 +104,7 @@ func TestTheStatusSaysTheDocumentIsBeingCheckedForTheAnchorAndNoLonger(t *testin
 		t.Fatal(err)
 	}
 	signed, err := p2p.Contribute(out.Document, sCert, sKey,
-		p2p.Attestation{Signer: "B", When: now}, onePixelPNG(t), place)
+		p2p.Attestation{Signer: "B", When: now}, place)
 	if err != nil {
 		t.Fatal(err)
 	}

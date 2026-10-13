@@ -467,7 +467,7 @@ func TestADecisionEndsTheArmAndALostChannelKeepsItOnBothTransports(t *testing.T)
 				prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFPHex, me.Fingerprint)
 				place, _ := p2p.NextPlacement(prepared)
 				att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
-				aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+				aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, place)
 				if err != nil {
 					t.Fatal(err)
 				}
