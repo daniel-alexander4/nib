@@ -600,7 +600,18 @@ func justifiedLines(a alignment, broken [][]emitWord, lines [][]reflowWord, spac
 	if !a.continues {
 		out[last] = a.lastDelta
 	}
+	first := 1 // the oldIdx of the first word of the paragraph's line i
 	for i, l := range broken {
+		// asSet is a line that is the paragraph's own line i, every word of it and nothing else, where it stood (`keptLines`):
+		// the producer set it, so it is not asked whether it can be — whether its spaces can shrink that far, or, the last
+		// line, whether it ends within an edge read from the lines above it (/pending 797).
+		asSet := i < len(lines) && len(l) == len(lines[i])
+		for t := 0; asSet && t < len(l); t++ {
+			asSet = l[t].oldIdx == first+t
+		}
+		if i < len(lines) {
+			first += len(lines[i])
+		}
 		x := lines[min(i, len(lines)-1)][0].startX
 		var gaps []float64
 		for wi, w := range l {
@@ -618,14 +629,14 @@ func justifiedLines(a alignment, broken [][]emitWord, lines [][]reflowWord, spac
 		switch {
 		case (i == last && !a.continues) || len(gaps) == 0:
 			// Within the paragraph's own tolerance of the edge is AT it: the lines it was read from end that far apart.
-			if slack < -a.tol-measureSlack {
+			if !asSet && slack < -a.tol-measureSlack {
 				return out, false
 			}
 		default:
 			// A quarter of the NATURAL space — the spacer's gap carries the paragraph's median stretch; lastDelta takes it off.
 			per := slack / float64(len(gaps))
 			for _, g := range gaps {
-				if g+per < (g+a.lastDelta)/4 {
+				if !asSet && g+per < (g+a.lastDelta)/4 {
 					return out, false
 				}
 			}
@@ -794,13 +805,15 @@ const measureSlack = 1e-6
 
 // breakAt is BreakGreedy with a line's room by index — past the last measured line, the last line's — the space after
 // an item by the item, and an item's one break point, where it carries one, with when to keep it (nil: none does).
+// keepLine keeps the lines an edit leaves alone (`keptLines`; nil: none is kept).
 func breakAt[T any](items []T, measures []float64, width func(T) float64, space func(prev T) float64, hyphenate func(T) (T, T, bool),
-	keepBreak func([]T, T) bool) [][]T {
+	keepBreak func([]T, T) bool, keepLine func(int, []T, T) mdpdf.LineKeep) [][]T {
 	return mdpdf.BreakGreedy(items, 0, mdpdf.BreakOps[T]{
 		Width:     width,
 		Space:     space,
 		Hyphenate: hyphenate,
 		KeepBreak: keepBreak,
+		KeepLine:  keepLine,
 		LineWidth: func(line int) float64 {
 			if line >= len(measures) {
 				line = len(measures) - 1
@@ -808,6 +821,125 @@ func breakAt[T any](items []T, measures []float64, width func(T) float64, space 
 			return measures[line] + measureSlack
 		},
 	})
+}
+
+// keptLines is the breaker's answer for the breaks an edit has no bearing on (/pending 797). words are the edit's, each
+// naming the paragraph word it keeps (`emitWord.oldIdx`); lines the paragraph as read; oldAt each paragraph word's line
+// and place on it; space the paragraph's spacer.
+//
+//   - **The word that began a line begins one still** (`LineApart`) where the line ahead of it stands where the line it
+//     followed stood and is no narrower than that line was: what did not fit then does not fit now, whatever the edit
+//     made of the line's words. So a word retyped, or a longer one put in its place, moves nothing below its line.
+//   - **No word leaves a line the edit kept whole** (`LineTogether`): every word of it, in order and together.
+//
+// Both only where the line has the room it had: at its own place, or (the paragraph a line longer or shorter above it)
+// where a line begins that began where it did. A line the edit made SHORTER takes what now fits on it, and the lines
+// after it are broken by what fits down to the first that begins where a line of the paragraph began, as before. A
+// line that ends in a hyphenated break keeps it by `keepBreak` (P08.S07), which this leaves alone.
+//
+// **Why the breaker is not simply asked again.** It re-breaks a paragraph's own words where the producer broke them
+// only when its one measure and one space reproduce the producer's rule, and a paragraph's measure is the widest any
+// line comes to under its MEDIAN space — wider than the column wherever one line was set tighter than most. Measured
+// over the real-producer corpus: 65 of 2,436 multi-line paragraphs did not re-break in place, so an edit on one line
+// moved words on lines it had no bearing on — with one word retyped, in 65 paragraphs wherever the word stood; with
+// the paragraph's last word taken away, in 52 of 2,067 (185 lines). With this: 3, 2 and 1 paragraphs for a word
+// retyped on the first line, where the middle line begins and at the end (`retypedMovesMost` names them), none for
+// the last word taken away, and no edit refused that was not. A flush-edge measure was measured first and refused
+// (326 → 273 of 345 justified paragraphs in place): no one measure is every producer's, and what the edit did not
+// touch needs none. The census is `TestHowOftenARealProducersParagraphRebreaksInPlace`.
+func keptLines(words []emitWord, lines [][]reflowWord, oldAt [][2]int, space wordSpacer) func(int, []emitWord, emitWord) mdpdf.LineKeep {
+	n := len(oldAt)
+	// at is where the edit's words hold each paragraph word (by oldIdx; 0: not held), a rejoined break as its halves;
+	// before[seq] is the paragraph word the edit's word ahead of words[seq-1] keeps (0: none, or nothing is ahead).
+	at, pos := make([]int, n+1), 0
+	before, prev := make([]int, len(words)+2), 0
+	note := func(w emitWord) {
+		pos++
+		if w.oldIdx > 0 && w.oldIdx <= n {
+			at[w.oldIdx] = pos
+		}
+		prev = w.oldIdx
+	}
+	for i, w := range words {
+		before[i+1] = prev
+		if w.broken != nil {
+			note(w.broken[0])
+			note(w.broken[1])
+			continue
+		}
+		note(w)
+	}
+	// first[li] is the oldIdx of line li's first word, whole[li] whether the edit keeps the line whole, and wide[li] how
+	// wide the line is under the paragraph's spacer.
+	first, whole, wide := make([]int, len(lines)+1), make([]bool, len(lines)), make([]float64, len(lines))
+	first[0] = 1
+	for li, l := range lines {
+		first[li+1] = first[li] + len(l)
+		whole[li] = at[first[li]] > 0
+		for t, w := range l {
+			whole[li] = whole[li] && at[first[li]+t] == at[first[li]]+t
+			if t > 0 {
+				wide[li] += space(l[t-1].face, l[t-1].tfSize, lastSpacing(l[t-1].spacing))
+			}
+			wide[li] += w.width
+		}
+	}
+	// room says whether a line that is now the paragraph's line number now has the room line li had.
+	room := func(now, li int) bool {
+		now = min(now, len(lines)-1)
+		return now == li || math.Abs(lines[now][0].startX-lines[li][0].startX) <= measureSlack
+	}
+	return func(line int, cur []emitWord, item emitWord) mdpdf.LineKeep {
+		next := item.oldIdx
+		if item.broken != nil {
+			next = item.broken[0].oldIdx
+		}
+		// A word put where a line's first word stood — straight after the last word of the line before — and no narrower
+		// than it begins that line as the word it replaced did.
+		if s := item.seq; next == 0 && item.broken == nil && s >= 1 && s < len(before) {
+			if b := before[s]; b >= 1 && b < n && oldAt[b][1] == 0 && item.width >= lines[oldAt[b][0]][0].width-measureSlack {
+				next = b + 1
+			}
+		}
+		if next < 1 || next > n {
+			return mdpdf.LineFree
+		}
+		c := cur[0].oldIdx
+		if li, wi := oldAt[next-1][0], oldAt[next-1][1]; wi == 0 && li > 0 && room(line, li-1) {
+			// item began line li. cur stands where line li-1 stood when it begins with that line's first word, or straight
+			// after the last word of the line before that (at the paragraph's start, for its first line).
+			begins := c == first[li-1]
+			if s := cur[0].seq; !begins && s >= 1 && s < len(before) {
+				begins = (li == 1 && s == 1) || (li > 1 && before[s] == first[li-1]-1)
+			}
+			if begins {
+				w := 0.0
+				for t, x := range cur {
+					if t > 0 {
+						w += space(cur[t-1].face, cur[t-1].tfSize, lastSpacing(cur[t-1].spacing))
+					}
+					w += x.width
+				}
+				if w >= wide[li-1]-measureSlack {
+					return mdpdf.LineApart
+				}
+			}
+		}
+		// item is the next word of a line the edit keeps whole, which cur is the start of.
+		if c < 1 || c > n || item.broken != nil || item.oldIdx != next {
+			return mdpdf.LineFree // a line's last word, rejoined, is `keepBreak`'s
+		}
+		li, wi := oldAt[c-1][0], oldAt[c-1][1]
+		if wi != 0 || !whole[li] || next != c+len(cur) || len(cur) >= len(lines[li]) || !room(line, li) {
+			return mdpdf.LineFree
+		}
+		for t, w := range cur {
+			if w.oldIdx != c+t {
+				return mdpdf.LineFree
+			}
+		}
+		return mdpdf.LineTogether
+	}
 }
 
 // A reflow refusal names its cause (law 3). Each is a fallback to cover-and-replace, never an error.
@@ -1277,8 +1409,9 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		return true
 	}
+	keepLine := keptLines(words, lines, oldAt, space)
 	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width },
-		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, hyphenate, keepBreak)
+		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, hyphenate, keepBreak, keepLine)
 	// A justified paragraph sets every line but its last to the flush edge (P08.S03). Broken at its own measure — which
 	// re-breaks the corpus's justified paragraphs in place — a line can still need more than the edge when the paragraph's
 	// median space carries stretch; then it is broken again AT the edge, at its natural spaces, and a word that does not fit
@@ -1290,7 +1423,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			edgeMeasures[i] = align.edge - l[0].startX
 		}
 		broken = breakAt(words, edgeMeasures, func(w emitWord) float64 { return w.width },
-			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, hyphenate, keepBreak)
+			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, hyphenate, keepBreak, keepLine)
 		if justify, fits = justifiedLines(align, broken, lines, space); !fits {
 			return reflowOutcome{cause: causeWordTooWide}, nil
 		}

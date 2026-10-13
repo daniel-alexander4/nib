@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -11,13 +12,14 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/pdfread"
+	"nib/mdpdf"
 )
 
 // rebreak breaks words at the paragraph's line measures with space between them, through the one line breaker — the
 // breaker as the rewrite calls it, over the words the paragraph already has. A test instrument.
 func rebreak(words []reflowWord, measures []float64, space wordSpacer) [][]reflowWord {
 	return breakAt(words, measures, func(w reflowWord) float64 { return w.width },
-		func(w reflowWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil)
+		func(w reflowWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil, nil)
 }
 
 // lineTexts renders broken lines as their words joined by a space — what a reader of the broken paragraph sees.
@@ -109,11 +111,77 @@ func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []stri
 
 // breakAsProduction is `rebreakAsProduction` for an EDITED paragraph too (/pending 797 W2): readback is the edit's
 // lines as the written document reads them, and they are broken with what production took from paragraph pi as it
-// stood BEFORE the edit — its alignment, its one word spacing, its spacer, its measures — which is what
-// `reflowParagraphIn` breaks an edit's words with. want is then the read-back's own lines. nil breaks the
-// paragraph's own words. The hooks of a hyphenated break are still not modelled: a break the rewrite kept reads
-// back as two words and one it rejoined as one, and each is broken as the word it now is.
+// stood BEFORE the edit — its alignment, its one word spacing, its spacer, its measures, and the lines the edit left
+// alone (`keptLines`, by the alignment of the read-back words to the paragraph's) — which is what `reflowParagraphIn`
+// breaks an edit's words with. want is then the read-back's own lines. nil breaks the paragraph's own words, by the
+// breaker ALONE: with nothing changed every line is kept and the answer would be the paragraph as read whatever the
+// breaker does, so this is what a line the edit changed, and those after it, are given. The hooks of a hyphenated
+// break are still not modelled: a break the rewrite kept reads back as two words and one it rejoined as one, and each
+// is broken as the word it now is.
 func breakAsProduction(l pageLayout, pi int, readback [][]reflowWord, edgeFirst bool) (got, want []string, justified, centred bool, cause string) {
+	var kept []int
+	if readback != nil {
+		lines, _, cause := paragraphWords(l.paragraphs[pi])
+		if cause != "" {
+			return nil, nil, false, false, cause
+		}
+		var old, edited []string
+		for _, ln := range lines {
+			for _, w := range ln {
+				old = append(old, w.text())
+			}
+		}
+		for _, ln := range readback {
+			for _, w := range ln {
+				edited = append(edited, w.text())
+			}
+		}
+		kept = make([]int, len(edited))
+		for ni, oi := range alignWords(old, edited).kept {
+			kept[ni] = oi + 1
+		}
+	}
+	return modelBreak(l, pi, readback, kept, edgeFirst)
+}
+
+// breakWithout breaks paragraph pi's own words with word at (counted from 0 across its lines) taken away — or, retyped,
+// left where it is as a word the edit typed, kept as no occurrence — as production breaks that edit, every other word
+// kept as the occurrence it is; keep false leaves `keptLines` out, which is the rewrite as it was before /pending 797.
+// want is the paragraph's lines as read, less the word taken away: what the edit leaves when it moves no other word.
+func breakWithout(l pageLayout, pi, at int, retyped, keep bool) (got, want []string, cause string) {
+	lines, _, cause := paragraphWords(l.paragraphs[pi])
+	if cause != "" {
+		return nil, nil, cause
+	}
+	var from [][]reflowWord
+	kept := []int{}
+	n := 0
+	for _, ln := range lines {
+		var row []reflowWord
+		for _, w := range ln {
+			switch {
+			case n != at:
+				row, kept = append(row, w), append(kept, n+1)
+			case retyped:
+				row, kept = append(row, w), append(kept, 0)
+			}
+			n++
+		}
+		if len(row) > 0 {
+			from = append(from, row)
+		}
+	}
+	if !keep {
+		kept = nil
+	}
+	got, want, _, _, cause = modelBreak(l, pi, from, kept, false)
+	return got, want, cause
+}
+
+// modelBreak is the instrument behind the two: readback are the words to break, in the lines they should come out in
+// (nil: paragraph pi's own), and kept names the paragraph word each one keeps, 1 + its index (0: none; a nil kept: no
+// line is kept at all).
+func modelBreak(l pageLayout, pi int, readback [][]reflowWord, kept []int, edgeFirst bool) (got, want []string, justified, centred bool, cause string) {
 	lines, gap, cause := paragraphWords(l.paragraphs[pi])
 	if cause != "" {
 		return nil, nil, false, false, cause
@@ -145,9 +213,23 @@ func breakAsProduction(l pageLayout, pi int, readback [][]reflowWord, edgeFirst 
 	}
 	for _, ln := range from {
 		for _, w := range ln {
-			words = append(words, emitWord{face: w.face, tfSize: w.tfSize, spacing: w.spacing, width: w.width, seq: len(words) + 1})
+			ew := emitWord{face: w.face, tfSize: w.tfSize, spacing: w.spacing, width: w.width, seq: len(words) + 1}
+			if len(words) < len(kept) {
+				ew.oldIdx = kept[len(words)]
+			}
+			words = append(words, ew)
 			texts = append(texts, w.text())
 		}
+	}
+	var keepLine func(int, []emitWord, emitWord) mdpdf.LineKeep
+	if kept != nil {
+		var oldAt [][2]int
+		for li, ln := range lines {
+			for wi := range ln {
+				oldAt = append(oldAt, [2]int{li, wi})
+			}
+		}
+		keepLine = keptLines(words, lines, oldAt, space)
 	}
 	width := func(w emitWord) float64 { return w.width }
 	atEdge := func() [][]emitWord {
@@ -156,7 +238,7 @@ func breakAsProduction(l pageLayout, pi int, readback [][]reflowWord, edgeFirst 
 			edge[i] = align.edge - ln[0].startX
 		}
 		return breakAt(words, edge, width,
-			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, nil, nil)
+			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, nil, nil, keepLine)
 	}
 	var broken [][]emitWord
 	if edgeFirst && align.justified {
@@ -171,7 +253,7 @@ func breakAsProduction(l pageLayout, pi int, readback [][]reflowWord, edgeFirst 
 				measures[i] = align.width
 			}
 		}
-		broken = breakAt(words, measures, width, func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil)
+		broken = breakAt(words, measures, width, func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil, keepLine)
 		if _, fits := justifiedLines(align, broken, lines, space); !fits {
 			broken = atEdge()
 			if _, fits = justifiedLines(align, broken, lines, space); !fits {
@@ -225,7 +307,7 @@ func resetLines(t *testing.T, pdf []byte, l pageLayout, p, pi int, edit string) 
 	pitch := paragraphPitch(l, pi)
 	for i, n := 0, 0; n < editLetters(edit); i++ {
 		y := para.lines[min(i, len(para.lines)-1)].y - float64(max(0, i-len(para.lines)+1))*pitch
-		ln, ok := lineAtBaseline(l3, paragraphBox(para), y, para.lines[0].size)
+		ln, ok := lineAtBaseline(l3, paragraphBox(para), y, para.lines[0].size, para.lines[min(i, len(para.lines)-1)].x0)
 		if !ok {
 			break
 		}
@@ -246,9 +328,17 @@ func backwards(word, text string) (string, bool) {
 	return rev, len(rs) > 2 && rev != word && !strings.Contains(" "+text+" ", " "+rev+" ")
 }
 
-// TestHowOftenARealProducersParagraphRebreaksInPlace is a MEASUREMENT, not an assertion: over the real-producer corpus, how
-// many multi-line paragraphs re-break where they were broken when nothing in them changes — so an edit confined to one
-// line moves no word on another. Skips without the corpus.
+// TestHowOftenARealProducersParagraphRebreaksInPlace is a MEASUREMENT of the breaker: over the real-producer corpus, how
+// many multi-line paragraphs it re-breaks where they were broken when nothing in them changes. Skips without the corpus.
+//
+// **It is no longer what keeps an edit on one line from moving a word on another** (/pending 797): the breaker cannot
+// reproduce every producer's breaks, so the rewrite keeps the breaks an edit has no bearing on (`keptLines`), and this
+// census says how often that matters — every paragraph not in place here is one where, before, an edit moved words on
+// lines it never touched. What an edit now moves is measured beside it, through the same instrument with the lines kept
+// (`breakWithout`), and that IS asserted: with a paragraph's last word taken away no word of another line moves; with
+// one word retyped — on its first line, where its middle line begins, at its end — keeping lines never moves more
+// paragraphs than the breaker alone, and moves no more than `retypedMovesMost` (the paragraphs left are justified ones
+// whose natural space is read from a last line that is itself set wide; they are re-broken narrow, as before).
 //
 // **Through PRODUCTION's path** (`rebreakAsProduction`, /pending 797). It broke with `spacerOf` over the lines as read,
 // which is the path S03 shipped and not the one production has taken since S03's own C3 gave a justified paragraph one
@@ -263,6 +353,15 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 	}
 	type count struct{ asRead, production, edgeFirst, of int }
 	type tally struct{ all, justified count }
+	// An edit of one word, through the instrument with the lines kept and with the breaker alone: how many paragraphs it
+	// was made in, and in how many it moved no other word.
+	type edited struct{ of, kept, alone int }
+	edits := map[string]*edited{}
+	editNames := []string{"its last word taken away", "its first word retyped", "the first word of its middle line retyped", "its last word retyped"}
+	for _, n := range editNames {
+		edits[n] = &edited{}
+	}
+	var movedThough []string
 	causes := map[string]int{}
 	by := map[string]*tally{}
 	var producers []string
@@ -301,6 +400,36 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 				production := got != nil && strings.Join(got, "\n") == strings.Join(want, "\n")
 				got, want, _, _ = rebreakAsProduction(l, pi, true)
 				edgeFirst := got != nil && strings.Join(got, "\n") == strings.Join(want, "\n")
+				n, mid := len(words), 0
+				for _, ln := range lines[:len(lines)/2] {
+					mid += len(ln)
+				}
+				for name, e := range map[string]struct {
+					at      int
+					retyped bool
+					skip    bool
+				}{
+					editNames[0]: {at: n - 1, skip: len(lines[len(lines)-1]) < 2}, // a last line of one word would go with it
+					editNames[1]: {at: 0, retyped: true},
+					editNames[2]: {at: mid, retyped: true},
+					editNames[3]: {at: n - 1, retyped: true},
+				} {
+					if e.skip {
+						continue
+					}
+					edits[name].of++
+					for _, keep := range []bool{true, false} {
+						got, want, cause := breakWithout(l, pi, e.at, e.retyped, keep)
+						switch same := cause == "" && got != nil && strings.Join(got, "\n") == strings.Join(want, "\n"); {
+						case same && keep:
+							edits[name].kept++
+						case same:
+							edits[name].alone++
+						case keep:
+							movedThough = append(movedThough, fmt.Sprintf("%s p%d, with %s (%s): %q", doc.name, p, name, cause, got))
+						}
+					}
+				}
 				for _, c := range []*count{&by[producer].all, &total.all, &by[producer].justified, &total.justified} {
 					if (c == &by[producer].justified || c == &total.justified) && !justified {
 						continue
@@ -337,7 +466,29 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 	if total.justified.of == 0 {
 		t.Errorf("no justified paragraph was read — the path production takes for one was never measured")
 	}
+	for _, name := range editNames {
+		e := edits[name]
+		t.Logf("with %-42s %5d paragraphs: no other word moves in %5d with the lines kept, %5d by the breaker alone", name+",", e.of, e.kept, e.alone)
+		if e.kept < e.alone {
+			t.Errorf("with %s, keeping lines moves a word in more paragraphs (%d of %d unmoved) than the breaker alone (%d)", name, e.kept, e.of, e.alone)
+		}
+		if e.of-e.kept > retypedMovesMost {
+			t.Errorf("with %s, a word of another line moves in %d of %d paragraphs; at most %d are known to", name, e.of-e.kept, e.of, retypedMovesMost)
+		}
+	}
+	if e := edits[editNames[0]]; e.kept != e.of || e.of < total.all.of/2 {
+		t.Errorf("with a paragraph's last word taken away, a word of another line moved in %d of %d paragraphs (of %d multi-line): none may, and half must be asked", e.of-e.kept, e.of, total.all.of)
+	}
+	for _, m := range movedThough {
+		t.Logf("moved though its lines were kept: %s", m)
+	}
 }
+
+// retypedMovesMost is the most paragraphs of the real-producer corpus in which one word retyped still moves a word of
+// another line — measured 3, 2 and 1 for the three retyped words (65 each by the breaker alone): `acrobat/fda-99140.pdf`
+// p30 (its last line runs past the edge its lines above share) and three of `antennahouse/irs-p15.pdf` (p10, p32, p53:
+// a last line set wide, from which the natural space is read).
+const retypedMovesMost = 3
 
 // glyphsOf builds glyphs for s at advance per character, with kern before each glyph after the first taken from kerns
 // (by index, 0 when absent).

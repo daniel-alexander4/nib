@@ -312,7 +312,7 @@ func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 				var got []textLine
 				for i, n := 0, 0; n < editLetters(edit); i++ { // letters: a hyphenated break can read back rejoined (P08.S07)
 					y := para.lines[min(i, len(para.lines)-1)].y - float64(max(0, i-len(para.lines)+1))*pitch
-					ln, ok := lineAtBaseline(l3, paragraphBox(para), y, size)
+					ln, ok := lineAtBaseline(l3, paragraphBox(para), y, size, para.lines[min(i, len(para.lines)-1)].x0)
 					if !ok {
 						break
 					}
@@ -544,5 +544,163 @@ func TestAJustifiedLineShrinksToAQuarterOfItsNaturalSpace(t *testing.T) {
 	// And under a quarter of the natural it does not: a gap of 0.4.
 	if _, fits := justifiedLines(a, [][]emitWord{{w(49.8), w(49.8)}, {w(10)}}, lines, space); fits {
 		t.Error("a line whose space falls under a quarter of its natural width fitted")
+	}
+}
+
+// TestAnEditMovesNoWordOnALineItHasNoBearingOn — /pending 797. The fixture's own lines are ones the breaker does not
+// reproduce: its measure is the widest any line comes to under the paragraph's median space (417 against a flush edge of
+// 400), so broken afresh the first line takes "runs" from the second and every line after it changes. An edit that
+// leaves a line as wide as it was, or touches only a later line, must move no word on another.
+func TestAnEditMovesNoWordOnALineItHasNoBearingOn(t *testing.T) {
+	whole := strings.Join(justifiedText, " ")
+	for _, byTJ := range []bool{false, true} {
+		pdf := helveticaPage(justifiedPara(byTJ, justifiedText...))
+		for _, c := range []struct {
+			name, old, new string
+			want           []string
+		}{
+			{"a word added to the last line", "old tree.", "old oak tree.",
+				[]string{justifiedText[0], justifiedText[1], justifiedText[2], "of an old oak tree."}},
+			{"a wider word typed on the second line", "open fields", "broad fields",
+				[]string{justifiedText[0], "runs far away from here across the broad fields to a", justifiedText[2], justifiedText[3]}},
+			{"a wider word typed where a line begins", "river where", "rivers where",
+				[]string{justifiedText[0], justifiedText[1], "rivers where it stops to drink and rests in the shade", justifiedText[3]}},
+		} {
+			out, cause := reflowed(t, pdf, 0, strings.Replace(whole, c.old, c.new, 1))
+			if cause != "" {
+				t.Errorf("byTJ %v, %s: refused (%s)", byTJ, c.name, cause)
+				continue
+			}
+			ends, _, lines := lineEnds(t, out)
+			if got := lineTexts(lines); strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+				t.Errorf("byTJ %v, %s: the lines read\n  %q\nwant\n  %q", byTJ, c.name, got, c.want)
+			}
+			for i := 0; i+1 < len(ends); i++ {
+				if math.Abs(ends[i]-400) > 1e-6 {
+					t.Errorf("byTJ %v, %s: line %d ends at %v, not the flush edge 400", byTJ, c.name, i, ends[i])
+				}
+			}
+		}
+	}
+}
+
+// TestALineSetAsItWasIsNotAskedWhetherItFits — /pending 797, on the door: a line that is the paragraph's own line, every
+// word of it where it stood, was set by the producer, and is not refused for spaces a re-set line may not shrink to or
+// for a last line past an edge read from the lines above it. The same widths as words the edit typed are refused.
+func TestALineSetAsItWasIsNotAskedWhetherItFits(t *testing.T) {
+	w := func(width float64, old int) emitWord {
+		return emitWord{width: width, spacing: []textSpacing{{th: 1}}, oldIdx: old}
+	}
+	word := reflowWord{startX: 0}
+	lines := [][]reflowWord{{word, word}, {word}}
+	space := func(*runFont, float64, textSpacing) float64 { return 12 }
+	a := alignment{justified: true, edge: 100, lastDelta: -10, tol: 0.6}
+	for _, c := range []struct {
+		name   string
+		broken [][]emitWord
+		fits   bool
+	}{
+		{"its own first line, spaces under a quarter", [][]emitWord{{w(49.8, 1), w(49.8, 2)}, {w(10, 3)}}, true},
+		{"the same line typed", [][]emitWord{{w(49.8, 0), w(49.8, 0)}, {w(10, 3)}}, false},
+		{"the same words on another line", [][]emitWord{{w(10, 0)}, {w(49.8, 1), w(49.8, 2)}, {w(10, 3)}}, false},
+		{"one of its words typed", [][]emitWord{{w(49.8, 1), w(49.8, 0)}, {w(10, 3)}}, false},
+		{"its own last line, past the edge", [][]emitWord{{w(40, 1), w(40, 2)}, {w(100.7, 3)}}, true},
+		{"a typed last line, past the edge", [][]emitWord{{w(40, 1), w(40, 2)}, {w(100.7, 0)}}, false},
+	} {
+		if _, fits := justifiedLines(a, c.broken, lines, space); fits != c.fits {
+			t.Errorf("%s: fits %v, want %v", c.name, fits, c.fits)
+		}
+	}
+}
+
+// TestOnlyTheBreaksAnEditHasNoBearingOnAreKept — `keptLines` on its own, each answer derived by hand. A paragraph of
+// three lines, the first indented: "a b c" from x 10, "d e f" and "g h" from x 0, every word 10 wide and every space 2.
+func TestOnlyTheBreaksAnEditHasNoBearingOnAreKept(t *testing.T) {
+	sp := []textSpacing{{th: 1}}
+	var lines [][]reflowWord
+	var oldAt [][2]int
+	for li, n := range []int{3, 3, 2} {
+		var row []reflowWord
+		for wi := 0; wi < n; wi++ {
+			row = append(row, reflowWord{startX: map[bool]float64{true: 10, false: 0}[li == 0] + float64(wi)*12, width: 10, spacing: sp})
+			oldAt = append(oldAt, [2]int{li, wi})
+		}
+		lines = append(lines, row)
+	}
+	space := func(*runFont, float64, textSpacing) float64 { return 2 }
+	// An edit is its words: a number keeps that word of the paragraph (from 1), a negative one is a word typed, that wide.
+	hook := func(edit ...float64) (func(line int, cur []int, item int) mdpdf.LineKeep, []emitWord) {
+		var words []emitWord
+		for i, e := range edit {
+			w := emitWord{width: 10, spacing: sp, seq: i + 1}
+			if e > 0 {
+				w.oldIdx = int(e)
+			} else {
+				w.width = -e
+			}
+			words = append(words, w)
+		}
+		keep := keptLines(words, lines, oldAt, space)
+		return func(line int, cur []int, item int) mdpdf.LineKeep {
+			var c []emitWord
+			for _, i := range cur {
+				c = append(c, words[i])
+			}
+			return keep(line, c, words[item])
+		}, words
+	}
+	type ask struct {
+		why  string
+		line int
+		cur  []int // indices into the edit's words
+		item int
+		want mdpdf.LineKeep
+	}
+	for _, c := range []struct {
+		name string
+		edit []float64
+		asks []ask
+	}{
+		{"nothing changed", []float64{1, 2, 3, 4, 5, 6, 7, 8}, []ask{
+			{"the word that began the second line begins it still", 0, []int{0, 1, 2}, 3, mdpdf.LineApart},
+			{"a word of a whole line stays on it", 0, []int{0, 1}, 2, mdpdf.LineTogether},
+			{"and so on the next", 1, []int{3}, 4, mdpdf.LineTogether},
+			{"a line that does not begin where one began keeps nothing", 1, []int{4, 5}, 6, mdpdf.LineFree},
+			{"past the last line, the room is the last line's", 5, []int{3, 4, 5}, 6, mdpdf.LineApart},
+		}},
+		{"a word of the second line typed as wide", []float64{1, 2, 3, 4, -10, 6, 7, 8}, []ask{
+			{"the line is as wide as it was: the third begins where it did", 1, []int{3, 4, 5}, 6, mdpdf.LineApart},
+			{"but it is not whole: its words are placed by what fits", 1, []int{3}, 4, mdpdf.LineFree},
+			{"the first line is untouched", 0, []int{0, 1, 2}, 3, mdpdf.LineApart},
+		}},
+		{"a word of the second line typed narrower", []float64{1, 2, 3, 4, -5, 6, 7, 8}, []ask{
+			{"the line is shorter: the next word may now fit", 1, []int{3, 4, 5}, 6, mdpdf.LineFree},
+		}},
+		{"a word added inside the second line", []float64{1, 2, 3, 4, 5, -10, 6, 7, 8}, []ask{
+			{"the line is not whole", 1, []int{3}, 4, mdpdf.LineFree},
+			{"and wider than it was, so the third begins where it did if this all fits", 1, []int{3, 4, 5, 6}, 7, mdpdf.LineApart},
+		}},
+		{"a wide word added inside the second line", []float64{1, 2, 3, 4, 5, -30, 6, 7, 8}, []ask{
+			{"a line that begins part-way through the second is not the second, however wide", 2, []int{5, 6}, 7, mdpdf.LineFree},
+		}},
+		{"the second line's first word typed wider", []float64{1, 2, 3, -12, 5, 6, 7, 8}, []ask{
+			{"it begins the line the word it replaced began", 0, []int{0, 1, 2}, 3, mdpdf.LineApart},
+			{"and the third line follows a line that stood where the second did", 1, []int{3, 4, 5}, 6, mdpdf.LineApart},
+		}},
+		{"the second line's first word typed narrower", []float64{1, 2, 3, -8, 5, 6, 7, 8}, []ask{
+			{"it may fit where the word it replaced did not", 0, []int{0, 1, 2}, 3, mdpdf.LineFree},
+		}},
+		{"a line of words typed ahead of the paragraph", []float64{-10, -10, -10, 1, 2, 3, 4, 5, 6, 7, 8}, []ask{
+			{"the indented first line, now second, has not the room it had", 1, []int{3, 4, 5}, 6, mdpdf.LineFree},
+			{"nor do its words stay together there", 1, []int{3, 4}, 5, mdpdf.LineFree},
+			{"the second line, now third, begins where the third did", 2, []int{6, 7, 8}, 9, mdpdf.LineApart},
+		}},
+	} {
+		ask, _ := hook(c.edit...)
+		for _, a := range c.asks {
+			if got := ask(a.line, a.cur, a.item); got != a.want {
+				t.Errorf("%s — %s: answered %v, want %v", c.name, a.why, got, a.want)
+			}
+		}
 	}
 }

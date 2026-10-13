@@ -355,7 +355,22 @@ type BreakOps[T any] struct {
 	// KeepBreak says the line so far is the one the item's break point ended: the break is then taken first, where its
 	// head fits, before the whole item is tried — so an edit after a producer's break leaves the line it ended alone.
 	KeepBreak func(line []T, item T) bool
+	// KeepLine says what a line already set says of the item about to follow cur on line number line (from 0): that
+	// cur is such a line, whole, and the item began the next (LineApart: the item starts a new line, though it would
+	// fit); or that cur is the start of one and the item its next word (LineTogether: the item joins, though it would
+	// not fit). Asked only of a line that holds something — so an edit elsewhere in a paragraph leaves alone the lines
+	// it does not reach, whatever rule first broke them (`pdfops`' reflow, /pending 797). nil: no line is kept.
+	KeepLine func(line int, cur []T, item T) LineKeep
 }
+
+// LineKeep is KeepLine's answer.
+type LineKeep int
+
+const (
+	LineFree     LineKeep = iota // the breaker decides, by what fits
+	LineApart                    // the item starts a new line
+	LineTogether                 // the item joins the line
+)
 
 // BreakGreedy is the line breaker — THE one: mdpdf's layout and `pdfops`' reflow both call it (`PLAN-text-reflow.md`
 // P06.S03, law 4). It fills each line greedily up to maxW, breaking between items; a forced break ends the line; an
@@ -393,6 +408,16 @@ func BreakGreedy[T any](items []T, maxW float64, ops BreakOps[T]) [][]T {
 					flush()
 					w, ww = tail, ops.Width(tail)
 				}
+			}
+		}
+		if len(cur) > 0 && ops.KeepLine != nil {
+			switch ops.KeepLine(len(lines), cur, w) {
+			case LineApart:
+				flush()
+			case LineTogether:
+				curW += ops.Space(cur[len(cur)-1]) + ww
+				cur = append(cur, w)
+				continue
 			}
 		}
 		if len(cur) > 0 {

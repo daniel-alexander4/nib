@@ -274,7 +274,7 @@ func TestStylesOverTheCorpus(t *testing.T) {
 				reset++
 				var got []textLine
 				for i, n := 0, 0; i < len(para.lines) && n < editLetters(edit); i++ {
-					ln, ok := lineAtBaseline(l3, paragraphBox(para), para.lines[i].y, para.lines[0].size)
+					ln, ok := lineAtBaseline(l3, paragraphBox(para), para.lines[i].y, para.lines[0].size, para.lines[i].x0)
 					if !ok {
 						break
 					}

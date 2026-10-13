@@ -935,6 +935,8 @@ home today.
   — closes ADR-131's first gap: a source's `/Configs` are appended to the host's, each with the host's groups in the state the host's `/D` gives them; a default's `/AS` goes to every configuration its groups' states go to (ADR-131 sent the source's to the host `/D` alone, so a host alternate showed a group hidden by usage).
 - [ADR-154](154-a-vault-write-is-read-change-write-under-one-lock-between-processes.md) — **a vault write is read, change, write under one lock between processes**
   — supersedes ADR-144's "a check, not a lock" only: every mutator takes a kernel file lock and reads the file where another process wrote it before judging anything; a file it cannot open is not written over; a refused write says why on every route.
+- [ADR-155](155-an-edit-keeps-the-breaks-it-has-no-bearing-on.md) — **an edit keeps the breaks it has no bearing on**
+  — extends ADR-071: `keptLines` through the breaker's `KeepLine` hook keeps every line the edit does not reach, a line set as the producer set it is not asked whether it fits, and a run does not continue a line across a gutter; the measure is not "fixed" instead.
 - [ADR-156](156-a-peer-turned-away-at-the-handshake-is-counted-and-named-and-never-ends-the-wait.md) — **a peer turned away at the handshake is counted and named, and never ends the wait**
   — one door (`listenTLS`) counts every pinned-peer refusal on both transports; the arm keeps waiting, shows the cause in its status (`turnedAway`) and gives it as the reason at the deadline; a clock refusal outranks a stranger; the dialler is told it was turned away; every arm calls both doors.
 - [ADR-157](157-a-launch-key-trades-only-for-the-user-it-was-minted-for.md) — **a launch key trades only for the user it was minted for**

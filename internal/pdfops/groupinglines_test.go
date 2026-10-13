@@ -227,6 +227,79 @@ func TestARuleDrawnAsAGlyphJoinsNoText(t *testing.T) {
 	}
 }
 
+// TestARunDoesNotContinueALineAcrossAGutter — /pending 871, with the numbers of the page that showed it
+// (`designer/irs-fw9.pdf` p4): a two-column table whose left cell's text ran to within 1.4 em of the right cell's, so
+// "be reported and direct sales over" and "1 through 5." read as one line. Three rows of the table are already parted
+// (their left text is short), and that is the evidence the fourth is parted on. Each thing the rule asks for is taken
+// away in turn, and without it the line is joined as it was.
+func TestARunDoesNotContinueALineAcrossAGutter(t *testing.T) {
+	parted := []textRun{
+		run("•  Broker transactions", 38, 400.26, 80, 8), run("are exempt only for sales of", 169.60, 400.26, 101.19, 8),
+		run("•  Interest payments", 38, 385.26, 75, 8), run("All exempt payees except", 169.60, 385.26, 90, 8),
+		run("•  Barter exchange transactions", 38, 370.26, 115.71, 8), run("Exempt payees 1 through 4.", 169.60, 370.26, 100.78, 8),
+	}
+	left, right := run("be reported and direct sales over ", 38, 340.26, 120.61, 8), run("1 through 5.", 169.60, 338.40, 43.28, 8)
+	const joined, apart = "be reported and direct sales over 1 through 5.", "be reported and direct sales over|1 through 5."
+	with := func(rs []textRun, more ...textRun) []textRun { return append(append([]textRun(nil), rs...), more...) }
+	for _, c := range []struct {
+		name string
+		runs []textRun
+		want string
+	}{
+		{"three rows parted at the edge", with(parted, left, right), apart},
+		{"only two rows parted there", with(parted[:4], left, right), joined},
+		{"only two rows parted there, and two at another edge", with(parted[:4], left, right,
+			run("Code", 300, 400.26, 20, 8), run("Code", 300, 385.26, 20, 8)), joined},
+		// Under a 20pt title half an em is 10pt for the page's largest pair of lines; for these 8pt lines it is 4pt, and
+		// the text to their left stands 6pt higher: a label above a hanging line, not a cell beside it.
+		{"lines at the edge whose text to the left is on the line above", with([]textRun{parted[1], parted[3], parted[5]}, left, right,
+			run("Title", 38, 500, 60, 20), run("Label", 38, 406.26, 30, 8), run("Label", 38, 391.26, 30, 8), run("Label", 38, 376.26, 30, 8)), joined},
+		{"lines that begin at the edge with nothing to their left", with([]textRun{parted[1], parted[3], parted[5]}, left, right), joined},
+		{"a line drawn across the edge just below", with(parted, left, right,
+			run("Payments made in settlement of payment card or third-party network transactions", 38, 329.26, 250, 8)), joined},
+		{"a line drawn across the edge well below", with(parted, left, right,
+			run("Payments made in settlement of payment card or third-party network transactions", 38, 300.26, 250, 8)), apart},
+		{"one word ahead of the gap", with(parted, run("Note: ", 38, 340.26, 120.61, 8), right), "Note: 1 through 5."},
+		{"a gap no wider than a space after a sentence", with(parted, run("be reported and direct sales over ", 38, 340.26, 127, 8), right), joined},
+	} {
+		var got []string
+		for _, l := range lineSegments(c.runs) {
+			if l.y < 345 && l.y > 335 {
+				got = append(got, l.text)
+			}
+		}
+		if strings.Join(got, "|") != c.want {
+			t.Errorf("%s: the row reads %q, want %q", c.name, strings.Join(got, "|"), c.want)
+		}
+	}
+}
+
+// TestAHeadingInTheNextColumnDoesNotJoinTheLineBesideIt — /pending 871 (`antennahouse/irs-p15.pdf` p11): two 10pt
+// columns 18pt apart are parted by joinGapEm, but the gap is measured in ems of the LARGER run, so a 14pt heading
+// opening the right-hand column joined the body line beside it — and one line across both made the page one column,
+// its 28 paragraphs read as 88.
+func TestAHeadingInTheNextColumnDoesNotJoinTheLineBesideIt(t *testing.T) {
+	var runs []textRun
+	for _, y := range []float64{300, 288.5, 272.1, 260.6, 249.1, 237.6} {
+		runs = append(runs, run("ited income, social security, and Medicare taxes. You ", 42, y, 255, 10))
+	}
+	for _, y := range []float64{300, 288.5, 253, 241.5} {
+		runs = append(runs, run("Forms W-4 claiming exemption from withholding expire.", 315, y, 255, 10))
+	}
+	runs = append(runs, run("On February 16", 315, 272.1, 100, 14))
+	l := groupRuns(runs)
+	if l.columns != 2 || l.unsupported != "" {
+		t.Errorf("the page reads as %d column(s), unsupported %q; want two columns: %q", l.columns, l.unsupported, paragraphTexts(l))
+	}
+	found := false
+	for _, s := range lineSegments(runs) {
+		found = found || (s.text == "On February 16" && s.x0 == 315)
+	}
+	if !found {
+		t.Errorf("the heading is not a line of its own")
+	}
+}
+
 // TestAPageWithNoTextStillHasItsBoxAndAnnotations —/pending 794 (pdfops I2): reflow's reader gives a page that draws
 // no glyph the page box and annotation boxes it gives every other page, so a destination read from it is not measured
 // against zeroes.
