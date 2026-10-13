@@ -1301,6 +1301,9 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    (.can-pan, kept by a ResizeObserver) and no tool owns the pointer ([data-no-pan]). It is set on the
    page and inherited, so text keeps pdf.js's I-beam and a link its pointer. */
 #viewerWrap:not([data-no-pan]) .viewerContainer.can-pan .page { cursor: grab; }
+/* The hand tool is on (ADR-147): text takes hold too, so it shows the hand and not the I-beam. */
+#viewerWrap[data-hand]:not([data-no-pan]) .viewerContainer.can-pan .textLayer span,
+#viewerWrap[data-hand]:not([data-no-pan]) .viewerContainer.can-pan .textLayer br { cursor: grab; }
 #viewerWrap .viewerContainer.panning,
 #viewerWrap .viewerContainer.panning * { cursor: grabbing; user-select: none; }
 

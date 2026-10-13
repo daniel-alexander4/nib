@@ -123,6 +123,36 @@ test('a drag that starts on text is a selection, and the middle button pans even
   assert.equal(drag(run, 60, 60, 1).dy, -60, 'the middle button did not pan from text — on a page of text there is then nowhere to take hold');
 });
 
+// The hand tool (ADR-147, /pending 846): a toggle in the bar. On, a drag from text moves the page and
+// selects nothing; off, text is a selection again. Fields and overlays keep their drags either way.
+test('the hand tool pans from text while it is on, and only then', () => {
+  const { box, run, field, handle } = pageWithText();
+  overflow(box, 1000);
+  const hand = doc.getElementById('handBtn');
+  assert.ok(hand, 'there is no hand tool in the bar');
+  assert.equal(hand.getAttribute('aria-pressed'), 'false', 'the hand tool is on before anyone pressed it');
+  assert.equal(hand.querySelector('.tblabel')?.textContent, 'Hand tool', 'the button has no word (ADR-087)');
+  assert.equal(drag(run, 60, 60).dy, 0, 'setup: a drag on text pans with the hand tool off');
+
+  hand.click();
+  assert.equal(hand.getAttribute('aria-pressed'), 'true', 'pressing the hand tool did not turn it on');
+  assert.equal(wrap.hasAttribute('data-hand'), true, 'the page is not told the hand is on, so text keeps the I-beam');
+  assert.equal(drag(run, 60, 60).dy, -60, 'with the hand tool on a drag that starts on text did not move the page');
+  // A selection must not start under the hand: the press is a pending pan, and that is what refuses it.
+  run.dispatchEvent(ev('pointerdown', 200, 200));
+  const sel = new win.Event('selectstart', { bubbles: true, cancelable: true });
+  run.dispatchEvent(sel);
+  wrap.dispatchEvent(ev('pointerup', 200, 200));
+  assert.equal(sel.defaultPrevented, true, 'with the hand tool on a press on text still starts a selection');
+  assert.equal(drag(field, 60, 60).dy, 0, 'the hand tool took a drag that belongs to a form field');
+  assert.equal(drag(handle, 60, 60).dy, 0, 'the hand tool took a drag that belongs to an overlay');
+
+  hand.click();
+  assert.equal(hand.getAttribute('aria-pressed'), 'false');
+  assert.equal(wrap.hasAttribute('data-hand'), false);
+  assert.equal(drag(run, 60, 60).dy, 0, 'with the hand tool off again a drag on text still moves the page');
+});
+
 test('a field and an overlay keep their own drags', () => {
   const { box, field, handle } = pageWithText();
   overflow(box, 1000);
