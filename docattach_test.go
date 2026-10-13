@@ -50,9 +50,10 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 	// this work claimed "no false positives in this run"; there were two, and they are the two
 	// shapes a name-first rule cannot express: a long doc that opens with a markdown heading,
 	// and one doc covering two adjacent one-line functions.
+	//
+	// The first — `seedNodes` in internal/rendezvous/seeds.go — left the list when that doc moved
+	// onto the `shippedSeed` type and the function gained a one-line doc of its own (/pending 357).
 	exempt := map[string]string{
-		"internal/rendezvous/seeds.go:seedNodes": "a 90-line doc opening with a `#` heading — the " +
-			"name appears below it, and requiring the heading to come second would make the doc worse",
 		"internal/cli/register_other.go:cmdRegister": "one doc for cmdRegister and cmdUnregister, " +
 			"two one-line siblings on the following lines; it names neither because it is about both",
 	}

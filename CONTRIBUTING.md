@@ -94,6 +94,14 @@ rescue path — a machine whose shipped list fails bootstrapping from addresses 
 invitation carried. The addresses are an **input** rather than a lookup because Nib must
 never resolve a name on the bootstrap path, and a live seed test is the one place tempted
 to. Without the variable that one test skips and the rest of the harness is unchanged.
+No invitation Nib issues carries seeds and the server never reads any (ADR-152); that
+path is the `nib rendezvous` diagnostic's alone.
+
+Every run also asks each **shipped** bootstrap address in turn and prints a `SEED` line
+for it — who runs it, whether it answered, and whether that differs from what
+`internal/rendezvous/seeds.go` records. A cold start succeeds while one address answers,
+so this is the only place a mostly-dead list is seen. A `ROT` line is not a red; it means
+re-measure and update the list.
 
 **A stale row is caught at tier 1 and costs nothing.** `TestEveryRedProofStillApplies` dry-runs
 every recorded patch against the working tree, so an edit that moves the code out from under a row

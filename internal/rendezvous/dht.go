@@ -751,6 +751,9 @@ func startingNodes(cached []krpc.NodeInfo, shipped []*net.UDPAddr, inv []netip.A
 // SeedSample picks up to n live nodes to put in an invitation — the producing half of
 // D6's second half.
 //
+// **Its one caller is the `nib rendezvous` diagnostic (ADR-152).** No invitation Nib issues
+// carries seeds; `TestInvitationSeedsReachNothingButTheDiagnostic` holds that.
+//
 // **Random per call, and that is a privacy property rather than a nicety.** A stable seed
 // set is a watermark: two invitations sharing one would link them to a single issuer, and a
 // recipient's bootstrap tells whoever chose the addresses that this invitation was opened,
@@ -819,6 +822,12 @@ func sampleSeeds(nodes []krpc.NodeInfo, self netip.AddrPort, n int) []netip.Addr
 
 // Seed supplies bootstrap addresses a caller obtained out of band — D6's second half, the
 // seeds an invitation carries.
+//
+// **Its one caller is the `nib rendezvous` diagnostic (ADR-152): the server never calls it**,
+// because addresses an invitation's sender chose would then be where this machine's first
+// packets go. Everything below about the retry, its attribution and the unsaved cache is true
+// of that diagnostic and is why the loop is kept: it is the measured answer to what wiring this
+// would do.
 //
 // **Opaque `netip.AddrPort`, and after Open rather than through it.** After, because
 // `StartingNodes` is evaluated lazily at every traversal, and because the caller that has

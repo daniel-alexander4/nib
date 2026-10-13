@@ -304,9 +304,9 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 			"is convened, but the next setup sheet will open pre-filled with it", out.Record.ID, derr)
 	}
 
-	// **No `Seeds` on a FIRST-issued invitation either, and the silence is what produced
-	// `/pending 357` (recorded 2026-09-03).** The re-issue door below states the absence for its
-	// own case; this one said nothing, so a reader had to re-derive the whole situation.
+	// **No `Seeds` on a FIRST-issued invitation, and that is REFUSED, not pending: ADR-152**
+	// (`/pending 357`, decided 2026-10-12). The re-issue door below and `convenerInvitationFor`
+	// say the same of their own cases.
 	//
 	// D6's second half — a bootstrap seed hint carried in the invitation, so a machine whose
 	// shipped list has rotted can still reach the DHT — was BUILT at P04.S06 (v1.115.0) and is
@@ -327,11 +327,13 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	// half is unwired, and it is bounded by `invSeedsOnly`, which admits invitation seeds only
 	// after a DEMONSTRATED bootstrap failure.
 	//
-	// So the open question is not this line: it is whether a recipient can be told, before they
-	// open an invitation, that doing so may cause outbound contact to addresses the sender chose,
-	// with their real IP and an exact timestamp. That is a different consent question from "Nib
-	// uses the DHT", and it is P06's. Until it has an answer, seeds stay off both halves — stated
-	// here so the next reader inherits the reasoning rather than the silence.
+	// **So both halves are refused.** Consumed, a seed list makes opening an invitation cause
+	// outbound contact to addresses its sender chose, from this user's real IP at an exact moment
+	// — a read receipt, and a different consent from "Nib uses the DHT". The failure it was built
+	// to survive, a shipped bootstrap list that has rotted, is answered at the list instead
+	// (`internal/rendezvous/seeds.go`: who runs each address, re-measured, and seen on every
+	// `./build/dhtlive.sh` run). `TestInvitationSeedsReachNothingButTheDiagnostic` holds this line
+	// and every other: nothing outside the diagnostic sets, reads or feeds `Seeds`.
 	invites := make([]conveneInvite, 0, len(out.Invites))
 	for _, inv := range out.Invites {
 		fp, _ := hex.DecodeString(inv.Party.Fingerprint)
@@ -548,9 +550,8 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 		// targets distinct. Two copies of that would drift exactly the way `Intent` already did here:
 		// omitted once, and every re-issued invitation was refused at the recipient's arrival gate.
 		//
-		// `Seeds` is still absent and cannot be recovered — the record does not carry them — so a
-		// re-issued invitation has no DHT seed hints. Stated rather than papered over; every other
-		// field a recipient CHECKS is present.
+		// `Seeds` is absent: no invitation Nib issues carries DHT seed hints (refused, ADR-152).
+		// Every field a recipient CHECKS is present.
 		inv, ierr := mintInvitationFor(v, rec, p, time.Now(), 0)
 		if ierr != nil {
 			httpError(w, http.StatusGone, ierr.Error())
