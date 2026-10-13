@@ -13,10 +13,10 @@ import (
 )
 
 // TestTheLibraryPatchIsReadGoAndLexGoOnlyAsItsNoticeSays holds ADR-066's maintenance rule, as ADR-068
-// widened it. nib carries ONE modified third-party module — `github.com/digitorus/pdf` v0.1.2, whose
+// widened it. nib carries a modified third-party module — `github.com/digitorus/pdf` v0.1.2, whose
 // object-stream lookup `third_party/digitorus-pdf/read.go` makes linear (/pending 758) and whose
 // `lex.go` readArray stops on an object's end (/pending 761) — and its NOTICE.nib says exactly what
-// differs from upstream. So:
+// differs from upstream. (A second one, the signature library, has the guard below.) So:
 //
 //   - go.mod still REQUIRES v0.1.2 and REPLACES it with that directory: a bump of the require line
 //     leaves the patch applied to a version it was not written against, and this fails until the
@@ -64,6 +64,24 @@ func TestTheLibraryPatchIsReadGoAndLexGoOnlyAsItsNoticeSays(t *testing.T) {
 		t.Errorf("%s/%s's readArray does not refuse an object's end — the copy has been reverted to upstream", dir, lex)
 	}
 
+	differ, missing, added := upstreamDiff(t, mod, ver, dir)
+	// sorted, so lex.go precedes read.go
+	if len(differ) != 2 || differ[0] != lex || differ[1] != file {
+		t.Errorf("files differing from upstream %s@%s: %v, want exactly [%s %s]", mod, ver, differ, lex, file)
+	}
+	if len(missing) != 0 {
+		t.Errorf("upstream files missing from %s: %v", dir, missing)
+	}
+	if len(added) != 1 || added[0] != "NOTICE.nib" {
+		t.Errorf("files added to %s: %v, want exactly [NOTICE.nib]", dir, added)
+	}
+}
+
+// upstreamDiff compares a patched copy under dir with mod@ver in the module cache and names the files
+// that differ, that upstream has and the copy lacks, and that the copy adds — each sorted. Without that
+// version in the module cache it skips, loudly.
+func upstreamDiff(t *testing.T, mod, ver, dir string) ([]string, []string, []string) {
+	t.Helper()
 	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
 	cache := strings.TrimSpace(string(out))
 	if err != nil || cache == "" {
@@ -111,9 +129,52 @@ func TestTheLibraryPatchIsReadGoAndLexGoOnlyAsItsNoticeSays(t *testing.T) {
 	sort.Strings(differ)
 	sort.Strings(missing)
 	sort.Strings(added)
-	// sorted, so lex.go precedes read.go
-	if len(differ) != 2 || differ[0] != lex || differ[1] != file {
-		t.Errorf("files differing from upstream %s@%s: %v, want exactly [%s %s]", mod, ver, differ, lex, file)
+	return differ, missing, added
+}
+
+// TestTheSignatureLibraryPatchIsItsVerifyPathOnlyAsItsNoticeSays holds the same rule for nib's SECOND
+// modified module (ADR-142, /pending 735): `github.com/digitorus/pdfsign`, whose `processByteRange`
+// `third_party/digitorus-pdfsign/verify/signature.go` makes read a signature's ranges into one buffer,
+// with `verify/verify.go` passing it the file's size. The four checks are the first guard's: the require
+// pin, the replace, the patch still being there, and nothing else differing from upstream.
+func TestTheSignatureLibraryPatchIsItsVerifyPathOnlyAsItsNoticeSays(t *testing.T) {
+	const (
+		mod = "github.com/digitorus/pdfsign"
+		ver = "v0.0.0-20260407063256-85ede6424a74"
+		dir = "third_party/digitorus-pdfsign"
+		sig = "verify/signature.go"
+		vfy = "verify/verify.go"
+	)
+	gomod, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(mod+" "+ver) + `\s*(//.*)?$`).Match(gomod) {
+		t.Errorf("go.mod no longer requires %s %s — re-apply %s's patch to the new version (NOTICE.nib, ADR-142), then move this pin", mod, ver, dir)
+	}
+	if !regexp.MustCompile(`(?m)^replace\s+` + regexp.QuoteMeta(mod) + `\s+=>\s+\./` + regexp.QuoteMeta(dir) + `\s*$`).Match(gomod) {
+		t.Errorf("go.mod does not replace %s with ./%s — the patched library is not the one linked", mod, dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "NOTICE.nib")); err != nil {
+		t.Errorf("%s/NOTICE.nib: %v — the modified copy must say what was modified", dir, err)
+	}
+	patched, err := os.ReadFile(filepath.Join(dir, sig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(patched, []byte("io.ReadAll(")) || !bytes.Contains(patched, []byte("func processByteRange(v pdf.Value, file io.ReaderAt, size int64, p7 *pkcs7.PKCS7) error {")) {
+		t.Errorf("%s/%s reads a byte range with io.ReadAll, or takes no size — the copy has been reverted to upstream", dir, sig)
+	}
+	caller, err := os.ReadFile(filepath.Join(dir, vfy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(caller, []byte("processSignature(v, file, size, options)")) {
+		t.Errorf("%s/%s does not pass the file's size to processSignature", dir, vfy)
+	}
+	differ, missing, added := upstreamDiff(t, mod, ver, dir)
+	if len(differ) != 2 || differ[0] != sig || differ[1] != vfy {
+		t.Errorf("files differing from upstream %s@%s: %v, want exactly [%s %s]", mod, ver, differ, sig, vfy)
 	}
 	if len(missing) != 0 {
 		t.Errorf("upstream files missing from %s: %v", dir, missing)

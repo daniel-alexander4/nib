@@ -1927,7 +1927,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## github.com/digitorus/pdfsign v0.0.0-20260407063256-85ede6424a74
+## github.com/digitorus/pdfsign v0.0.0-20260407063256-85ede6424a74 — modified by nib, see third_party/digitorus-pdfsign/NOTICE.nib
 
 ```
 BSD 2-Clause License

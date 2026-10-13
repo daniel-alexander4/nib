@@ -649,15 +649,18 @@ var errLibraryWouldOverread = errors.New("a signature's /ByteRange would make th
 // the library must not be handed. It refuses exactly three shapes, each a cost the library pays
 // before any hash is compared, and nothing else:
 //
-//   - **An indirect `/ByteRange` array.** `processByteRange` (`signature.go:69-84`) calls
+//   - **An indirect `/ByteRange` array.** Upstream's `processByteRange` (`signature.go:69-84`) calls
 //     `v.Key("ByteRange")` three times per pair, and an indirect array is re-resolved and re-parsed
 //     from the file on every call — measured 7.86 s for K=4000 pairs on a 29 KB file, still ending
-//     `valid`. Honest producers write it direct; conjunct (1) refuses it as a record too.
+//     `valid`. Honest producers write it direct; conjunct (1) refuses it as a record too. (nib's
+//     patched copy resolves it once a signature — ADR-142 — and this refusal stays: it is written
+//     against the library as published, so it holds whichever copy is linked.)
 //   - **Any negative length.** `io.NewSectionReader` (`io/io.go:486-497`) computes `off+n` guarded
 //     against overflow only for positive `n`: a negative `n` takes the overflow arm and the section
 //     becomes "to the end of the file", so `[0 -1 0 -1 …]` copies the whole file per pair —
 //     measured 371 MB from a 16 KB file.
-//   - **An effective read summing past the file.** The library copies every pair into memory, so
+//   - **An effective read summing past the file.** The library copies every pair into memory (the
+//     patched copy into ONE buffer sized by the same arithmetic as below, ADR-142), so
 //     `[0 S 0 S … ×K]` allocates K×S, and a Go out-of-memory is `fatal`, not a panic, so no
 //     `recover` contains it. A pair reads `min(l, size-off)` bytes when `0 <= off < size`
 //     (`SectionReader.Read` clamps to the underlying reader, `io/io.go:509-519`), and nothing

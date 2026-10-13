@@ -55,3 +55,7 @@ require (
 
 // /pending 758, ADR-066: the object-stream lookup is patched (read.go only); see third_party/digitorus-pdf/NOTICE.nib.
 replace github.com/digitorus/pdf => ./third_party/digitorus-pdf
+
+// /pending 735, ADR-142: verification reads a signature's byte ranges into one buffer (verify/signature.go and
+// verify/verify.go only); see third_party/digitorus-pdfsign/NOTICE.nib.
+replace github.com/digitorus/pdfsign => ./third_party/digitorus-pdfsign
