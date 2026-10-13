@@ -183,6 +183,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 
 		"(*Socket).Describe":  "test-only — the multicast interface selection rendered for a human. Read by the discovery tests and by nothing on a running path.",
 		"(*Socket).LocalPort": "test-only — the bound port, which only a harness needs to know.",
+		"Matches":             "test-only — the six-word name compared against a fingerprint. Its one running caller was the link browse (`resolve`), which has matched a salted tag since ADR-151 (`TagMatches`); the name is still shown to people and compared by eye, and the encoding's own properties — a transposed, substituted or retyped name — are asserted through this function in internal/pairing's tests.",
 
 		"ReadAttestations":      "test-only — `Attestations` over a document nobody has verified yet. Its one production caller, `confirmCoSigned`, now verifies once and reads the attestations and the coverage verdict off the same Status (/pending 629); the p2p and server tests still read through it.",
 		"ExchangeBudget":        "test-only — D16's Stage 6 nesting pin is a PROPERTY, and the only thing that can read a property is the guard that asserts it. Exported so internal/server's own deadline tests can ask this package rather than keeping a second copy of the number.",

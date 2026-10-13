@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"nib/internal/discovery"
-	"nib/internal/pairing"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -38,12 +37,8 @@ func (b *scriptedBrowser) Read(deadline time.Time) (discovery.Seen, error) {
 
 func seenFrom(t *testing.T, fp []byte, port uint16) discovery.Seen {
 	t.Helper()
-	name, err := pairing.Name(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return discovery.Seen{
-		Announcement: discovery.Announcement{Name: name, Port: port, Transport: discovery.TransportTCP},
+		Announcement: announcedBy(t, fp, discovery.Announcement{Port: port, Transport: discovery.TransportTCP}),
 		From:         &net.UDPAddr{IP: net.ParseIP("10.9.0.7"), Port: int(port)},
 	}
 }

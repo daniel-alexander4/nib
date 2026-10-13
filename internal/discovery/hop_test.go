@@ -16,7 +16,7 @@ import (
 // them indistinguishable on the link, so a dialer raced them and took whichever answered first.
 
 func base(hop int) Announcement {
-	return Announcement{Name: "one two three four five six", Port: 9000, Transport: TransportQUIC, Hop: hop}
+	return Announcement{Salt: [16]byte{1}, Port: 9000, Transport: TransportQUIC, Hop: hop}
 }
 
 // TestTheHopSurvivesTheWire is the round trip, and it drives HopNone alongside real hops because

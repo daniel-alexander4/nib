@@ -164,11 +164,11 @@ type browser interface {
 // The layer that holds pins is the layer that decides what to dial, and putting the
 // join here keeps the guard meaningful instead of routing around it.
 //
-// It uses pairing.Matches rather than comparing against a precomputed name table
-// because Matches is the exported comparison and it normalises case and whitespace;
-// a table keyed on exact bytes would quietly miss a peer whose name arrived
-// differently cased. The cost is one Name() per pin per announcement, over a handful
-// of pins.
+// It asks pairing.TagMatches of each pin: the announcement carries a salt and the tag of
+// its sender's fingerprint under it (ADR-151), and the only way to recognise one is to
+// recompute it from a fingerprint already held. No table can be precomputed — the salt
+// is new for every announcer, which is the point. The cost is one SHA-256 per pin per
+// announcement, no allocation: measured 1 µs at 1 pin, 13 µs at 32, 420 µs at 1000 (ADR-151).
 // **`want` is the hop the caller is looking for, and a sighting for another arm is refused here
 // rather than raced.** A machine can hold a hop arm and a delivery arm at once, pinned to the same
 // peer, and before the hop travelled in the announcement the two were indistinguishable on the
@@ -181,7 +181,7 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 	if s.From == nil || s.Port == 0 {
 		return candidate{}, false
 	}
-	// Refused BEFORE the pin scan, deliberately: this is cheaper than `pairing.Matches` per pin,
+	// Refused BEFORE the pin scan, deliberately: this is cheaper than `pairing.TagMatches` per pin,
 	// and it keeps the reason for the refusal about the arm rather than about identity.
 	if want != discovery.HopNone && s.Hop != want {
 		// **Logged, because a refusal that drops a legitimate arm is invisible otherwise.** This
@@ -193,16 +193,23 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 		// **At most one line per `hopMismatchLogEvery`, with the count it stands for** (/pending
 		// 766). This runs before the pin scan, so the sender is anyone on the link: a line per
 		// datagram let any host there write to this machine's log as fast as it could send.
+		//
+		// **It names the SOURCE ADDRESS, because that is all there is to name** (ADR-151). The
+		// line used to print the announced six-word name; an announcement no longer says who
+		// sent it to anyone who has not matched it against a pin, and this is before the match.
 		if n, ok := hopMismatches.allow(time.Now()); ok {
-			log.Printf("link: ignoring %s at hop %d — this dial wants hop %d (%d such announcement(s) "+
-				"since the last line like this)", s.Name, s.Hop, want, n)
+			log.Printf("link: ignoring an announcement from %s at hop %d — this dial wants hop %d "+
+				"(%d such announcement(s) since the last line like this)", hostOf(s.From), s.Hop, want, n)
 		}
 		return candidate{}, false
 	}
 	for _, p := range pins {
-		if !pairing.Matches(p.Fingerprint, s.Name) {
+		if !pairing.TagMatches(p.Fingerprint, s.Salt, s.Tag) {
 			continue
 		}
+		// The six words are the PIN's, computed here — the wire no longer carries them
+		// (ADR-151). A fingerprint TagMatches accepted is 32 bytes, so this cannot fail.
+		name, _ := pairing.Name(p.Fingerprint)
 		return candidate{
 			// The tier this came from, so the race's size cap is per source. Without
 			// it every LAN candidate would carry the zero value and be accounted to
@@ -212,7 +219,7 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 			// shared backing array is how one peer's identity becomes another's.
 			Fingerprint: append([]byte(nil), p.Fingerprint...),
 			Label:       p.Label,
-			Name:        s.Name,
+			Name:        name,
 			// The announced PORT with the observed ADDRESS. The announcement does
 			// not carry an address because a claimed one can be anything, whereas
 			// the source of the datagram is where a reply actually goes.
@@ -249,9 +256,9 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 // # And CAPPED, because that fix created the next attack
 //
 // The address is the observed source host plus the port **from the datagram payload**
-// (`resolve` above). So one on-link host needs no address spoofing at all: it announces the
-// six-word name — which the armed side broadcasts in the clear every 500 ms, and which this
-// very comment records is not a secret — with a different port each time, and every
+// (`resolve` above). So one on-link host needs no address spoofing at all: it replays the
+// salt and tag the armed side broadcasts in the clear every 500 ms — or makes its own from
+// the fingerprint, which is not a secret — with a different port each time, and every
 // datagram becomes another distinct candidate. `dialAny` then walked all of them serially
 // at 30 s each inside an HTTP handler, so a few hundred datagrams wedged
 // `/api/session/initiate` for hours.
@@ -292,7 +299,7 @@ const maxLANCandidates = 8
 //
 // # What it gives up, stated rather than left to be discovered
 //
-// A peer that ARMS mid-browse, after some other host has already claimed its name on the
+// A peer that ARMS mid-browse, after some other host has already claimed its identity on the
 // link, can now be missed: the quiet period elapses against the impostor's announcement
 // and the genuine peer's first datagram arrives after the browse has closed. That needs
 // an on-link impostor AND the peer arming inside our window, the ceremony fails with
@@ -310,8 +317,8 @@ const browseQuiet = announceEvery + 250*time.Millisecond
 // It returns EVERY distinct address seen, not one per peer.
 //
 // Deduping by fingerprint alone was a defect with a security consequence: two different
-// HOSTS can claim one name — the name is broadcast in the clear every 500 ms and is
-// displayed beside a signature, so it is not a secret — and the loser was thrown away
+// HOSTS can claim one identity — a salt and tag are broadcast in the clear every 500 ms and
+// can be replayed, and the fingerprint they are made from is not a secret — and the loser was thrown away
 // rather than returned. An attacker announcing faster than the real peer therefore
 // captured the browse outright and the genuine address was unreachable to any caller.
 // Keyed on fingerprint AND address, so the caller gets both and can try both.
@@ -351,7 +358,7 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration, want 
 		}
 		// Fingerprint AND address. A dual-stack peer arrives twice from two of its
 		// own addresses and both are worth keeping; two different hosts claiming one
-		// name is the attack above, and keeping both is what lets the caller get past
+		// identity is the attack above, and keeping both is what lets the caller get past
 		// it. Order is first-seen, which is at least the faster path first.
 		key := string(c.Fingerprint) + "\x00" + c.Addr
 		if _, dup := seen[key]; dup {
@@ -417,11 +424,12 @@ type lanHeardResponse struct {
 //
 // # What it does NOT disclose
 //
-// Only peers already pinned in this vault. `resolve` matches an announcement's six-word name
-// against the pins, and `pairing.Matches` recomputes the name from a fingerprint the receiver
-// already holds — there is no path from a name to a fingerprint, which is why `pairing.decode` is
-// unexported. So this reports what the caller could already have learned by arming, and L1 is
-// untouched: nothing here reaches identity, and nothing here dials.
+// Only peers already pinned in this vault. `resolve` matches an announcement's salt and tag
+// against the pins, and `pairing.TagMatches` recomputes the tag from a fingerprint the receiver
+// already holds — there is no path from a tag to a fingerprint. The `name` it reports is the
+// PIN's six words, computed here; an announcement does not carry them (ADR-151). So this reports
+// what the caller could already have learned by arming, and L1 is untouched: nothing here
+// reaches identity, and nothing here dials.
 //
 // Read-only, unlocked-vault only, and it opens its own socket rather than borrowing an armed
 // session's, so asking the question cannot disturb one in progress.
@@ -515,7 +523,7 @@ type networkTestResponse struct {
 // question, and wiring either one to the verdict would have been confidently wrong on every
 // healthy machine.
 //
-// **The identity is a throwaway**, exactly as `nib discover`'s is: a name derived from the random
+// **The identity is a throwaway**, exactly as `nib discover`'s is: a tag made from the random
 // nonce, matching nobody's pin. A diagnostic must not put the user's real pairing identity on the
 // wire, and it does not need to — the test is whether packets move, not who is sending them.
 //
@@ -552,13 +560,13 @@ func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
 	out.Interfaces = len(sock.Interfaces())
 
 	fpr := sha256.Sum256(nonce[:])
-	name, err := pairing.Name(fpr[:])
+	salt, tag, err := pairing.NewTag(fpr[:])
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not derive a test name")
+		httpError(w, http.StatusInternalServerError, "could not start a network test")
 		return
 	}
 	// HopNone: the network test announces a machine, not an arm — it has no ceremony at all.
-	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
+	ann := discovery.Announcement{Salt: salt, Tag: tag, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
 
 	deadline := time.Now().Add(networkTestWindow)
 	stop := make(chan struct{})

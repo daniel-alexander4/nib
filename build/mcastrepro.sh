@@ -109,7 +109,13 @@ DISC_TESTS=(
   TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group
   TestAnOffLinkUnicastIsDroppedByTheReadLoop
 )
-SRV_TESTS=(TestARealAnnouncementResolvesToACandidate)
+# The second server test is the product's own announcer over real multicast (ADR-151): two arms
+# of one identity, heard by a third socket, recognised by a pin and sharing neither salt nor tag.
+# It skips wherever the group does not loop back, so this namespace is where it is seen to run.
+SRV_TESTS=(
+  TestARealAnnouncementResolvesToACandidate
+  TestTwoArmsOfOneIdentityShareNoIdentifierOnTheLink
+)
 join_re() { local IFS='|'; printf '^(%s)$' "$*"; }
 DISC_RE="$(join_re "${DISC_TESTS[@]}")"
 SRV_RE="$(join_re "${SRV_TESTS[@]}")"

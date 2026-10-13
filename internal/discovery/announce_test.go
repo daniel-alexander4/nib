@@ -16,22 +16,24 @@ import (
 	"nib/internal/pairing"
 )
 
-// aName is a real six-word name, produced the way the product produces one, so the
-// tests exercise the encoding the wire actually carries rather than a stand-in that
-// happens to have six words in it.
-func aName(t *testing.T, seed byte) string {
+// tagged gives a its salt and tag the way the product does — pairing.NewTag over a real
+// 32-byte fingerprint — so the tests exercise what the wire actually carries rather than
+// sixteen bytes that happen to be non-zero. The salt is random, so two calls with one seed
+// are two announcers of one identity.
+func tagged(t *testing.T, seed byte, a Announcement) Announcement {
 	t.Helper()
 	fp := sha256.Sum256([]byte{seed})
-	n, err := pairing.Name(fp[:])
+	salt, tag, err := pairing.NewTag(fp[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n
+	a.Salt, a.Tag = salt, tag
+	return a
 }
 
 func good(t *testing.T) Announcement {
 	t.Helper()
-	return Announcement{Name: aName(t, 1), Port: 8443, Nonce: [nonceLen]byte{9, 8, 7, 6, 5, 4, 3, 2}}
+	return tagged(t, 1, Announcement{Port: 8443, Nonce: [nonceLen]byte{9, 8, 7, 6, 5, 4, 3, 2}})
 }
 
 func TestAnnouncementRoundTrips(t *testing.T) {
@@ -42,8 +44,8 @@ func TestAnnouncementRoundTrips(t *testing.T) {
 	}
 	// Stimulus: the thing being parsed really is a full announcement, not an empty
 	// slice that would round-trip through a parser that did nothing.
-	if len(b) <= headerLen {
-		t.Fatalf("encoded to %d bytes, which is no more than the header — nothing was carried", len(b))
+	if len(b) != wireLen {
+		t.Fatalf("encoded to %d bytes; an announcement is %d", len(b), wireLen)
 	}
 	got, err := Parse(b)
 	if err != nil {
@@ -54,25 +56,25 @@ func TestAnnouncementRoundTrips(t *testing.T) {
 	}
 }
 
-// TestTheAnnouncementCarriesTheNameAndNothingElse is the first acceptance clause,
+// TestTheAnnouncementCarriesATagAndNothingElse is the first acceptance clause,
 // asserted against the ENCODER'S OUTPUT rather than by reading the struct.
 //
 // Reading the struct proves only that nobody added a field. What matters is what
 // goes on the wire, and the two can differ — an encoder that appended a fingerprint
 // "for convenience" would leave the struct definition untouched.
-func TestTheAnnouncementCarriesTheNameAndNothingElse(t *testing.T) {
+func TestTheAnnouncementCarriesATagAndNothingElse(t *testing.T) {
 	fp := sha256.Sum256([]byte{1})
 	name, err := pairing.Name(fp[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := Announcement{Name: name, Port: 8443, Nonce: [nonceLen]byte{1, 2, 3, 4, 5, 6, 7, 8}}
+	a := tagged(t, 1, Announcement{Port: 8443, Nonce: [nonceLen]byte{1, 2, 3, 4, 5, 6, 7, 8}})
 	b, err := a.Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The fingerprint the name was derived from must not appear on the wire in any
+	// The fingerprint the tag was made from must not appear on the wire in any
 	// form — not whole, and not truncated to the 66 bits the name encodes.
 	for n := 4; n <= len(fp); n++ {
 		if idx := indexOf(b, fp[:n]); idx >= 0 {
@@ -80,11 +82,33 @@ func TestTheAnnouncementCarriesTheNameAndNothingElse(t *testing.T) {
 				"— L1 says the rendezvous path carries reachability, never identity", n, idx)
 		}
 	}
+	// Nor the six-word name, whole or by the word (ADR-151): it is one constant for the
+	// life of an identity, which is what this format stopped sending.
+	for _, w := range append(strings.Fields(name), name) {
+		if idx := indexOf(b, []byte(w)); idx >= 0 {
+			t.Fatalf("%q, from the sender's six-word name, is in the announcement at offset %d — "+
+				"the name is a stable identifier and the announcement must not carry it", w, idx)
+		}
+	}
 
-	// And the whole datagram is accounted for: header + name, with nothing spare.
-	if got, want := len(b), headerLen+len(name); got != want {
-		t.Fatalf("the announcement is %d bytes; header plus name is %d — %d bytes carry something "+
-			"this test does not know about", got, want, got-want)
+	// And the whole datagram is accounted for, field by field, with nothing spare.
+	want := len(magic) + 1 + 1 + 2 + 2 + nonceLen + pairing.SaltLen + pairing.TagLen
+	if len(b) != want || wireLen != want {
+		t.Fatalf("the announcement is %d bytes (wireLen %d); its fields add up to %d — the "+
+			"difference carries something this test does not know about", len(b), wireLen, want)
+	}
+
+	// **Two announcers of ONE identity share no identifying byte.** This is the property
+	// the format exists for. Everything outside the salt and the tag is equal by
+	// construction here (same port, same nonce), so any other equal run would be a
+	// constant derived from the identity.
+	c := tagged(t, 1, Announcement{Port: 8443, Nonce: a.Nonce})
+	if a.Salt == c.Salt {
+		t.Fatal("two announcers drew the same salt")
+	}
+	if a.Tag == c.Tag {
+		t.Fatal("two announcers of one identity carry the same tag — an observer links them " +
+			"without knowing whose they are, which is the six-word name under another encoding")
 	}
 }
 
@@ -118,7 +142,7 @@ func TestParseRefusesEveryMalformedShape(t *testing.T) {
 		in   []byte
 	}{
 		{"empty", ErrNotOurs, nil},
-		{"shorter than the header", ErrNotOurs, base[:headerLen-1]},
+		{"shorter than magic and version", ErrNotOurs, base[:prefixLen-1]},
 		{"foreign traffic", ErrNotOurs, []byte("this is an mDNS packet, honestly, and quite long")},
 		{"wrong magic", ErrNotOurs, mutate(func(b []byte) []byte { b[0] = 'X'; return b })},
 		{"wrong version", ErrVersion, mutate(func(b []byte) []byte { b[offVersion] = version + 1; return b })},
@@ -137,21 +161,15 @@ func TestParseRefusesEveryMalformedShape(t *testing.T) {
 			b[offTransport] = 7
 			return b
 		})},
-		{"truncated name", ErrMalformed, base[:len(base)-1]},
+		{"truncated", ErrMalformed, base[:len(base)-1]},
+		{"only magic and version", ErrMalformed, base[:prefixLen]},
 		{"trailing bytes", ErrMalformed, append(append([]byte(nil), base...), 'x')},
-		{"name length lies short", ErrMalformed, mutate(func(b []byte) []byte {
-			b[headerLen-1]--
+		{"over the cap", ErrMalformed, make([]byte, MaxDatagram+1)},
+		// The salt an announcer that never drew one would send (ADR-151).
+		{"no salt", ErrMalformed, mutate(func(b []byte) []byte {
+			clear(b[offSalt : offSalt+pairing.SaltLen])
 			return b
 		})},
-		{"over the cap", ErrMalformed, make([]byte, MaxDatagram+1)},
-		{"not six words", ErrMalformed, func() []byte {
-			a := good(t)
-			a.Name = "only four words here"
-			b := append([]byte(nil), base...)
-			b = b[:headerLen-1]
-			b = append(b, byte(len(a.Name)))
-			return append(b, a.Name...)
-		}()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Parse(tc.in)
@@ -273,8 +291,8 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 			for _, fld := range st.Fields.List {
 				for _, nm := range fld.Names {
 					if fp.MatchString(nm.Name) {
-						t.Errorf("Announcement has a field %q — the announcement carries the "+
-							"NAME, which is a public encoding, and never the pin", nm.Name)
+						t.Errorf("Announcement has a field %q — the announcement carries a salted "+
+							"TAG, and never the pin", nm.Name)
 					}
 				}
 			}
@@ -283,45 +301,36 @@ func TestNothingHereCanReachAnIdentity(t *testing.T) {
 	}
 }
 
-// TestEncodeRefusesWhatParseWouldReject closes the loop Encode's own doc promises.
+// TestEncodeRefusesWhatParseWouldReject closes the loop Encode's own doc promises: "It
+// refuses to encode one that would not parse".
 //
-// It says "It refuses to encode one that would not parse", and bounding the name at the
-// length byte's 0xff did not keep that: six 40-character words is 245 bytes, encodes to
-// 261, and Parse rejects it at the 256-byte cap. The two ends of the format disagreed
-// about what is legal — the one thing check() exists to prevent — and it was unreachable
-// from the product only because pairing.Name is at most 53 bytes. An invariant held by a
-// caller is not held by the check that claims to hold it.
+// It was first written against the name's length (six 40-character words encoded to 261
+// bytes and Parse refused them at the 256-byte cap). The format has one fixed length since
+// ADR-151, so that disagreement cannot be built; the rule the two ends can still disagree
+// on is the one `check` now holds for both — a salt must have been drawn.
 func TestEncodeRefusesWhatParseWouldReject(t *testing.T) {
-	// Stimulus: a name that is legal by every OTHER rule — six words, each within the
-	// per-word bounds, total under the length byte's 255 — encodes and parses.
-	ok := Announcement{Name: aName(t, 3), Port: 8443}
-	if _, err := ok.Encode(); err != nil {
-		t.Fatalf("a real name does not encode (%v); the refusal below proves nothing", err)
+	// Stimulus: a real announcement encodes and parses.
+	ok := good(t)
+	wire, err := ok.Encode()
+	if err != nil {
+		t.Fatalf("a real announcement does not encode (%v); the refusal below proves nothing", err)
 	}
 
-	long := Announcement{Name: strings.TrimSpace(strings.Repeat(strings.Repeat("a", 40)+" ", 6)), Port: 8443}
-	if n := len(strings.Fields(long.Name)); n != 6 {
-		t.Fatalf("the fixture is %d words, not 6 — it would be refused for the wrong reason", n)
-	}
-	if len(long.Name) > 0xff {
-		t.Fatalf("the fixture is %d bytes, over the length byte — it would be refused for "+
-			"the wrong reason", len(long.Name))
-	}
-	if headerLen+len(long.Name) <= MaxDatagram {
-		t.Fatalf("the fixture encodes to %d bytes, inside the %d cap — it does not exercise "+
-			"the disagreement", headerLen+len(long.Name), MaxDatagram)
-	}
-
-	b, err := long.Encode()
+	unsalted := ok
+	unsalted.Salt = [pairing.SaltLen]byte{}
+	b, err := unsalted.Encode()
 	if err == nil {
-		// The defect, stated as what it costs: the encoder produced a datagram its own
-		// parser refuses.
 		_, perr := Parse(b)
-		t.Fatalf("Encode produced %d bytes and Parse says %v — the encoder and the parser "+
-			"disagree about what is legal", len(b), perr)
+		t.Fatalf("Encode produced an announcement with no salt and Parse says %v — an announcer "+
+			"that skipped pairing.NewTag would send the same tag for the life of its identity", perr)
 	}
 	if !errors.Is(err, ErrMalformed) {
 		t.Errorf("refused as %v, want ErrMalformed", err)
+	}
+	// And the parser, on bytes the encoder did not launder.
+	clear(wire[offSalt : offSalt+pairing.SaltLen])
+	if got, err := Parse(wire); !errors.Is(err, ErrMalformed) || got != (Announcement{}) {
+		t.Errorf("Parse answered %+v, %v for an announcement with no salt; want ErrMalformed", got, err)
 	}
 }
 
@@ -350,7 +359,7 @@ func TestTheTransportSurvivesTheWire(t *testing.T) {
 		}
 		// The rest of the announcement is unchanged by the new field. An insertion
 		// that shifted the port would still round-trip the transport correctly.
-		if got.Port != a.Port || got.Name != a.Name || got.Nonce != a.Nonce {
+		if got.Port != a.Port || got.Salt != a.Salt || got.Tag != a.Tag || got.Nonce != a.Nonce {
 			t.Errorf("%v: the other fields did not survive: got %+v, want %+v", want, got, a)
 		}
 	}
@@ -384,50 +393,81 @@ func TestAnEncoderCannotEmitATransportItsOwnParserRefuses(t *testing.T) {
 	}
 }
 
-// TestParseRefusesANameItCouldNotPrintSafely — /pending 711 R5-6. Every refused row below has
-// six `strings.Fields`, which is all the check used to ask, so every one parsed; the server then
-// logged the name with %s before any pin had matched it. The rows are the bytes that make that
-// a forged log line or a terminal escape, plus the non-canonical spacings a rendered name
-// never has.
-func TestParseRefusesANameItCouldNotPrintSafely(t *testing.T) {
-	raw := func(name string) []byte {
-		base, err := good(t).Encode()
-		if err != nil {
-			t.Fatal(err)
-		}
-		b := append([]byte(nil), base[:headerLen-1]...)
-		b = append(b, byte(len(name)))
-		return append(b, name...)
+// TestAnAnnouncementIsOneLengthAndNothingElseParses — /pending 711 R5-6, restated for a
+// format with no text in it. The name was a length-prefixed string any on-link host chose,
+// and the server logged it before a pin had matched; six `strings.Fields` was all the check
+// asked, so control characters and terminal escapes reached the log. Nothing an announcement
+// carries is printed any more (the hop refusal names the source address), and the property
+// that keeps it so is that there is no variable part: every length but one is refused.
+func TestAnAnnouncementIsOneLengthAndNothingElseParses(t *testing.T) {
+	base, err := good(t).Encode()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Stimulus: names the product renders parse through the same raw builder.
-	for seed := byte(0); seed < 32; seed++ {
-		if _, err := Parse(raw(aName(t, seed))); err != nil {
-			t.Fatalf("a rendered name %q is refused: %v — the rows below would pass for the wrong reason",
-				aName(t, seed), err)
-		}
+	if _, err := Parse(base); err != nil {
+		t.Fatalf("the unmutated announcement does not parse: %v", err)
 	}
-	for _, name := range []string{
-		"one two three four\nlink: forged",
-		"one two three four five \x1b[2Jsix",
-		"one two three four five six\x00",
-		"One two three four five six",
-		"one  two three four five six",
-		"one\ttwo three four five six",
-		" one two three four five six",
-		"one two three four five six ",
-		"one two three four five sïx",
-	} {
-		if len(strings.Fields(name)) != pairing.NameWords {
-			t.Fatalf("row %q does not have six fields, so the old check refused it too", name)
-		}
-		got, err := Parse(raw(name))
-		if err == nil {
-			t.Errorf("Parse accepted the name %q: a datagram from any on-link source reaches the "+
-				"server's log with these bytes intact", name)
+	for n := 0; n <= MaxDatagram; n++ {
+		if n == wireLen {
 			continue
 		}
-		if !errors.Is(err, ErrMalformed) || got != (Announcement{}) {
-			t.Errorf("name %q: refused as %v with %+v, want ErrMalformed and the zero announcement", name, err, got)
+		b := make([]byte, n)
+		copy(b, base)
+		// Bytes past the real announcement are printable text, as a forged log line would be.
+		for i := len(base); i < n; i++ {
+			b[i] = 'a'
 		}
+		if got, err := Parse(b); err == nil || got != (Announcement{}) {
+			t.Fatalf("a %d-byte datagram parsed as %+v (%v); an announcement is exactly %d bytes",
+				n, got, err, wireLen)
+		}
+	}
+}
+
+// versionThree builds an announcement exactly as format version 3 encoded one: the header
+// this version still has, then a length byte and the sender's six-word name.
+func versionThree(t *testing.T, name string) []byte {
+	t.Helper()
+	b := []byte(magic)
+	b = append(b, 3, byte(TransportTCP))
+	b = binary.BigEndian.AppendUint16(b, 8443)
+	b = binary.BigEndian.AppendUint16(b, hopNoneWire)
+	b = append(b, 1, 2, 3, 4, 5, 6, 7, 8)
+	b = append(b, byte(len(name)))
+	return append(b, name...)
+}
+
+// TestAVersionThreeAnnouncementIsRefusedAsAnotherVersion — ADR-151's bump, by ADR-010's rule.
+//
+// A version-3 announcement names its sender by the six words. It is refused, and refused AS
+// A VERSION whatever its length: a v3 datagram is 42 to 72 bytes and this format is 50, so
+// a parser that judged the length first would call a healthy older Nib "malformed" — or
+// "not ours" — and the one diagnostic that can tell a user "update" would never fire.
+func TestAVersionThreeAnnouncementIsRefusedAsAnotherVersion(t *testing.T) {
+	fp := sha256.Sum256([]byte{1})
+	real, err := pairing.Name(fp[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"aaa bbb ccc ddd eee fff", // 42 bytes: shorter than this format
+		real,                      // what a v3 Nib really sends
+		"aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff", // 72 bytes: longer
+		"aaaa bbbb cccc dddd eeee ffffff",                       // 50 bytes: EXACTLY this format's length
+	} {
+		b := versionThree(t, name)
+		got, err := Parse(b)
+		if err == nil {
+			t.Fatalf("a version-3 announcement (%d bytes, name %q) parsed as %+v — its bytes were "+
+				"read as a salt and a tag", len(b), name, got)
+		}
+		if !errors.Is(err, ErrVersion) || got != (Announcement{}) {
+			t.Errorf("a version-3 announcement (%d bytes) was refused as %v with %+v; want ErrVersion "+
+				"and the zero announcement, so a diagnostic can say a Nib of another version is here",
+				len(b), err, got)
+		}
+	}
+	if n := len(versionThree(t, "aaaa bbbb cccc dddd eeee ffffff")); n != wireLen {
+		t.Fatalf("the same-length fixture is %d bytes, not %d — the row that matters most is not driven", n, wireLen)
 	}
 }

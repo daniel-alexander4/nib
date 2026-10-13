@@ -23,11 +23,7 @@ import (
 // parser rather than against a struct someone filled in by hand.
 func announcementFrom(t *testing.T, fp []byte, port uint16, from string) discovery.Seen {
 	t.Helper()
-	name, err := pairing.Name(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := discovery.Announcement{Name: name, Port: port}
+	a := announcedBy(t, fp, discovery.Announcement{Port: port})
 	b, err := a.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +33,18 @@ func announcementFrom(t *testing.T, fp []byte, port uint16, from string) discove
 		t.Fatalf("the fixture does not survive its own parser: %v", err)
 	}
 	return discovery.Seen{Announcement: parsed, From: &net.UDPAddr{IP: net.ParseIP(from), Port: discovery.Port}}
+}
+
+// announcedBy gives a the salt and tag an announcer holding fp would send — drawn by
+// pairing.NewTag, the product's own door, so every call is a NEW announcer of that identity.
+func announcedBy(t *testing.T, fp []byte, a discovery.Announcement) discovery.Announcement {
+	t.Helper()
+	salt, tag, err := pairing.NewTag(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Salt, a.Tag = salt, tag
+	return a
 }
 
 // tcpCands turns plain addresses into TCP candidates, for the tests whose subject is the
@@ -80,6 +88,12 @@ func TestAPinnedPeerResolvesAndAnUnpinnedOneDoesNot(t *testing.T) {
 		t.Errorf("addr %q, want 192.168.1.9:8443 (observed source, announced port)", got.Addr)
 	}
 
+	// The six words are the PIN's own, computed on this side: the wire does not carry them
+	// (ADR-151), and what a caller shows a user must still be the name it always was.
+	if want, _ := pairing.Name(pinned); got.Name != want || want == "" {
+		t.Errorf("the candidate is named %q, want the pinned peer's own six words %q", got.Name, want)
+	}
+
 	// The stranger. Same shape of announcement, same everything, different identity.
 	if c, ok := resolve(pins, announcementFrom(t, stranger, 8443, "192.168.1.9"), discovery.HopNone); ok {
 		t.Errorf("an UNPINNED peer resolved to %+v — discovery would be introducing a peer, "+
@@ -90,8 +104,8 @@ func TestAPinnedPeerResolvesAndAnUnpinnedOneDoesNot(t *testing.T) {
 // TestTheResolvedFingerprintIsThePinnedOneNotTheAnnouncedName guards the property that
 // makes a lying announcer harmless.
 //
-// An announcement carries a NAME, which is 66 bits of a fingerprint — so two different
-// fingerprints could in principle produce the same name. What must never happen is the
+// An announcement carries a TAG, a truncated hash of a fingerprint under a salt — and anyone
+// holding that fingerprint can make one, or replay one. What must never happen is the
 // candidate carrying anything derived from the wire: the fingerprint that goes to the
 // TLS pin has to be the one in the vault, byte for byte.
 func TestTheResolvedFingerprintIsThePinnedOneNotTheAnnouncedName(t *testing.T) {
@@ -376,10 +390,6 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	nAnnounce[0], nBrowse[0] = 0xa1, 0xb2
 
 	peerFP := fpOf(42)
-	name, err := pairing.Name(peerFP)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	announcer, err := discovery.Open(nAnnounce)
 	if err != nil {
@@ -392,12 +402,12 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	}
 	defer browser.Close()
 
-	// The announcer plays the peer: its announcement carries the peer's NAME, which
+	// The announcer plays the peer: its announcement carries the peer's TAG, which
 	// is all an announcement ever carries about identity.
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
-		a := discovery.Announcement{Name: name, Port: 8443, Nonce: nAnnounce}
+		a := announcedBy(t, peerFP, discovery.Announcement{Port: 8443, Nonce: nAnnounce})
 		for {
 			select {
 			case <-stop:

@@ -64,6 +64,7 @@ home today.
   secret authorising one route, and why kernel-vouched peer credentials were refused
 - [ADR-007: Discovery announcement](007-discovery-announcement.md) — the name, a
   port and a nonce; never the pin, and the socket treated as hostile everywhere
+  (the **name** is superseded by ADR-151: a salted tag)
 - [ADR-008: The byte cap binds every growth door](008-the-byte-cap-binds-every-growth-door.md) —
   extends ADR-005: the byte half was enforced only at open, so five writers of `doc.data`
   went past it
@@ -926,3 +927,5 @@ home today.
   — supersedes ADR-074 §3: equal forms and identical fonts are counted as veraPDF counts them; `formTwins`, the DuplicateFonts refusal and the checker's unaffordable-pass refusal are retired; no agreement figure moved.
 - [ADR-150](150-the-faces-nib-authors-in-are-named-nibs-too.md) — **the faces Nib authors in are named Nib's too**
   — extends ADR-044 to the authoring faces: installed as `NibText-*` and `NibMono` through one rename table, so a stamp on a document carrying its own Roboto keeps an embedded face; the OCR layer's Latin face is the declared gap.
+- [ADR-151](151-an-announcement-carries-a-salted-tag-never-the-name.md) — **an announcement carries a salted tag, never the name**
+  — supersedes ADR-007's name field: a salt drawn per announcer and `SHA-256(label ‖ salt ‖ fingerprint)[:16]`, recognised only by recomputing over a pin; format version 4, version 3 refused; anyone holding the fingerprint can still recognise the announcer — what goes is linking two arms without it.

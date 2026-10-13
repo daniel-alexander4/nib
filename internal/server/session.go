@@ -48,9 +48,9 @@ import (
 //
 //   - this listener is where a document arrives and a signature is produced;
 //   - the discovery socket cannot influence which peer is accepted at all. L1, and it
-//     is structural rather than a rule: an announcement carries a NAME, the only way
-//     back to a fingerprint is pairing.Matches against a pin the receiver already
-//     holds, and internal/discovery is guarded against importing the vault, sign or
+//     is structural rather than a rule: an announcement carries a salted TAG (ADR-151),
+//     the only way back to a fingerprint is pairing.TagMatches against a pin the receiver
+//     already holds, and internal/discovery is guarded against importing the vault, sign or
 //     p2p (TestNothingHereCanReachAnIdentity). The worst a hostile announcer achieves
 //     is wasting a two-second browse.
 //

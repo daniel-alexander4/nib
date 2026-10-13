@@ -11,6 +11,10 @@ three things" enumeration is, and it is six fields now. **This line said "the fo
 version is 2" while the code said 3** (`/pending 420`), which is why ADR-030 exists: ADR-010
 is the decision that established a bump is ADR-worthy.
 
+**Superseded in part by:** [ADR-151](151-an-announcement-carries-a-salted-tag-never-the-name.md)
+— the **name** is no longer announced. A salt drawn per announcer and a tag of the fingerprint
+under it take its place, and the format version is **4**. Everything else here stands.
+
 ## Decision
 
 A link-local discovery announcement (`internal/discovery`) carries exactly three

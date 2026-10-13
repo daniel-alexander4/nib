@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/pairing"
 )
 
 // liveOrSkip opens a real discovery socket and proves the link can carry a datagram at
@@ -42,7 +45,7 @@ func liveOrSkip(t *testing.T) *Socket {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	a := Announcement{Name: aName(t, 7), Port: 8443, Nonce: nonce}
+	a := tagged(t, 7, Announcement{Port: 8443, Nonce: nonce})
 	sent, err := s.Announce(a)
 	if err != nil {
 		t.Skipf("could not announce on any interface: %v (%s)", err, s.Describe())
@@ -114,7 +117,7 @@ func TestOwnAnnouncementsAreFilteredByNonceNotAddress(t *testing.T) {
 	// An announcement with a DIFFERENT nonce from the same host must NOT be filtered
 	// — that is the whole point of using the nonce rather than the source address,
 	// since both datagrams arrive from the same local address.
-	other := Announcement{Name: aName(t, 11), Port: 9999}
+	other := tagged(t, 11, Announcement{Port: 9999})
 	if _, err := rand.Read(other.Nonce[:]); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +265,7 @@ func runRole(t *testing.T, role string) {
 
 	switch role {
 	case "announce":
-		a := Announcement{Name: aName(t, 21), Port: 8443, Nonce: nonce}
+		a := tagged(t, 21, Announcement{Port: 8443, Nonce: nonce})
 		for i := 0; i < 12; i++ { // repeat: the browser may still be joining
 			sent, err := s.Announce(a)
 			if err != nil {
@@ -279,7 +282,7 @@ func runRole(t *testing.T, role string) {
 		for time.Now().Before(deadline) {
 			seen, err := s.Read(deadline)
 			if err == nil {
-				fmt.Printf("DISCOVERED %q port %d from %s\n", seen.Name, seen.Port, seen.From)
+				fmt.Printf("DISCOVERED a Nib on port %d from %s\n", seen.Port, seen.From)
 				return
 			}
 		}
@@ -502,7 +505,7 @@ func TestAnOffLinkUnicastIsDroppedByTheReadLoop(t *testing.T) {
 		}
 	}
 
-	good, err := Announcement{Name: aName(t, 33), Port: 8443, Nonce: [nonceLen]byte{1}}.Encode()
+	good, err := tagged(t, 33, Announcement{Port: 8443, Nonce: [nonceLen]byte{1}}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +525,7 @@ func TestAnOffLinkUnicastIsDroppedByTheReadLoop(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an off-link unicast from %s was returned as a peer: %+v — anyone who can "+
 			"route a packet to this port could inject a candidate for any peer whose "+
-			"six-word name they know, and names are public by design", offIP, got)
+			"fingerprint they know, and a fingerprint is in every signed document", offIP, got)
 	}
 	if st := sock.Stats(); st.OffLink != before.OffLink+1 {
 		t.Errorf("OffLink went %d -> %d, want +1 — it was rejected, but not as off-link, so "+
@@ -653,7 +656,7 @@ func TestTheReadPathHearsBothFamilies(t *testing.T) {
 	if _, err := rand.Read(peerNonce[:]); err != nil {
 		t.Fatal(err)
 	}
-	wire, err := Announcement{Name: aName(t, 7), Port: 9443, Nonce: peerNonce}.Encode()
+	wire, err := tagged(t, 7, Announcement{Port: 9443, Nonce: peerNonce}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,4 +723,74 @@ func TestTheReadPathHearsBothFamilies(t *testing.T) {
 		t.Fatalf("the v6 datagram's payload did not survive the read: port %d, want 9443", got6.Port)
 	}
 	t.Logf("v4 from %v, v6 from %v — both reach Read", got4.From, got6.From)
+}
+
+// TestAnotherVersionsAnnouncementIsCountedAsThat — ADR-151, over a real socket.
+//
+// A Nib still on format version 3 and this one do not find each other on a link, and to both
+// of them that looks exactly like an empty link. The one thing this side can say is that a
+// well-formed Nib of another version announced here; it said it as "malformed", which reads
+// as a broken or hostile sender. The control is a real version-4 datagram down the same
+// path, so a socket that hears nothing cannot pass.
+func TestAnotherVersionsAnnouncementIsCountedAsThat(t *testing.T) {
+	var nonce [nonceLen]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(nonce)
+	if err != nil {
+		t.Skipf("no usable interface for discovery: %v", err)
+	}
+	defer s.Close()
+
+	c, err := net.Dial("udp4", net.JoinHostPort("127.0.0.1", fmt.Sprint(Port)))
+	if err != nil {
+		t.Skipf("cannot send a v4 loopback datagram on this host: %v", err)
+	}
+	defer c.Close()
+	// until reads to the first answer that is not our own copy or unrelated chatter.
+	until := func(want func(Seen, error) bool) bool {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			got, err := s.Read(deadline)
+			if want(got, err) {
+				return true
+			}
+		}
+		return false
+	}
+
+	now, err := tagged(t, 7, Announcement{Port: 9443, Nonce: [nonceLen]byte{0xAA}}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write(now); err != nil {
+		t.Fatal(err)
+	}
+	if !until(func(got Seen, err error) bool { return err == nil && got.Port == 9443 }) {
+		t.Fatalf("setup: the socket did not hear a current-version datagram on loopback, so the "+
+			"count below would be about nothing. %s", s.Describe())
+	}
+	before := s.Stats()
+
+	fp := sha256.Sum256([]byte{7})
+	name, err := pairing.Name(fp[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write(versionThree(t, name)); err != nil {
+		t.Fatal(err)
+	}
+	if !until(func(_ Seen, err error) bool { return errors.Is(err, ErrVersion) }) {
+		t.Fatalf("a version-3 announcement was never answered with ErrVersion (stats %+v)", s.Stats())
+	}
+	after := s.Stats()
+	if after.OtherVersion != before.OtherVersion+1 {
+		t.Errorf("OtherVersion went %d -> %d, want +1: an older Nib on the link is not reported as one",
+			before.OtherVersion, after.OtherVersion)
+	}
+	if after.Malformed != before.Malformed || after.Peers != before.Peers {
+		t.Errorf("an older Nib's announcement moved Malformed %d -> %d and Peers %d -> %d; it is neither",
+			before.Malformed, after.Malformed, before.Peers, after.Peers)
+	}
 }
