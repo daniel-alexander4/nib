@@ -23,20 +23,22 @@ import (
 // from the embedded program's own points, and where there is no program this reads, a run has no ink and its box
 // stays exactly as it was.
 //
-// What is read: a TrueType program (`/FontFile2`). Two answers come out of one, and they are not equally good:
+// What is read: a TrueType program (`/FontFile2`) here, and a CFF or Type 1 program (`/FontFile3`, `/FontFile`)
+// by the charstring reader beside this one (fontinkcs.go). Two answers come out of one, and they are not equally good:
 //
 //   - a font whose codes ARE its glyph numbers — a Type0 font under Identity-H whose CIDFontType2 maps CIDs to glyphs
 //     by identity, which is how every current writer sets text outside Latin-1 — gives each run the ink of the glyphs
-//     it shows. That may be deeper than the reach (an Arabic tail), and then the box grows to it.
-//   - any other TrueType font gives the reach of EVERY glyph in its program, because which glyph a code draws is
+//     it shows. That may be deeper than the reach (an Arabic tail), and then the box grows to it. So does a Type0
+//     font under Identity-H over a CIDFontType0 with a CFF program: its codes are CIDs, and the program's own
+//     charset says which glyph each is (a program without one numbers its glyphs by CID).
+//   - any other font gives the reach of EVERY glyph in its program, because which glyph a code draws is
 //     decided by the program's own tables and a reader that maps them differently from the renderer has the wrong
 //     glyph's ink. A subset holds little more than the glyphs the document shows, so this is nearly as tight. It is
 //     only ever used to TIGHTEN: where the program reaches past the line's reach, the reach stands (`printInk`,
 //     pagemap.go).
 //
-// Not read, and so left as they were: a font that is not embedded; Type 1 and CFF programs (`/FontFile`,
-// `/FontFile3` — their outlines are charstring programs, a second reader); Type 3; a glyph that scales or turns a
-// component by a full matrix; a run that is stroked (its ink is wider than its outline by half the line width), turned, or hidden.
+// Not read, and so left as they were: a font that is not embedded; Type 3 and multiple-master fonts; a TrueType
+// glyph that scales or turns a component by a full matrix; a charstring program fontinkcs.go refuses; a run that is stroked (its ink is wider than its outline by half the line width), turned, or hidden.
 
 // fontInkLimit is the largest decoded program read for its glyphs. Past it the font has no ink to give.
 const fontInkLimit = 32 << 20
@@ -48,47 +50,95 @@ type fontInk struct {
 	glyphs [][2]float64
 	inked  []bool
 	byCode bool
+	// cff is a CFF program whose glyphs are read as they are asked for, by CID (fontinkcs.go). Nil for TrueType.
+	cff *cffInk
 }
+
+// glyph is the ink of the glyph a two-byte code draws, for a font whose codes say which glyph that is. ok false is
+// a glyph this cannot vouch for.
+func (k *fontInk) glyph(n int) (lo, hi float64, inked, ok bool) {
+	if k.cff != nil {
+		g := n
+		if k.cff.isCID {
+			g = k.cff.cids[n] // a CID the charset does not hold is drawn as glyph 0
+		} else if g >= k.cff.chars.count {
+			g = 0
+		}
+		box, ok := k.cff.glyph(g)
+		return box.lo / 1000, box.hi / 1000, box.inked, ok
+	}
+	if n >= len(k.glyphs) {
+		n = 0 // a glyph the program does not have is drawn as its first
+	}
+	return k.glyphs[n][0], k.glyphs[n][1], k.inked[n], true
+}
+
+// The three kinds of program an inkSource reads.
+const (
+	inkGlyf = iota
+	inkCFF
+	inkType1
+)
 
 // inkSource is what loadRunFont keeps so the program is read only when a reader asks — the map — and once.
 type inkSource struct {
 	xt     *model.XRefTable
-	prog   types.Object // the /FontFile2 stream
+	prog   types.Object // the /FontFile2, /FontFile3 or /FontFile stream
+	kind   int
 	byCode bool
 	done   bool
 	ink    *fontInk
 }
 
-// inkSourceFor finds the TrueType program font dictionary d draws from, or nil.
+// inkSourceFor finds the program font dictionary d draws from, or nil.
 func inkSourceFor(xt *model.XRefTable, d types.Dict) *inkSource {
 	sub := nameVal(d, "Subtype")
 	byCode := false
-	if sub == "Type0" {
+	// Which program a font may draw from is its subtype's to say: /FontFile3 under a TrueType font is not read.
+	keys := map[string]int{}
+	switch sub {
+	case "Type0":
 		kids, err := xt.DereferenceArray(d["DescendantFonts"])
 		if err != nil || len(kids) != 1 {
 			return nil
 		}
 		kid, err := xt.DereferenceDict(kids[0])
-		if err != nil || kid == nil || nameVal(kid, "Subtype") != "CIDFontType2" {
+		if err != nil || kid == nil {
 			return nil
 		}
-		// A code is a glyph number only under Identity-H with no map between CID and glyph.
-		m, has := kid["CIDToGIDMap"]
-		name, isName := m.(types.Name)
-		byCode = nameVal(d, "Encoding") == "Identity-H" && (!has || (isName && name == "Identity"))
+		switch nameVal(kid, "Subtype") {
+		case "CIDFontType2":
+			// A code is a glyph number only under Identity-H with no map between CID and glyph.
+			m, has := kid["CIDToGIDMap"]
+			name, isName := m.(types.Name)
+			byCode = nameVal(d, "Encoding") == "Identity-H" && (!has || (isName && name == "Identity"))
+			keys["FontFile2"] = inkGlyf
+		case "CIDFontType0":
+			// A code is a CID under Identity-H, and the program says which glyph a CID is.
+			byCode = nameVal(d, "Encoding") == "Identity-H"
+			keys["FontFile3"] = inkCFF
+		default:
+			return nil
+		}
 		d = kid
-	} else if sub != "TrueType" {
+	case "TrueType":
+		keys["FontFile2"] = inkGlyf
+	case "Type1":
+		keys["FontFile"], keys["FontFile3"] = inkType1, inkCFF
+	default:
 		return nil
 	}
 	fd, err := xt.DereferenceDict(d["FontDescriptor"])
 	if err != nil || fd == nil {
 		return nil
 	}
-	prog, ok := fd["FontFile2"]
-	if !ok {
-		return nil
+	for _, key := range []string{"FontFile", "FontFile2", "FontFile3"} {
+		kind, wanted := keys[key]
+		if prog, has := fd[key]; has && wanted {
+			return &inkSource{xt: xt, prog: prog, kind: kind, byCode: byCode}
+		}
 	}
-	return &inkSource{xt: xt, prog: prog, byCode: byCode}
+	return nil
 }
 
 func (s *inkSource) read() *fontInk {
@@ -107,8 +157,15 @@ func (s *inkSource) read() *fontInk {
 	if err := pdfread.DecodeWithin(&c, fontInkLimit); err != nil {
 		return nil
 	}
-	if s.ink = readGlyfInk(c.Content); s.ink != nil {
-		s.ink.byCode = s.byCode
+	switch s.kind {
+	case inkCFF:
+		s.ink = readCFFInk(c.Content, s.byCode)
+	case inkType1:
+		s.ink = readType1Ink(c.Content)
+	default:
+		if s.ink = readGlyfInk(c.Content); s.ink != nil {
+			s.ink.byCode = s.byCode
+		}
 	}
 	return s.ink
 }

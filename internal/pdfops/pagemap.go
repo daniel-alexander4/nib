@@ -290,12 +290,12 @@ func printInk(r textRun) (bottom, top float64, ok bool) {
 			if len(g.code) != 2 {
 				return 0, 0, false
 			}
-			n := fontcode.Value(g.code)
-			if n >= len(ink.glyphs) {
-				n = 0 // a glyph the program does not have is drawn as its first
+			a, z, inked, ok := ink.glyph(fontcode.Value(g.code))
+			if !ok {
+				return 0, 0, false
 			}
-			if ink.inked[n] {
-				lo, hi = math.Min(lo, ink.glyphs[n][0]), math.Max(hi, ink.glyphs[n][1])
+			if inked {
+				lo, hi = math.Min(lo, a), math.Max(hi, z)
 			}
 		}
 	} else {
