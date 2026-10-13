@@ -3874,6 +3874,11 @@ async function setDocumentFromServer(meta, target = view) {
 
   const old = target.pdfDocument;
   target.pdfDocument = doc;
+  // The revision of the bytes this view now holds, set with the bytes and not with `docMeta` above:
+  // between the two the view still shows the document before, and a page operation started there
+  // must name THAT revision (ADR-146). If the server moved on between its answer and the fetch, this
+  // names an older revision than the bytes loaded, which is refused and reloaded — the safe direction.
+  target.loadedRev = meta.rev || 0;
   // pdf.js's own change detection, and it is exact where a size comparison is not:
   // AnnotationStorage.setValue compares each property and fires this only when a value
   // actually changed, so editing an existing field's text counts while a no-op write
@@ -4022,6 +4027,7 @@ function closeDocument() {
   if (doc) doc.loadingTask.destroy().catch(() => {});
 
   view.docMeta = { canSave: false, path: '' };
+  view.loadedRev = null;
   view.originalName = '';
   view.docHadFlags = false;
   view.signLocked = false;
@@ -5352,6 +5358,9 @@ async function save() {
     }
     if (!res.ok) { toast(await errText(res, 'save failed')); return; }
     const meta = await res.json();
+    // The server now holds the bytes this view baked, so this view is at the saved revision whether
+    // or not it reloads below (ADR-146) — without this the next page operation would be refused.
+    owner.loadedRev = meta.rev || 0;
 
     // Everything below reports on the SAVE, and the save was of `doc`. If the open
     // document changed while the bytes were in flight, none of it belongs on screen:
@@ -7771,15 +7780,44 @@ async function pageOp(op, extra = {}) {
   // `pageNumGo`'s object literal, which is one function short of the wire.
   if (extra.size != null) form.append('size', String(extra.size));
   if (extra.color) form.append('color', extra.color);
+  // What these bytes were built on, so the server refuses them if the document has moved (ADR-146).
+  if (owner.loadedRev != null) form.append('baseRev', String(owner.loadedRev));
   let res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (await acceptedSignatureLoss(res)) {
     form.append('acceptSignatureLoss', '1');
     res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   }
   // The server's sentence — see the attachment-add door for why (P06.S09).
-  if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
+  if (!res.ok) {
+    if (!(res.status === 409 && await reloadIfMoved(owner))) toast(await errText(res, 'page operation failed'));
+    return false;
+  }
   owner.thumbFocus = refocus ? extra.focus : null;
   await setDocumentFromServer(await res.json(), owner);
+  return true;
+}
+
+// reloadIfMoved is the way back from a refused page or outline operation (ADR-146): when the server's
+// document is at another revision than the bytes `owner` holds, it loads the current one into that
+// view and answers true, having said so. Without it "run it again" would be refused every time — the
+// view would go on posting bytes built on a document that is gone. What was placed or typed into this
+// view since it loaded was built on the document before and goes with the reload, so the reload is
+// behind the overlay question like every other: declined, the view is left as it is (Save still keeps
+// the edits) and the refusal is still said.
+async function reloadIfMoved(owner) {
+  const id = owner.docMeta && owner.docMeta.id;
+  if (!id || owner.loadedRev == null) return false;
+  const res = await apiFetch('/api/docs', { unpinned: true });
+  if (!res.ok) return false;
+  const { docs = [] } = await res.json();
+  const meta = docs.find((d) => d.id === id);
+  if (!meta || (meta.rev || 0) === owner.loadedRev) return false;
+  if (!confirmOverlayLoss(owner)) {
+    toast('This document had changed since this window loaded it, so the operation was not applied.');
+    return true;
+  }
+  await setDocumentFromServer(meta, owner);
+  toast('This document had changed since this window loaded it, so the operation was not applied. It has been reloaded — run it again.');
   return true;
 }
 
@@ -8447,8 +8485,12 @@ els.outlineSave.onclick = async () => {
   if (!confirmOverlayLoss(owner, true)) return; // baked below: only the redaction boxes go with the reload
   const form = await bakedForm(owner);
   form.append('outline', JSON.stringify(owner.outlineItems.map((it) => ({ title: it.title.trim(), page: it.page, level: it.level }))));
+  if (owner.loadedRev != null) form.append('baseRev', String(owner.loadedRev)); // ADR-146; see pageOp
   const res = await apiFetch('/api/outline', { method: 'POST', body: form, docId: opDoc && opDoc.id });
-  if (!res.ok) return toast(await errText(res, 'could not save the outline'));
+  if (!res.ok) {
+    if (!(res.status === 409 && await reloadIfMoved(owner))) toast(await errText(res, 'could not save the outline'));
+    return;
+  }
   await setDocumentFromServer(await res.json(), owner);
   els.outlineModal.hidden = true;
   toast('Outline saved');

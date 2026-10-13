@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"nib/internal/ceremony"
 	"nib/internal/pdfops"
@@ -69,10 +70,13 @@ const (
 // recover the lost edit either. A `snapshotBase` is bytes the server itself handed out through
 // `docBytes`; every writer of `doc.data` installs a new slice, so "the document still holds that
 // slice" is exact, costs a pointer compare under the lock, and a mismatch is refused as
-// errDocChanged before anything is pushed. A `postedBase` is the CLIENT's bytes (the page and
+// errDocChanged before anything is pushed. An `echoedBase` is the CLIENT's bytes (the page and
 // outline routes, which work from a posted PDF carrying the client's own overlays): the server
-// cannot know what they were derived from, so those routes stay last-writer-wins — the declared
-// gap, closable only by the client sending the revision it built on.
+// cannot compare those with anything, so the window sends back the revision of the document it
+// built them on (`docResponse.Rev`, form field `baseRev`) and a commit whose echo is not the
+// document's revision NOW is refused the same way, by one integer compare under the hold the commit
+// already has (ADR-146, /pending 792). The echo is optional — the CLI and the Go tests send none,
+// as with `X-Nib-Doc` (ADR-004) — and a request without one stays last-writer-wins: the declared gap.
 func (s *Server) commitMutation(doc *document, base mutationBase, result []byte, acceptSignatureLoss bool) error {
 	input := base.data
 	sig := sign.Verify(result)
@@ -119,6 +123,9 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 	if base.snapshot && !sameSlice(doc.data, input) {
 		return errDocChanged
 	}
+	if base.echoed && doc.rev != base.rev {
+		return errDocChanged
+	}
 	if err := s.byteCapLocked(doc, result); err != nil {
 		return err
 	}
@@ -129,8 +136,7 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 	// alongside a non-empty stack, which reads as a lie.
 	doc.historyEvicted = false
 	s.trimHistoryLocked(doc)
-	doc.data = result
-	doc.sig = sig
+	doc.install(result, sig)
 	noteTaggingFate(doc, input, result, base.broughtAnnots)
 	return nil
 }
@@ -140,6 +146,9 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 type mutationBase struct {
 	data     []byte
 	snapshot bool
+	// echoed says the client named the revision its bytes were built on, and rev is that revision.
+	echoed bool
+	rev    uint64
 	// broughtAnnots is how many annotations the operation brought in from ANOTHER document (an
 	// append, an insert), counted by the caller before the commit. See noteTaggingFate.
 	broughtAnnots int
@@ -148,10 +157,44 @@ type mutationBase struct {
 // snapshotBase is bytes this operation read from the document with `docBytes`.
 func snapshotBase(b []byte) mutationBase { return mutationBase{data: b, snapshot: true} }
 
-// postedBase is bytes the client posted; the server cannot know what they were built on.
+// postedBase is bytes posted with no word on what they were built on. Production reaches it only
+// through echoedBase; tests call it for a commit with no echo.
 // broughtAnnots is the count an append or insert carried in from another document, 0 otherwise.
 func postedBase(b []byte, broughtAnnots int) mutationBase {
 	return mutationBase{data: b, broughtAnnots: broughtAnnots}
+}
+
+// echoedBase is bytes the client posted, with what it sent as `baseRev`: the revision of the
+// document those bytes were built on, or "" when it sent none (the CLI, a Go test). The page and
+// outline routes are its only callers, and `TestOnlyThePostedBytesRoutesSkipTheLostUpdateGuard`
+// holds that. A value that is not a whole number is an error: a client that tried to say what it
+// built on and failed must not be read as one that said nothing.
+func echoedBase(b []byte, broughtAnnots int, baseRev string) (mutationBase, error) {
+	base := postedBase(b, broughtAnnots)
+	if baseRev == "" {
+		return base, nil
+	}
+	rev, err := strconv.ParseUint(baseRev, 10, 64)
+	if err != nil {
+		return base, errBaseRev
+	}
+	base.echoed, base.rev = true, rev
+	return base, nil
+}
+
+// errBaseRev refuses a `baseRev` that is not a revision number.
+var errBaseRev = errors.New("the document revision this request names is not a whole number")
+
+// install makes data the document's bytes and counts it. **The ONE writer of `document.data`**
+// (ADR-146, ADR-009): the two commit doors, the history step, the save and the ceremony install all
+// come through here, so the revision a window echoes moves at every one of them and a sixth door
+// cannot forget to move it — `TestEveryInstallOfDocumentBytesBumpsTheRevision` fails on any other
+// assignment. Caller holds s.mu. `data` is a fresh slice, never the old one written in place: the
+// unlocked readers (`docBytes`, `docResponse`) rest on that.
+func (d *document) install(data []byte, sig sign.Status) {
+	d.data = data
+	d.sig = sig
+	d.rev++
 }
 
 // sameSlice reports whether a and b are the same bytes in memory — not equal content, the SAME
@@ -295,8 +338,7 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	// it stands is what the claim is compared against. Captured before the assignment below, which
 	// is the line that makes it unavailable.
 	before := doc.data
-	doc.data = result
-	doc.sig = sig
+	doc.install(result, sig)
 	noteTaggingFate(doc, before, result, 0) // a barrier brings nothing in
 	return nil
 }
@@ -616,8 +658,7 @@ func (s *Server) stepHistory(w http.ResponseWriter, doc *document, stacks func(*
 		*from = (*from)[:last]
 		*to = append(*to, doc.data)
 		s.trimHistoryLocked(doc)
-		doc.data = next
-		doc.sig = sig
+		doc.install(next, sig)
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse(doc))
 		return
