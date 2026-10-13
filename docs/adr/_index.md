@@ -920,3 +920,5 @@ home today.
   — `document.install` is the one writer of `document.data` and moves `rev`; the window echoes it as `baseRev` on the page and outline routes, and a stale echo is `errDocChanged` (409), as a stale snapshot is.
 - [ADR-147](147-a-document-says-what-a-step-will-do-before-the-step.md) — **a document says what a step will do before the step**
   — facts on the document's own answer (`conformanceLabel`, `tagged`, `signerNamed`, the hop quote's `block`) are said on the surface where the step is taken: what signing does to a PDF/UA or PDF/A label, that a crop on a tagged document only hides, who a signer is by what this machine knows, and where Sign now will place the block.
+- [ADR-149](149-a-stranger-holds-a-share-of-the-handshake-pool-and-a-mapped-address-is-published-only-where-the-probe-saw-us.md) — **one source holds a share of the handshake pool, and a mapped address is published only where the probe saw us**
+  — at most 4 of the 16 TCP handshake slots per source (IPv4 address or IPv6 /64; loopback exempt; QUIC needs none), and a port-mapped candidate only at the address a strict majority of the DHT probe's sources saw.

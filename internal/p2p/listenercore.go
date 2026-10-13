@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 
 	"nib/internal/safe"
@@ -47,6 +48,11 @@ type listenerCore struct {
 	mu     sync.Mutex
 	closed bool
 	cerr   error
+	// sources counts the handshakes in flight per source (`admit`); guarded by mu.
+	sources map[netip.Prefix]int
+	// capLoopback makes the per-source cap bind loopback too. False everywhere but a test of the
+	// cap itself: see `handshakeSource`.
+	capLoopback bool
 }
 
 // maxConcurrentHandshakes bounds the in-flight handshakes.
@@ -63,13 +69,89 @@ type listenerCore struct {
 // by up to one handshakeTimeout, which is strictly better than the one-stall-blocks-everything
 // this replaced and than the fd exhaustion the unbounded version allowed.
 //
-// **That figure is for ONE burst, and it is not the worst case** (/pending 691 R7-2). A host that
-// keeps stalling connections refills the pool as fast as it drains, so the genuine peer waits
+// **That figure is for ONE burst, and it was not the worst case** (/pending 691 R7-2). A host that
+// keeps stalling connections refills the pool as fast as it drains, so the genuine peer waited
 // behind everything queued ahead of it: N stalled connections cost about N/16 handshakeTimeouts,
-// which at N of about 160 is the whole five-minute arm. Nothing here bounds that; what bounds it
-// is the arm window, after which the listener is closed. Reach is a host on the link, or one that
-// was handed a published candidate. Declared, not fixed: a per-source limit is a decision.
+// which at N of about 160 is the whole five-minute arm. `maxHandshakesPerSource` is what bounds
+// that now (/pending 775, ADR-149).
 const maxConcurrentHandshakes = 16
+
+// maxHandshakesPerSource is how many of the pool's slots ONE source may hold at a time, on the TCP
+// listener (/pending 775, ADR-149).
+//
+// A connection past it is CLOSED, not queued: queueing is what let one host put the genuine peer
+// behind everything it had sent. So a single stalling source holds four slots and no more, the
+// other twelve stay free, and the genuine peer's handshake starts at once whatever that source
+// keeps sending.
+//
+// **Four, because the genuine peer is a source too.** The racing dialer opens one connection per
+// candidate address and a re-race can overlap the attempt it replaces; from one source address that
+// is two or three at once in the shapes this tree produces (a LAN address, a typed one, a mapped
+// one), and a refused connection is a lost candidate, so the cap sits above that with room.
+//
+// **What it does not bound, declared:** a host that can dial from four source addresses (four IPv4
+// addresses, or four IPv6 /64s) still fills the pool, and the genuine peer then waits as before. And
+// two parties behind one NAT are one source: a stranger there can hold the four slots the genuine
+// peer would have used. Both are the arm window's to end, as the whole attack was before this.
+const maxHandshakesPerSource = 4
+
+// handshakeSource is the key a connection's source is counted under, and whether the cap binds it.
+//
+// An IPv4 address is its own key. An IPv6 address is keyed by its /64, because a host owns the whole
+// of one — per-address counting would hand it 2^64 keys. **Loopback is exempt, by name:** every
+// multi-process tier, and every test in this tree, dials from 127.0.0.1, where nine parties share
+// one address and a cap on it would be a cap on the harness rather than on a stranger; a process
+// that can dial loopback is already on the machine. An address this cannot read is not capped
+// either — it keeps the pool's own bound, which is what it had.
+func (l *listenerCore) handshakeSource(remote net.Addr) (netip.Prefix, bool) {
+	tcp, ok := remote.(*net.TCPAddr)
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	ip, ok := netip.AddrFromSlice(tcp.IP)
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() && !l.capLoopback {
+		return netip.Prefix{}, false
+	}
+	bits := 64
+	if ip.Is4() {
+		bits = 32
+	}
+	p, err := ip.Prefix(bits)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	return p, true
+}
+
+// admit counts one more handshake against remote's source, or refuses it when that source already
+// holds `maxHandshakesPerSource`. The returned release gives the count back and must run exactly
+// once, when the handshake goroutine ends (or is never started).
+func (l *listenerCore) admit(remote net.Addr) (release func(), ok bool) {
+	src, capped := l.handshakeSource(remote)
+	if !capped {
+		return func() {}, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.sources[src] >= maxHandshakesPerSource {
+		return nil, false
+	}
+	if l.sources == nil {
+		l.sources = make(map[netip.Prefix]int)
+	}
+	l.sources[src]++
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.sources[src]--; l.sources[src] <= 0 {
+			delete(l.sources, src)
+		}
+	}, true
+}
 
 // newListenerCore builds the channels.
 //

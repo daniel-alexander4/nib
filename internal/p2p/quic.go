@@ -492,6 +492,10 @@ func (l *quicListener) acceptLoop() {
 			_ = l.Close()
 			return
 		}
+		// **No per-source cap here, by name** (ADR-149; the TCP loop has one). A connection this
+		// Accept returns has COMPLETED the pinned mutual handshake, so only the pinned peer reaches
+		// this pool at all — a stranger is refused inside the library, before it. The TCP pool is
+		// the one a stranger's bare connection lands in.
 		select {
 		case l.sem <- struct{}{}:
 		case <-l.done:

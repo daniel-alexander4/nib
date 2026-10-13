@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"sync"
@@ -179,7 +180,7 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 	// A miss or an unroutable answer leaves `addrs` untouched: an ordinary tier miss, never an
 	// error (D15/D16, grill F8), and never routed through `Sign`'s all-or-nothing screen, which
 	// would drop the good reflexive candidates alongside a bad mapped one (grill F1/#1).
-	addrs = c.appendMappedCandidate(armCtx, addrs)
+	addrs = c.appendMappedCandidate(armCtx, self, addrs)
 	if len(addrs) == 0 {
 		// Not a failure of this path: it is D19's cause 3 or 4, and the ladder's other
 		// tiers are unaffected. Publishing nothing is the honest outcome — a record naming
@@ -237,7 +238,10 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 // expires — which is `portmap.DefaultLeaseSec` (120 s) only if the router honours the request; a router
 // granting more (a tested value is 7200 s) leaves the hole open that long. Bounded by the grant,
 // not by the 120 s we ask for — recorded rather than claimed as 120 s.
-func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []ceremony.Endpoint) []ceremony.Endpoint {
+//
+// **And it is published only at the address the probe saw us at** (/pending 775, ADR-149): see
+// `corroboratedMappedEndpoint`. `self` is the probe `publishCandidates` has just made.
+func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, self rendezvous.SelfAddress, addrs []ceremony.Endpoint) []ceremony.Endpoint {
 	if c.end == nil {
 		return addrs // no shared endpoint (the TCP path never sets one) — no mapping tier
 	}
@@ -286,9 +290,53 @@ func (c *ceremonyID) appendMappedCandidate(armCtx context.Context, addrs []cerem
 		mapper.close()
 		return addrs
 	}
+	ep, ok, elsewhere := corroboratedMappedEndpoint(self, ep)
+	if !ok {
+		// Not published, so not left on the router either — the screen's rule, one line up.
+		if elsewhere {
+			// The world sees this machine at a DIFFERENT address from the one the router named:
+			// another NAT sits beyond it (or the answer was not the router's), which is the
+			// screened case's advice and not "enable port mapping".
+			c.markMapUnroutable()
+		}
+		log.Printf("ceremony %s: a port mapping named %s as this machine's public address and the "+
+			"rendezvous probe did not see it there, so it was not published", c.inv.ID, ap.Addr())
+		mapper.close()
+		return addrs
+	}
 	c.setPortMap(mapper)  // stored under the lock, so close() can reach it (grill C6)
 	mapper.startRefresh() // self-contained; stopped by close() (diff-grill #1)
 	return append(addrs, ep)
+}
+
+// corroboratedMappedEndpoint passes a mapped endpoint only when its address is the one the DHT
+// self-address probe saw this machine at (/pending 775, ADR-149). `elsewhere` says the probe DID
+// place us — at another address — as against having no answer for that family.
+//
+// **Why the router's word is not enough.** On the UPnP path the "router" is whatever answered an
+// SSDP multicast first, and `GetExternalIPAddress` is its say-so: any host on the link can answer,
+// and the address it names went into a signed candidate record that both parties then dial and
+// punch at (D8/D16/D33) — a stranger aiming this machine's and its peer's traffic at an address of
+// its choosing. `screenedMappedEndpoint` cannot see that: a victim's address is public and
+// well-formed. The probe can, because it is what strangers on the far side of the NAT observed,
+// majority-voted across source prefixes, and a host on the link is not among them.
+//
+// **It also refuses what could never have worked.** A mapping whose external address is not where
+// the world sees this machine is one behind a second NAT: nobody outside can dial it.
+//
+// **Fails CLOSED when the probe has no answer for the family** — fewer than two sources, or no
+// majority. The reflexive candidates are then missing for the same reason, and an uncorroborated
+// address is exactly what this refuses; the LAN tier and a typed address are untouched by it.
+func corroboratedMappedEndpoint(self rendezvous.SelfAddress, ep ceremony.Endpoint) (out ceremony.Endpoint, ok, elsewhere bool) {
+	ext := ep.Addr.Addr().Unmap()
+	seen, known := self.MajorityIP(ext.Is6())
+	if !known {
+		return ceremony.Endpoint{}, false, false
+	}
+	if seen != ext {
+		return ceremony.Endpoint{}, false, true
+	}
+	return ep, true, false
 }
 
 // screenedMappedEndpoint applies `addrscope.Target` to a gateway-supplied external address and
