@@ -43,8 +43,8 @@ import (
 // # It needs no vault and does not unlock one
 //
 // A diagnostic that required the user's passphrase would be useless in the case it is for
-// — first run, nothing configured, nothing working. So it announces under a name derived
-// from RANDOM bytes, which is safe precisely because of L1: a name only means something to
+// — first run, nothing configured, nothing working. So it announces a tag made from
+// RANDOM bytes, which is safe precisely because of L1: a tag only means something to
 // a peer that has already pinned the matching fingerprint, and no peer has pinned this one.
 // It cannot be mistaken for a real Nib by anything that matters.
 func cmdDiscover(args []string) int {
@@ -137,17 +137,17 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 			"        silently accept everything on this platform.")
 	}
 
-	// A name from random bytes: see the doc comment. It matches nobody's pin.
+	// A tag from random bytes: see the doc comment. It matches nobody's pin.
 	fpr := sha256.Sum256(nonce[:])
-	name, err := pairing.Name(fpr[:])
+	salt, tag, err := pairing.NewTag(fpr[:])
 	if err != nil {
-		fmt.Fprintf(errw, "cannot derive a name: %v\n", err)
+		fmt.Fprintf(errw, "cannot make a throwaway identity: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(out, "announcing as %q (a throwaway identity; it matches nobody's pin)\n\n", name)
+	fmt.Fprintf(out, "announcing a throwaway identity (it matches nobody's pin)\n\n")
 
 	// HopNone: the CLI's discovery probe announces a machine, not an arm.
-	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
+	ann := discovery.Announcement{Salt: salt, Tag: tag, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
 	deadline := time.Now().Add(listen)
 	// Stopped and JOINED before the socket closes. Without the join the goroutine can
 	// wake past the deadline, call Announce on a closed socket, and print "announce
@@ -184,7 +184,9 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 		switch {
 		case err == nil:
 			if !quiet {
-				fmt.Fprintf(out, "  peer   %q port %d from %s\n", seen.Name, seen.Port, seen.From)
+				// No name: an announcement says who sent it only to a Nib that has that
+				// sender pinned, and this command holds no pins (ADR-151).
+				fmt.Fprintf(out, "  peer   a Nib on port %d (%s) from %s\n", seen.Port, seen.Transport, seen.From)
 			}
 		case errors.Is(err, discovery.ErrOwn):
 			if !quiet {
@@ -228,6 +230,13 @@ func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 	fmt.Fprintf(out, "  own copies heard    %d\n", st.Own)
 	fmt.Fprintf(out, "  peers heard         %d\n", st.Peers)
 	fmt.Fprintf(out, "  other traffic       %d foreign, %d malformed\n", st.Foreign, st.Malformed)
+	// The mixed-build case, said outright (ADR-151): to both machines it otherwise reads as an
+	// empty link, and the fix is not on the network.
+	if st.OtherVersion > 0 {
+		fmt.Fprintf(out, "  OTHER VERSION       %d announcement(s) from a Nib of another version. It is on\n"+
+			"                      this network and working, and it and this Nib cannot find each\n"+
+			"                      other here until both run the same version.\n", st.OtherVersion)
+	}
 	// Reads the socket itself failed (/pending 653 part 7). The listen loop pauses on them
 	// rather than spinning, but it used to say nothing: an interface going down mid-window
 	// ended in "peers heard 0" and a verdict about a firewall, from a socket that had stopped

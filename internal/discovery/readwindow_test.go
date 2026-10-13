@@ -30,7 +30,7 @@ func TestAnAnnouncementEveryInterfaceRefusedIsAnError(t *testing.T) {
 		group6Addr: &net.UDPAddr{IP: net.IPv6loopback, Port: 9}}
 	pc.Close()
 
-	n, err := s.Announce(Announcement{Name: aName(t, 1), Port: 8443, Hop: HopNone})
+	n, err := s.Announce(tagged(t, 1, Announcement{Port: 8443, Hop: HopNone}))
 	if n != 0 {
 		t.Fatalf("setup: %d write(s) succeeded on a closed socket", n)
 	}
@@ -43,7 +43,7 @@ func TestAnAnnouncementEveryInterfaceRefusedIsAnError(t *testing.T) {
 
 	// The other side: with no interface to send on, nothing was attempted and nothing failed.
 	none := &Socket{}
-	if n, err := none.Announce(Announcement{Name: aName(t, 1), Port: 8443, Hop: HopNone}); n != 0 || err != nil {
+	if n, err := none.Announce(tagged(t, 1, Announcement{Port: 8443, Hop: HopNone})); n != 0 || err != nil {
 		t.Errorf("Announce on a socket with no interfaces = (%d, %v), want (0, nil)", n, err)
 	}
 }

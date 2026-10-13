@@ -80,6 +80,11 @@ type Stats struct {
 	Foreign uint64
 	// Malformed is datagrams that claimed to be ours and were not.
 	Malformed uint64
+	// OtherVersion is announcements from a Nib speaking another format version (ErrVersion).
+	// Counted apart from Malformed because it is the opposite finding: a healthy Nib IS on
+	// this link and the two builds cannot read each other, which no other counter can say —
+	// to both of them it otherwise looks exactly like an empty link.
+	OtherVersion uint64
 	// OffLink is datagrams discarded because their source is not on a link this
 	// socket joined. **Non-zero means somebody is sending link-local discovery
 	// traffic from off the link**, which is not a thing that happens by accident —
@@ -126,6 +131,7 @@ type Socket struct {
 	foreign    atomic.Uint64
 	offLink    atomic.Uint64
 	malformed  atomic.Uint64
+	otherVer   atomic.Uint64
 	noCM       atomic.Bool
 }
 
@@ -409,8 +415,8 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	// Off-link sources are discarded BEFORE parsing. Go binds a multicast listener to
 	// the wildcard, so this port accepts ordinary unicast from any host that can route
 	// to it; without this, an honest datagram from anywhere on the internet would be
-	// returned as a candidate for any peer whose six-word name it knows, and names are
-	// public by design.
+	// returned as a candidate for any peer whose fingerprint it knows, and a fingerprint
+	// is in every document its owner signed.
 	//
 	// **It reads the CLAIMED source, so it is a scope filter and not an authentication
 	// step.** A UDP source address is not verified by anything, and an announcement
@@ -431,6 +437,9 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	switch {
 	case errors.Is(perr, ErrNotOurs):
 		s.foreign.Add(1)
+		return Seen{}, perr
+	case errors.Is(perr, ErrVersion):
+		s.otherVer.Add(1)
 		return Seen{}, perr
 	case perr != nil:
 		s.malformed.Add(1)
@@ -483,6 +492,7 @@ func (s *Socket) Stats() Stats {
 		Foreign:          s.foreign.Load(),
 		OffLink:          s.offLink.Load(),
 		Malformed:        s.malformed.Load(),
+		OtherVersion:     s.otherVer.Load(),
 		NoControlMessage: s.noCM.Load(),
 	}
 }

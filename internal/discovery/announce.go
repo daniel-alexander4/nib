@@ -11,8 +11,9 @@
 //
 // So an announcement carries exactly two facts and a nonce:
 //
-//   - the sender's six-word NAME (D3), which is a public encoding of 66 bits of
-//     their fingerprint and is already displayed on their own screen;
+//   - a SALT drawn for this one announcer and the TAG of the sender's fingerprint under
+//     it (ADR-151, format version 4) — until then the sender's six-word name, which is
+//     one constant for the life of an identity and so linked every arm to every other;
 //   - the port their armed session is listening on, AND the transport it speaks;
 //   - a per-instance nonce, which exists only so a sender can recognise its own
 //     announcement coming back (see below).
@@ -35,15 +36,14 @@
 // This is reachability, never identity, so L1 is untouched: the transport says how to
 // open a socket and has no bearing on which peer is accepted at the handshake.
 //
-// It carries the name and not the fingerprint because that is what the receiving
-// side can actually use: pairing.Matches(fp, name) recomputes the name from a
-// fingerprint the receiver ALREADY HOLDS. There is no way to go from a name to a
-// fingerprint — pairing.decode is unexported on purpose, because "a half-fingerprint
-// that looks like an identity is the misuse this design removed". That export
-// boundary is what makes L1 structural here rather than a rule someone has to
-// remember: a browser can only recognise peers it has already pinned, and discovery
-// therefore cannot serve first contact at all. Two strangers still need an
-// invitation (D21).
+// It carries a tag and not the fingerprint because that is what the receiving side
+// can actually use: pairing.TagMatches(fp, salt, tag) recomputes the tag from a
+// fingerprint the receiver ALREADY HOLDS, and there is no way from a salt and a tag
+// back to a fingerprint. That is what makes L1 structural here rather than a rule
+// someone has to remember: a browser can only recognise peers it has already pinned,
+// and discovery therefore cannot serve first contact at all. Two strangers still need
+// an invitation (D21). This package never sees a fingerprint: the salt and the tag
+// are opaque bytes to it, and the comparison is the caller's.
 //
 // # Why the nonce, and why not the source address
 //
@@ -75,7 +75,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 
 	"nib/internal/pairing"
 )
@@ -102,15 +101,22 @@ const (
 	// announcement's port could be either ARM — a hop arm or a delivery arm, on one machine,
 	// pinned to the same peer — and guessing between them is the defect the field was added to
 	// remove. The same "no shims" position applies, so a version-2 speaker is refused too.
-	version = 3
+	//
+	// **4 since ADR-151**, which replaced the six-word name with a salt and a tag. A version-3
+	// announcement names its sender by a constant, and reading one would keep every Nib
+	// recognising — and so every arm emitting — the identifier this version exists to stop
+	// sending. Refused in both directions: a version-3 Nib refuses a version-4 announcement by
+	// the same rule, so the two do not find each other on the link and say so only as a count
+	// (`Stats.OtherVersion`).
+	version = 4
 
 	// nonceLen is the per-instance self-recognition nonce.
 	nonceLen = 8
 
-	// MaxDatagram bounds a whole announcement. It is far larger than the biggest
-	// legal one (a six-word name is at most 6*8+5 = 53 bytes) and far smaller than
-	// a UDP datagram, so the cap costs nothing legitimate and denies an attacker
-	// the ability to make this package allocate.
+	// MaxDatagram bounds what one read takes off the socket. It is far larger than an
+	// announcement (wireLen, a fixed 50 bytes) and far smaller than a UDP datagram, so
+	// the cap costs nothing legitimate and denies an attacker the ability to make this
+	// package allocate.
 	MaxDatagram = 256
 
 	// The field offsets, named ONCE.
@@ -126,10 +132,17 @@ const (
 	offPort      = offTransport + 1
 	offHop       = offPort + 2
 	offNonce     = offHop + 2
-	offNameLen   = offNonce + nonceLen
+	offSalt      = offNonce + nonceLen
+	offTag       = offSalt + pairing.SaltLen
 
-	// headerLen is magic + version + transport + port + hop + nonce + name length.
-	headerLen = offNameLen + 1
+	// prefixLen is magic + version: what must be present before anything can be said
+	// about a datagram, and the most that is read of one from another version.
+	prefixLen = offVersion + 1
+
+	// wireLen is the whole announcement, and it is the ONLY length one has: magic +
+	// version + transport + port + hop + nonce + salt + tag. No field's length travels
+	// on the wire any more, so no length on the wire can disagree with the datagram's.
+	wireLen = offTag + pairing.TagLen
 )
 
 var (
@@ -222,8 +235,13 @@ func (t Transport) valid() bool { return t == TransportTCP || t == TransportQUIC
 // better one: the source address of the datagram itself, which cannot be forged
 // past the point where it would also have to receive the reply.
 type Announcement struct {
-	// Name is the sender's six-word pairing name (D3).
-	Name string
+	// Salt is drawn once for this announcer (pairing.NewTag) and Tag is the sender's
+	// fingerprint hashed under it. Opaque here: only a caller holding a fingerprint can
+	// ask whether the pair is that fingerprint's (pairing.TagMatches). An all-zero salt
+	// is refused on both sides — it is what a caller that forgot to draw one would send,
+	// and a constant salt makes the tag the stable identifier ADR-151 removed.
+	Salt [pairing.SaltLen]byte
+	Tag  [pairing.TagLen]byte
 	// Port is where the sender's armed session is listening.
 	Port uint16
 	// Transport is the socket that port belongs to. A UDP port and a TCP port with
@@ -257,15 +275,15 @@ func (a Announcement) Encode() ([]byte, error) {
 	if err := a.check(); err != nil {
 		return nil, err
 	}
-	out := make([]byte, 0, headerLen+len(a.Name))
+	out := make([]byte, 0, wireLen)
 	out = append(out, magic...)
 	out = append(out, version)
 	out = append(out, byte(a.Transport))
 	out = binary.BigEndian.AppendUint16(out, a.Port)
 	out = binary.BigEndian.AppendUint16(out, hopWire(a.Hop))
 	out = append(out, a.Nonce[:]...)
-	out = append(out, byte(len(a.Name)))
-	out = append(out, a.Name...)
+	out = append(out, a.Salt[:]...)
+	out = append(out, a.Tag[:]...)
 	return out, nil
 }
 
@@ -287,42 +305,22 @@ func (a Announcement) check() error {
 	if !a.Transport.valid() {
 		return fmt.Errorf("%w: unknown transport %d", ErrMalformed, uint8(a.Transport))
 	}
-	if len(strings.Fields(a.Name)) != pairing.NameWords {
-		return fmt.Errorf("%w: name is not %d words", ErrMalformed, pairing.NameWords)
-	}
-	// **The exact shape pairing.Name renders, not merely six fields** (/pending 711 R5-6). A
-	// word count admitted any byte up to the length cap — control characters, ANSI escapes, a
-	// "\n" that Fields reads as a separator — from any host onLink admits, and the server logs
-	// the name before a pin has matched it (`resolve`'s hop refusal), so one datagram forged a
-	// log line or drove the operator's terminal. Every word in the list is lowercase ASCII
-	// (TestWordlistProperties) and render joins them with one space, so nothing this Nib would
-	// emit is refused, and a name that could not match any pin is refused before anyone reads it.
-	if !renderedShape(a.Name) {
-		return fmt.Errorf("%w: name is not %d lowercase words separated by single spaces", ErrMalformed, pairing.NameWords)
-	}
-	if len(a.Name) > 0xff {
-		return fmt.Errorf("%w: name too long", ErrMalformed)
-	}
-	// Against the DATAGRAM cap, not just the length byte. Encode's doc promises it
-	// "refuses to encode one that would not parse", and bounding the name at 0xff alone
-	// did not keep that promise: six 40-character words is 245 bytes, encodes to 261,
-	// and Parse rejects it as over the 256-byte cap. The two ends of the format
-	// disagreed about what is legal, which is the one thing this function exists to
-	// prevent. Unreachable from the product only because pairing.Name is at most 53
-	// bytes — an invariant held by a caller, not by the check that claims to hold it.
-	if headerLen+len(a.Name) > MaxDatagram {
-		return fmt.Errorf("%w: %d bytes exceeds the %d-byte cap", ErrMalformed,
-			headerLen+len(a.Name), MaxDatagram)
+	// **A salt must have been drawn.** The zero value is what an announcer that skipped
+	// pairing.NewTag would carry, and every such announcer would carry the SAME one — so its
+	// tag would be a constant per identity, which is the six-word name again under another
+	// encoding. Refused here, on both sides, rather than trusted to each caller.
+	if a.Salt == ([pairing.SaltLen]byte{}) {
+		return fmt.Errorf("%w: no salt", ErrMalformed)
 	}
 	return nil
 }
 
 // Parse reads an announcement off the wire.
 //
-// It reads the fixed header before touching the payload, and every length it uses
-// comes from a bound it checked first. b is not retained: the returned Name is a
-// fresh string, so a caller may reuse its read buffer, which is the normal shape for
-// a UDP read loop and a source of aliasing bugs when a parser forgets.
+// The format is one fixed length, so there is no length on the wire to believe: a
+// datagram is exactly wireLen bytes or it is not an announcement of this version. b is
+// not retained — every field is copied out — so a caller may reuse its read buffer.
+//
 // Every error path returns the ZERO announcement, never the partially-filled one.
 // That is not tidiness: the first draft returned what it had parsed so far, so a
 // caller who ignored the error — the ordinary mistake in a read loop — would act on
@@ -334,7 +332,7 @@ func Parse(b []byte) (Announcement, error) {
 	if len(b) > MaxDatagram {
 		return Announcement{}, fmt.Errorf("%w: %d bytes exceeds the %d-byte cap", ErrMalformed, len(b), MaxDatagram)
 	}
-	if len(b) < headerLen {
+	if len(b) < prefixLen {
 		// Too short even to be ours: this is the common case on a shared group and
 		// must be the cheapest path through the function.
 		return Announcement{}, ErrNotOurs
@@ -342,46 +340,26 @@ func Parse(b []byte) (Announcement, error) {
 	if string(b[:len(magic)]) != magic {
 		return Announcement{}, ErrNotOurs
 	}
+	// The version BEFORE the length, because the length is this version's: another
+	// version's announcement is a different size, and judging it by ours would report
+	// "malformed" about a well-formed Nib that simply cannot be read here.
 	if b[offVersion] != version {
 		return Announcement{}, fmt.Errorf("%w: %d, want %d", ErrVersion, b[offVersion], version)
+	}
+	if len(b) != wireLen {
+		// Exact, not "at least": trailing bytes are as much a malformed
+		// announcement as missing ones, and accepting them would let a sender
+		// smuggle a payload past every other check here.
+		return Announcement{}, fmt.Errorf("%w: %d bytes, an announcement is %d", ErrMalformed, len(b), wireLen)
 	}
 	a.Transport = Transport(b[offTransport])
 	a.Port = binary.BigEndian.Uint16(b[offPort : offPort+2])
 	a.Hop = hopFromWire(binary.BigEndian.Uint16(b[offHop : offHop+2]))
 	copy(a.Nonce[:], b[offNonce:offNonce+nonceLen])
-	n := int(b[offNameLen])
-	i := headerLen
-	if len(b)-i != n {
-		// Exact, not "at least": trailing bytes are as much a malformed
-		// announcement as missing ones, and accepting them would let a sender
-		// smuggle a payload past every other check here.
-		return Announcement{}, fmt.Errorf("%w: declared %d name bytes, %d remain", ErrMalformed, n, len(b)-i)
-	}
-	a.Name = string(b[i:])
+	copy(a.Salt[:], b[offSalt:offSalt+pairing.SaltLen])
+	copy(a.Tag[:], b[offTag:offTag+pairing.TagLen])
 	if err := a.check(); err != nil {
 		return Announcement{}, err
 	}
 	return a, nil
-}
-
-// renderedShape reports whether name is NameWords runs of a-z joined by single spaces — the
-// form pairing.Name produces. It checks shape, not membership in the word list: membership is
-// pairing.Matches' job, and the shape is what keeps an unmatched name safe to print.
-func renderedShape(name string) bool {
-	words, inWord := 0, false
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case c >= 'a' && c <= 'z':
-			if !inWord {
-				words++
-				inWord = true
-			}
-		case c == ' ' && inWord && i+1 < len(name):
-			inWord = false
-		default:
-			return false
-		}
-	}
-	return words == pairing.NameWords
 }

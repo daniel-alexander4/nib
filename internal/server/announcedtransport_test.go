@@ -7,7 +7,6 @@ import (
 
 	"nib/internal/discovery"
 	"nib/internal/p2p"
-	"nib/internal/pairing"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -72,10 +71,6 @@ func TestAQUICArmedPeerIsDialledOverQUIC(t *testing.T) {
 		t.Fatalf("setup: a QUIC listener announces as %v", got)
 	}
 
-	name, err := pairing.Name(fpB)
-	if err != nil {
-		t.Fatal(err)
-	}
 	port := portOf(ln)
 	if port <= 0 {
 		t.Fatalf("setup: the QUIC listener reports port %d", port)
@@ -83,12 +78,11 @@ func TestAQUICArmedPeerIsDialledOverQUIC(t *testing.T) {
 
 	// Through the wire, not around it: encoded and parsed, so the transport is being
 	// read out of bytes rather than out of the struct that produced them.
-	wire, err := discovery.Announcement{
-		Name:      name,
+	wire, err := announcedBy(t, fpB, discovery.Announcement{
 		Port:      uint16(port),
 		Transport: announcedTransport(ln.Transport()),
 		Nonce:     [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
-	}.Encode()
+	}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,7 @@ const announceEvery = 500 * time.Millisecond
 // lanAnnounceWindow caps how long the armed side ANNOUNCES on the link, independently of how long it
 // LISTENS (P05.S09b). S09b extends a ceremony arm's listen window to ceremony scope — up to D33's
 // 30-day MaxCeremonyLife — so a multi-party signer is not disarmed before the baton arrives. Left
-// coupled, this 500ms ticker would then broadcast a never-rotating six-word name for 30 days:
+// coupled, this 500ms ticker would then broadcast this party's presence for 30 days:
 // 2/s × 86400 × 30 ≈ 5.2M multicast datagrams per ceremony, the D6 privacy harm errLoopbackBind
 // exists against and a criterion-14 violation ("nothing emits at full rate for the whole deadline").
 // So the LAN fast-path stays what it effectively is today — five minutes, ~600 datagrams — and a
@@ -98,7 +98,12 @@ var errDiscoveryOff = errors.New("local network discovery is switched off on thi
 // configuration the pair exists to make possible.
 var errRendezvousOff = errors.New("remote peer rendezvous is switched off on this machine")
 
-// startAnnouncing begins announcing this user's name and the port ln is bound to.
+// startAnnouncing begins announcing this user's tag and the port ln is bound to.
+//
+// **Each call draws its own salt (ADR-151), and that is the unit "per arm" means here.** The
+// arm's announcer, each answer to a seeker and the dialling side's hop burst are separate calls,
+// so each is a separate salt and none outlives the announcer it was drawn for. Nothing is kept
+// between calls to reuse, and the salt comes from `pairing.NewTag`, which takes none.
 //
 // **It never fails the session.** A host with no usable interface, or a firewall that
 // swallows the group, must still be able to run a ceremony over a typed address — the
@@ -113,8 +118,8 @@ var errRendezvousOff = errors.New("remote peer rendezvous is switched off on thi
 // on every joined interface every 500 ms while the listener answered only on loopback.
 // Two harms, and the second is the one that does not announce itself: a peer on the link
 // resolves that to `<our LAN address>:8443` and cannot connect, and a user who
-// deliberately bound loopback has their presence — a stable six-word name derived from a
-// never-rotating fingerprint — put on every attached segment anyway.
+// deliberately bound loopback has their presence — at the time a stable six-word name derived
+// from a never-rotating fingerprint — put on every attached segment anyway.
 //
 // The rule lives HERE rather than at the call site because this is the door (ADR-009).
 // A guard on `runSession` would say nothing about the second caller, and the ladder's
@@ -132,13 +137,13 @@ var errRendezvousOff = errors.New("remote peer rendezvous is switched off on thi
 // `runHopDial`, and those are exactly where a fourth caller comes from.
 //
 // Refusing here means the socket is never opened and the ticker never starts, which is what "off"
-// has to mean: `/pending 3` is open precisely because discovery announces a stable identifier every
-// 500 ms whether or not anyone is looking at the panel.
+// has to mean: an armed Nib says it is here every 500 ms whether or not anyone is looking at the
+// panel, and anyone holding this identity's fingerprint can still recognise it (ADR-151).
 func (s *Server) startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration, hop int) (*lanAnnouncer, error) {
 	if !advancedOn(s.unlockedVault(), featDiscovery) {
 		return nil, errDiscoveryOff
 	}
-	name, err := ownName(myCertPEM)
+	fp, err := sign.Fingerprint(myCertPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -161,21 +166,21 @@ func (s *Server) startAnnouncing(myCertPEM []byte, ln announceable, window time.
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
+	// Built HERE, once per announcer, after every refusal above: a salt for an announcer that
+	// never starts is not drawn, and the same pair is repeated for this announcer's life only.
+	//
+	// The transport is ASKED OF THE LISTENER, never passed alongside it: a port and a
+	// transport carried separately are two facts that can disagree, and the listener
+	// is the only thing that knows which socket it actually opened (ADR-010).
+	ann, err := announcementOf(fp, uint16(port), announcedTransport(ln.Transport()), hop, nonce)
+	if err != nil {
+		return nil, err
+	}
 	sock, err := discovery.Open(nonce)
 	if err != nil {
 		return nil, err
 	}
 	a := &lanAnnouncer{sock: sock, stop: make(chan struct{}), done: make(chan struct{})}
-	// The transport is ASKED OF THE LISTENER, never passed alongside it: a port and a
-	// transport carried separately are two facts that can disagree, and the listener
-	// is the only thing that knows which socket it actually opened (ADR-010).
-	ann := discovery.Announcement{
-		Name:      name,
-		Port:      uint16(port),
-		Transport: announcedTransport(ln.Transport()),
-		Hop:       hop,
-		Nonce:     nonce,
-	}
 
 	go func() {
 		// safe.Recover, like every other detached goroutine in this package. runSession's
@@ -219,6 +224,28 @@ func (s *Server) startAnnouncing(myCertPEM []byte, ln announceable, window time.
 	return a, nil
 }
 
+// announcementOf builds what ONE announcer of the identity `fp` says for its whole life.
+//
+// **It draws the salt, and that is why it is a function** (ADR-151): every call is a new
+// announcer with a salt nothing else has seen, and there is no parameter through which a caller
+// could hand in an old one. Separate from the socket so the pair it produces can be driven over
+// a real one without a multicast-capable host.
+func announcementOf(fp []byte, port uint16, transport discovery.Transport, hop int, nonce [8]byte) (discovery.Announcement, error) {
+	var ann discovery.Announcement
+	salt, tag, err := pairing.NewTag(fp)
+	if err != nil {
+		return ann, err
+	}
+	return discovery.Announcement{
+		Salt:      salt,
+		Tag:       tag,
+		Port:      port,
+		Transport: transport,
+		Hop:       hop,
+		Nonce:     nonce,
+	}, nil
+}
+
 // announcedTransport maps p2p's transport name onto the announcement's wire byte. The
 // inverse of transportOf, and here for the same reason: internal/discovery may not import
 // internal/p2p, so this layer owns the join.
@@ -253,16 +280,6 @@ func (a *lanAnnouncer) Close() {
 // the same two events at the same moments (Sent / SendErrors, mcast.go), and `nib discover`
 // already prints them. Adding a reader here would have made two counters for one fact —
 // the duplicate-derivation defect — where one already has a reader.
-
-// ownName is this user's six-word pairing name, derived from their identity — the
-// only thing about themselves an announcement ever carries.
-func ownName(certPEM []byte) (string, error) {
-	fp, err := sign.Fingerprint(certPEM)
-	if err != nil {
-		return "", err
-	}
-	return pairing.Name(fp)
-}
 
 // errNoPeerOnTheLink reports a browse that heard nothing useful.
 var errNoPeerOnTheLink = errors.New("that peer is not announcing on this network")
@@ -305,8 +322,8 @@ func findPeerOnLAN(v *vault.Vault, peerFP []byte, want int) ([]candidate, error)
 	}
 
 	// EVERY address, in the order they were heard. One peer can legitimately announce
-	// from two addresses (dual stack), and two different hosts can claim one name —
-	// the name is public. Returning only the first meant an attacker who announced
+	// from two addresses (dual stack), and two different hosts can claim one identity —
+	// a tag can be made by anyone holding the fingerprint, or replayed. Returning only the first meant an attacker who announced
 	// faster than the real peer denied the tier outright, with the genuine address
 	// discarded where no caller could reach it.
 	// The CANDIDATES, not their address strings. Flattening to []string here threw
@@ -713,11 +730,11 @@ func raceKey(c candidate) string {
 //
 // # L1 is untouched
 //
-// An answer discloses exactly what this party's own arm announcement already discloses — the
-// six-word name and the port. `Matches(fp, name)` recomputes the name from a fingerprint the
-// receiver ALREADY HOLDS, and `pairing.decode` is unexported precisely so a name never resolves to
-// a pin. So a stranger's announcement cannot make this party answer, and an answer cannot tell a
-// stranger anything they could not already have heard.
+// An answer discloses what this party's own arm announcement already discloses — a tag of its
+// identity and the port — under a salt of its own (ADR-151). `TagMatches(fp, salt, tag)`
+// recomputes the tag from a fingerprint the receiver ALREADY HOLDS, and nothing leads from a tag
+// back to one. So a stranger's announcement cannot make this party answer, and an answer tells a
+// listener who does not hold the fingerprint nothing it can connect to the arm.
 // `wanted` reports whether this arm still wants to be found. Once the hop has signed, a peer that
 // reaches us can only be re-delivering and already holds the address, so answering would put a
 // stale candidate on the link for the next ceremony's browse to pick up (/pending 300).

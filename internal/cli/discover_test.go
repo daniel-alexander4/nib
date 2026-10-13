@@ -276,7 +276,7 @@ func TestTheTwoNothingWasJoinedFailuresGiveDifferentAdvice(t *testing.T) {
 	s := string(src)
 
 	openFail := between(t, s, "sock, err := discovery.Open(nonce)", "defer sock.Close()")
-	zeroJoin := between(t, s, "joined := sock.Interfaces()", "// A name from random bytes")
+	zeroJoin := between(t, s, "joined := sock.Interfaces()", "// A tag from random bytes")
 
 	// The defect: the open-failure path sending the reader to a list that carries no reasons,
 	// because no interface was ever attempted.

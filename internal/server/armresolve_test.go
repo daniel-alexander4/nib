@@ -34,14 +34,10 @@ import (
 
 func seenAt(t *testing.T, fp []byte, hop int) discovery.Seen {
 	t.Helper()
-	name, err := pairing.Name(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return discovery.Seen{
-		Announcement: discovery.Announcement{
-			Name: name, Port: 9000, Transport: discovery.TransportQUIC, Hop: hop,
-		},
+		Announcement: announcedBy(t, fp, discovery.Announcement{
+			Port: 9000, Transport: discovery.TransportQUIC, Hop: hop,
+		}),
 		From: &net.UDPAddr{IP: net.ParseIP("192.168.1.9"), Port: discovery.Port},
 	}
 }
@@ -228,6 +224,23 @@ func TestAHopMismatchIsLoggedOncePerIntervalNotPerDatagram(t *testing.T) {
 	if lines != 1 {
 		t.Errorf("%d datagrams inside one interval wrote %d log lines, want 1 — a host on the link "+
 			"sets the rate this machine writes to its log", datagrams, lines)
+	}
+	// What the line names (ADR-151). This is BEFORE the pin scan, so the sender is nobody yet:
+	// the line says where the datagram came from, and never the six words of the pin it would
+	// have matched — an announcement does not carry them, and printing them here would be
+	// this machine volunteering an identity for an unmatched sender.
+	if !strings.Contains(logged.String(), "192.168.1.9") {
+		t.Errorf("the line does not name the datagram's source address: %q", logged.String())
+	}
+	name, err := pairing.Name(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range strings.Fields(name) {
+		if strings.Contains(logged.String(), " "+w+" ") {
+			t.Errorf("the line carries %q, a word of the six-word name of the pin it was never matched against: %q",
+				w, logged.String())
+		}
 	}
 }
 
