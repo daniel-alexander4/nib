@@ -275,8 +275,8 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 	}
 	switch ed.kind {
 	case editRetype:
-		if !standardStructTypes[ed.value] {
-			return fmt.Errorf("%w: %q is not a standard structure type", ErrTagsReview, ed.value)
+		if err := typeAsChosen(tree, ed.value); err != nil {
+			return err
 		}
 		e.dict["S"] = types.Name(ed.value)
 	case editAlt:

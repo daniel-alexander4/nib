@@ -6681,7 +6681,9 @@ async function promoteInlineTags() {
 // What each of the document's own tag types means: one row per mapping, and a row to add one. Every change is
 // one `rolemap` edit through `sendTagEdits`, applied by a button and taken back by Ctrl+Z. The server
 // refuses what cannot be — a standard type as the name, a mapping removed while tags still use it — and its
-// sentence is shown under the list.
+// sentence is shown under the list. A mapping a producer wrote FROM a standard type (P means Span) is the one
+// exception both ways: it can only be removed, and it can be removed while tags are of that type — a tag
+// cannot be given that type until it is (/pending 632).
 
 function roleTypeOptions(select, value) {
   select.textContent = '';
@@ -6744,7 +6746,13 @@ function renderRoleMap(tree) {
     note.id = `tagRoleNote${i}`;
     const used = m.elements === 1 ? '1 tag is of this type' : `${m.elements} tags are of this type`;
     const reads = m.standard !== m.to ? ` It is read as ${m.standard === m.name ? 'nothing — its mapping leads in a circle' : m.standard}.` : '';
-    if (m.elements > 0) {
+    if (STRUCT_TYPES.includes(m.name)) {
+      // A standard type the document remaps: the server sets no such mapping, so the row offers only its removal.
+      select.disabled = true;
+      change.disabled = true;
+      note.textContent = `${m.name} is a standard type, and this mapping makes every ${m.name} tag read as ${m.standard === m.name ? m.to : m.standard} (${used.replace(' of this type', '')}). Remove it so that ${m.name} means ${m.name} — a tag cannot be given this type until then.`;
+      remove.onclick = () => sendRoleMapEdit(m.name, '', 'tagRoleRemove', `The mapping of ${m.name} is removed`);
+    } else if (m.elements > 0) {
       // Removing it would leave those tags with a type nothing explains.
       remove.disabled = true;
       note.textContent = `${used}, so its mapping cannot be removed — change their type first.${reads}`;

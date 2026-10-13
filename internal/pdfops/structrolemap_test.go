@@ -237,7 +237,7 @@ func TestARoleMapEditThatCannotBeAppliedIsRefused(t *testing.T) {
 	}{
 		{"no name", mapping("", "P"), "needs the name"},
 		{"a standard type as the name", mapping("H1", "H2"), "H1 is a standard structure type"},
-		{"a standard type removed", mapping("P", ""), "P is a standard structure type"},
+		{"a standard type's mapping removed where it has none", mapping("P", ""), "no mapping for P"},
 		{"a target that is not standard", mapping("Orphan Type", "Heading 1"), "is not a standard structure type"},
 		{"a target that is the name itself", mapping("Orphan Type", "Orphan Type"), "is not a standard structure type"},
 		{"removing a mapping two tags use", mapping("Heading 1", ""), "2 tag(s) are still of type Heading 1"},
@@ -419,5 +419,58 @@ func TestMappingACustomTypeClearsItsUA1Clause(t *testing.T) {
 	}
 	if !reflect.DeepEqual(re, got) {
 		t.Errorf("with sound mappings replaced, removed and added the document fails %v, and failed %v", sortedClauses(re), sortedClauses(got))
+	}
+}
+
+// TestAStandardTypeTheRoleMapRemapsIsNotChosenUntilItsMappingIsRemoved — `/pending 632` part 7. A producer's
+// role map that sends a STANDARD type elsewhere (`/P → /Span`, which ua1 7.1 t7 forbids) made a tag retyped to
+// P read as Span, with nothing saying so. A retype to, a create of and a region of such a type are refused with
+// the mapping and the remedy named; the remedy — removing that mapping — is the one role map edit that names a
+// standard type, and it is applied whether or not tags are of the type; setting one is still refused.
+func TestAStandardTypeTheRoleMapRemapsIsNotChosenUntilItsMappingIsRemoved(t *testing.T) {
+	src := bytes.Replace(roleFixture(true, false), []byte("/Unused /Note"), []byte("/P /Span     "), 1)
+	if got := byID(viewOf(t, src))[25].standard; got != "Span" {
+		t.Fatalf("setup: element 25, typed P, reads as %s — want Span, through the role map", got)
+	}
+	const says = "role map sends P to Span, so a tag of type P would be read as Span — remove the mapping of P"
+	for _, c := range []struct {
+		name string
+		ed   structEdit
+	}{
+		{"a retype", structEdit{kind: editRetype, elem: 20, value: "P"}},
+		{"a create", structEdit{kind: editCreate, value: "P", parent: 8, index: -1}},
+		{"a region", structEdit{kind: editRegion, value: "P", page: 1, rect: [4]float64{0, 0, 1, 1}}},
+	} {
+		_, err := applyStructEdits(src, []structEdit{c.ed})
+		if !errors.Is(err, ErrTagsReview) || !strings.Contains(err.Error(), says) {
+			t.Errorf("%s to a remapped standard type: err = %v, want ErrTagsReview saying %q", c.name, err, says)
+		}
+	}
+	// A standard type the map leaves alone is chosen as before.
+	if _, err := applyStructEdits(src, []structEdit{{kind: editRetype, elem: 20, value: "H2"}}); err != nil {
+		t.Errorf("a retype to a type the role map does not remap: %v", err)
+	}
+	// Setting a standard type's mapping is still refused; only its removal is an edit.
+	if _, err := applyStructEdits(src, []structEdit{mapping("P", "H1")}); !errors.Is(err, ErrTagsReview) || !strings.Contains(err.Error(), "P is a standard structure type") {
+		t.Errorf("mapping a standard type to another: err = %v, want the refusal", err)
+	}
+	// The remedy, with a tag of that type in the tree: the mapping goes and the tag reads as what it is.
+	out, err := applyStructEdits(src, []structEdit{mapping("P", "")})
+	if err != nil {
+		t.Fatalf("removing a standard type's mapping while a tag is of that type: %v", err)
+	}
+	if rm, _, _ := rawRoleMap(t, out); rm["P"] != "" {
+		t.Errorf("the written role map still maps P: %v", rm)
+	}
+	if got := byID(viewOf(t, out))[25].standard; got != "P" {
+		t.Errorf("after the removal element 25 reads as %s, want P", got)
+	}
+	// And in one batch with the retype it makes possible.
+	out, err = applyStructEdits(src, []structEdit{mapping("P", ""), {kind: editRetype, elem: 20, value: "P"}})
+	if err != nil {
+		t.Fatalf("the removal and the retype as one batch: %v", err)
+	}
+	if e := byID(viewOf(t, out))[20]; e.kind != "P" || e.standard != "P" {
+		t.Errorf("element 20 is %s read as %s, want P read as P", e.kind, e.standard)
 	}
 }

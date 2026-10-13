@@ -93,7 +93,9 @@ func tagWrite(args []string, mode string) int {
 			"promote takes nothing else: it gives every tag written inline (id 0 in \"nib tag tree\") a number of its\n" +
 			"own, so that it can be named — read the tree again for the ids. rolemap sets what one of the document's\n" +
 			"own type names means: \"role\" the name, \"value\" the standard type it is mapped to, or \"\" to remove a\n" +
-			"mapping no tag uses any more. A signed document is refused."
+			"mapping no tag uses any more — or a mapping a producer wrote from a STANDARD type, which is removed\n" +
+			"whatever uses it, and which a retype, create or region to that type is refused until it is.\n" +
+			"A signed document is refused."
 	}
 	if mode == "remove" {
 		usage = "nib tag remove IN -o OUT  |  nib tag remove -w IN"

@@ -62,8 +62,8 @@ func createElement(ctx *model.Context, tree *structTree, ed structEdit) error {
 	if ed.elem != 0 {
 		return fmt.Errorf("%w: a new element has no number until it is written, and this edit names element %d — leave the element out", ErrTagsReview, ed.elem)
 	}
-	if !standardStructTypes[ed.value] {
-		return fmt.Errorf("%w: %q is not a standard structure type", ErrTagsReview, ed.value)
+	if err := typeAsChosen(tree, ed.value); err != nil {
+		return err
 	}
 	holder := tree.root
 	var parent *types.IndirectRef

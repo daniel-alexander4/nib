@@ -898,3 +898,5 @@ home today.
   `POST /api/ceremony/sign-turn` is a hop with the dial taken out, offered as *Sign now* on the rail.
 - [ADR-136](136-an-associated-file-only-af-reaches-is-refused-at-the-write-door.md) — **an associated file only /AF reaches is refused at the write door**
   — pdfcpu's writer carries the `/AF` key and not the file; `pdfread.Write` refuses such a document (422 `associated-file`) instead of deleting the file on every save.
+- [ADR-137](137-a-standard-types-mapping-can-be-removed-and-a-type-picked-is-the-type-read.md) — **a standard type's mapping can be removed and never set, and a type picked for a tag is the type read**
+  — amends ADR-127: `rolemap` may remove a mapping whose name is a standard type; retype, create and region refuse a standard type the role map sends elsewhere.

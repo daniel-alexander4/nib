@@ -221,6 +221,24 @@ test('a refusal keeps what was typed, shows the server\'s sentence, and leaves n
   assert.notEqual(doc.activeElement, $('tagRoleNewName'), 'a later read of the tree moved focus for an edit that was refused');
 });
 
+test('a standard type the document remaps can only have its mapping removed, even while tags are of that type', async () => {
+  // /pending 632: P means Span in this document, so a tag retyped to P would read as Span. The server refuses
+  // that retype and names this row's Remove as the remedy, so the row must offer it — and nothing else.
+  tree = { ...baseTree(), roleMap: [...baseTree().roleMap, { name: 'P', to: 'Span', standard: 'Span', elements: 2 }] };
+  await reopenPanel();
+  const li = row('P');
+  assert.ok(li, 'the remapped standard type has no row');
+  assert.equal(li.querySelector('.tagRoleRemove').disabled, false, 'Remove is disabled because tags are of the type — the one remedy is out of reach');
+  assert.equal(li.querySelector('.tagRoleChange').disabled, true, 'Change is offered for a mapping the server will not set');
+  assert.equal(li.querySelector('select').disabled, true, 'the picker is live for a mapping the server will not set');
+  assert.match(li.querySelector('p').textContent, /P is a standard type, and this mapping makes every P tag read as Span \(2 tags are\)\. Remove it/, 'the row does not say what the mapping does and what to do');
+  assert.equal(row('Heading 1').querySelector('.tagRoleRemove').disabled, true, 'a custom type two tags use can now be removed');
+  edits.length = 0;
+  tree = { ...baseTree() };
+  await act(li.querySelector('.tagRoleRemove'));
+  assert.deepEqual(edits, [{ edits: [{ kind: 'rolemap', role: 'P', value: '' }] }], 'Remove did not send the rolemap edit with an empty value');
+});
+
 test('a document with no mappings is still offered the section, and an untagged one is not', async () => {
   tree = { tagged: true, unaddressable: 0, elements: baseTree().elements, roleMap: [] };
   await reopenPanel();
