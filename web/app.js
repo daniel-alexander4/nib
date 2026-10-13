@@ -5547,13 +5547,29 @@ const SIGNATURE_FAILS_WORD = '⚠ Does not verify';
 // returned-document sheet alike (P03.S02, ADR-009): two renderers of one signer would let the sheet say a word the
 // panel withholds. A caller appends what only it knows (the sheet: whose it is, and where it falls against yours).
 // A failing signature's word is SIGNATURE_FAILS_WORD on both surfaces (/pending 813).
-function signerRow(s) {
+//
+// **Who, in a pinned order (ADR-147, /pending 831): what Nib KNOWS comes first.** The name the user gave a
+// pinned peer; then what the certificate says its holder is called, labelled as the certificate's; then the
+// fingerprint's words. The first one there is leads the row and the rest follow it in that order. `/Name` is
+// text the signer typed (ADR-051): it never leads, and is shown last as what they call themselves. `named` is
+// the server's `signerNamed` entry for this signer; without it the row has only what the signature carries.
+function signerRow(s, named) {
   const row = document.createElement('div');
   row.className = 'sigrow';
-  const who = document.createElement('div');
-  who.className = 'sigrow-who';
-  who.textContent = s.name || 'Unnamed signer';
-  row.appendChild(who);
+  const pinned = (named && named.pinned) || '';
+  const words = (named && named.words) || '';
+  const lines = [];
+  if (pinned) lines.push(pinned);
+  if (s.subject) lines.push(`Certificate says: ${s.subject}`);
+  if (words) lines.push(pinned || s.subject ? `Fingerprint: ${words}` : words);
+  if (!lines.length) lines.push('Nib could not tell who signed');
+  if (s.name) lines.push(`Calls themselves: ${s.name}`);
+  lines.forEach((text, i) => {
+    const line = document.createElement('div');
+    line.className = i ? 'sigrow-id' : 'sigrow-who';
+    line.textContent = text;
+    row.appendChild(line);
+  });
 
   const status = document.createElement('div');
   status.className = s.valid ? 'sigrow-ok' : 'sigrow-bad';
@@ -5586,8 +5602,10 @@ async function openSigDetails() {
   if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length && !unchecked) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
-  const rows = signers.map((s) => {
-    const row = signerRow(s);
+  // Whose each is, from the answer these signers came with — the same order (`signerNamed`).
+  const named = (view.docMeta && view.docMeta.signerNamed) || [];
+  const rows = signers.map((s, i) => {
+    const row = signerRow(s, named.length === signers.length ? named[i] : null);
     body.appendChild(row);
     return row;
   });
@@ -18559,7 +18577,7 @@ async function checkReturned(state) {
   }
   if (!whose) {
     say('Unlock Nib to check which of these signatures is yours.', 'rvverdict');
-    renderReturnedSigners(signers, null, 0);
+    renderReturnedSigners(signers, null, 0, meta.signerNamed);
     return;
   }
   const mine = [...new Set(signers.filter((x, i) => whose[i] === 'you' && x.fingerprint)
@@ -18573,7 +18591,7 @@ async function checkReturned(state) {
         + 'so it cannot say whether one of them is yours.'
       : 'None of this document\'s signatures, as it stands, is yours: none was made with this machine\'s identity or '
         + 'with the signing certificate you imported.', 'rvverdict');
-    renderReturnedSigners(signers, whose, 0);
+    renderReturnedSigners(signers, whose, 0, meta.signerNamed);
     return;
   }
   say('Looking for the version you signed…', 'rvchecking');
@@ -18607,7 +18625,7 @@ async function checkReturned(state) {
     sayRefused(refusals[0], say);
     if (refusals.length > 1) say('Nib could not recover a version for your other certificate either.');
   }
-  renderReturnedSigners(signers, whose, best ? best.facts.end : 0);
+  renderReturnedSigners(signers, whose, best ? best.facts.end : 0, meta.signerNamed);
 }
 
 // sayFound words a recovered version and every fact the route sent about it (the ten `X-Nib-Revision` fields). `size`
@@ -18670,13 +18688,13 @@ function sayRefused(r, say) {
 
 // renderReturnedSigners lists every signature ordered by how far it reaches, each with whose it is to this machine and
 // where it falls against yours (D9). A position is unknown when Nib could not tie the signature to its record.
-function renderReturnedSigners(signers, whose, myEnd) {
+function renderReturnedSigners(signers, whose, myEnd, named) {
   const list = els.returnedSigners;
   list.textContent = '';
   const order = signers.map((x, i) => i).sort((a, b) => (signers[a].coverageEnd || Infinity) - (signers[b].coverageEnd || Infinity));
   for (const i of order) {
     const x = signers[i];
-    const row = signerRow(x);
+    const row = signerRow(x, named && named[i]);
     row.setAttribute('role', 'listitem');
     const kin = document.createElement('div');
     kin.className = 'sigrow-kin';
