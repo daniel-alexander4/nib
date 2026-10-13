@@ -294,7 +294,7 @@ func printSummary(out io.Writer, st discovery.Stats, listen time.Duration) {
 // confident-wrong-diagnosis failure the `--seconds` guard above exists to prevent.
 // printVerdict prints the CLI's own prose for a verdict, and the CLASSIFICATION is not its own.
 //
-// **The switch that decided which of the four states obtained used to live here**, which made a
+// **The switch that decided which of the states obtained used to live here**, which made a
 // terminal the only place the answer existed — see `discovery.Verdict`. It now routes through
 // `Stats.Verdict()` (ADR-009: one door, and this is a caller of it), and what stays here is the
 // wording for somebody who typed the command and can act on a port number. The panel shows
@@ -315,6 +315,14 @@ func printVerdict(out io.Writer, st discovery.Stats) int {
 		fmt.Fprintln(out, "VERDICT: sending and receiving both work — we heard ourselves — but no\n"+
 			"         other Nib announced. Either nobody has armed a session on this\n"+
 			"         network, or they are on a different one.")
+		return 0
+	case discovery.VerdictOtherVersion:
+		// Exit 0, as "nobody else" is: nothing on this machine or this network is at fault, and
+		// which of the two is the older build is not something the counters can say.
+		fmt.Fprintf(out, "VERDICT: sending and receiving both work — we heard ourselves — and another\n"+
+			"         Nib is on this network, but it is a different version from this one\n"+
+			"         (%d announcement(s) this build cannot read). The two cannot find each\n"+
+			"         other here. Update the older one so both run the same version.\n", st.OtherVersion)
 		return 0
 	default:
 		fmt.Fprintf(out, "VERDICT: working. %d peer announcement(s) received.\n", st.Peers)

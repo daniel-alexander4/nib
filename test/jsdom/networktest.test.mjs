@@ -122,3 +122,32 @@ test('a test that could not run at all says why, and does not claim a clean netw
     'machine with no network reads identically to one whose peers are simply absent.');
   assert.ok(out.classList.contains('nettest-bad'), 'a machine that can send nothing is not a warning');
 });
+
+// /pending 877. With only a Nib of another announcement version on the link the test used to say
+// "no other Nib is announcing here" — to both machines the link read as empty. The server now has a
+// fifth verdict for it; here: its sentence is shown, the count it was drawn from is shown beside the
+// other three, and it is still a warning.
+test('a Nib of another version is named, with the count it was drawn from', async () => {
+  answer = {
+    verdict: 'other-version',
+    summary: "This machine's network is working, and another Nib is on it — but that Nib is a " +
+      'different version from this one, so the two cannot find each other here. Update the older ' +
+      'one so both run the same version.',
+    sent: 6, own: 6, peers: 0, otherVersion: 4, interfaces: 1, windowMs: 3000,
+  };
+  const out = await runTest();
+  const text = out.textContent;
+  assert.ok(text.includes('different version from this one'), "the server's sentence is not rendered");
+  assert.match(text, /heard others 0, heard a Nib of another version 4 times, on 1 network connection\b/,
+    'the count of other-version announcements is not shown, so the sentence above it has no ' +
+    'evidence a user could quote');
+  assert.ok(out.classList.contains('nettest-bad'),
+    'two Nibs that cannot find each other is styled as success');
+
+  // And the count is said only when it happened.
+  answer = { verdict: 'working', summary: 'Working: another Nib was heard on this network.',
+    sent: 6, own: 6, peers: 3, otherVersion: 0, interfaces: 1, windowMs: 3000 };
+  const quiet = await runTest();
+  assert.equal(quiet.textContent.includes('another version'), false,
+    'a link with no Nib of another version mentions one');
+});

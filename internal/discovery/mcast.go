@@ -539,6 +539,12 @@ const (
 	VerdictNotHeardBack
 	// VerdictNobodyElse — sending and receiving both work and no other Nib announced.
 	VerdictNobodyElse
+	// VerdictOtherVersion — sending and receiving both work, no Nib this build can read announced,
+	// and one of ANOTHER announcement version did (`Stats.OtherVersion`, ADR-151). It is the one
+	// "found nothing" whose remedy is not on the network: to both machines the link otherwise
+	// reads as empty, and "nobody else has armed, or they are on a different network" is false
+	// of it on both counts.
+	VerdictOtherVersion
 )
 
 // Verdict classifies the counters. See the type's doc for the precondition.
@@ -548,6 +554,10 @@ func (s Stats) Verdict() Verdict {
 		return VerdictNothingSent
 	case s.Own == 0:
 		return VerdictNotHeardBack
+	case s.Peers == 0 && s.OtherVersion > 0:
+		// Only when nothing readable was heard: with a peer heard too, discovery is working and
+		// the other build is `nib discover`'s summary line, not the answer.
+		return VerdictOtherVersion
 	case s.Peers == 0:
 		return VerdictNobodyElse
 	default:
@@ -573,6 +583,10 @@ func (v Verdict) Summary() string {
 		return "This machine's network is working — Nib heard itself — and no other Nib is " +
 			"announcing here. Either nobody else has armed a session yet, or they are on a " +
 			"different network."
+	case VerdictOtherVersion:
+		return "This machine's network is working, and another Nib is on it — but that Nib is a " +
+			"different version from this one, so the two cannot find each other here. Update " +
+			"the older one so both run the same version."
 	default:
 		return "Working: another Nib was heard on this network."
 	}
@@ -587,6 +601,8 @@ func (v Verdict) Name() string {
 		return "not-heard-back"
 	case VerdictNobodyElse:
 		return "nobody-else"
+	case VerdictOtherVersion:
+		return "other-version"
 	default:
 		return "working"
 	}

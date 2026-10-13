@@ -10,6 +10,6 @@
  		return VerdictNotHeardBack
 +	case s.Sent == 0:
 +		return VerdictNothingSent
- 	case s.Peers == 0:
- 		return VerdictNobodyElse
- 	default:
+ 	case s.Peers == 0 && s.OtherVersion > 0:
+ 		// Only when nothing readable was heard: with a peer heard too, discovery is working and
+ 		// the other build is `nib discover`'s summary line, not the answer.

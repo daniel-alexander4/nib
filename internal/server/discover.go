@@ -493,7 +493,8 @@ const networkTestWindow = 3 * time.Second
 // nil`), and the status path publishes nothing for an undiagnosed cause — so the armed screen has
 // no sentence at all for exactly this failure.
 type networkTestResponse struct {
-	// Verdict is the machine tag — "working", "nobody-else", "not-heard-back", "nothing-sent".
+	// Verdict is the machine tag — "working", "nobody-else", "other-version", "not-heard-back",
+	// "nothing-sent".
 	Verdict string `json:"verdict"`
 	// Summary is the sentence for a person, from the one door that decides it.
 	Summary string `json:"summary"`
@@ -503,6 +504,10 @@ type networkTestResponse struct {
 	Sent  uint64 `json:"sent"`
 	Own   uint64 `json:"own"`
 	Peers uint64 `json:"peers"`
+	// OtherVersion is announcements from a Nib of another announcement version (ADR-151) — the
+	// fourth counter the verdict reads, published for the reason the three above are: with no
+	// peer heard it is what separates "another Nib is here and cannot be read" from "nobody".
+	OtherVersion uint64 `json:"otherVersion"`
 	// Interfaces is how many network connections accepted the join. Zero is its own failure and
 	// it is the one that arrives without any counters at all.
 	Interfaces int `json:"interfaces"`
@@ -596,11 +601,18 @@ func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
 	// Through the one listen loop, which pauses on a failing socket rather than spinning a core
 	// (/pending 710 R4-7).
 	sock.ReadWindow(deadline, nil)
-	st := sock.Stats()
+	out.read(sock.Stats())
+	writeJSON(w, out)
+}
+
+// read fills the answer from the socket's counters: the verdict, its sentence, and EVERY counter
+// the verdict was drawn from. One place, so a counter `Stats.Verdict()` starts reading is published
+// here or `TestTheNetworkTestPublishesEveryCounterItsVerdictRead` fails — an answer whose own
+// evidence classifies as something else cannot be checked, only trusted.
+func (out *networkTestResponse) read(st discovery.Stats) {
 	v := st.Verdict()
 	out.Verdict, out.Summary = v.Name(), v.Summary()
-	out.Sent, out.Own, out.Peers = st.Sent, st.Own, st.Peers
-	writeJSON(w, out)
+	out.Sent, out.Own, out.Peers, out.OtherVersion = st.Sent, st.Own, st.Peers, st.OtherVersion
 }
 
 // hopMismatchLogEvery is the least time between two "ignoring … at hop" lines.

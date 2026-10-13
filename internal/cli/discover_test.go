@@ -47,6 +47,14 @@ func TestEachVerdictIsReachedByItsOwnCounters(t *testing.T) {
 			says: "we heard ourselves",
 		},
 		{
+			// /pending 877: the link is not empty — a Nib of another announcement version is on
+			// it. It used to fall to "nobody else", whose two suggested causes are both false.
+			name: "heard ourselves, and only a Nib of another version",
+			st:   discovery.Stats{Interfaces: 2, Sent: 20, Own: 20, OtherVersion: 4},
+			code: 0,
+			says: "different version",
+		},
+		{
 			name: "peers heard",
 			st:   discovery.Stats{Interfaces: 2, Sent: 20, Own: 20, Peers: 3},
 			code: 0,
@@ -83,6 +91,7 @@ func TestTheFourVerdictsAreFourDifferentMessages(t *testing.T) {
 		{Interfaces: 2, Sent: 20},
 		{Interfaces: 2, Sent: 20, Own: 20},
 		{Interfaces: 2, Sent: 20, Own: 20, Peers: 3},
+		{Interfaces: 2, Sent: 20, Own: 20, OtherVersion: 4},
 	}
 	seen := map[string][]int{}
 	for i, st := range states {
