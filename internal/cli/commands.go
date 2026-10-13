@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"nib/mdpdf"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"golang.org/x/term"
 
 	"nib/internal/ots"
+	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/uacheck"
@@ -1264,8 +1267,10 @@ func pdfPassword(passFile string) (string, error) {
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("nib verify", flag.ContinueOnError)
 	var asJSON bool
+	var expected signerFlag
 	fs.BoolVar(&asJSON, "json", false, "emit one JSON object per file instead of a text report")
-	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, carries a signature Nib refused, or belongs to a ceremony some\nobliged party has not signed, whose signatures do not all commit to it, or\nthat carries a signature from someone off its roster.")
+	fs.Var(&expected, "signer", "the `FINGERPRINT` of a key you expect to have signed, as this command prints it; repeatable, or comma-separated. With it, exit 2 unless every signature is from one of these keys and each of them signed")
+	fs.Usage = usageFunc(fs, "nib verify [--json] [--signer FINGERPRINT]... FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, carries a signature Nib refused, or belongs to a ceremony some\nobliged party has not signed, whose signatures do not all commit to it, or\nthat carries a signature from someone off its roster. With --signer, also if\nany signature is from a key not named, or a named key has not signed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1283,17 +1288,22 @@ func cmdVerify(args []string) int {
 		}
 		st := sign.Verify(data)
 		cer := ceremonyReportOf(data, st, time.Now())
+		exp := signersAgainst(st, expected)
 		if asJSON {
 			b, _ := json.Marshal(struct {
 				File string `json:"file"`
 				sign.Status
-				Ceremony *ceremonyReportJSON `json:"ceremony,omitempty"`
-			}{p, st, cer.json()})
+				Ceremony        *ceremonyReportJSON `json:"ceremony,omitempty"`
+				ExpectedSigners *expectedSigners    `json:"expectedSigners,omitempty"`
+			}{p, st, cer.json(), exp})
 			fmt.Println(string(b))
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
 			for _, line := range signerLines(st) {
 				fmt.Printf("  %s\n", termText(line))
+			}
+			if exp != nil {
+				fmt.Printf("  %s\n", termText(exp.line()))
 			}
 			// Every row below can carry the document's own text (a party's label, a signer's
 			// name), so each goes through `termText` (/pending 727).
@@ -1327,7 +1337,9 @@ func cmdVerify(args []string) int {
 		// A refused record is not a signer, so a copy placed BEFORE a later, covering signer (the
 		// /pending 736 shape) leaves `AddedAfter` false and `State` valid — and a document carrying
 		// a signature-shaped object nib would not take is not one a script should wave through.
-		if st.State != sign.Valid || st.AddedAfter || len(st.Refused) > 0 || cer.refuses() {
+		// **And a signer nobody expected, or an expected one missing, when the caller named who to expect**
+		// (`--signer`, /pending 626). Without the option exp is nil and nothing here changes.
+		if st.State != sign.Valid || st.AddedAfter || len(st.Refused) > 0 || cer.refuses() || !exp.asExpected() {
 			// AddedAfter too, and it is the case that mattered.
 			//
 			// `sign.Verify` reports State=Valid with AddedAfter=true for a document
@@ -1418,6 +1430,74 @@ func signerLines(st sign.Status) []string {
 		out = append(out, "a valid signature shows its key signed those bytes, not whose key it is — compare each key with one you were given")
 	}
 	return out
+}
+
+// signerFlag is `nib verify --signer`: the fingerprints of the keys the caller expects to have signed, one per
+// use or comma-separated. A value that is not a fingerprint as `nib verify` prints one — 64 hex digits, the
+// SHA-256 of the signing certificate's public key (ADR-051) — is refused when the flag is read, so a mistyped
+// key is a usage error and never a quiet "that key did not sign".
+type signerFlag []string
+
+func (sf *signerFlag) String() string { return "" }
+
+func (sf *signerFlag) Set(v string) error {
+	for _, fp := range strings.Split(v, ",") {
+		fp = strings.TrimSpace(fp)
+		if b, err := hex.DecodeString(fp); err != nil || len(b) != sha256.Size {
+			return fmt.Errorf("%q is not a key fingerprint: want the 64 hex digits nib verify prints after \"key\"", fp)
+		}
+		*sf = append(*sf, fp)
+	}
+	return nil
+}
+
+// expectedSigners is `nib verify --signer`'s verdict on one file (/pending 626): the CLI has no vault, so it can
+// say whose key signed only against keys the caller names. Unexpected holds the fingerprint of each signature
+// that is from none of them — "" where Nib could not establish which key signed, which matches nobody (ADR-051) —
+// and Missing each named key with no valid signature.
+type expectedSigners struct {
+	AsExpected bool     `json:"asExpected"`
+	Unexpected []string `json:"unexpected"`
+	Missing    []string `json:"missing"`
+}
+
+// signersAgainst compares st's signers with the expected keys through `p2p.SameParty`, the one door for "is this
+// signer that party". nil when no key was named. An expected key is discharged only by a signature that verified.
+func signersAgainst(st sign.Status, expected []string) *expectedSigners {
+	if len(expected) == 0 {
+		return nil
+	}
+	e := &expectedSigners{Unexpected: []string{}, Missing: []string{}}
+	for _, sg := range st.Signers {
+		if !slices.ContainsFunc(expected, func(fp string) bool { return p2p.SameParty(sg.Fingerprint, fp) }) {
+			e.Unexpected = append(e.Unexpected, sg.Fingerprint)
+		}
+	}
+	for _, fp := range expected {
+		if !slices.ContainsFunc(st.Signers, func(sg sign.SignerInfo) bool { return sg.Valid && p2p.SameParty(sg.Fingerprint, fp) }) {
+			e.Missing = append(e.Missing, fp)
+		}
+	}
+	e.AsExpected = len(e.Unexpected) == 0 && len(e.Missing) == 0
+	return e
+}
+
+// asExpected is true where no key was named (a nil receiver) or the signers are exactly the named keys.
+func (e *expectedSigners) asExpected() bool { return e == nil || e.AsExpected }
+
+// line is the one text line of the verdict.
+func (e *expectedSigners) line() string {
+	if e.AsExpected {
+		return "signers: every signature is from a key you named, and each key you named signed"
+	}
+	var parts []string
+	if n := len(e.Unexpected); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d signature(s) from a key you did not name", n))
+	}
+	if n := len(e.Missing); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d key(s) you named did not sign (%s)", n, strings.Join(e.Missing, ", ")))
+	}
+	return "NOT THE EXPECTED SIGNERS: " + strings.Join(parts, "; ")
 }
 
 // uncheckedWords is the CLI's sentence for each `sign.UncheckedCause` (/pending 741); `web/app.js`'s

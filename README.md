@@ -1562,7 +1562,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file, skipping any file that already has one. |
 | `nib timestamp --force FILE…` | Re-stamp even where a proof exists, discarding it. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
-| `nib verify [--json] FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, carries a signature Nib refused, **or belongs to a ceremony an obliged party has not signed, whose signatures do not all commit to it, or that carries a signature from someone off its roster** — a signature written by a newer Nib excuses only its own unread attestation, never another signature and never the roster check. |
+| `nib verify [--json] [--signer FINGERPRINT]… FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, carries a signature Nib refused, **or belongs to a ceremony an obliged party has not signed, whose signatures do not all commit to it, or that carries a signature from someone off its roster** — a signature written by a newer Nib excuses only its own unread attestation, never another signature and never the roster check. A valid signature shows that its key signed, not whose key it is: **`--signer`** (repeatable, or comma-separated) names the key fingerprints you expect, as `nib verify` prints them, and the exit is then also `2` — with one line saying so, and `expectedSigners` in the JSON — when any signature is from a key you did not name or a key you named has not signed. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
@@ -1640,6 +1640,7 @@ verdict on something that does not exist.
 
 ```sh
 nib verify contract.pdf && echo "signature intact"
+nib verify --signer "$MY_KEY" --signer "$THEIR_KEY" contract.pdf && echo "signed by the two of us and nobody else"
 for f in *.pdf; do nib timestamp "$f"; done   # re-runnable: already-stamped files are skipped
 nib sanitize -w *.pdf          # scrub a whole folder in place
 nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
