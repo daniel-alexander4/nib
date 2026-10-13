@@ -884,3 +884,7 @@ home today.
   — extends ADR-098: `fontinkcs.go` runs Type 2 and Type 1 charstrings for each glyph's vertical extent, a second
   reading beside the checker's; a font is vouched for whole or gives no ink. A box reaching the line above
   399 → 132 of 6,490 words, ink outside a box 0.
+- [ADR-133](133-a-launch-ends-the-session-only-after-a-grace-older-than-a-reconnect.md) — **a launch ends the
+  previous session only after a grace older than two reconnects**
+  — amends ADR-085 decision 1: a grace also runs for a stream reconnect or a reload, and a launch landing in it
+  closed every document under a window still on screen.
