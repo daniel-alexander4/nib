@@ -132,6 +132,28 @@ const (
 	sseRetry      = 1 * time.Second
 )
 
+// launchGapBound is how young a grace must be for a launch that cancels it to be read as a launch
+// into a RUNNING Nib rather than one after Nib was closed (/pending 847; amends ADR-085 decision 1).
+//
+// **A grace also runs while a window is only away**: for one stream reconnect (`sseRetry`, the
+// floor of that gap) and for a page reload (measured 95-312 ms over 20 reloads). A launch takes
+// 17-34 ms, so it fits in either, and ending the session there closed every document, unsaved edits
+// included, under a window still on screen. A grace younger than this keeps its documents; the
+// launch is ADR-086's, into a Nib whose window is about to return.
+//
+// **A named multiple of the reconnect and not a bare duration**, on `idleExitGrace`'s footing: the
+// gap is at least one `sseRetry`, so the bound must exceed one, and two leaves a whole reconnect of
+// margin. The declared residue: closing Nib and starting it again inside the bound keeps the
+// documents — extra tabs, never lost edits. A variable only so a test can set it.
+var launchGapBound = launchGapReconnects * sseRetry
+
+// launchGapReconnects is `launchGapBound` in stream reconnects.
+const launchGapReconnects = 2
+
+// launchInGapMsg is the line a launch that landed inside a young grace leaves — the only trace on a
+// user's machine of which way the boundary was read.
+const launchInGapMsg = "launch inside a young idle-exit grace; the open documents are kept:"
+
 // These are the strings a tier-3 test greps, on `windowConnectedMsg`'s footing.
 //
 // The cancel line carries the ELAPSED time (T06) because the first acceptance clause asks for the
@@ -360,11 +382,13 @@ func (s *Server) windowArrived() (n int64, heardFrom uint64) {
 // the same hold that records that decision, so no hand-off can slip between the two (/pending 727).
 // A hand-off it refuses is answered with an error, and the launch then serves the document itself.
 //
-// **It also reports whether a grace WAS running, and that is the session boundary (ADR-085).** A
-// grace runs only after this process's last window went, so a launch that cancels one is a user
-// starting Nib after closing it — not a reload, which comes back as a window and never passes
-// through here. Read under the hold that cancels, so the answer is the cancel's own and not a
-// second look at a timer a window could have stopped in between.
+// **It also reports whether a grace OLDER than `launchGapBound` was running, and that is the session
+// boundary (ADR-085, amended by /pending 847).** A grace that old runs only after this process's
+// last window went and stayed gone, so a launch that cancels one is a user starting Nib after
+// closing it. A younger one may be a window that is only away — a reload or one stream reconnect —
+// and a launch landing there cancels the grace all the same and ends nothing. Read under the hold
+// that cancels, so the answer is the cancel's own and not a second look at a timer a window could
+// have stopped in between.
 func (s *Server) keepAliveForHandoff() (alive, afterLastWindow bool) {
 	s.idle.mu.Lock()
 	if s.idle.exited {
@@ -372,8 +396,16 @@ func (s *Server) keepAliveForHandoff() (alive, afterLastWindow bool) {
 		return false, false
 	}
 	t, at := s.stopIdleExitLocked(idleExitCauseHandoff)
+	age := time.Since(at)
 	s.idle.mu.Unlock()
-	return true, logIdleCancel(t, at, idleExitCauseHandoff)
+	if !logIdleCancel(t, at, idleExitCauseHandoff) {
+		return true, false
+	}
+	if age < launchGapBound {
+		log.Printf("%s grace %s old, bound %s", launchInGapMsg, age.Round(time.Millisecond), launchGapBound)
+		return true, false
+	}
+	return true, true
 }
 
 // cancelIdleExit stops a running grace and counts WHY. Returns whether there was one to stop, so an

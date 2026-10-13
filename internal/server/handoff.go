@@ -98,6 +98,9 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusServiceUnavailable, "this Nib is exiting")
 		return
 	}
+	// "After the last window" means the grace had run longer than `launchGapBound`: a younger one
+	// may be a window that is only reloading or reconnecting, and its documents stay (/pending 847).
+	//
 	// **A launch after the last window closed starts fresh (ADR-085).** Ten seconds later this
 	// process would have exited and the launch would have found nothing open; arriving inside the
 	// grace must not be the one case where closing Nib does not close its documents. Before the

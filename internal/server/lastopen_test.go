@@ -11,8 +11,24 @@ import (
 )
 
 // graceAfterAWindow drives the real route to the state a closed Nib is in: one window came and
-// went, and the grace is counting down.
+// went, and the grace has been counting down for longer than a window is ever merely away
+// (`launchGapBound`, /pending 847). The grace is aged, not waited for.
 func graceAfterAWindow(t *testing.T, tsURL string, s *Server) {
+	t.Helper()
+	youngGraceAfterAWindow(t, tsURL, s)
+	ageGrace(s, launchGapBound)
+}
+
+// ageGrace moves the running grace's start back by d, under the lock that owns it.
+func ageGrace(s *Server, d time.Duration) {
+	s.idle.mu.Lock()
+	s.idle.armedAt = s.idle.armedAt.Add(-d)
+	s.idle.mu.Unlock()
+}
+
+// youngGraceAfterAWindow is the state a reload or a stream reconnect passes through: the window
+// went a moment ago and the grace has only just been armed.
+func youngGraceAfterAWindow(t *testing.T, tsURL string, s *Server) {
 	t.Helper()
 	closeIt := openWindow(t, tsURL)
 	waitForWindows(t, s, 1)
@@ -66,6 +82,61 @@ func TestALaunchAfterTheLastWindowClosedStartsFresh(t *testing.T) {
 	}
 	if _, byHandoff := s.IdleExitCancels(); byHandoff != 1 {
 		t.Errorf("hand-off cancels = %d, want 1: the launch must still keep the process alive", byHandoff)
+	}
+}
+
+// TestALaunchInsideAReconnectGapKeepsTheDocuments — /pending 847. A grace also runs while a window
+// is only away (a reload, one stream reconnect), and a launch fits inside that gap: it must keep the
+// process alive and close nothing, because the window is still on screen with its edits.
+func TestALaunchInsideAReconnectGapKeepsTheDocuments(t *testing.T) {
+	ts, s := startServerWith(t)
+	s.SetHandoffSecret("secret")
+	s.ArmIdleExit(true)
+	c, _ := authedClient(t, ts)
+	a, fresh := pdfOnDisk(t), pdfOnDisk(t)
+	if code, out := handoffTo(t, ts, c, "secret", a); code != http.StatusOK || out.Result != "opened" {
+		t.Fatalf("setup: %d/%q", code, out.Result)
+	}
+	// An hour, so the test's own pace can never carry the grace past the bound.
+	defer func(d time.Duration) { launchGapBound = d }(launchGapBound)
+	launchGapBound = time.Hour
+
+	youngGraceAfterAWindow(t, ts.URL, s)
+	if code, out := handoffTo(t, ts, c, "secret", fresh); code != http.StatusOK || out.Result != "opened" {
+		t.Fatalf("the launch = %d/%q, want 200/opened", code, out.Result)
+	}
+	if got := openPaths(s); !slices.Equal(got, []string{a, fresh}) {
+		t.Errorf("a launch inside a young grace left open = %v, want %v — a launch that landed in a "+
+			"reload or reconnect gap closed the documents of a window still on screen", got, []string{a, fresh})
+	}
+	if _, byHandoff := s.IdleExitCancels(); byHandoff != 1 {
+		t.Errorf("hand-off cancels = %d, want 1: a launch in the gap must still keep the process alive", byHandoff)
+	}
+	if s.idleGraceRunning() {
+		t.Error("the grace is still running after the launch; the process would exit under it")
+	}
+
+	// The same grace one bound older is a closed Nib, and the launch ends the session (ADR-085).
+	youngGraceAfterAWindow(t, ts.URL, s)
+	ageGrace(s, launchGapBound)
+	if code, out := handoffTo(t, ts, c, "secret", ""); code != http.StatusOK || out.Result != "window" {
+		t.Fatalf("the later launch = %d/%q, want 200/window", code, out.Result)
+	}
+	if got := openPaths(s); len(got) != 0 {
+		t.Errorf("a launch into a grace one bound old left %v open, want nothing — the bound is "+
+			"where a closed Nib begins", got)
+	}
+}
+
+// TestTheLaunchGapBoundExceedsOneReconnect — the gap a window leaves is at least one `sseRetry`, so
+// a bound at or under it would not cover the blip it exists for; and it must leave the grace room.
+func TestTheLaunchGapBoundExceedsOneReconnect(t *testing.T) {
+	if launchGapBound <= sseRetry {
+		t.Errorf("launchGapBound = %s, want more than one reconnect (%s): a launch landing in a stream "+
+			"blip would still end the session", launchGapBound, sseRetry)
+	}
+	if launchGapBound >= idleExitGrace {
+		t.Errorf("launchGapBound = %s reaches the grace (%s): no launch could ever end a session", launchGapBound, idleExitGrace)
 	}
 }
 
