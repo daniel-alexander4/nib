@@ -8,6 +8,7 @@ import (
 
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 )
 
@@ -44,6 +45,14 @@ var ErrNoRecord = errors.New("document carries no ceremony record")
 // would embed a third.
 var ErrTwoRecords = errors.New("document carries two ceremony records, so which ceremony it " +
 	"belongs to has no answer")
+
+// ErrRecordUnreadable is Extract's answer for a document whose list of embedded files this build could not
+// read in full (ADR-164, `/pending 880`). The record is an embedded file, so whether the document carries one is
+// NOT KNOWN — and it is deliberately not ErrNoRecord, which every gate treats as "an ordinary PDF": a signed
+// ceremony document whose record sat in a part of the list pdfcpu's validator dropped was read as an ordinary
+// PDF, silently.
+var ErrRecordUnreadable = errors.New("the document's embedded files could not be read in full, so whether it " +
+	"carries a ceremony record is not known")
 
 // ErrDigestVersion reports a record whose DocHash was computed under a different
 // content-digest rule than this build uses.
@@ -193,6 +202,9 @@ func Extract(pdf []byte) (Record, error) {
 	b, err := pdfops.CeremonyRecord(pdf)
 	if errors.Is(err, pdfops.ErrTwoCeremonyRecords) {
 		return Record{}, ErrTwoRecords
+	}
+	if errors.Is(err, pdfread.ErrNameTreeUnread) {
+		return Record{}, fmt.Errorf("%w: %w", ErrRecordUnreadable, err)
 	}
 	if err != nil || len(b) == 0 {
 		return Record{}, ErrNoRecord

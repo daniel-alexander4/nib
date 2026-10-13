@@ -50,6 +50,9 @@ import (
 //
 // **It refuses a document whose pages are a placeholder for a dynamic XFA form, and writes no other with an XFA
 // packet or `/NeedsRendering`** (`ErrDynamicXFA`, `dropXFA`, `xfa.go`, ADR-145).
+//
+// **It refuses a document read with a catalog name tree nib could not read whole, and nests no name tree deeper
+// than pdfcpu's own validator reads** (`ErrNameTreeLost`, `shapeNameTrees`, `nametree.go`, ADR-164).
 func Write(ctx *model.Context) ([]byte, error) {
 	if err := refuseAssociatedFileLoss(ctx); err != nil {
 		return nil, err
@@ -57,8 +60,12 @@ func Write(ctx *model.Context) ([]byte, error) {
 	if err := RefuseDynamicXFA(ctx); err != nil {
 		return nil, err
 	}
+	if err := RefuseNameTreeLoss(ctx); err != nil {
+		return nil, err
+	}
 	dropXFA(ctx)
 	PutBackValidatorLosses(ctx)
+	shapeNameTrees(ctx)
 	var out bytes.Buffer
 	if err := api.WriteContext(ctx, &out); err != nil {
 		return nil, err

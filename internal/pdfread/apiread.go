@@ -208,6 +208,9 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 		if err := RefuseDynamicXFA(src); err != nil { // the mark does not follow its pages into dest (`xfa.go`)
 			return nil, err
 		}
+		if err := RefuseNameTreeLoss(src); err != nil { // nor does this one, and the merge carries its trees (`nametree.go`)
+			return nil, err
+		}
 		PutBackValidatorLosses(src) // before the merge renumbers its references (`write.go`)
 		layers := SourceOptionalContent(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {

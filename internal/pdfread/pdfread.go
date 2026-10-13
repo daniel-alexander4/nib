@@ -65,12 +65,16 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	}
 	// What the document says about XFA is read HERE: the validator deletes an XFA-only form (`xfa.go`, ADR-145).
 	xfa := xfaIn(ctx)
+	// And each catalog name tree is walked HERE, and one nested deeper than the validator follows is made flat
+	// for it: the validator drops such a tree and says nothing (`nametree.go`, ADR-164).
+	trees := settleNameTrees(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
 	err = api.ValidateContext(ctx)
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
 		rememberAssociatedFiles(ctx)
 		rememberXFA(ctx, xfa)
+		rememberNameTrees(ctx, trees)
 	}
 	putBack()
 	putPacket()

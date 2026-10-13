@@ -558,6 +558,9 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// non-empty document-level JavaScript tree survived StripActive (`/pending 729`: found by the
 		// verifier below the first time it ran; craftActivePDF's tree was empty, which is never parsed).
 		delete(xt.Names, "JavaScript")
+		// A tree nib could not read whole is removed all the same — the validator took it out of the context and
+		// the write leaves it out — so the write is not refused for it (`pdfread/nametree.go`, ADR-164).
+		pdfread.ForgetNameTree(xt, "JavaScript")
 		// A slideshow, and its parsed copy for the same reason (`/pending 864`). Only the shape pdfcpu's
 		// validator accepts gets this far — /Resources as an array; the name tree ISO 32000-1 Table 273 gives
 		// is refused at the read (`validate/nameTree.go:467`, v0.13.0), so such a document is refused whole
@@ -1267,6 +1270,8 @@ func removeAllAttachments(ctx *model.Context) error {
 		dropKey(xt, names, "EmbeddedFiles")
 	}
 	delete(xt.Names, "EmbeddedFiles")
+	// Files in a tree nib could not read whole go too, and the write is not refused for them (ADR-164).
+	pdfread.ForgetNameTree(xt, "EmbeddedFiles")
 	return nil
 }
 
