@@ -128,14 +128,18 @@ func TestBothRetryArmsRouteThroughTheReraceDoor(t *testing.T) {
 	if body == "" {
 		t.Fatal("the brace matcher read an empty body")
 	}
-	if n := strings.Count(body, "reraceWait("); n != 2 {
-		t.Errorf("runCeremonyReceive calls reraceWait %d time(s), want 2 — one per retry arm. "+
+	// Three since /pending 766: the pre-signing re-race, the post-signing promote, and the outcome
+	// the spend rule KEPT the arm after (a channel lost mid-exchange, an unreadable or refused role),
+	// which used to go back round bare. `TestEveryWayRoundTheCeremonyArmLoopIsPaced` holds the
+	// routing; this holds the count.
+	if n := strings.Count(body, "reraceWait("); n != 3 {
+		t.Errorf("runCeremonyReceive calls reraceWait %d time(s), want 3 — one per retry arm. "+
 			"An arm that retries without the door has no delay and no bound, which is exactly "+
 			"the state /pending 369 found the pre-signing one in and the state the post-signing "+
 			"one was in unnoticed", n)
 	}
-	if n := strings.Count(body, "sleepOrDone("); n != 2 {
-		t.Errorf("runCeremonyReceive calls sleepOrDone %d time(s), want 2. A site that took a "+
+	if n := strings.Count(body, "sleepOrDone("); n != 3 {
+		t.Errorf("runCeremonyReceive calls sleepOrDone %d time(s), want 3. A site that took a "+
 			"delay from the door and did not wait it would be paced on paper only", n)
 	}
 	// The shape the door replaced must not come back beside it: a bare `continue` reached from a

@@ -1,12 +1,12 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 5073d43c..66628eaa 100644
+index f94ffaac..075dd2ca 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1928,6 +1928,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+@@ -2081,6 +2081,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 			// is the same defect one phase later.
  			postSign = time.Now().Add(connectDeadline)
- 			return false // the loop resumes the timer to postSign's remainder
  		}
 +		postSign = time.Now().Add(connectDeadline)
- 		return time.Now().After(postSign)
+ 		return false // the loop resumes the timer to the remainder of whichever deadline is live
  	}
  	for {

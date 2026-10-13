@@ -1,12 +1,14 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index f94ffaac..21d65a5e 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1868,7 +1868,8 @@
- 			continue // an unreadable role is a peer this build cannot serve; the arm is not spent
- 		}
- 		served, final, answered, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
--		if final != nil && !opened {
-+		_ = opened
-+		if final != nil {
- 			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
- 			opened = true
- 		}
+@@ -2030,7 +2030,8 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 			var final []byte
+ 			var answered string
+ 			final, answered, xerr = s.serveOneSession(anchor, cer, conn, cert, key, label, mode, myFP, role, false)
+-			if final != nil && !opened {
++			_ = opened
++			if final != nil {
+ 				s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
+ 				opened = true
+ 			}

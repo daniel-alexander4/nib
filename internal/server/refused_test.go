@@ -227,3 +227,76 @@ func TestEveryArmNamesItsRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestBothArmsAskTheOneSpendRule — /pending 766, inventory row A5, ADR-009 over a lifecycle rule.
+//
+// "Is this arm spent by how that connection ended" was answered in two places by two rules:
+// `runSession` read `serveOneSession`'s `served` and threw the error away, `runCeremonyReceive`
+// threw `served` away and switched on the error. They disagreed on four outcomes and nothing said
+// so. There is one rule now, `armSpentBy`, and this holds the routing: each arm loop that a session
+// can spend calls it exactly once and neither can decide for itself, because `serveOneSession` no
+// longer hands back a verdict to decide from. The delivery arm is the named exemption — it is spent
+// by a delivered leg and by nothing a hop does — and must say so at the site.
+func TestBothArmsAskTheOneSpendRule(t *testing.T) {
+	read := func(file string) (raw, code string) {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b), stripLineComments(string(b))
+	}
+	_, session := read("session.go")
+	rawDelivery, delivery := read("delivery.go")
+	body := func(code, fn string) string {
+		i := strings.Index(code, fn)
+		if i < 0 {
+			t.Fatalf("cannot find %s — the guard is pinned to a function that is gone", fn)
+		}
+		b := funcBodyFrom(code, i)
+		if b == "" {
+			t.Fatalf("the brace matcher read an empty body for %s", fn)
+		}
+		return b
+	}
+	for _, fn := range []string{"func (s *Server) runSession(", "func (s *Server) runCeremonyReceive("} {
+		b := body(session, fn)
+		// STIMULUS: this is the arm loop — it serves a session — so a count of the door is about it.
+		if !strings.Contains(b, "s.serveOneSession(") {
+			t.Fatalf("%s no longer serves a session; the guard is reading the wrong function", fn)
+		}
+		if n := strings.Count(b, "s.armSpentBy("); n != 1 {
+			t.Errorf("%s asks armSpentBy %d time(s), want exactly 1. With none it decides what "+
+				"spends its arm by itself, which is the second copy of the rule this guard exists "+
+				"to prevent; with two, one outcome is judged twice", fn, n)
+		}
+		// Neither loop may judge the session's outcome inline beside the door.
+		for _, inline := range []string{"isTransportLoss(xerr)", "errors.Is(xerr", "p2p.IsCommitmentFailure("} {
+			if strings.Contains(b, inline) {
+				t.Errorf("%s tests the session's outcome itself (%s). That question has one door", fn, inline)
+			}
+		}
+	}
+	// The verdict the TCP arm used to decide from is gone from the signature, so it cannot come back
+	// as a second rule without a compile error at three call sites.
+	sig := session[strings.Index(session, "func (s *Server) serveOneSession("):]
+	sig = sig[:strings.Index(sig, "{")]
+	if strings.Contains(sig, "served bool") || strings.Contains(sig, "spent bool") {
+		t.Errorf("serveOneSession returns a spend verdict again:\n%s\nIt reports what happened; "+
+			"armSpentBy says what that means for the arm", sig)
+	}
+	// The rule's body is the only place the table is consulted.
+	if n := strings.Count(session, "spendClass("); n != 0 {
+		t.Errorf("session.go consults spendClass directly at %d site(s); arms go through armSpentBy", n)
+	}
+	// The exemption, named where it is taken.
+	d := body(delivery, "func (s *Server) armForDelivery(")
+	if strings.Contains(d, "armSpentBy(") {
+		t.Error("the delivery arm asks armSpentBy. A decline or an unanswered gate at a resumed hop " +
+			"would then end the arm that is waiting for this machine's copy of the finished " +
+			"document (/pending 500). If that is now wanted, it is a decision, not a refactor")
+	}
+	if !strings.Contains(rawDelivery, "does not ask `armSpentBy`, by name") {
+		t.Error("the delivery arm's exemption from the spend rule is no longer written at the site " +
+			"(ADR-009: a deliberate exemption is named where it is taken)")
+	}
+}

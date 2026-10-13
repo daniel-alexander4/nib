@@ -1156,11 +1156,28 @@ func TestBothCleanCompletionBranchesConsultTheReDeliverySignal(t *testing.T) {
 	if signed == 0 {
 		t.Fatal("session.go contains no hasSigned() call at all — this guard is reading the wrong file")
 	}
-	if served < 2 {
-		t.Errorf("servedReDelivery() is consulted at %d site(s), want at least 2 — the clean-"+
-			"completion branch exists in BOTH runSession and runCeremonyReceive, and a fix wired "+
-			"only where it was noticed leaves the other transport tearing the arm down across a "+
-			"restart with nothing failing to say so.", served)
+	// **The clean-completion branch is ONE function since /pending 766** — `armSpentBy`, which both
+	// arm loops ask (`TestBothArmsAskTheOneSpendRule`) — so the signal has to be read there, and
+	// "both transports" follows from the routing rather than from a count of two copies. The TCP
+	// loop reads it once more, to open its re-delivery window on a restarted party's answer.
+	rule, rerr := os.ReadFile("armspend.go")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	ruleCode := stripLineComments(string(rule))
+	at := strings.Index(ruleCode, "func (s *Server) armSpentBy(")
+	if at < 0 {
+		t.Fatal("cannot find armSpentBy in armspend.go — this guard is pinned to a function that is gone")
+	}
+	if !strings.Contains(funcBodyFrom(ruleCode, at), "servedReDelivery()") {
+		t.Error("armSpentBy does not consult servedReDelivery(): a party that restarted and answered " +
+			"from its STORED contribution then reads as a clean completion with nothing owed, and " +
+			"both transports tear the arm down across a restart with nothing failing to say so.")
+	}
+	if served < 1 {
+		t.Errorf("servedReDelivery() is consulted at %d site(s) in session.go, want at least 1 — "+
+			"runSession opens its re-delivery window on it, and without that a restarted party's "+
+			"TCP arm is kept on the pre-signing bound.", served)
 	}
 }
 
