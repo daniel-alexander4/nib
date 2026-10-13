@@ -96,7 +96,7 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 	git("init", "-q")
 	write("VERSION", "1.2.3\n")
 	write("main.go", "package main\n")
-	write(".gitignore", "local-only.go\n")
+	write(".gitignore", "local-only.go\n.scratch/\n")
 	git("add", "VERSION", "main.go", ".gitignore")
 	git("commit", "-q", "-m", "base")
 	git("init", "-q", "--bare", origin)
@@ -110,7 +110,20 @@ func TestThePublishPreflightRefuses(t *testing.T) {
 		why     string // a word the refusal must contain, so a refusal for another reason cannot pass
 	}{
 		{"a clean tree at the committed version", func() {}, "1.2.3", true, ""},
-		{"an ignored local-only file is not a refusal", func() { write("local-only.go", "package main\n") }, "1.2.3", true, ""},
+		// /pending 522: ignoring a file hides it from git and not from `go build`.
+		{"an ignored Go file the build would compile", func() { write("local-only.go", "package main\n") }, "1.2.3", false, "ignored files the build would read"},
+		{"with it gone, clean again", func() {
+			if err := os.Remove(filepath.Join(dir, "local-only.go")); err != nil {
+				t.Fatal(err)
+			}
+		}, "1.2.3", true, ""},
+		{"an ignored Go file under a directory the go tool skips is not a refusal", func() { write(".scratch/copy/main.go", "package main\n") }, "1.2.3", true, ""},
+		{"an ignored dot file under web/ is embedded, so it is one", func() { write("web/.scratch/x.js", "x\n") }, "1.2.3", false, "ignored files the build would read"},
+		{"with it gone, clean again", func() {
+			if err := os.RemoveAll(filepath.Join(dir, "web")); err != nil {
+				t.Fatal(err)
+			}
+		}, "1.2.3", true, ""},
 		{"a scratch note the build never reads is not a refusal", func() { write("notes.txt", "x") }, "1.2.3", true, ""},
 		{"a version HEAD does not carry", func() {}, "1.2.4", false, "VERSION"},
 		{"an uncommitted edit to a tracked file", func() { write("main.go", "package main // edited\n") }, "1.2.3", false, "tracked files differ"},
