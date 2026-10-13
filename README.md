@@ -1075,8 +1075,10 @@ When a ceremony ends and its delivery round has finished — or three days after
 whichever comes first — the folder is **moved, not deleted**, to `~/nib/ended/`. That matters more than it sounds: on every machine but the
 convener's, that folder holds the only copy of *your own* signature on a proceeding that was
 declined or abandoned, and nothing has carried it anywhere else. Nib also leaves a small
-note beside it saying how the ceremony ended and when your machine decided so. Nothing ever
-removes what was moved — that is your file, and deleting it is your decision.
+note beside it saying how the ceremony ended and when your machine decided so. **Nib keeps every
+ceremony you took part in.** Nothing removes what was moved — not after a year, not ever, and there
+is no setting that would — so `~/nib/ended/` grows by one folder per ceremony. Those are your files:
+delete a folder there, or the whole directory, whenever you no longer want it, and Nib will not miss it.
 
 **What the document itself proves — and what it does not.** A finished Nib PDF proves that
 its signatures are intact, that they all commit to the same proceeding, and which of the
