@@ -132,7 +132,102 @@ func TestARaisedFigureStaysOnItsLine(t *testing.T) {
 	}
 }
 
-// TestAPageWithNoTextStillHasItsBoxAndAnnotations — /pending 794 (pdfops I2): reflow's reader gives a page that draws
+// TestARaisedFigureStandsAtItsWord — /pending 871, with the numbers of the pages that showed it: a smaller run above a
+// line's baseline is a raised figure only where the line ends. A 12pt table cell inside a 63pt stamp drawn across the
+// table (`acrobat/fda-156618.pdf` p2), a form's 8pt label 7pt past a 10pt one (`designer/irs-f1040.pdf` p1) and a
+// contents entry 8pt past a 31pt title (`antennahouse/irs-p15.pdf` p1) each read as raised on the larger text.
+func TestARaisedFigureStandsAtItsWord(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		runs []textRun
+		want []string
+	}{
+		{"a cell inside a stamp drawn across it", []textRun{run("REVOCADO", 212.31, 249.26, 343.49, 63.41), run("1 vial ", 286.85, 272.57, 31.16, 12)},
+			[]string{"1 vial", "REVOCADO"}},
+		{"a label past a larger label", []textRun{run("Digital Assets", 36, 501.9, 62, 10), run("At ", 105, 505.5, 9.8, 8)},
+			[]string{"At", "Digital Assets"}},
+		{"a contents entry past a title", []textRun{run("Employer’s Tax ", 42, 635.9, 211, 31), run("1. Employer Identification Number (EIN)", 261.06, 650.6, 170, 10)},
+			[]string{"1. Employer Identification Number (EIN)", "Employer’s Tax"}},
+		// Still raised: a mark a fifth of an em past its word (`acrobat/fda-71021.pdf` p11), and one set back over the
+		// space its word's run ends with (`acrobat/fda-156618.pdf` p2).
+		{"a mark a fifth of an em past its word", []textRun{run("characteristics", 72, 198.8, 70, 12), run("13", 144.4, 204.3, 8, 8)},
+			[]string{"characteristics 13"}},
+		{"a mark set back over a space", []textRun{run("3mL ", 426.8, 544.15, 36.14, 12), run("* ", 456.55, 548.11, 5.36, 8.04)},
+			[]string{"3mL *"}},
+	} {
+		var got []string
+		for _, l := range lineSegments(c.runs) {
+			got = append(got, l.text)
+		}
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+			t.Errorf("%s: the lines read %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAMarkThatOpensItsLineIsOnIt — /pending 871: a footnote's own number, set smaller and above the baseline AHEAD
+// of its text (`acrobat/fda-170357.pdf` p3: a 6.5pt "2 " at y 147.0 ending at x 76.9, then 10pt text at y 143.5 from
+// x 77.8), is the start of that line, and the footnote is one paragraph. It was a line, and a paragraph, of its own.
+func TestAMarkThatOpensItsLineIsOnIt(t *testing.T) {
+	note := func(mark textRun) []textRun {
+		return []textRun{
+			run("The body of the page, set at twelve points, above the notes.", 72, 300, 320, 12),
+			mark, run("Google. 2019 Map of 600 Perdue Ave., Richmond, VA 23234.  Retrieved", 77.8, 143.5, 330, 10),
+			run("from Google Maps.", 72, 132, 80, 10),
+		}
+	}
+	lines := lineSegments(note(run("2 ", 72, 147.0, 4.9, 6.5)))
+	if len(lines) != 3 || lines[1].text != "2 Google. 2019 Map of 600 Perdue Ave., Richmond, VA 23234.  Retrieved" || lines[1].y != 143.5 || lines[1].x0 != 72 || lines[1].size != 10 {
+		t.Fatalf("the lines read %+v", lines)
+	}
+	if l := groupRuns(note(run("2 ", 72, 147.0, 4.9, 6.5))); len(l.paragraphs) != 2 || len(l.paragraphs[1].lines) != 2 {
+		t.Errorf("the footnote reads as %q, want one paragraph of two lines after the body", paragraphTexts(l))
+	}
+	for name, mark := range map[string]textRun{
+		"text of the line's own size":        run("2 ", 72, 147.0, 4.9, 10),
+		"small text more than half an em up": run("2 ", 72, 149.0, 4.9, 6.5),
+		"small text below the line":          run("2 ", 72, 139.5, 4.9, 6.5),
+		"small text ending well short of it": run("2 ", 70, 147.0, 4.9, 6.5),
+		"more than a mark":                   run("Note ", 72, 147.0, 4.9, 6.5),
+	} {
+		alone := false
+		for _, l := range lineSegments(note(mark)) {
+			alone = alone || l.text == strings.TrimSpace(mark.text)
+		}
+		if !alone {
+			t.Errorf("%s opened the line: %+v", name, lineSegments(note(mark)))
+		}
+	}
+}
+
+// TestARuleDrawnAsAGlyphJoinsNoText — /pending 871 (`acrobat/fda-170357.pdf` p42): a signature rule drawn as one 72pt
+// hyphen, 85pt right of a 9.8pt line and 14pt above its baseline, is within 0.3 em and 1.5 em of it by its OWN em. It
+// joined the line and gave it its size. An ordinary dash, and large text that is not a rule, still join.
+func TestARuleDrawnAsAGlyphJoinsNoText(t *testing.T) {
+	title := run("Vice President Operations ", 71.99, 522.51, 119.07, 9.8)
+	for _, c := range []struct {
+		name string
+		runs []textRun
+		want []string
+	}{
+		{"a 72pt hyphen right of a line", []textRun{title, run("-", 275.82, 537, 23.98, 72)}, []string{"-", "Vice President Operations"}},
+		{"a 72pt hyphen left of a line", []textRun{run("-", 20, 537, 23.98, 72), title}, []string{"-", "Vice President Operations"}},
+		{"a 30pt em dash", []textRun{title, run("—", 195, 522.51, 30, 30)}, []string{"Vice President Operations", "—"}},
+		{"a dash of the line's size", []textRun{title, run("- 2024", 195, 522.51, 30, 9.8)}, []string{"Vice President Operations - 2024"}},
+		{"a large letter", []textRun{title, run("A", 195, 522.51, 20, 30)}, []string{"Vice President Operations A"}},
+		{"a hyphen at twice the size", []textRun{title, run("-", 195, 522.51, 6, 19.6)}, []string{"Vice President Operations -"}},
+	} {
+		var got []string
+		for _, l := range lineSegments(c.runs) {
+			got = append(got, l.text)
+		}
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+			t.Errorf("%s: the lines read %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAPageWithNoTextStillHasItsBoxAndAnnotations —/pending 794 (pdfops I2): reflow's reader gives a page that draws
 // no glyph the page box and annotation boxes it gives every other page, so a destination read from it is not measured
 // against zeroes.
 func TestAPageWithNoTextStillHasItsBoxAndAnnotations(t *testing.T) {

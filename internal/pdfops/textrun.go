@@ -55,7 +55,7 @@ type textRun struct {
 	// size is the effective size in user space: the `Tf` size scaled by the text and current
 	// transformation matrices, so a 10pt font under a 2× `cm` is 20.
 	size float64
-	// x, y is the origin of the first glyph in user space, including text rise.
+	// x, y is the origin of the first glyph in user space, including text rise and a `TJ` adjustment ahead of it.
 	x, y float64
 	// width is the run's total advance in user space, kerning and spacing included.
 	width float64
@@ -122,6 +122,9 @@ type textRun struct {
 	// needs each glyph's code and advance, and no other reader does. `Σ(kern + advance) + kernAfter == width`.
 	glyphs    []runGlyph
 	kernAfter float64
+	// lead is a `TJ` adjustment ahead of the first glyph, in user space, kept with the glyphs: `x` is past it and
+	// `state.tm` is not, so `x - lead` is where the operator's text matrix stood — what a re-set line is placed from.
+	lead float64
 	// face is the font the run was drawn in, kept with the glyphs so reflow can ask it what it can draw (`codesFor`).
 	face *runFont
 	// state is the text state the run was shown under — kept with the glyphs, for reflow to re-emit text where the run
@@ -1344,6 +1347,18 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 // show advances the text matrix across one show operator's glyphs and records the run.
 func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
 	textAt := *tm
+	// A `TJ` adjustment ahead of the first glyph moves that glyph, so it moves the run: `x` is the first glyph's origin
+	// and `width` starts there. Acrobat writes a word after a styled letter as `[-4228 (evice)] TJ` from the line's
+	// start, and read from the operator's start the word stood under the one before it — "Medical", "D", "evice" drawn
+	// in that order from 407.4, 449.5 and 407.4 read "MedicaleviceD" (/pending 871). `state.tm` stays the operator's
+	// matrix, which is what a re-set line is placed from (`textRun.lead`); no glyph carries the adjustment as its kern.
+	lead := 0.0
+	for len(pieces) > 0 && pieces[0].isAdjust {
+		tx := -pieces[0].adjust / 1000 * gs.size * gs.th
+		*tm = runTranslate(tx, 0).mul(*tm)
+		lead += tx
+		pieces = pieces[1:]
+	}
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
 		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact(),
@@ -1398,6 +1413,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	}
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
+		run.lead = lead * scale
 		run.face = gs.font
 		run.state = runTextState{tm: textAt, tlm: tlm, ctm: gs.ctm, fill: gs.fill, stroke: gs.stroke, extGState: gs.extGState, clip: gs.clip, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
 	}

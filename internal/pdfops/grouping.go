@@ -512,8 +512,9 @@ func verticalRuns(runs []textRun) int {
 // lineSegments joins runs into lines: same baseline, and no gap wider than joinGapEm.
 //
 // **Runs are taken left to right across the whole page, and each joins the line it continues** — the line within
-// 0.3 em of its baseline (or that it is a raised figure on, `raisedOn`) and that ends no further than joinGapEm before
-// it, the nearest in height where there are two.
+// 0.3 em of its baseline (or that it is a raised figure on, `raisedOn`, or that is so far only the raised mark it opens
+// with, `opensRaised`) and that ends no further than joinGapEm before it, the nearest in height where there are two. A
+// rule drawn as a glyph joins no text (`ruleBeside`).
 // "Within 0.3 em of each other" is not an order, so the runs cannot first be sorted into baselines by it: with a 12pt
 // bullet at y 464.4 beside 10pt text at 464.8 and another column's line at 460.8, the bullet shares a baseline with
 // both and they do not share one with each other. A sort by that comparison answered by the order the runs happened
@@ -541,22 +542,34 @@ func lineSegments(runs []textRun) []textLine {
 	for _, r := range rs {
 		var best *textLine
 		from := sort.Search(len(lines), func(i int) bool { return lines[i].y <= r.y+reach })
+		bestAt := -1
 		for i := from; i < len(lines) && lines[i].y >= r.y-reach; i++ {
 			l := lines[i]
 			em := math.Max(l.size, r.size)
-			if (math.Abs(l.y-r.y) > 0.3*em && !raisedOn(r, l)) || r.x-l.x1 > joinGapEm*em {
+			if (math.Abs(l.y-r.y) > 0.3*em && !raisedOn(r, l) && !opensRaised(l, r)) || r.x-l.x1 > joinGapEm*em || ruleBeside(r, l) {
 				continue
 			}
 			if d, b := math.Abs(l.y-r.y), best; b == nil || d < math.Abs(b.y-r.y) || (d == math.Abs(b.y-r.y) && l.x1 > b.x1) {
-				best = l
+				best, bestAt = l, i
 			}
 		}
-		if best == nil {
-			at := sort.Search(len(lines), func(i int) bool { return lines[i].y < r.y })
+		// place puts a line where its baseline says, keeping lines top to bottom.
+		place := func(l *textLine) {
+			at := sort.Search(len(lines), func(i int) bool { return lines[i].y < l.y })
 			lines = append(lines, nil)
 			copy(lines[at+1:], lines[at:])
-			lines[at] = &textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text}
+			lines[at] = l
+		}
+		if best == nil {
+			place(&textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text})
 			continue
+		}
+		// A line that was only its opening mark takes the baseline of the text that follows it, and its place among the
+		// lines with it.
+		if math.Abs(best.y-r.y) > 0.3*math.Max(best.size, r.size) && !raisedOn(r, best) {
+			lines = append(lines[:bestAt], lines[bestAt+1:]...)
+			best.y = r.y
+			place(best)
 		}
 		em := math.Max(best.size, r.size)
 		if separatesWords(r.x-best.x1, em) && !strings.HasSuffix(best.text, " ") && !strings.HasPrefix(r.text, " ") {
@@ -592,11 +605,67 @@ const (
 // 2,797, Antenna House 3,626 → 3,657, InDesign 2,060 → 2,145, Word 1,212 → 1,308) and multi-line paragraphs that do
 // not re-break in place went 45 → 44.
 //
-// **Declared limits**: a mark that OPENS its line ("¹ See…") is still a line of its own — the line would have to take
-// its baseline from a run that comes after — and in a table a small label set just above a larger one beside it reads
-// as raised on it.
+// A mark that OPENS its line ("¹ See…") is `opensRaised`. **Declared limit**: a small label that ends within
+// raisedGapEm of where a larger one beside and just below it begins still reads as raised on it.
 func raisedOn(r textRun, l *textLine) bool {
-	return r.size <= raisedSizeRatio*l.size && r.y > l.y && r.y-l.y <= raisedMaxEm*l.size
+	gap := r.x - l.x1
+	return r.size <= raisedSizeRatio*l.size && r.y > l.y && r.y-l.y <= raisedMaxEm*l.size &&
+		gap >= -raisedOverlapEm*l.size && gap <= raisedGapEm*l.size
+}
+
+// A raised figure stands AT its word: it begins no further than raisedGapEm of the line's size past the line's end, and
+// no further than raisedOverlapEm before it (a run's width takes in the space it ends with, and a mark is set back over
+// one: "3mL " then "*" half an em inside it).
+//
+// Measured over the real-producer corpus (/pending 871): of 528 raised joins, 506 stood between -0.53 and 0.20 em, and
+// every one outside those bounds was other text — a contents list beside a 31pt title (0.26 em past it), a form's label
+// above the next field's (0.70), another column's body beside a heading (0.83), a 12pt table cell inside a 63pt stamp
+// drawn across the table (4.2 em before its end), and a table's figures under a title a page wide (30 to 56 em).
+const (
+	raisedGapEm     = 0.25
+	raisedOverlapEm = 1.0
+)
+
+// An opening mark is at most openingMarkRunes characters and ends within openingMarkGapEm, of the size of the text it
+// opens, of where that text begins.
+const (
+	openingMarkRunes = 3
+	openingMarkGapEm = 0.15
+)
+
+// opensRaised says whether line l is so far only a raised mark that OPENS the line r continues — a footnote's own
+// number ahead of its text ("¹ See…"), set smaller and above the baseline as a mark after a word is (`raisedOn`). The
+// mark comes first left to right, so it started a line at its own height; that line then takes r's baseline
+// (`lineSegments`). 145 footnotes over the real-producer corpus opened with a line, and so a paragraph, of their own
+// (/pending 871).
+func opensRaised(l *textLine, r textRun) bool {
+	return l.size <= raisedSizeRatio*r.size && l.y > r.y && l.y-r.y <= raisedMaxEm*r.size &&
+		math.Abs(r.x-l.x1) <= openingMarkGapEm*r.size && len([]rune(strings.TrimSpace(l.text))) <= openingMarkRunes
+}
+
+// A rule drawn as a glyph is ruleBesideSizes times the size of the text beside it, or more, and only these characters.
+const (
+	ruleBesideSizes  = 3.0
+	ruleBesideGlyphs = "-_‐‑‒–—―"
+)
+
+// ruleBeside says whether r and l are a drawn rule and text. A producer draws a rule as one huge hyphen — a 72pt "-"
+// set 85pt right of a 9.8pt signature line and 14pt above its baseline — and every join is measured in ems of the
+// LARGER run, so the rule shared a baseline with the text and gave the line its size (/pending 871: two over the
+// real-producer corpus, both in one document, and no other such run at even twice its neighbour's size).
+func ruleBeside(r textRun, l *textLine) bool {
+	switch {
+	case r.size >= ruleBesideSizes*l.size:
+		return onlyRuleGlyphs(r.text)
+	case l.size >= ruleBesideSizes*r.size:
+		return onlyRuleGlyphs(l.text)
+	}
+	return false
+}
+
+func onlyRuleGlyphs(s string) bool {
+	s = strings.TrimFunc(s, unicode.IsSpace)
+	return s != "" && strings.Trim(s, ruleBesideGlyphs) == ""
 }
 
 // joinsALine says whether a run belongs in a line. An artifact is text the document says is not content — a watermark, a
