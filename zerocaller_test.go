@@ -129,6 +129,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"SignatureWidgets": "test-only — the structural half of 'is a signature block actually on " +
 			"the page'. Its own doc says the rendered half needs pdf.js and belongs at tier 3, so " +
 			"production has nothing to ask it.",
+		"RemovePages": "test-only — the removal selection as an EXTRACT (no title, no source /ID, no files). " +
+			"Its two production callers both turned out to be editing the document they read and now go " +
+			"through `DeletePages`: `/api/pages` delete, and `nib pages --remove` (/pending 870). The page-" +
+			"selection censuses still drive it as the removal rule without the same-document facts.",
 
 		"ClaimsTagging": "test-support — the named predicate ten tests across three packages ask " +
 			"(`internal/pdfops`, `internal/p2p`, `internal/server`). Its production caller was " +

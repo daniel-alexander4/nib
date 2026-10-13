@@ -5,7 +5,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// The optional-content properties, carried through a MERGE — `/pending 559`, ADR-131. The mirror of
+// The optional-content properties, carried through a MERGE — `/pending 559`, ADR-131; `/pending 870`, ADR-153. The mirror of
 // `optionalcarry.go` (ADR-043), which carries them through a page selection.
 //
 // # A merge kept only the first document's, so it REVEALED every later document's hidden layers
@@ -36,19 +36,32 @@ import (
 //     `/OFF`, and one that was on is listed in `/ON` wherever that configuration's `/BaseState` is not
 //     `/ON` — the base state is the host's and applies to every group no list names, so a host that says
 //     "everything off unless listed" would otherwise hide a later document's visible layers;
-//   - the source `/D`'s `/Order`, `/Locked`, `/AS` and `/RBGroups` are appended to the host `/D`'s. Each
-//     names only the source's own groups, so nothing of the host's is restated by them.
+//   - the source `/D`'s `/Order`, `/Locked` and `/RBGroups` are appended to the host `/D`'s, and its `/AS` to
+//     every host configuration's. Each names only the source's own groups, so nothing of the host's is
+//     restated by them.
 //
 // **The host's own state is never touched**: nothing is removed from a host list, no host group changes
 // list, and the host's `/BaseState`, `/Name`, `/Intent` and `/ListMode` stand.
 //
+// # The source's alternate configurations come too, with the host's groups as the host's default has them
+//
+// An alternate configuration (`/Configs`) is a named state of the whole document that a reader can switch to.
+// The source's were dropped (ADR-131's declared gap); ADR-153 carries them, by the rule above read the other way
+// round: each is appended to the host's `/Configs`, and every HOST group is given, in it, the state the host's
+// `/D` gave it — off groups in its `/OFF`, on groups in its `/ON` wherever its `/BaseState` is not `/ON` — with
+// the host `/D`'s `/AS` appended. So switching to a merged-in configuration shows of the source what the source's
+// author chose for it, and of the host exactly what the host's default shows: nothing either document hid by
+// default is shown by a configuration its author never saw. The source's lists in it are its own and are not
+// restated.
+//
+// A usage application (`/AS`) can switch a group off by itself — a group no list names, hidden on screen by its
+// usage — so the source `/D`'s `/AS` goes to EVERY host configuration, not to the host's `/D` alone: in a host
+// alternate without it, such a group was shown.
+//
 // # What it does not carry, named
 //
-// The source's ALTERNATE configurations (`/Configs`) are not merged: an alternate configuration is a
-// named whole-document state somebody can switch to, and two documents' lists of them have no pairing.
-// The source's groups are still hidden in each of the HOST's alternates, by the rule above, so no
-// configuration of the merged document shows what the source's default hid. And a group whose state
-// the source's `/D` set only through `/AS` (a usage application) keeps that entry, which is appended.
+// A group that only an alternate configuration of its own document hid is shown under the other document's
+// configurations, as it was shown under its own default. Two documents' alternates are not paired by name.
 //
 // # It lives here because BOTH merge loops call it (ADR-009)
 //
@@ -90,22 +103,59 @@ func UnionOptionalContent(ctx *model.Context, src types.Dict) error {
 	if len(groups) == 0 {
 		return nil
 	}
+
+	// Each document's groups in the state its own default configuration gives them — the host's read BEFORE
+	// anything of the source's joins it.
+	srcD := derefDict(xt, src["D"])
+	hostD := derefDict(xt, host["D"])
+	if hostD == nil {
+		hostD = types.Dict{}
+		host["D"] = hostD
+	}
+	srcOn, srcOff := defaultStates(xt, srcD, groups)
+	hostOn, hostOff := defaultStates(xt, hostD, derefArray(xt, host["OCGs"]))
+	hostAS := derefArray(xt, hostD["AS"])
+	srcAS := derefArray(xt, srcD["AS"])
 	host["OCGs"] = joined(xt, host["OCGs"], groups)
 
-	// Each source group's state under its own default configuration.
-	srcD := derefDict(xt, src["D"])
+	for _, c := range append([]types.Object{hostD}, derefArray(xt, host["Configs"])...) {
+		if d := derefDict(xt, c); d != nil {
+			giveStates(xt, d, srcOn, srcOff, srcAS)
+		}
+	}
+	for _, k := range []string{"Order", "Locked", "RBGroups"} {
+		if more := derefArray(xt, srcD[k]); len(more) > 0 {
+			hostD[k] = joined(xt, hostD[k], more)
+		}
+	}
+	// The source's alternates, AFTER the loop above: they already say what the source's groups do.
+	var alternates types.Array
+	for _, c := range derefArray(xt, src["Configs"]) {
+		if d := derefDict(xt, c); d != nil {
+			giveStates(xt, d, hostOn, hostOff, hostAS)
+			alternates = append(alternates, c)
+		}
+	}
+	if len(alternates) > 0 {
+		host["Configs"] = joined(xt, host["Configs"], alternates)
+	}
+	return nil
+}
+
+// defaultStates sorts groups by the state the default configuration d gives each, as a reader reads it: off when
+// listed in `/OFF`, or under `/BaseState /OFF` and not listed in `/ON`.
+func defaultStates(xt *model.XRefTable, d types.Dict, groups types.Array) (on, off types.Array) {
 	listed := func(key string) map[int]bool {
 		in := map[int]bool{}
-		for _, o := range derefArray(xt, srcD[key]) {
+		for _, o := range derefArray(xt, d[key]) {
 			if r, ok := o.(types.IndirectRef); ok {
 				in[r.ObjectNumber.Value()] = true
 			}
 		}
 		return in
 	}
-	srcOn, srcOff := listed("ON"), listed("OFF")
-	baseOff := nameVal(srcD, "BaseState") == "OFF"
-	var on, off types.Array
+	inOn, inOff := listed("ON"), listed("OFF")
+	baseOff := nameVal(d, "BaseState") == "OFF"
 	for _, g := range groups {
 		r, ok := g.(types.IndirectRef)
 		if !ok {
@@ -113,38 +163,28 @@ func UnionOptionalContent(ctx *model.Context, src types.Dict) error {
 		}
 		nr := r.ObjectNumber.Value()
 		// `/OFF` is applied after `/ON` (ISO 32000-1 Table 101), so a group in both is off.
-		if srcOff[nr] || (baseOff && !srcOn[nr]) {
+		if inOff[nr] || (baseOff && !inOn[nr]) {
 			off = append(off, g)
 		} else {
 			on = append(on, g)
 		}
 	}
+	return on, off
+}
 
-	hostD := derefDict(xt, host["D"])
-	if hostD == nil {
-		hostD = types.Dict{}
-		host["D"] = hostD
+// giveStates writes another document's groups into the configuration c in the states their own default gave
+// them: off groups into `/OFF`, on groups into `/ON` wherever c's base state would not already show them, and
+// that default's usage applications after c's own.
+func giveStates(xt *model.XRefTable, c types.Dict, on, off, as types.Array) {
+	if len(off) > 0 {
+		c["OFF"] = joined(xt, c["OFF"], off)
 	}
-	configs := []types.Dict{hostD}
-	for _, c := range derefArray(xt, host["Configs"]) {
-		if d := derefDict(xt, c); d != nil {
-			configs = append(configs, d)
-		}
+	if len(on) > 0 && nameVal(c, "BaseState") != "" && nameVal(c, "BaseState") != "ON" {
+		c["ON"] = joined(xt, c["ON"], on)
 	}
-	for _, c := range configs {
-		if len(off) > 0 {
-			c["OFF"] = joined(xt, c["OFF"], off)
-		}
-		if len(on) > 0 && nameVal(c, "BaseState") != "" && nameVal(c, "BaseState") != "ON" {
-			c["ON"] = joined(xt, c["ON"], on)
-		}
+	if len(as) > 0 {
+		c["AS"] = joined(xt, c["AS"], as)
 	}
-	for _, k := range []string{"Order", "Locked", "AS", "RBGroups"} {
-		if more := derefArray(xt, srcD[k]); len(more) > 0 {
-			hostD[k] = joined(xt, hostD[k], more)
-		}
-	}
-	return nil
 }
 
 // joined is the array at have followed by more, as a new array.
