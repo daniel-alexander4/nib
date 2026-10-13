@@ -94,6 +94,102 @@ func TestADigestVersionSkewSaysSoRatherThanAccusing(t *testing.T) {
 	if strings.Contains(msg, "not the same document") {
 		t.Errorf("the skew produced the TAMPERING sentence: %s", msg)
 	}
+	// This record is from a NEWER rule than this build computes, and the remedy is this machine's.
+	if !strings.Contains(msg, "started with a newer Nib") || !strings.Contains(msg, "update Nib") {
+		t.Errorf("a record under a rule this build does not compute YET must say so and name the update: %s", msg)
+	}
+	if !errors.Is(err, p2p.ErrCeremonyRuleTooNew) || errors.Is(err, p2p.ErrCeremonyRuleRetired) {
+		t.Errorf("the skew is not the too-new wire refusal and only that one: %v", err)
+	}
+}
+
+// TestADigestRuleSkewNamesWhichBuildIsBehind — ADR-143, /pending 691. The skew sentence ended "update Nib"
+// in BOTH directions, and for a record under a RETIRED rule that is advice with nothing behind it: the machine
+// reading it is the up-to-date one. Every bump retires the oldest readable rule (ADR-080), so this is the
+// sentence a ceremony begun two rules back meets — rule 4, the rule the release before last wrote, on this
+// build. It must say the ceremony is the older side and what can be done about that, at every comparing door,
+// and it must be the wire refusal for that direction so the arrival gate's answer crosses by name.
+func TestADigestRuleSkewNamesWhichBuildIsBehind(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := p2p.PrepareDocument(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, c := range []struct {
+		name          string
+		rule          int
+		retired       bool
+		says, remedy  string
+		mustNotAdvise string
+	}{
+		{"the rule this bump retired", pdfops.ContentDigestVersion - 2, true,
+			"started with an older Nib", "convene it again", "update Nib"},
+		{"a rule long gone", 3, true, "started with an older Nib", "convene it again", "update Nib"},
+		{"a rule this build does not know yet", pdfops.ContentDigestVersion + 1, false,
+			"started with a newer Nib", "update Nib", "convene it again"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if pdfops.ContentDigestRuleReadable(c.rule) {
+				t.Fatalf("setup: this build computes rule %d, so a record under it is not a skew", c.rule)
+			}
+			r := draft(t, cfp, afp)
+			r.DocHash = strings.Repeat("0", 64) // another rule's number: never compared
+			r.DigestVersion = c.rule
+			if err := r.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+			if r.DigestVersion != c.rule {
+				t.Fatal("setup: Sign overwrote the skewed DigestVersion")
+			}
+			doc, err := Embed(prepared, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			if _, err := WriteMirror(root, r, doc); err != nil {
+				t.Fatal(err)
+			}
+			_, checkErr := CheckDocument(doc, now)
+			_, _, mirrorErr := ReadMirror(root, r.ID, now)
+			_, hashErr := DocumentHashFor(doc, r)
+			for door, err := range map[string]error{"CheckDocument": checkErr, "ReadMirror": mirrorErr, "DocumentHashFor": hashErr} {
+				if !errors.Is(err, ErrDigestVersion) {
+					t.Errorf("%s: %v — want ErrDigestVersion", door, err)
+					continue
+				}
+				msg := err.Error()
+				if !strings.Contains(msg, c.says) || !strings.Contains(msg, c.remedy) {
+					t.Errorf("%s: the sentence does not say %q with the remedy %q: %s", door, c.says, c.remedy, msg)
+				}
+				if strings.Contains(msg, c.mustNotAdvise) {
+					t.Errorf("%s: the sentence gives the OTHER direction's remedy (%q): %s", door, c.mustNotAdvise, msg)
+				}
+				if !strings.Contains(msg, fmt.Sprintf("rule %d", c.rule)) ||
+					!strings.Contains(msg, fmt.Sprintf("rule %d", pdfops.ContentDigestVersion)) {
+					t.Errorf("%s: the sentence does not name both rules: %s", door, msg)
+				}
+				if strings.Contains(msg, "not the same document") || errors.Is(err, ErrMirrorDamaged) {
+					t.Errorf("%s: a version difference is reported as tampering or damage: %s", door, msg)
+				}
+				if got := errors.Is(err, p2p.ErrCeremonyRuleRetired); got != c.retired {
+					t.Errorf("%s: is the retired-rule wire refusal: %v, want %v", door, got, c.retired)
+				}
+				if got := errors.Is(err, p2p.ErrCeremonyRuleTooNew); got == c.retired {
+					t.Errorf("%s: is the too-new wire refusal: %v, want %v", door, got, !c.retired)
+				}
+				if !p2p.IsContributionRefusal(err) {
+					t.Errorf("%s: the skew has no wire code, so an arrival gate's refusal of it reaches the "+
+						"dialler as a bare EOF", door)
+				}
+			}
+		})
+	}
 }
 
 // TestAStoredMirrorUnderAnotherDigestRuleIsASkewNotDamage — /pending 725 bumped
@@ -109,8 +205,8 @@ func TestAStoredMirrorUnderAnotherDigestRuleIsASkewNotDamage(t *testing.T) {
 	}
 	r := draft(t, cfp, afp)
 	r.DocHash = "0000000000000000000000000000000000000000000000000000000000000000" // a rule-3 number: not this build's
-	// Rule 3, which no build since v4 computes. Rule 4 would not do: since ADR-080 it is still COMPUTED, so a
-	// rule-4 record is checked under rule 4 (TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt), not skewed.
+	// Rule 3, which no build since v4 computes. The legacy rule would not do: since ADR-080 it is still COMPUTED,
+	// so a record under it is checked under it (TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt), not skewed.
 	r.DigestVersion = 3
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
@@ -151,10 +247,11 @@ func TestExtractReadsTheEntryTheDigestExcludes(t *testing.T) {
 	}
 }
 
-// TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt — ADR-080. A record signed under content-digest rule 4 (every
-// record the previous release wrote) is compared with the number rule 4 computes for the document, at every
-// comparing door: not refused as a skew, which halted the ceremony across every earlier bump, and not compared with
-// rule 5's number, which is a tampering sentence. A real change to the document is still a mismatch under rule 4.
+// TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt — ADR-080. A record signed under the legacy content-digest rule
+// (rule 5 since ADR-143: every record the previous release wrote) is compared with the number THAT rule computes
+// for the document, at every comparing door: not refused as a skew, which halted the ceremony across every bump
+// before ADR-080, and not compared with the current rule's number, which is a tampering sentence. A real change to
+// the document is still a mismatch under the legacy rule.
 func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	cert, key, cfp := identity(t, "Convener")
 	_, _, afp := identity(t, "A")
@@ -166,20 +263,24 @@ func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const legacy = 4
-	h4, err := pdfops.ContentDigestAt(prepared, legacy)
+	// The rule before the current one, by its number: the one earlier rule ADR-080 keeps readable.
+	const legacy = pdfops.ContentDigestVersion - 1
+	if !pdfops.ContentDigestRuleReadable(legacy) {
+		t.Fatalf("setup: this build does not compute rule %d, so no record under it can be checked by it", legacy)
+	}
+	hLegacy, err := pdfops.ContentDigestAt(prepared, legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h5, err := DocumentHash(prepared)
+	hCurrent, err := DocumentHash(prepared)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h4 == h5 || legacy == pdfops.ContentDigestVersion {
+	if hLegacy == hCurrent {
 		t.Fatal("setup: the two rules agree on this document, so a comparison under the wrong one would pass too")
 	}
 	r := draft(t, cfp, afp)
-	r.DocHash = h4
+	r.DocHash = hLegacy
 	r.DigestVersion = legacy
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
@@ -190,17 +291,17 @@ func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	}
 	now := time.Now()
 	if _, err := CheckDocument(doc, now); err != nil {
-		t.Fatalf("CheckDocument on a rule-4 record over its own document: %v — want nil", err)
+		t.Fatalf("CheckDocument on a legacy-rule record over its own document: %v — want nil", err)
 	}
 	root := t.TempDir()
 	if _, err := WriteMirror(root, r, doc); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := ReadMirror(root, r.ID, now); err != nil {
-		t.Fatalf("ReadMirror on a rule-4 record over its own document: %v — want nil", err)
+		t.Fatalf("ReadMirror on a legacy-rule record over its own document: %v — want nil", err)
 	}
 
-	// The control: the same record over a different document is still the tampering sentence, under rule 4.
+	// The control: the same record over a different document is still the tampering sentence, under the legacy rule.
 	other, err := testpdf.Text("the other lease")
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +316,7 @@ func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	}
 	_, err = CheckDocument(swapped, now)
 	if err == nil || errors.Is(err, ErrDigestVersion) || !strings.Contains(err.Error(), "not the same document") {
-		t.Fatalf("a rule-4 record over a different document reported %v — want the mismatch sentence", err)
+		t.Fatalf("a legacy-rule record over a different document reported %v — want the mismatch sentence", err)
 	}
 }
 

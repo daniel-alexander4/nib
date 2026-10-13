@@ -13,9 +13,11 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
+	"nib/internal/pdfread"
 )
 
-// referenceContentDigest is ContentDigest's body EXACTLY as it stood before /pending 488 —
+// referenceContentDigest is ContentDigest's body walked as it was before /pending 488 —
 // `ctx.PageDict(i, false)` per page, and no stream memo.
 //
 // # Why a reference implementation and not only the golden corpus
@@ -45,37 +47,40 @@ func referenceContentDigest(pdf []byte) (string, error) {
 func referenceDigestBody(ctx *model.Context) (string, error) {
 	h := sha256.New()
 	hashChunk(h, []byte("nib-content-digest"))
-	// v4's body: the rule the one-pass walk and the memo were measured against. v5 reads its pages from the
-	// same walk and the same memo, so their equivalence is a property of the walk, not of the rule (ADR-080).
-	hashUint(h, legacyContentDigestVersion)
+	// The CURRENT rule's body, walked the old way. It was rule 4's until rule 4 was retired (ADR-143); what this
+	// function pins is the page walk and the memo, which every rule shares, so it follows the current rule and
+	// calls the rule's own per-page and catalog doors rather than copying them.
+	hashUint(h, ContentDigestVersion)
 	hashUint(h, uint64(ctx.PageCount))
+	// A memo already past its budget stores nothing: every stream is decoded afresh, which is what the old code
+	// did. It is here only to carry the page positions the rule hashes a reached page by.
+	sc := &streamMemo{met: map[int]bool{}, body: map[int]decodedStream{}, spent: streamMemoBudget + 1, pageAt: map[int]int{}}
 	for i := 1; i <= ctx.PageCount; i++ {
-		d, _, _, err := ctx.PageDict(i, false)
+		if ir, err := ctx.PageDictIndRef(i); err == nil && ir != nil {
+			sc.pageAt[ir.ObjectNumber.Value()] = i
+		}
+	}
+	for i := 1; i <= ctx.PageCount; i++ {
+		d, _, attrs, err := ctx.PageDict(i, false)
 		if err != nil || d == nil {
 			return "", fmt.Errorf("page %d is unreadable: %w", i, err)
 		}
-		c, err := ctx.PageContent(d, i)
+		c, err := pdfread.PageContent(ctx, d, i)
 		if err != nil && err != model.ErrNoContent {
 			return "", fmt.Errorf("page %d content: %w", i, err)
 		}
 		hashChunk(h, c)
-		for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
-			hashChunk(h, []byte(key))
-			// nil memo: every stream decoded afresh, which is what the old code did.
-			hashObject(ctx.XRefTable, d[key], h, 0, nil)
-		}
-		hashPageResources(ctx.XRefTable, d, h, nil)
+		hashEffectivePage(ctx.XRefTable, d, attrs, h, sc, true)
 		hashChunk(h, []byte("Annots"))
-		hashObject(ctx.XRefTable, d["Annots"], h, 0, nil)
+		hashObject(ctx.XRefTable, d["Annots"], h, 0, sc)
 	}
-	// The embedded-files axis is shared with the real body, not copied: /pending 725 (v4)
-	// changed WHAT it hashes, and this function's job is the page walk and the memo, not it.
-	hashEmbeddedFiles(ctx, h, nil)
+	hashEmbeddedFiles(ctx, h, sc)
+	hashCatalogBehaviour(ctx.XRefTable, h, sc)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func reportDigest(pdf []byte) string {
-	d, err := ContentDigestAt(pdf, legacyContentDigestVersion)
+	d, err := ContentDigestAt(pdf, ContentDigestVersion)
 	if err != nil {
 		return flattenRowValue("ERROR:" + err.Error())
 	}
@@ -202,7 +207,7 @@ func TestASharedFontIsDecodedTwiceAndNotOncePerPage(t *testing.T) {
 // `optimizeResourceDicts` (pkg/pdfcpu/optimize.go:1602) assigns `d["Resources"] =
 // inhPAttrs.Resources` — the CONSOLIDATED resources, which are only the ones the page's content
 // stream actually requires. A page carrying a font it never draws with therefore presents a
-// different `/Font` dict to `hashPageResources` depending on whether Optimize ran, and
+// different `/Font` dict to `hashResourceDict` depending on whether Optimize ran, and
 // `ContentDigest` hashes the resource NAMES.
 //
 // **295 of 295 corpus files were identical with and without it**, which is exactly why this test

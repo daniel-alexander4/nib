@@ -40,24 +40,14 @@ import (
 // read short. Each element is still pdfcpu's own decode, so the work done before the refusal is at most the
 // bound plus one stream's 512 MiB.
 func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
-	return pageContent(ctx, page, pageNr, true)
-}
-
-// PageContentAsPdfcpu is `PageContent` joined as pdfcpu joins — the streams of a `/Contents` array appended
-// with nothing between them — and bounded as `PageContent` is. Its one caller is `ContentDigest`'s rule 4
-// (ADR-084), which hashed pdfcpu's join and is kept to check the records written under it; keeping pdfcpu's join
-// there does not also mean keeping its unbounded one. (The checker read it until /pending 719 measured that
-// veraPDF separates a `/Contents` array's streams, as `PageContent` does.)
-func PageContentAsPdfcpu(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
-	return pageContent(ctx, page, pageNr, false)
-}
-
-func pageContent(ctx *model.Context, page types.Dict, pageNr int, separate bool) ([]byte, error) {
-	out, _, err := joinContent(ctx, page, pageNr, separate)
+	out, _, err := joinContent(ctx, page, pageNr)
 	return out, err
 }
 
-// joinContent is pageContent, also reporting — for an array — the index of every element a separator was put in
+// (`PageContentAsPdfcpu`, this door's bounded copy of pdfcpu's bare join, stood here until `ContentDigest`'s
+// rule 4 — its one caller — was retired with the bump to rule 6 (ADR-143). The door has one join now.)
+
+// joinContent is PageContent's join, also reporting — for an array — the index of every element a separator was put in
 // front of, which is what SeparateContents writes into the page.
 //
 // **Each distinct stream is decoded once per page** (`/pending 728`). An array may name one stream any number of
@@ -66,7 +56,7 @@ func pageContent(ctx *model.Context, page types.Dict, pageNr int, separate bool)
 // took 5.5 s and allocated 3.9 GB here while producing no content at all, linear in the count (each decode sets up
 // a fresh inflater). A repeat reuses the first decode; what it contributes to the join, and so the bound, is
 // unchanged.
-func joinContent(ctx *model.Context, page types.Dict, pageNr int, separate bool) ([]byte, []int, error) {
+func joinContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, []int, error) {
 	o, _ := page.Find("Contents")
 	if o == nil {
 		return nil, nil, model.ErrNoContent
@@ -116,7 +106,7 @@ func joinContent(ctx *model.Context, page types.Dict, pageNr int, separate bool)
 		// **The previous STREAM, never the join so far.** A stream begins on a token boundary, so its own
 		// tokenization is the one that matters at its end; handing the accumulated join instead re-tokenized the
 		// whole page at every join — quadratic, measured at 13.8 s for 1,000 streams against pdfcpu's 10 ms.
-		sep := separate && needsSeparator(prev, b)
+		sep := needsSeparator(prev, b)
 		if n := len(out) + len(b); n > MaxPageContentBytes || sep && n+1 > MaxPageContentBytes {
 			return nil, nil, pageTooLarge(pageNr)
 		}
@@ -157,7 +147,7 @@ func SeparateContents(ctx *model.Context, pageNrs []int) error {
 		if pa.Err != nil || pa.Dict == nil || pageNrs != nil && !want[pa.Nr] {
 			continue
 		}
-		_, seps, err := joinContent(ctx, pa.Dict, pa.Nr, true)
+		_, seps, err := joinContent(ctx, pa.Dict, pa.Nr)
 		if err == model.ErrNoContent {
 			continue
 		}

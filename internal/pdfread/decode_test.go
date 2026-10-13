@@ -67,9 +67,10 @@ func allocatedBy(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole is the item's own case at both page-content doors: one
-// 100 MiB stream named six times is a 600 MiB page, past `MaxPageContentBytes`, and both joins refuse it rather
-// than return it. On the old code both returned all 600 MiB.
+// TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole is the item's own case at the page-content door: one
+// 100 MiB stream named six times is a 600 MiB page, past `MaxPageContentBytes`, and the join refuses it rather
+// than return it. On the old code it returned all 600 MiB. (A second door, pdfcpu's bare join, was held to the
+// same bound here until its one caller — `ContentDigest`'s rule 4 — was retired, ADR-143.)
 //
 // The refusal's cost is held against reading the same stream named ONCE, in the same rounds (/pending 841; it was
 // "under 20 s", which measures the machine): the stream is decoded once however often it is named, so refusing six
@@ -79,7 +80,7 @@ func TestAPageNamingOneStreamRepeatedlyIsRefusedAsAWhole(t *testing.T) {
 	ctx, page := namedRepeatedly(t, 100<<20, 6)
 	once, opage := namedRepeatedly(t, 100<<20, 1)
 	for name, read := range map[string]func(*model.Context, types.Dict, int) ([]byte, error){
-		"PageContent": pdfread.PageContent, "PageContentAsPdfcpu": pdfread.PageContentAsPdfcpu,
+		"PageContent": pdfread.PageContent,
 	} {
 		scaling.WithinFactor(t, name+": refusing one 100 MiB stream named six times, against reading it named once", 5.5,
 			func() time.Duration {

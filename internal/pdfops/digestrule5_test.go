@@ -1,6 +1,8 @@
 package pdfops
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -10,26 +12,33 @@ import (
 	"nib/internal/testpdf"
 )
 
-// Rule 5 of ContentDigest (ADR-080): what it closes, one axis per row, each asserted under BOTH rules.
+// What rule 5 of ContentDigest closed (ADR-080), one axis per row, asserted under EVERY rule this build computes —
+// rule 5, the legacy arm, and the current one, which keeps all of it.
 //
-// Each row is a pair of documents that a reader shows differently (or, for /pending 720, identically) and the
-// assertion is two-sided: rule 5 must answer as the reader does, and rule 4 must still answer as it was MEASURED
-// to — because rule 4 is the legacy arm every v4 record is checked by, and a row whose rule-4 answer moved is a
-// v4 record that now reads as tampering. The rule-4 half is also what keeps each row honest: a mutation rule 4
-// already saw would pass rule 5's half for a reason that has nothing to do with this change.
+// Each row is a pair of documents that a reader shows differently (or, for /pending 720, identically), and each
+// readable rule must answer as the reader does.
+//
+// **These rows were two-sided until rule 4 was retired (ADR-143)**: rule 4 had to answer as it was MEASURED to —
+// blind to each row — which was also what kept a row honest, since a mutation rule 4 already saw would pass for
+// a reason that had nothing to do with rule 5. That half was measured green for as long as rule 4 was computed
+// and cannot be asserted now that nothing computes it. Rule 6's own rows (digestrule6_test.go) are two-sided
+// against rule 5 in the same way.
 
-// digestsUnder returns the document's digest under rule 4 and rule 5.
-func digestsUnder(t *testing.T, pdf []byte) (v4, v5 string) {
+// readableRules is every rule this build computes, oldest first.
+var readableRules = []int{legacyContentDigestVersion, ContentDigestVersion}
+
+// digestsUnder returns the document's digest under each of readableRules, in that order.
+func digestsUnder(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	v4, err := ContentDigestAt(pdf, legacyContentDigestVersion)
-	if err != nil {
-		t.Fatalf("rule 4: %v", err)
+	out := make([]string, 0, len(readableRules))
+	for _, rule := range readableRules {
+		d, err := ContentDigestAt(pdf, rule)
+		if err != nil {
+			t.Fatalf("rule %d: %v", rule, err)
+		}
+		out = append(out, d)
 	}
-	v5, err = ContentDigestAt(pdf, ContentDigestVersion)
-	if err != nil {
-		t.Fatalf("rule 5: %v", err)
-	}
-	return v4, v5
+	return out
 }
 
 func mustMutate(t *testing.T, pdf []byte, fn func(*model.Context) error) []byte {
@@ -50,7 +59,7 @@ func pagesNode(ctx *model.Context) (types.Dict, error) {
 }
 
 // TestRuleFiveSeesWhatTheReaderSees — /pending 578 (inherited page attributes) and /pending 616 (the catalog's
-// behaviour and page /UserUnit, /AA): each mutation changes what a reader shows or does, and rule 4 did not see it.
+// behaviour and page /UserUnit, /AA): each mutation changes what a reader shows or does.
 func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 	three, err := testpdf.Text("clause one", "clause two", "clause three")
 	if err != nil {
@@ -76,7 +85,7 @@ func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 		}
 		return nil
 	})
-	b4, b5 := digestsUnder(t, base)
+	before := digestsUnder(t, base)
 
 	jsAction := func(js string) types.Dict {
 		return types.Dict{"S": types.Name("JavaScript"), "JS": types.StringLiteral(js)}
@@ -164,13 +173,11 @@ func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 			onPage1(func(d types.Dict) { d["AA"] = types.Dict{"O": jsAction("app.alert('page')")} })},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			a4, a5 := digestsUnder(t, mustMutate(t, base, c.mut))
-			if a5 == b5 {
-				t.Errorf("rule %d is unchanged after %s — it %s (/pending %s)", ContentDigestVersion, c.name, c.why, c.item)
-			}
-			if a4 != b4 {
-				t.Errorf("rule 4 MOVED after %s, and it was measured not to — either the row mutates something rule 4 "+
-					"already covered (so it proves nothing about rule 5), or the legacy arm is no longer rule 4", c.name)
+			after := digestsUnder(t, mustMutate(t, base, c.mut))
+			for i, rule := range readableRules {
+				if after[i] == before[i] {
+					t.Errorf("rule %d is unchanged after %s — it %s (/pending %s)", rule, c.name, c.why, c.item)
+				}
 			}
 		})
 	}
@@ -178,7 +185,8 @@ func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 
 // TestRuleFiveReadsADividedPageAsItsReaderDoes — /pending 718: `[… (A) Tj, ET …]` shows the text and the single
 // stream `… (A) TjET …` does not (`TjET` is one unknown operator). Rule 4 hashed pdfcpu's bare join, under which the
-// two are the same bytes; rule 5 hashes `pdfread.PageContent`'s.
+// two are the same bytes; rules 5 and 6 hash `pdfread.PageContent`'s. The fused document is built from pdfcpu's own
+// join (`ctx.PageContent`), which is the reading that fuses.
 func TestRuleFiveReadsADividedPageAsItsReaderDoes(t *testing.T) {
 	divided, _, err := testpdf.SplitContents("a divided page", testpdf.JoinRegular)
 	if err != nil {
@@ -189,9 +197,16 @@ func TestRuleFiveReadsADividedPageAsItsReaderDoes(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		bare, err := pdfread.PageContentAsPdfcpu(ctx, d, 1)
+		bare, err := ctx.PageContent(d, 1)
 		if err != nil {
 			return err
+		}
+		door, err := pdfread.PageContent(ctx, d, 1)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(bare, door) {
+			return fmt.Errorf("setup: pdfcpu's join and the door's are the same bytes, so nothing is fused")
 		}
 		sd, err := ctx.NewStreamDictForBuf(bare)
 		if err != nil {
@@ -207,14 +222,12 @@ func TestRuleFiveReadsADividedPageAsItsReaderDoes(t *testing.T) {
 		d["Contents"] = *ref
 		return nil
 	})
-	d4, d5 := digestsUnder(t, divided)
-	f4, f5 := digestsUnder(t, fused)
-	if d4 != f4 {
-		t.Errorf("setup: rule 4 tells the divided page from its fused re-join, so this pair does not reproduce 718")
-	}
-	if d5 == f5 {
-		t.Errorf("rule %d digests the divided page and its fused re-join alike (%s), though one shows its text and "+
-			"the other does not (/pending 718)", ContentDigestVersion, d5)
+	d, f := digestsUnder(t, divided), digestsUnder(t, fused)
+	for i, rule := range readableRules {
+		if d[i] == f[i] {
+			t.Errorf("rule %d digests the divided page and its fused re-join alike (%s), though one shows its text "+
+				"and the other does not (/pending 718)", rule, d[i])
+		}
 	}
 }
 
@@ -271,13 +284,11 @@ func TestRuleFiveDoesNotHashAReachedPagesEncoding(t *testing.T) {
 	if filterBefore == nil {
 		t.Fatal("setup: page 1's content had no /Filter, so storing it uncompressed changes no encoding")
 	}
-	n4, n5 := digestsUnder(t, noted)
-	r4, r5 := digestsUnder(t, reencoded)
-	if n4 == r4 {
-		t.Errorf("setup: rule 4 held over the re-encode, so this pair does not reproduce 720")
-	}
-	if n5 != r5 {
-		t.Errorf("rule %d moved %s → %s over a re-encode that changed no content, because an annotation names the "+
-			"page (/pending 720)", ContentDigestVersion, n5, r5)
+	n, r := digestsUnder(t, noted), digestsUnder(t, reencoded)
+	for i, rule := range readableRules {
+		if n[i] != r[i] {
+			t.Errorf("rule %d moved %s → %s over a re-encode that changed no content, because an annotation names "+
+				"the page (/pending 720)", rule, n[i], r[i])
+		}
 	}
 }

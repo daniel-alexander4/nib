@@ -51,7 +51,10 @@ var ErrTwoRecords = errors.New("document carries two ceremony records, so which 
 // Its own sentinel, and not a shape of the hash-mismatch error, for the reason D32 exists:
 // the two mean opposite things to a reader. A hash mismatch says somebody changed the
 // document. This says the two builds measure the document differently and the numbers were
-// never comparable — nobody has done anything wrong, and the fix is an update.
+// never comparable — nobody has done anything wrong.
+//
+// **Which build is behind decides the remedy, and the error says which** (ADR-143): see
+// digestRuleSkew. `errors.Is(err, ErrDigestVersion)` answers for either direction.
 var ErrDigestVersion = errors.New("this ceremony's document hash was computed under a different version of Nib")
 
 // ShortHash renders a digest for a human sentence — the same abbreviation `CheckDocument` and
@@ -287,16 +290,65 @@ func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 
 // digestRuleSkew is the one door for D32's digest-rule skew: nil when r's DocHash was computed
 // under a rule this build can still compute (`pdfops.ContentDigestRuleReadable` — the current rule
-// and the one before it, ADR-080), else an ErrDigestVersion naming both rules. Every site that
-// compares a DocHash asks it FIRST (CheckRecord above, ReadMirror, DocumentHashFor), because a
-// comparison across rules produces a tampering sentence for a version difference — /pending 725's
+// and the one before it, ADR-080), else a skew error that is ErrDigestVersion to `errors.Is`. Every
+// site that compares a DocHash asks it FIRST (CheckRecord above, ReadMirror, DocumentHashFor), because
+// a comparison across rules produces a tampering sentence for a version difference — /pending 725's
 // bump to rule 4 would otherwise have reported every stored unsigned mirror as damaged.
 func digestRuleSkew(r Record) error {
 	if pdfops.ContentDigestRuleReadable(r.DigestVersion) {
 		return nil
 	}
-	return fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+
-		"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
-		"comparable — update Nib rather than treating this as a changed document",
-		ErrDigestVersion, r.DigestVersion, pdfops.ContentDigestVersion)
+	return digestSkew{rule: r.DigestVersion}
+}
+
+// digestSkew is the skew, with its DIRECTION (ADR-143, /pending 691).
+//
+// The sentence used to end "update Nib" whichever build was behind. That is the right advice when the
+// record is NEWER than this build, and exactly wrong when it is OLDER: every bump retires the oldest
+// readable rule (ADR-080), so a ceremony begun two rules back meets this sentence on the up-to-date
+// machine, where there is nothing to update to. The remedy there is to finish the ceremony on the Nib
+// it was started with, or to convene it again.
+//
+// It is ErrDigestVersion to `errors.Is`, as every caller already asks, and ALSO the p2p sentinel for
+// its direction — so the arrival gate's refusal crosses the wire by name (`p2p.refusalCode`) instead of
+// as a bare EOF, without a second mapping at each site that raises it (ADR-009).
+type digestSkew struct {
+	rule int // the rule the record names; 0 is a record written before the field existed
+}
+
+// retired reports that the record's rule is one this build no longer computes, as opposed to one it
+// does not compute yet.
+func (e digestSkew) retired() bool { return e.rule < pdfops.ContentDigestVersion }
+
+func (e digestSkew) Error() string {
+	oldest := pdfops.ContentDigestVersion
+	for pdfops.ContentDigestRuleReadable(oldest - 1) {
+		oldest--
+	}
+	computes := fmt.Sprintf("rule %d", pdfops.ContentDigestVersion)
+	if oldest != pdfops.ContentDigestVersion {
+		computes = fmt.Sprintf("rule %d and rule %d", oldest, pdfops.ContentDigestVersion)
+	}
+	if e.retired() {
+		return fmt.Sprintf("this ceremony was started with an older Nib: its document hash was computed "+
+			"under content-digest rule %d and this build computes %s, so the two numbers are not "+
+			"comparable — finish the ceremony on the Nib it was started with, or convene it again. This "+
+			"is a version difference, not a changed document", e.rule, computes)
+	}
+	return fmt.Sprintf("this ceremony was started with a newer Nib: its document hash was computed "+
+		"under content-digest rule %d and this build computes %s, so the two numbers are not "+
+		"comparable — update Nib to take part in it. This is a version difference, not a changed "+
+		"document", e.rule, computes)
+}
+
+func (e digestSkew) Is(target error) bool {
+	switch target {
+	case ErrDigestVersion:
+		return true
+	case p2p.ErrCeremonyRuleRetired:
+		return e.retired()
+	case p2p.ErrCeremonyRuleTooNew:
+		return !e.retired()
+	}
+	return false
 }

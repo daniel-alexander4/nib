@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
+	"nib/internal/p2p"
 	"nib/internal/sign"
 )
 
@@ -42,6 +43,8 @@ const (
 	copyNotOnThisMachine    ceremonyCopyCause = "not-on-this-machine"  // no stored copy, live or ended, under that id
 	copyDifferentProceeding ceremonyCopyCause = "different-proceeding" // a stored ceremony with that id is ANOTHER proceeding
 	copyDamaged             ceremonyCopyCause = "damaged"              // the stored copy does not match its own record
+	copyOlderNib            ceremonyCopyCause = "older-nib"            // stored under a digest rule this build no longer computes
+	copyNewerNib            ceremonyCopyCause = "newer-nib"            // stored under a digest rule this build does not compute yet
 	copyUnreadable          ceremonyCopyCause = "unreadable"           // anything else reading it failed
 )
 
@@ -98,6 +101,14 @@ func (s *Server) handleDocumentCeremonyCopy(w http.ResponseWriter, r *http.Reque
 		return
 	case errors.Is(err, ceremony.ErrMirrorDamaged):
 		refuse(copyDamaged)
+		return
+	case errors.Is(err, p2p.ErrCeremonyRuleRetired):
+		// A version difference, never "unreadable" (ADR-143): the copy is intact, and this build cannot
+		// check it against its record because the record's digest rule is one it does not compute.
+		refuse(copyOlderNib)
+		return
+	case errors.Is(err, ceremony.ErrDigestVersion):
+		refuse(copyNewerNib)
 		return
 	case err != nil:
 		refuse(copyUnreadable)

@@ -350,13 +350,31 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 //     page tree, as every reader shows them — v4 read the page's own key, so /Rotate on a /Pages node
 //     moved nothing (/pending 578) — and page /UserUnit and /AA are covered;
 //   - the catalog's /OpenAction, /AA, /OCProperties and /Names /JavaScript are covered (/pending 616).
-const ContentDigestVersion = 5
+//
+// **Bumped to 6 (2026-10-12, ADR-143, /pending 691 R5-5/-6), and rule 4 is retired.** Rules 1 to 5 followed
+// a page's resources through a LIST of kinds — /Font and /XObject — under a comment saying the other kinds
+// change what is drawn only "through a stream these two already cover". Measured false six ways, each with the
+// content stream byte-identical (`TestRuleSixFollowsEveryKindOfResourceAPageBinds`): an /ExtGState whose /ca
+// goes 1 → 0 (the text is painted fully transparent; no stream is involved at all), the form under an
+// /ExtGState's /SMask /G, a tiling /Pattern's stream, an Indexed /ColorSpace's palette, a /Shading's colours,
+// and a /Properties membership dictionary that turns marked content off. Rule 6 follows EVERY kind the
+// effective resource dictionary holds, by sorted kind and sorted name — see hashEveryResource. Nothing else
+// changed. Rule 5 is still computed, byte for byte, for the records written under it; rule 4 is not, by
+// ADR-080's policy that each bump retires the oldest readable rule.
+//
+// The added walk was measured before it landed, because the digest runs at the arrival gate (/pending 359):
+// on seven real documents from 220 KB to 6.1 MB, rule 6 against rule 5 in the same process, the whole call
+// (read plus walk) moved by at most +2%. The most the resource walk grew in bytes hashed was +9.5%, on a
+// 67-page InDesign report with 12 colour profiles and shadings to decode — see ADR-143 for the table and for
+// what the machine's load did to the timings.
+const ContentDigestVersion = 6
 
 // legacyContentDigestVersion is the one earlier rule this build still computes (ADR-080).
 //
-// One, not every rule ever shipped: v3 and earlier were never computable side by side, records under them
-// are already reported as a skew by every build since v4, and nothing in the field depends on them.
-const legacyContentDigestVersion = 4
+// One, not every rule ever shipped: each bump retires the oldest readable rule (ADR-080, ADR-143), so a
+// record under rule 4 or earlier is a skew — reported as "started with an older Nib", never as a changed
+// document (`ceremony.digestRuleSkew`).
+const legacyContentDigestVersion = 5
 
 // ContentDigestRuleReadable reports whether this build can compute ContentDigest under rule v — the
 // current rule or the retained legacy one. A record naming any other rule is a version skew (D32).
@@ -400,10 +418,12 @@ const CeremonyRecordName = "nib-ceremony.json"
 //
 // # What it covers, and the exclusion list that outlived its own truth
 //
-// **Covered (rule 5, ADR-080):** page count; per page the content stream (joined at token
-// boundaries), the EFFECTIVE MediaBox/CropBox/Rotate and resources — inherited through the page
-// tree — with the resources followed into font and XObject streams, /UserUnit, /AA, and /Annots in
-// full (a page an annotation names hashes as its position); the catalog's embedded-files name tree
+// **Covered (rule 6):** page count; per page the content stream (joined at token boundaries), the
+// EFFECTIVE MediaBox/CropBox/Rotate and resources — inherited through the page tree — with EVERY kind
+// of resource the page binds followed to its streams (fonts, XObjects, graphics states and their soft
+// masks, patterns, shadings, colour spaces, /Properties, /ProcSet, and any kind not named here),
+// /UserUnit, /AA, and /Annots in full (a page an annotation names hashes as its position); the
+// catalog's embedded-files name tree
 // entry by entry — each key with its own filespec and streams — minus the ceremony record (see
 // CeremonyRecordName); and the catalog's /OpenAction, /AA, /OCProperties and /Names /JavaScript.
 //
@@ -413,7 +433,8 @@ const CeremonyRecordName = "nib-ceremony.json"
 // signature rewrites /AcroForm by design); outlines, page labels, named destinations and viewer
 // preferences (navigation, not content); the structure tree (accessibility, not what is drawn).
 // The AcroForm's /XFA is the one of these that can change what some readers DRAW, and it is
-// filed rather than covered.
+// filed rather than covered. Rule 5, still computed for the records written under it, follows a
+// page's resources into /Font and /XObject only.
 //
 // This comment used to carry an exclusion list reading "annotations, form field values,
 // attachments, and metadata", justified by "tamper-evidence for everything else is what the
@@ -515,9 +536,10 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 }
 
 // digestRule is the digest under rule `version` — ContentDigestVersion or legacyContentDigestVersion, which
-// its callers have already checked. **v4's arm is v4 byte for byte** (ADR-080): the external and generated
-// goldens are pinned under both rules, because a record written under v4 is checked by this arm for as long
-// as v4 is readable.
+// its callers have already checked. **Rule 5's arm is rule 5 byte for byte** (ADR-080): the external and
+// generated goldens are pinned under both rules, because a record written under rule 5 is checked by this
+// arm for as long as rule 5 is readable. The two rules differ in ONE place — which kinds of a page's
+// effective resources are followed (hashEffectivePage).
 func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int) (string, error) {
 	h := sha256.New()
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first
@@ -537,18 +559,15 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 	if pages == nil {
 		answers = pdfread.Pages(ctx)
 	}
-	v5 := version >= 5
-	if v5 {
-		// Every page's POSITION by object number, BEFORE any page is hashed: page 1's annotations may name page 9.
-		// A page pdfcpu answered without a reference is not in the map and is walked as v4 walked it.
-		sc.pageAt = map[int]int{}
-		for i, a := range answers {
-			if a.Ref != nil {
-				sc.pageAt[a.Ref.ObjectNumber.Value()] = i + 1
-			}
+	// Every page's POSITION by object number, BEFORE any page is hashed: page 1's annotations may name page 9.
+	// A page pdfcpu answered without a reference is not in the map and is walked as a dictionary.
+	sc.pageAt = map[int]int{}
+	for i, a := range answers {
+		if a.Ref != nil {
+			sc.pageAt[a.Ref.ObjectNumber.Value()] = i + 1
 		}
-		defer func() { sc.pageAt = nil }()
 	}
+	defer func() { sc.pageAt = nil }()
 	for i := 1; i <= ctx.PageCount; i++ {
 		// `pages` is nil whenever the one-pass walk was not usable, and a nil SLICE must not be
 		// indexed — the first cut wrote `pages[i-1]` unguarded, which panics on exactly the
@@ -578,15 +597,9 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 					"number, though it counts %d", i, ctx.PageCount)
 			}
 		}
-		// v5 reads the page through ADR-056's door, which separates two streams only where a bare join would fuse
-		// them (/pending 718). v4 reads pdfcpu's bare join — the bytes it always hashed, now bounded as the door
-		// bounds (`PageContentAsPdfcpu` is byte-identical to pdfcpu's join below `MaxPageContentBytes`).
-		var c []byte
-		if v5 {
-			c, err = pdfread.PageContent(ctx, d, i)
-		} else {
-			c, err = pdfread.PageContentAsPdfcpu(ctx, d, i)
-		}
+		// The page is read through ADR-056's door, which separates two streams only where a bare join would fuse
+		// them (/pending 718).
+		c, err := pdfread.PageContent(ctx, d, i)
 		if err != nil && err != model.ErrNoContent {
 			return "", fmt.Errorf("page %d content: %w", i, err)
 		}
@@ -594,15 +607,7 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 		// GEOMETRY, which the first draft did not cover at all. Shrinking /CropBox to
 		// excise a paragraph, or setting /Rotate 90, changes what every reader displays.
 		// It is per-page, and it is exactly what a general reviewer reads past.
-		if v5 {
-			hashEffectivePage(ctx.XRefTable, d, attrs, h, sc)
-		} else {
-			for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
-				hashChunk(h, []byte(key))
-				hashObject(ctx.XRefTable, d[key], h, 0, sc)
-			}
-			hashPageResources(ctx.XRefTable, d, h, sc)
-		}
+		hashEffectivePage(ctx.XRefTable, d, attrs, h, sc, version >= 6)
 		// ANNOTATIONS, because the exclusion's premise is false in the window this digest
 		// is checked in. The argument was "everything else is covered by the signatures" —
 		// but CheckDocument exists for the pre-FIRST-signature hop, where there are none,
@@ -632,9 +637,7 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 	// key and filespec are hashed as separate length-prefixed chunks, so a rename and an edit
 	// cannot be made to cancel out.
 	hashEmbeddedFiles(ctx, h, sc)
-	if v5 {
-		hashCatalogBehaviour(ctx.XRefTable, h, sc)
-	}
+	hashCatalogBehaviour(ctx.XRefTable, h, sc)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -650,7 +653,10 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 //
 // `/UserUnit` (PDF 1.6) scales every unit on the page and `/AA` runs actions on opening and closing it;
 // both are page-only keys, hashed as written (/pending 616).
-func hashEffectivePage(xt *model.XRefTable, d types.Dict, attrs *model.InheritedPageAttrs, h hash.Hash, sc *streamMemo) {
+//
+// `everyKind` is the one difference between rule 5 and rule 6: rule 5 follows the resources into /Font and
+// /XObject (hashResourceDict), rule 6 into every kind the dictionary holds (hashEveryResource).
+func hashEffectivePage(xt *model.XRefTable, d types.Dict, attrs *model.InheritedPageAttrs, h hash.Hash, sc *streamMemo, everyKind bool) {
 	if attrs == nil {
 		// pdfcpu answered the page with no attributes; hashed as such, never as an empty page.
 		hashChunk(h, []byte("#noattrs"))
@@ -665,6 +671,10 @@ func hashEffectivePage(xt *model.XRefTable, d types.Dict, attrs *model.Inherited
 	for _, key := range []string{"UserUnit", "AA"} {
 		hashChunk(h, []byte(key))
 		hashObject(xt, d[key], h, 0, sc)
+	}
+	if everyKind {
+		hashEveryResource(xt, attrs.Resources, h, sc)
+		return
 	}
 	hashResourceDict(xt, attrs.Resources, h, sc)
 }
@@ -1180,8 +1190,8 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 // call per geometry key, per `/Annots` and **per resource name per page**. A font shared by a
 // thousand pages is therefore reached a thousand times, and each arrival flate-decodes the
 // embedded program again. Measured on a 1,000-page tagged document (`TestZZ`-style fixture,
-// 8,000 Markdown clauses): `hashPageResources` was 74.6% of `ContentDigest` and 94% of THAT was
-// `filter.flate.Decode`, under `hashStreamBody`.
+// 8,000 Markdown clauses): the page-resource walk (`hashResourceDict` now) was 74.6% of `ContentDigest`
+// and 94% of THAT was `filter.flate.Decode`, under `hashStreamBody`.
 //
 // **This memo changes how OFTEN a stream is decoded and nothing else.** The bytes written into
 // the hash, the marker in front of them, the order they arrive in, and every `#again` index are
@@ -1211,8 +1221,9 @@ type streamMemo struct {
 	body  map[int]decodedStream // object numbers reached twice or more, with their decode
 	spent int64
 	st    *digestStats
-	// pageAt is not part of the memo: it is v5's page identity (object number → 1-based position), carried
-	// here because this is the one per-call value every hash function already threads. Nil under v4.
+	// pageAt is not part of the memo: it is the page identity rule 5 introduced (object number → 1-based
+	// position), carried here because this is the one per-call value every hash function already threads.
+	// Nil outside digestRule.
 	pageAt map[int]int
 }
 
@@ -1287,16 +1298,27 @@ func decodeStream(sd *types.StreamDict, sc *streamMemo, num int) decodedStream {
 	return d
 }
 
-// resourceKinds are the page-visible resource categories folded into ContentDigest.
+// resourceKinds are the two resource categories RULE 5 follows — kept, unchanged, because a record
+// written under rule 5 is checked by rule 5 (ADR-080). Rule 6 does not read this list: see
+// hashEveryResource.
 //
 // XObject holds images and form XObjects — for a scan, the whole visible page. Font decides
-// what the glyphs the content stream names actually look like. The others (ColorSpace,
-// Pattern, Shading, ExtGState) are deliberately out: they are parameters rather than content,
-// and every one of them that changes what is drawn does so through a stream these two already
-// cover.
+// what the glyphs the content stream names actually look like.
+//
+// **This comment used to say the others (ColorSpace, Pattern, Shading, ExtGState) "are parameters
+// rather than content, and every one of them that changes what is drawn does so through a stream
+// these two already cover". That was false, and measured so** (/pending 691 R5-5, 2026-10-12): with the
+// content stream byte-identical, rule 5's digest does not move when an /ExtGState's /ca goes 1 → 0
+// (nothing is drawn, and no stream is involved), when the form under an /ExtGState's /SMask /G is
+// replaced, when a tiling /Pattern's stream is replaced, when an Indexed /ColorSpace's palette is
+// repainted, when a /Shading's colours change, or when a /Properties membership dictionary turns marked
+// content off. None of the six is reached from a /Font or an /XObject entry. An image XObject's own /SMask
+// IS covered, which is the one case the old sentence described. A list of kinds was the defect; rule 6 has
+// none.
 var resourceKinds = []string{"Font", "XObject"}
 
-// hashPageResources folds a page's resources into h, in a canonical order.
+// hashResourceDict folds a resource dictionary's /Font and /XObject into h, in a canonical order — rule 5's
+// reading of a page's effective resources.
 //
 // # The DICT, not only the stream body
 //
@@ -1319,13 +1341,6 @@ var resourceKinds = []string{"Font", "XObject"}
 // Order comes from the resource NAMES, not from object numbers — object numbers change on
 // every pdfcpu rewrite and names do not, which is the same reason this hashes the stream
 // rather than the file.
-func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash, sc *streamMemo) {
-	res, _ := xt.DereferenceDict(page["Resources"])
-	hashResourceDict(xt, res, h, sc)
-}
-
-// hashResourceDict is hashPageResources over a resource dictionary already found — the page's own (v4) or
-// its effective, inherited one (v5).
 func hashResourceDict(xt *model.XRefTable, res types.Dict, h hash.Hash, sc *streamMemo) {
 	if res == nil {
 		hashChunk(h, []byte("#nores"))
@@ -1343,6 +1358,55 @@ func hashResourceDict(xt *model.XRefTable, res types.Dict, h hash.Hash, sc *stre
 			names = append(names, k)
 		}
 		sort.Strings(names)
+		hashUint(h, uint64(len(names)))
+		for _, name := range names {
+			hashChunk(h, []byte(name))
+			hashObject(xt, sub[name], h, 0, sc)
+		}
+	}
+}
+
+// hashEveryResource is rule 6's reading of a page's effective resource dictionary: EVERY kind the
+// dictionary holds, whatever it is called (ADR-143).
+//
+// Kinds are taken from the dictionary itself and sorted, never from a list in this file — a list is how
+// rules 1 to 5 came to leave six kinds out (see resourceKinds). A kind that is a dictionary (every one but
+// /ProcSet) is hashed name by name, sorted, each name its own top-level walk exactly as hashResourceDict
+// does it: `seen` keeps its per-call scope, and a font, image or colour profile shared between pages still
+// reaches the stream memo. A kind that is anything else is hashed as the object it is. The two shapes carry
+// different markers, so an array and a dictionary cannot be made to hash alike.
+//
+// **What "every kind" is in practice: the eight of ISO 32000-1 Table 33.** The digest reads a validated
+// context, and pdfcpu's validator DELETES any other key from a resource dictionary (`validateResourceDict`)
+// before this function sees it — as it empties a font it cannot validate, which hashes as `#nil` under this
+// rule exactly as under rule 5 (ADR-129). No content operator can name a key outside those eight, so nothing
+// a reader draws is lost by it; `TestRuleSixTakesItsKindsFromTheDictionary` pins it, so a pdfcpu that stops
+// deleting shows up as a moved digest in the suite.
+func hashEveryResource(xt *model.XRefTable, res types.Dict, h hash.Hash, sc *streamMemo) {
+	if res == nil {
+		hashChunk(h, []byte("#nores"))
+		return
+	}
+	kinds := make([]string, 0, len(res))
+	for k := range res {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	hashUint(h, uint64(len(kinds)))
+	for _, kind := range kinds {
+		hashChunk(h, []byte(kind))
+		sub, _ := xt.DereferenceDict(res[kind])
+		if sub == nil {
+			hashChunk(h, []byte("#value"))
+			hashObject(xt, res[kind], h, 0, sc)
+			continue
+		}
+		names := make([]string, 0, len(sub))
+		for k := range sub {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		hashChunk(h, []byte("#names"))
 		hashUint(h, uint64(len(names)))
 		for _, name := range names {
 			hashChunk(h, []byte(name))

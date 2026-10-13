@@ -28,6 +28,7 @@ func TestEveryRefusalCodeRoundTripsToItsOwnSentinel(t *testing.T) {
 		ErrNotYourTurn, ErrNotInRoster, ErrPrefixMismatch, ErrPrefixUnproven,
 		ErrProceedingMismatch, ErrCeremonyComplete, ErrNotTheConnectedPeer,
 		ErrPeerDoesNotAcceptYou, ErrWrongPriorSignerCount, ErrConsentBusy,
+		ErrCeremonyRuleRetired, ErrCeremonyRuleTooNew,
 	}
 	seen := map[byte]error{}
 	for _, want := range all {

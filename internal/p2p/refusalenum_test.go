@@ -69,6 +69,8 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		"refuseDocumentSubstituted": refuseDocumentSubstituted,
 		"refuseWrongRole":           refuseWrongRole,
 		"refuseConsentBusy":         refuseConsentBusy,
+		"refuseCeremonyRuleRetired": refuseCeremonyRuleRetired,
+		"refuseCeremonyRuleTooNew":  refuseCeremonyRuleTooNew,
 	}
 	// And the values they are pinned TO, written out separately from the identifiers above. The
 	// two halves are compared below: the map above proves the names still exist, this one proves
@@ -97,6 +99,10 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		// Frozen 2026-09-29 (/pending 744). A consent gate already occupied by another request: the
 		// refusal /pending 660 introduced, which crossed as a bare EOF and so read as a network fault.
 		"refuseConsentBusy": 17,
+		// Frozen 2026-10-12 (ADR-143, /pending 691). The arrival gate's refusal of a ceremony whose record
+		// names a content-digest rule the checking build does not compute, one code per direction because
+		// the remedies are opposite. It had crossed as a bare EOF.
+		"refuseCeremonyRuleRetired": 18, "refuseCeremonyRuleTooNew": 19,
 	}
 
 	fset := token.NewFileSet()

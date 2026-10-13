@@ -912,3 +912,5 @@ home today.
   — `third_party/digitorus-pdfsign` via `replace`, differing from upstream in `verify/signature.go` and `verify/verify.go` only; allocation per signature 6-7× the file → 1.0-1.3×, held by a root guard and an allocation test.
 - [ADR-144](144-removing-an-authorized-key-replaces-the-vaults-content-key.md) — **removing an authorized key replaces the vault's content key**
   — every remaining slot is re-sealed from its stored public key, the staged file is opened with the new key before the rename, and a generation in the envelope (no format change) stops a stale process writing its old slots back; nothing already copied is taken back.
+- [ADR-143](143-rule-6-follows-every-kind-of-resource-a-page-binds.md) — **rule 6 follows every kind of resource a page binds**
+  — `ContentDigestVersion` 5 → 6: the digest follows every kind in the effective resource dictionary, not a list; rule 5 is still computed for its records, rule 4 is retired, and a rule skew says which build is behind (wire codes 18, 19).
