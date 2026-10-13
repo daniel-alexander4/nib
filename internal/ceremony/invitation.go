@@ -203,6 +203,12 @@ type Invitation struct {
 	// depend on a shipped list that rots — three of the five Nib ships were dead the day
 	// they were written.
 	//
+	// **Refused on the real path (ADR-152).** No door that issues an invitation sets them and
+	// nothing feeds a parsed invitation's to the DHT; only the `nib rendezvous` diagnostic does
+	// either. The field, its cap and both validating doors STAY, so the wire form is unchanged
+	// and an over-long list is still refused whole — a list that is ignored is not thereby safe
+	// to accept unparsed.
+	//
 	// **This is the only field that will never have a signed counterpart.** MatchesRecord
 	// compares the id, the roster and the signs flags against the convener-signed Record,
 	// and a Record has no seeds to compare against — so unlike every other field here,

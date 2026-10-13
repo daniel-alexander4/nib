@@ -166,6 +166,19 @@ if [ -n "${NIB_LIVE_SEEDS:-}" ]; then
   fi
 fi
 
+# The shipped seed list, address by address (/pending 357, ADR-152). Invitation seeds are refused
+# on the real path, so this list is where a cold machine starts — and a cold start succeeds while
+# ONE address answers, so a list that has mostly died passes everything above. These lines are the
+# only place that is seen. A ROT line is not a failure of this run (a stranger's router is entitled
+# to be down); it is an instruction to re-measure and update internal/rendezvous/seeds.go.
+if grep -q -- "--- PASS: TestLiveShippedSeedsAnswerAsRecorded" "$OUT"; then
+  SEEDLIST="$(sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: SEEDS //p' "$OUT")"
+elif grep -q -- "--- SKIP: TestLiveShippedSeedsAnswerAsRecorded" "$OUT"; then
+  SEEDLIST="SKIPPED — no shipped seed answered; UNVERIFIED by this run"
+else
+  cat "$OUT"; fail "TestLiveShippedSeedsAnswerAsRecorded neither passed nor skipped — it failed"
+fi
+
 # Evidence, not just a green. Each of these is a separate claim the pass does not make.
 grep -q "BOOTSTRAP" "$OUT" || fail "no bootstrap line — the seed list was never exercised"
 grep -q "OBSERVED"  "$OUT" || fail "no node reported our address; the pass above is not about the wire"
@@ -173,7 +186,7 @@ grep -q "CLASSIFIED" "$OUT" || fail "nothing was classified; D19's test did not 
 
 # Strip go test's "    live_test.go:53: " prefix before matching, or this prints nothing
 # at all and the harness reports a green with no evidence under it.
-sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|PROBE\|CLASSIFIED\|TRANSLATED\|NOTE\|PUBLISHER\|PUBLISHED\|HARVESTED\|FETCHER\|UNREACHABLE\) /p' "$OUT"
+sed -n 's/^[[:space:]]*[a-z_]*\.go:[0-9]*: //; /^\(LOCAL\|BOOTSTRAP\|OBSERVED\|PROBE\|CLASSIFIED\|TRANSLATED\|NOTE\|PUBLISHER\|PUBLISHED\|HARVESTED\|FETCHER\|UNREACHABLE\|SEED\) /p' "$OUT"
 
 echo "PASS: a real DHT node reported this host's public endpoint, port included, and the"
 echo "      mapping classified — from a cold start with no cached nodes"
@@ -181,3 +194,7 @@ echo "      publish/fetch round trip: $PUBFETCH"
 echo "      candidate fetched→dialled: $CANDDIAL"
 echo "      pre-hop end-state pull:    $ENDSTATE"
 echo "      invitation-seed rescue:   $SEEDRESCUE"
+echo "      shipped seed list:        $SEEDLIST"
+if grep -q "ROT — \|BACK — " "$OUT"; then
+  echo "NOTE: a shipped seed no longer answers as internal/rendezvous/seeds.go records — see the SEED lines above."
+fi

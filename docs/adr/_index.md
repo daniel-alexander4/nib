@@ -929,3 +929,5 @@ home today.
   — extends ADR-044 to the authoring faces: installed as `NibText-*` and `NibMono` through one rename table, so a stamp on a document carrying its own Roboto keeps an embedded face; the OCR layer's Latin face is the declared gap.
 - [ADR-151](151-an-announcement-carries-a-salted-tag-never-the-name.md) — **an announcement carries a salted tag, never the name**
   — supersedes ADR-007's name field: a salt drawn per announcer and `SHA-256(label ‖ salt ‖ fingerprint)[:16]`, recognised only by recomputing over a pin; format version 4, version 3 refused; anyone holding the fingerprint can still recognise the announcer — what goes is linking two arms without it.
+- [ADR-152](152-invitation-carried-dht-seeds-are-refused-on-both-halves.md) — **invitation-carried DHT seeds are refused on both halves**
+  — no issued invitation carries seeds and the server feeds none to the DHT; the wire field and its validator stay, `nib rendezvous` keeps its loop; the shipped bootstrap list records each address's operator, keeps two answering operators, and is measured on every `dhtlive.sh` run.

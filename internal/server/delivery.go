@@ -1540,9 +1540,8 @@ func checkMintAllowed(v *vault.Vault, rec ceremony.Record, now time.Time, budget
 // logic is extracted here rather than written twice, which is the duplicate derivation this repo
 // keeps paying for.
 //
-// `Seeds` is absent and cannot be recovered — the record does not carry them — so a re-minted
-// invitation has no DHT seed hints. Stated rather than papered over, exactly as the invites route
-// states it; every other field a recipient CHECKS is present.
+// `Seeds` is absent: no invitation Nib issues carries DHT seed hints (refused, ADR-152), exactly
+// as the invites route states it. Every field a recipient CHECKS is present.
 func convenerInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.Party) (ceremony.Invitation, error) {
 	conv := convenerFingerprintOf(rec)
 	if conv == "" {
