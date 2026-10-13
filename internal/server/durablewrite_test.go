@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,6 +32,40 @@ import (
 // the signer sees, where before it was a `log.Printf` into a stderr a double-clicked launch sends
 // nowhere. And the cache-survives-the-failure arm is the clause that keeps a failed local write
 // from turning into a SECOND signature on the reconnect, which is what D24 forbids.
+// TestAStoreAfterCloseSaysTheSignatureWasNotKept — /pending 666 #2. An arm that closed while its
+// exchange was still signing answered nil from Store, which `p2p.Receive` reads as "kept": the peer
+// got the signature, this machine kept none, and the signer was told nothing. The error is the only
+// channel "Signed, but not saved" has. And nothing is written: the close may be the close-out that
+// moved the ceremony's folder (ADR-012).
+func TestAStoreAfterCloseSaysTheSignatureWasNotKept(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	final, _ := convenedFor(t)
+	rec, err := ceremony.Extract(final)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	inbound := []byte("%PDF-1.4\nthe document as it arrived at this hop")
+
+	cer := &ceremonyID{}
+	cer.close()
+	err = cer.Store(inbound, final)
+	if !errors.Is(err, errStoreAfterClose) {
+		t.Fatalf("Store on a closed ceremony returned %v, want errStoreAfterClose — the signature "+
+			"leaves for the peer and the signer is never told this machine kept no copy", err)
+	}
+	if _, serr := os.Stat(filepath.Join(home, "nib", "ceremonies", rec.ID)); !errors.Is(serr, fs.ErrNotExist) {
+		t.Errorf("a Store after close left %s behind (%v) — a mirror written for a ceremony whose "+
+			"folder the close-out may already have moved", filepath.Join("~/nib/ceremonies", rec.ID), serr)
+	}
+	cer.mu.Lock()
+	n := len(cer.reDelivery)
+	cer.mu.Unlock()
+	if n != 0 {
+		t.Errorf("a Store after close kept %d re-delivery entries on a ceremony nothing will tear down", n)
+	}
+}
+
 func TestTheContributionReachesDiskInsideStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

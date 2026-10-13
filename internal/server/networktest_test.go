@@ -2,10 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"nib/internal/discovery"
+	"nib/internal/vault"
 )
 
 // /pending 23 — the discovery counters get a surface that is not a terminal.
@@ -66,6 +69,30 @@ func TestTheNetworkTestAnswersWithAVerdictAndItsCounters(t *testing.T) {
 			"classify as %q. The published counters are what let a user quote the evidence, so "+
 			"they must be the evidence the verdict was drawn from",
 			got.Verdict, got.Sent, got.Own, got.Peers, st.Verdict().Name())
+	}
+}
+
+// TestTheNetworkTestRefusesWhileDiscoveryIsOff — /pending 666. The test ANNOUNCES on the link for
+// its whole window, so with local-network discovery switched off it must not run: it was the one
+// sender the switch did not reach.
+func TestTheNetworkTestRefusesWhileDiscoveryIsOff(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, _ := authedClient(t, ts)
+	// Everything else on, so the refusal is this switch's and no other's.
+	setAdvanced(t, srv.unlockedVault(), &vault.Advanced{Ceremony: true, Rendezvous: true, Timestamp: true})
+
+	r, err := c.Get(ts.URL + "/api/lan/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	if r.StatusCode != http.StatusForbidden {
+		t.Fatalf("with discovery off the network test answered %d (%s), want 403 — it announces on "+
+			"the link, and off means nothing announces", r.StatusCode, body)
+	}
+	if !strings.Contains(string(body), featDiscovery.String()) {
+		t.Errorf("the refusal reads %s and does not name the switch that caused it", body)
 	}
 }
 
