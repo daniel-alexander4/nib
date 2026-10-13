@@ -1917,12 +1917,64 @@ function startVerifyPoll() {
     try {
       const st = await (await apiFetch('/api/session/status')).json();
       if (token !== verifyPoll) return;
+      // Before the dial the server checks the document against its record, and says so here.
+      reflectChecking('out', !!st.checking);
       if (st.verify && st.verify.words !== shown) { shown = st.verify.words; showVerify(shown); }
     } catch { /* keep polling; the request in flight owns the error reporting */ }
     if (token === verifyPoll) setTimeout(tick, 800);
   };
   tick();
-  return () => { verifyPoll++; els.verifyModal.hidden = true; };
+  return () => { verifyPoll++; els.verifyModal.hidden = true; reflectChecking('out', false); };
+}
+
+// "Checking the document…" (/pending 359) — the wait before anything is shown, saying what it is.
+//
+// While a ceremony's document is still unsigned, each side hashes all of it against the ceremony
+// record before going on: the side that calls does it before it dials, the side that is called does
+// it before the consent screen. On a large document that is seconds with nothing on screen. The
+// server publishes it as `checking` on `/api/session/status`, which both sides are already polling
+// across exactly that stretch, and this one line is up for as long as it is true.
+//
+// **One line, three watchers.** `who` is the poller reporting — 'out' (a call or a send in flight),
+// 'in' (the receive poller) and 'own' (the convener signing their own turn) — and the line stays up
+// while ANY of them last heard yes, so one poller stopping does not take down what another still
+// reports. Every watcher clears its own entry when it stops, so the line cannot outlive them all.
+//
+// Its own element, above the toast's place, for `readingNote`'s reason: a toast hides itself after
+// 2.5 s. Announced politely and once — the text is written only when the line goes up.
+const checkingSeen = new Set();
+let checkingEl = null;
+function reflectChecking(who, on) {
+  if (on) checkingSeen.add(who); else checkingSeen.delete(who);
+  const up = checkingSeen.size > 0;
+  if (!checkingEl) {
+    if (!up) return;
+    checkingEl = document.createElement('div');
+    checkingEl.id = 'checkingNote';
+    checkingEl.setAttribute('role', 'status');
+    checkingEl.setAttribute('aria-live', 'polite');
+    checkingEl.hidden = true;
+    document.body.appendChild(checkingEl);
+  }
+  if (checkingEl.hidden !== up) return; // already as it should be: nothing is re-announced
+  checkingEl.textContent = up ? 'Checking the document…' : '';
+  checkingEl.hidden = !up;
+}
+
+// watchChecking polls for that line beside a request that has no other poller — the convener's own
+// turn, which calls nobody and so has no spoken check to watch for. Returns its stop.
+function watchChecking() {
+  let live = true;
+  const tick = async () => {
+    if (!live) return;
+    try {
+      const st = await (await apiFetch('/api/session/status')).json();
+      if (live) reflectChecking('own', !!st.checking);
+    } catch { /* the request in flight owns the error reporting */ }
+    if (live) setTimeout(tick, 800);
+  };
+  tick();
+  return () => { live = false; reflectChecking('own', false); };
 }
 
 // pollRecv drives the receive state machine off /api/session/status: a pending
@@ -1972,6 +2024,8 @@ async function pollRecv(token, fails = 0) {
   reflectArmProgress(st.progress);
   reflectDiagnosis(st.diagnosis);
   reflectTurnedAway(st.turnedAway);
+  // An arrival is hashed against its record before the consent screen; said for as long as it runs.
+  reflectChecking('in', !!st.checking);
   // `until` is when this arm gives up. Read here so the indicator says how long is left rather
   // than only that something is armed — which is what the field was added for (C05): a five-minute
   // manual bound and a thirty-day ceremony bound are indistinguishable from the OUTCOME and
@@ -2401,6 +2455,7 @@ function endRecv() {
   recvStage = 'arm';
   recvAnsweredId = '';
   reflectArmed(false);
+  reflectChecking('in', false); // this poller has stopped, so nothing would ever clear its line
   els.srvPreview.innerHTML = '';
   els.srvAccept.disabled = false; els.srvDecline.disabled = false;
   els.sessionRecvModal.hidden = true;
@@ -18400,14 +18455,22 @@ function ceremonySignTurn(c, refresh) {
     if (!confirmOverlayLoss(owner)) return;
     btn.disabled = true;
     back.hidden = true;
+    // The server checks the document against the ceremony record before it signs; on a large one
+    // that is the longer part of this wait, and the line says so while it runs.
+    const stopChecking = watchChecking();
     try {
       say.textContent = 'Signing…';
-      const res = await apiFetch('/api/ceremony/sign-turn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ceremony: c.id, appearance, when }),
-        docId: opDoc.id,
-      });
+      let res;
+      try {
+        res = await apiFetch('/api/ceremony/sign-turn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ceremony: c.id, appearance, when }),
+          docId: opDoc.id,
+        });
+      } finally {
+        stopChecking();
+      }
       if (!res.ok) { putBack(await errText(res, `Nib could not sign (${res.status}). Nothing was signed.`)); return; }
       preview.hidden = true;
       say.textContent = 'You have signed.';

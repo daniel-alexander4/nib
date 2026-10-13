@@ -1490,6 +1490,23 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   padding: 8px 10px 8px 16px;
 }
 
+/* "Checking the document…" (/pending 359): up for as long as a ceremony document is being hashed
+ * against its record, before a call is dialled or a consent screen is shown. Above #readingNote's
+ * place, so the two never cover each other, and above every dialog for #toast's reason — the wait
+ * it describes is started from one. No `display` of its own: `hidden` is what takes it down. */
+#checkingNote {
+  position: fixed;
+  z-index: 300;
+  bottom: 112px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface1);
+  color: var(--text);
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  padding: 8px 16px;
+}
+
 /* Fillable-form field-naming modal (Save as fillable form…) */
 .fieldname-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 .fieldname-row { display: flex; align-items: center; gap: 10px; }

@@ -66,7 +66,7 @@ func TestTheArrivalGateRefusesADigestRuleSkewByName(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			doc, _ := documentUnderDigestRule(t, c.rule)
-			err := cer.checkArrival(doc, time.Now())
+			err := cer.checkArrival(doc, time.Now(), nil)
 			if !errors.Is(err, ceremony.ErrDigestVersion) {
 				t.Fatalf("the arrival gate answered %v — want the digest-rule skew", err)
 			}

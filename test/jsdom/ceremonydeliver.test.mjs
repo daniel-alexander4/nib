@@ -91,6 +91,7 @@ const listing = {
 // it on the echoed id, which is the guard `ceremonyNextLine` exists to keep.
 let hopQuote = null;
 const signTurns = [];
+let signHold = null; // while set, the signing route waits on `.wait` and the status says `checking`
 let afterSigning = null;
 let nextAnswer = { ceremony: '6'.repeat(32), state: 'complete' };
 
@@ -133,7 +134,10 @@ const { document: doc, settle } = await boot({
       ? new Response('<html>Bad Gateway</html>', { status: 502 }) : hopQuote),
     // The convener's own turn (/pending 869): the press is recorded, the answer is the document's new
     // state, and the turn moves to whoever `afterSigning` names.
-    '/api/ceremony/sign-turn': (opts) => {
+    // What the server says while it hashes the document before signing (/pending 359).
+    '/api/session/status': () => ({ armed: false, ...(signHold ? { checking: true } : {}) }),
+    '/api/ceremony/sign-turn': async (opts) => {
+      if (signHold) await signHold.wait;
       signTurns.push({ body: JSON.parse((opts && opts.body) || '{}'), doc: opts?.headers?.['X-Nib-Doc'] });
       if (afterSigning) nextAnswer = afterSigning;
       return {
@@ -490,9 +494,28 @@ test('Sign now quotes the block, signs the document that was open at the press, 
     await settle();
     await settle();
     hopQuote = { ...hopQuote, when: '2031-12-31T00:00:00Z' }; // a later quote must not be what is signed
-    signBtn.click();
+    // The signing request is held in flight with the server saying it is checking the document
+    // (/pending 359): nobody is called at this turn, so this press has no other poller to say so.
+    signHold = {};
+    signHold.wait = new Promise((r) => { signHold.release = r; });
+    const { release } = signHold;
+    let checkingNote;
+    try {
+      signBtn.click();
+      await new Promise((r) => setTimeout(r, 300));
+      await settle();
+      checkingNote = doc.getElementById('checkingNote');
+      assert.ok(checkingNote && !checkingNote.hidden,
+        'the server is checking the document before it signs and the window says only "Signing…"');
+      assert.equal(checkingNote.textContent, 'Checking the document…');
+    } finally {
+      // Released on a failure too: a route left waiting holds the file open and reads as a hang.
+      signHold = null;
+      release();
+    }
     await settle();
     await settle();
+    assert.equal(checkingNote.hidden, true, 'the signing ended and the line stayed up');
     assert.equal(signTurns.length, 1, `the press reached the signing route ${signTurns.length} time(s): ${again.textContent.slice(-200)}`);
     assert.equal(signTurns[0].body.ceremony, id);
     assert.equal(signTurns[0].body.when, '2030-01-01T00:00:00Z',

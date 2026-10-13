@@ -145,6 +145,40 @@ type session struct {
 	// field cleared on disarm would be no better: the disarm IS the symptom, and a message that
 	// vanishes with it is a message nobody reads.
 	notice *noticeView
+	// checking counts the arrival content anchors running right now — see checkingDocument.
+	checking int
+}
+
+// checkingDocument marks one arrival content anchor as under way, and returns what ends it
+// (/pending 359).
+//
+// **The anchor stays on the request path; this is the wait saying what it is.** `checkArrival`
+// hashes the whole document against its record while the document is still unsigned — seconds on a
+// large one — and it runs before anything is put in front of either party: the initiating side has
+// not dialled, the receiving side has not been shown the consent screen. Both windows are already
+// polling `GET /api/session/status` across exactly that stretch, so the fact is published there as
+// `checking` and each draws "Checking the document…" for as long as it is true.
+//
+// **A count and not a flag**, because one process can run two at once — a hop being dialled while a
+// delivery arm receives — and the first to finish must not clear the other's.
+//
+// **One field write under `se.mu`, and nothing under `s.mu`.** The hash itself runs with no lock
+// held; `status()` reads the count under the lock it already takes.
+//
+// Nil-safe, so a caller with no session to tell (a test driving the gate directly) passes nil.
+// The caller defers the return, which is what clears it on a refusal, an error and a panic alike.
+func (se *session) checkingDocument() (done func()) {
+	if se == nil {
+		return func() {}
+	}
+	se.mu.Lock()
+	se.checking++
+	se.mu.Unlock()
+	return func() {
+		se.mu.Lock()
+		se.checking--
+		se.mu.Unlock()
+	}
 }
 
 // armKind names which of the session's two slots an arm occupies (P08.S05c).
@@ -1205,7 +1239,8 @@ func (se *session) status() sessionStatus {
 	if shown == nil {
 		shown = se.arms[armDelivery]
 	}
-	st := sessionStatus{Armed: se.armedLocked(), Received: se.received, Settled: se.settled}
+	st := sessionStatus{Armed: se.armedLocked(), Received: se.received, Settled: se.settled,
+		Checking: se.checking > 0}
 	if shown != nil {
 		st.Address = shown.addr
 		if !shown.until.IsZero() {
@@ -1382,7 +1417,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// gate refused was shown to nobody, and nothing that shows nobody anything should spend an
 	// arm. The load-bearing half is the ordering against `setPending` above.
 	if sc.cer != nil {
-		if err := sc.cer.checkArrival(doc, time.Now()); err != nil {
+		if err := sc.cer.checkArrival(doc, time.Now(), &sc.s.sess); err != nil {
 			// **The local half of the refusal (/pending 345).** The error below reaches the PEER
 			// as a named wire code; this arm has no response to write into, so without this line
 			// the user on this machine sees nothing and goes on waiting for a proceeding their
@@ -2503,6 +2538,10 @@ type sessionStatus struct {
 	// conditions — the diagnosis waits for `bootstrapDone` so it cannot accuse the wrong tier, and
 	// this does not, because the wait is the thing a user most needs described.
 	Progress *armProgress `json:"progress,omitempty"`
+	// Checking is true while an arrival's content anchor is running on this machine (/pending 359)
+	// — see session.checkingDocument. Published whether or not anything is armed: the initiating
+	// side runs the anchor before it dials, with no arm at all.
+	Checking bool `json:"checking,omitempty"`
 }
 
 // noticeView is something that went wrong where no response could carry it (P08.S08).
@@ -3392,7 +3431,7 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 	// same check in the same position relative to `buildCoSigned`; what changed is that both
 	// doors onto a hop now reach it, rather than only the one that takes a pasted invitation.
 	if cer != nil {
-		if err := cer.checkArrival(pdfBytes, time.Now()); err != nil {
+		if err := cer.checkArrival(pdfBytes, time.Now(), &s.sess); err != nil {
 			httpError(w, http.StatusConflict, err.Error())
 			return
 		}

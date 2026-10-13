@@ -242,7 +242,7 @@ func TestTheArrivalCheckRefusesADocumentTheInvitationDoesNotDescribe(t *testing.
 	cer := &ceremonyID{inv: inv}
 
 	// The control FIRST: without it the two refusals below say nothing.
-	if err := cer.checkArrival(doc, time.Now()); err != nil {
+	if err := cer.checkArrival(doc, time.Now(), nil); err != nil {
 		t.Fatalf("the document this invitation was made for was refused (%v) — every refusal "+
 			"below would then be a gate that refuses everything", err)
 	}
@@ -251,14 +251,14 @@ func TestTheArrivalCheckRefusesADocumentTheInvitationDoesNotDescribe(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cer.checkArrival(plain, time.Now()); err == nil {
+	if err := cer.checkArrival(plain, time.Now(), nil); err == nil {
 		t.Error("a document with no ceremony record at all was accepted under a ceremony arm")
 	}
 
 	// A second, honestly-convened ceremony: a valid record, a valid convener signature, and not
 	// the one this invitation commits to.
 	other, _ := convenedFor(t)
-	err = cer.checkArrival(other, time.Now())
+	err = cer.checkArrival(other, time.Now(), nil)
 	if err == nil {
 		t.Fatal("a document carrying a DIFFERENT ceremony's record was accepted. One " +
 			"invitation would then authorise any number of proceedings, which is what " +
@@ -436,12 +436,12 @@ func TestTheArrivalGateRefusesAnEndedProceeding(t *testing.T) {
 
 	// ARM 1 — the control. A live proceeding is admitted, or every refusal below is a gate that
 	// refuses everything.
-	if err := cer.checkArrival(doc, expires.Add(-24*time.Hour)); err != nil {
+	if err := cer.checkArrival(doc, expires.Add(-24*time.Hour), nil); err != nil {
 		t.Fatalf("a live proceeding was refused (%v)", err)
 	}
 
 	// ARM 2 — the proceeding has ended.
-	err = cer.checkArrival(doc, expires.Add(time.Second))
+	err = cer.checkArrival(doc, expires.Add(time.Second), nil)
 	if err == nil {
 		t.Error("a contribution offered AFTER the ceremony's deadline was accepted. The convener " +
 			"holds the only other clock check, so nothing else would have refused it and the " +
@@ -459,7 +459,7 @@ func TestTheArrivalGateRefusesAnEndedProceeding(t *testing.T) {
 	// minutes would refuse it — which is the error this arm exists to catch, and which no other
 	// assertion here can see.
 	worstCase := expires.Add(-7 * time.Minute).Add(time.Second)
-	if err := cer.checkArrival(doc, worstCase); err != nil {
+	if err := cer.checkArrival(doc, worstCase, nil); err != nil {
 		t.Errorf("an honest hop at the convener's worst case was refused (%v). The convener "+
 			"admits at hop budget %s and the worst-case lag to this gate is %s, so a hop arrives "+
 			"here with as little as %s left — reserving anything at this end refuses hops nobody "+
@@ -565,7 +565,7 @@ func TestAnUnsignedArrivalIsAnchoredToItsOwnRecord(t *testing.T) {
 
 	// STIMULUS: the genuine document passes. Without this, "the decoy is refused" is true of a
 	// gate that refuses everything, which is the vacuous green in its most convenient form.
-	if err := cer.checkArrival(out.Document, now); err != nil {
+	if err := cer.checkArrival(out.Document, now, nil); err != nil {
 		t.Fatalf("the convened document was refused by its own ceremony's gate: %v", err)
 	}
 	// And it really is unsigned, so the branch under test is the one that ran. A signed fixture
@@ -596,7 +596,7 @@ func TestAnUnsignedArrivalIsAnchoredToItsOwnRecord(t *testing.T) {
 			"refusal would come from a gate that was already closed", err)
 	}
 
-	err = cer.checkArrival(decoy, now)
+	err = cer.checkArrival(decoy, now, nil)
 	if err == nil {
 		t.Fatal("the gate ADMITTED a different document carrying this ceremony's record. Every " +
 			"other check it runs — the record's own signature, the deadline, the roster " +
@@ -649,7 +649,7 @@ func TestAnUnsignedArrivalIsAnchoredToItsOwnRecord(t *testing.T) {
 	// that made this arm fail on the deadline or the roster would have left it green while its own
 	// message claimed the gate "must let a SIGNED arrival past". Nothing in the fixture justifies
 	// any error here.
-	if err := cer.checkArrival(signed, now); err != nil {
+	if err := cer.checkArrival(signed, now, nil); err != nil {
 		t.Errorf("the gate refused a SIGNED arrival: %v. A visible signature changes the content "+
 			"digest by design, so an unconditional anchor refuses every honest hop from 2 on — "+
 			"the resumption case the mirror and the ceremony both exist for.", err)
