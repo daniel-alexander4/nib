@@ -584,6 +584,24 @@ test('the page registry is written by its own functions and by nothing else, and
     'openAppPage no longer replaces the open page with the one asked for');
 });
 
+test('removing an authorized key is described as what it does: a new vault key from now on, and nothing taken back (ADR-144)', () => {
+  const html = fs.readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8').replace(/\s+/g, ' ');
+  const said = [...html.matchAll(/Removing a key gives the vault a new key of its own[^<]*/g)].map((m) => m[0]);
+  assert.equal(said.length, 2, 'the Identity & Keys page and the Authorized keys dialog each say what removing a key does');
+  for (const s of said) {
+    assert.match(s, /cannot open the vault as it is saved from then on/, 'what the removal does is not said');
+    assert.match(s, /not taken back/, 'what the removal does NOT do is not said');
+    assert.match(s, /made before you removed it still opens with that key/, 'the older copy is not named');
+  }
+  assert.doesNotMatch(html, /revoke/i, 'the window says a key is revoked; a removal takes nothing back');
+  const start = CODE.indexOf('async function removeKey(');
+  assert.ok(start > 0, 'removeKey is gone');
+  const body = CODE.slice(start, CODE.indexOf('\n}\n', start));
+  assert.match(body, /confirm\(`[^`]*cannot open the vault as it is saved from now on[^`]*not taken back[^`]*`\)/,
+    'the question asked before a key is removed does not say both halves');
+  assert.doesNotMatch(body, /no longer be able to unlock/, 'the old, stronger-sounding question is back');
+});
+
 test('what stands in the main area is written at one site', () => {
   assert.deepEqual(writersOf(/viewerWrap\.hidden\s*=(?!=)/), ['syncMainArea'],
     'the viewer is hidden or shown from somewhere other than syncMainArea — a page or a sheet in front can now be uncovered by it');

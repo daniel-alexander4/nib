@@ -1,6 +1,7 @@
 package atomicfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -143,4 +144,57 @@ func inode(fi os.FileInfo) (uint64, bool) {
 		return 0, false
 	}
 	return uint64(st.Ino), true
+}
+
+// TestACheckThatRefusesLeavesTheFileAndNoStagedCopy — ADR-144, the door the vault's key rotation
+// writes through.
+//
+// Three facts, each of which the vault relies on: check sees the STAGED bytes at the path it is
+// handed while the destination still holds the old ones; a refusal leaves the destination
+// untouched and removes the staged file; and the refusal comes back as check's own error.
+func TestACheckThatRefusesLeavesTheFileAndNoStagedCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "only-copy")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	refusal := errors.New("the staged bytes do not open")
+	var sawStaged, sawCurrent string
+	err := WriteDurableChecked(path, []byte("new"), 0o600, func(staged string) error {
+		b, rerr := os.ReadFile(staged)
+		if rerr != nil {
+			t.Fatalf("the staged file is not readable inside check: %v", rerr)
+		}
+		sawStaged = string(b)
+		c, rerr := os.ReadFile(path)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		sawCurrent = string(c)
+		return refusal
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("a refusing check returned %v, want its own error", err)
+	}
+	if sawStaged != "new" || sawCurrent != "old" {
+		t.Errorf("inside check the staged file read %q and the destination %q, want \"new\" and \"old\"",
+			sawStaged, sawCurrent)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "old" {
+		t.Errorf("after a refused write the file holds %q, want the old bytes — the check ran "+
+			"after the rename, or not at all", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("a refused write left %d entries in the directory, want only the file itself", len(entries))
+	}
+
+	// And a check that agrees lets the write through.
+	if err := WriteDurableChecked(path, []byte("new"), 0o600, func(string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "new" {
+		t.Errorf("after an accepted write the file holds %q, want \"new\"", got)
+	}
 }

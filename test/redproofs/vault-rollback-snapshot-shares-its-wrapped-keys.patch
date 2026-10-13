@@ -1,7 +1,7 @@
 diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 --- a/internal/vault/vault.go
 +++ b/internal/vault/vault.go
-@@ -1576,13 +1576,7 @@
+@@ -1974,13 +1974,7 @@
  	// Scrubbed like save() scrubs its own plaintext, and for the same reason: this buffer is a
  	// second copy of Identity.KeyPEM and ExternalSigner.P12, and it exists on every AddRecent.
  	defer zero(before)
@@ -13,10 +13,10 @@ diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 -	// discard path and an exception nobody wrote down is how that discipline erodes.
 -	defer zero(beforeSlots)
 +	slots := append([]Slot(nil), v.ssh...)
- 
- 	apply()
- 
-@@ -1608,12 +1602,8 @@
+ 	// The content key, its generation and whether it is proven are the third thing save() writes
+ 	// from, since RemoveKey replaces the key (ADR-144). The key is kept as its slice AND its bytes:
+ 	// the slice so a mutation that swaps in a new one is undone by putting the old one back, the
+@@ -2014,12 +2008,8 @@
  	// leaves memory as the mutation left it rather than half-restored — a vault whose contents
  	// are the old ones and whose key slots are the new ones is a state neither disk nor memory
  	// has ever held.
@@ -27,6 +27,6 @@ diff --git a/internal/vault/vault.go b/internal/vault/vault.go
  	v.contents = restored
 -	v.ssh = restoredSlots
 +	v.ssh = slots
- 	return serr
- }
- 
+ 	v.key = keyBefore
+ 	copy(v.key, keyBytes)
+ 	v.gen, v.unproven = genBefore, unprovenBefore

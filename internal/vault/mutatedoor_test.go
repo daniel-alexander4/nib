@@ -26,7 +26,8 @@ import (
 //
 // Two things, and each one alone is escapable:
 //
-//   - **No function outside the door may change `v.contents` or `v.ssh`.** An assignment whose
+//   - **No function outside the door may change `v.contents`, `v.ssh`, or the content key
+//     (`v.key`, `v.gen`, `v.unproven` — ADR-144).** An assignment whose
 //     left-hand side is rooted at either field — including through an index, a slice, or a
 //     pointer taken with `&` — must sit inside the closure handed to `mutateLocked`, where the
 //     snapshot has already been taken. In front of the call is the defect with a door beside it.
@@ -52,7 +53,8 @@ func TestEveryVaultMutationGoesThroughOneDoor(t *testing.T) {
 	exempt := map[string]string{
 		// The payload version is stamped on every write at the one place they all pass
 		// through — save() says so at the line — and it is inside the door's own save.
-		"save": "stamps Contents.Version inside the write the door performs",
+		// It also clears v.unproven once the write it proved has landed — the same write.
+		"save": "stamps Contents.Version, and clears unproven, inside the write the door performs",
 		// The door itself: it takes the snapshot and puts it back.
 		door: "is the door",
 	}
@@ -210,14 +212,17 @@ func TestEveryVaultMutationGoesThroughOneDoor(t *testing.T) {
 }
 
 // rootedAtVaultState reports which piece of persisted vault state an expression writes to —
-// "contents", "ssh", or "" for anything else — by walking down through selectors, indexes and
+// "contents", "ssh", "key", "gen", "unproven", or "" for anything else — by walking down through selectors, indexes and
 // slices to whatever the expression is ultimately rooted at.
 func rootedAtVaultState(e ast.Expr) string {
 	for {
 		switch x := e.(type) {
 		case *ast.SelectorExpr:
 			if id, ok := x.X.(*ast.Ident); ok && id.Name == "v" {
-				if x.Sel.Name == "contents" || x.Sel.Name == "ssh" {
+				// key, gen and unproven joined with ADR-144: RemoveKey replaces the content key, so
+				// it is now state a failed save has to put back.
+				switch x.Sel.Name {
+				case "contents", "ssh", "key", "gen", "unproven":
 					return x.Sel.Name
 				}
 				return ""

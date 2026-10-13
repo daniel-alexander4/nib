@@ -14,7 +14,7 @@ func withFailingWrite(t *testing.T) func() int {
 	t.Helper()
 	saved := writeFileAtomic
 	calls := 0
-	writeFileAtomic = func(string, []byte) error { calls++; return errors.New("disk full") }
+	writeFileAtomic = func(string, []byte, func(string) error) error { calls++; return errors.New("disk full") }
 	t.Cleanup(func() { writeFileAtomic = saved })
 	return func() int {
 		writeFileAtomic = saved

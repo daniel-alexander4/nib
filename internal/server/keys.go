@@ -152,6 +152,14 @@ func (s *Server) handleKeysRemove(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, vault.ErrCurrentKey):
 		httpError(w, http.StatusConflict, "can't remove the key you're currently using")
 		return
+	case errors.Is(err, vault.ErrKeyNotSealable):
+		// Removing a key seals the vault's new key to every key that stays (ADR-144), and one of
+		// them is not a key that can be sealed to. The vault names it; nothing was changed.
+		httpError(w, http.StatusConflict, err.Error()+". Remove that key first.")
+		return
+	case errors.Is(err, vault.ErrKeyChanged):
+		httpError(w, http.StatusConflict, err.Error())
+		return
 	default:
 		httpError(w, http.StatusInternalServerError, "could not remove key")
 		return

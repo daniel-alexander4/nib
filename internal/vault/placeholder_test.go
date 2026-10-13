@@ -19,7 +19,7 @@ func TestAFailedSaveInCreateLeavesNoVaultBehind(t *testing.T) {
 	saved := writeFileAtomic
 	t.Cleanup(func() { writeFileAtomic = saved })
 	calls := 0
-	writeFileAtomic = func(string, []byte) error { calls++; return errors.New("disk full") }
+	writeFileAtomic = func(string, []byte, func(string) error) error { calls++; return errors.New("disk full") }
 
 	if _, err := Create(dir, pub, keyPath); err == nil {
 		t.Fatal("Create succeeded although its Save failed")

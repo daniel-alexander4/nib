@@ -64,7 +64,7 @@ func TestUpdateSettingsRollsBackAFailedSave(t *testing.T) {
 	saved := writeFileAtomic
 	t.Cleanup(func() { writeFileAtomic = saved })
 	calls := 0
-	writeFileAtomic = func(string, []byte) error { calls++; return errors.New("disk full") }
+	writeFileAtomic = func(string, []byte, func(string) error) error { calls++; return errors.New("disk full") }
 
 	uerr := v.UpdateSettings(func(s *Settings) { s.Appearance = "dark" })
 	writeFileAtomic = saved
