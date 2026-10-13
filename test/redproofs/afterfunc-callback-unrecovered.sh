@@ -6,4 +6,4 @@
 # untrusted-datagram path, where a double close is a panic.
 TIER="tier 1 — go test"
 PROVE="go test ./ -run TestEveryDetachedGoroutineIsRecovered -count=1"
-EXPECT="hands time.AfterFunc a callback"
+EXPECT="hands an AfterFunc (time or context) a callback"

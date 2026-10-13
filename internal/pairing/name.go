@@ -158,10 +158,14 @@ func bitsAt(fp []byte, off int) int {
 
 // Matches reports whether fp is a fingerprint that produces name.
 //
-// This is the comparison the product uses, and it is the whole of the exported
-// verification surface. It rejects a transposition, a substituted word, and a wrong
-// name, by the same mechanism and without the encoding having to reserve anything: two
-// different word sequences decode to two different bit strings.
+// It is the whole of the exported verification surface, and **nothing running calls it**
+// (ADR-151): its one caller was the link browse, which now matches a salted tag
+// ([TagMatches]). It is kept as the written form of the comparison a person makes by eye, and
+// the encoding's properties are asserted through it. It rejects a transposition, a
+// substituted word, and a wrong name, by the same mechanism and without the encoding having
+// to reserve anything: two different word sequences decode to two different bit strings.
+// Do not give it a running caller that reads a name off the network — that is the constant
+// identifier ADR-151 stopped sending.
 //
 // Whitespace and case are normalised, because the name travels through people —
 // retyped, pasted out of an email, read off a screen.
