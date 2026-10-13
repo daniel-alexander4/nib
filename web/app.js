@@ -177,6 +177,8 @@ const els = {
   srvWaitTiers: $('srvWaitTiers'),
   srvWaitWhy: $('srvWaitWhy'), srvWaitWhyMore: $('srvWaitWhyMore'),
   srvWaitWhyDetail: $('srvWaitWhyDetail'),
+  srvWaitTurnedAway: $('srvWaitTurnedAway'), srvWaitTurnedAwayMore: $('srvWaitTurnedAwayMore'),
+  srvWaitTurnedAwayDetail: $('srvWaitTurnedAwayDetail'),
   srvNetTestGo: $('srvNetTestGo'), srvNetTestOut: $('srvNetTestOut'),
   srvPeerLabel: $('srvPeerLabel'), srvPeerFp: $('srvPeerFp'), srvPeerCopy: $('srvPeerCopy'),
   srvReasonCap: $('srvReasonCap'), srvPeerReason: $('srvPeerReason'), srvPreview: $('srvPreview'),
@@ -1731,6 +1733,34 @@ function reflectDiagnosis(d) {
   els.srvWaitWhy.hidden = false;
 }
 
+let turnedAwayShownFor = '';
+
+// reflectTurnedAway is the READER for sessionStatus.turnedAway (ADR-156, /pending 669 #3): this arm
+// refused somebody at the pinned-peer check, or was refused, and is STILL WAITING.
+//
+// Live state, so it clears on absence as reflectDiagnosis does — the server stops sending it once a
+// session is in progress. The sentence is the server's own, whole: which of the four causes is
+// shown is decided there, once, so a stranger knocking cannot displace a clock that is wrong. `at`
+// is deliberately not in the key: every further refusal moves it, and a screen reader would be
+// told the same sentence each time somebody knocked.
+function reflectTurnedAway(t) {
+  if (!els.srvWaitTurnedAway) return;
+  if (!t || !t.summary) {
+    els.srvWaitTurnedAway.hidden = true;
+    els.srvWaitTurnedAwayMore.hidden = true;
+    turnedAwayShownFor = '';
+    return;
+  }
+  const key = t.summary + '\u0000' + (t.detail || '');
+  if (key === turnedAwayShownFor) return;
+  turnedAwayShownFor = key;
+  els.srvWaitTurnedAway.textContent = t.summary;
+  els.srvWaitTurnedAway.title = t.at ? 'Last turned away ' + new Date(t.at).toLocaleTimeString() : '';
+  els.srvWaitTurnedAwayDetail.textContent = t.detail || '';
+  els.srvWaitTurnedAwayMore.hidden = !t.detail;
+  els.srvWaitTurnedAway.hidden = false;
+}
+
 let recvPoll = 0; // token; bump to invalidate any in-flight poll or preview render
 let recvStage = 'arm'; // arm | wait | consent | applying | declining
 let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
@@ -1941,6 +1971,7 @@ async function pollRecv(token, fails = 0) {
   reflectNotice(st.notice);
   reflectArmProgress(st.progress);
   reflectDiagnosis(st.diagnosis);
+  reflectTurnedAway(st.turnedAway);
   // `until` is when this arm gives up. Read here so the indicator says how long is left rather
   // than only that something is armed — which is what the field was added for (C05): a five-minute
   // manual bound and a thirty-day ceremony bound are indistinguishable from the OUTCOME and

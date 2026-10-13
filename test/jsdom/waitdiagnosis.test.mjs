@@ -26,11 +26,14 @@ const PEER = { fingerprint: 'a'.repeat(64), label: 'Ada' };
 
 let armed = false;
 let diagnosis = null;
+// ADR-156: who the arm turned away while it waits. Carried on the same poll, so it rides the same
+// ticks as the diagnosis below rather than adding waits of its own.
+let turnedAway = null;
 const h = await boot({
   routes: {
     '/api/peers': () => ({ self: 'b'.repeat(64), peers: [PEER] }),
     '/api/session/arm': () => { armed = true; return { armed: true, address: '127.0.0.1:8443' }; },
-    '/api/session/status': () => ({ armed, address: '127.0.0.1:8443', diagnosis }),
+    '/api/session/status': () => ({ armed, address: '127.0.0.1:8443', diagnosis, turnedAway }),
     '/api/session/disarm': () => { armed = false; return {}; },
   },
 });
@@ -39,6 +42,9 @@ const { document: doc, settle } = h;
 const why = () => doc.getElementById('srvWaitWhy');
 const more = () => doc.getElementById('srvWaitWhyMore');
 const detail = () => doc.getElementById('srvWaitWhyDetail');
+const away = () => doc.getElementById('srvWaitTurnedAway');
+const awayMore = () => doc.getElementById('srvWaitTurnedAwayMore');
+const awayDetail = () => doc.getElementById('srvWaitTurnedAwayDetail');
 
 // The poll is scheduled 1200 ms after arming and this tier has no fake clock, so the wait is real.
 // It is one wait for the whole file: the routes are re-read on every poll, so a later phase only
@@ -56,6 +62,7 @@ test('a waiting arm shows why nothing has connected, and stops when the reason d
   doc.getElementById('srvArmGo').click();
   await settle();
   const hiddenWithNoDiagnosis = why().hidden;
+  const awayHiddenAtFirst = away().hidden;
 
   // THE CASE THE FIELD EXISTS FOR: the counterparty has not started.
   diagnosis = {
@@ -63,7 +70,18 @@ test('a waiting arm shows why nothing has connected, and stops when the reason d
     summary: "The other person hasn't opened their side yet.",
     detail: 'No announcement for that peer has been seen on the rendezvous network in this window.',
   };
+  turnedAway = {
+    summary: 'Still waiting. Someone other than the pinned peer connected to this computer and was turned away.',
+    detail: 'connections here that were not the pinned peer: 3.',
+    at: '2026-10-12T10:00:00Z',
+  };
   await tick();
+  const awayShown = away().hidden;
+  const awayText = away().textContent;
+  const awayMoreShown = awayMore().hidden;
+  const awayDetailText = awayDetail().textContent;
+  const awayRole = away().getAttribute('role');
+  const awayLive = away().getAttribute('aria-live');
   const shown = why().hidden;
   const shownText = why().textContent;
   const cause = why().dataset.cause;
@@ -76,7 +94,10 @@ test('a waiting arm shows why nothing has connected, and stops when the reason d
   // one the reason has stopped applying, and leaving the sentence up explains a condition that
   // has passed.
   diagnosis = null;
+  turnedAway = null;
   await tick();
+  const awayCleared = away().hidden;
+  const awayMoreCleared = awayMore().hidden;
   const clearedText = why().hidden;
   const clearedMore = more().hidden;
 
@@ -87,6 +108,23 @@ test('a waiting arm shows why nothing has connected, and stops when the reason d
   // copied deliberately rather than re-derived.
   doc.getElementById('srvCancel').click();
   await settle();
+
+  // ── Who was turned away (ADR-156, /pending 669 #3) ──────────────────────────
+  assert.equal(awayHiddenAtFirst, true,
+    'the turned-away line is up before anybody was turned away');
+  assert.equal(awayShown, false,
+    'the server said this arm turned somebody away and the wait view shows nothing — the blank wait /pending 669 #3 is about');
+  assert.match(awayText, /^Still waiting\. Someone other than the pinned peer/,
+    'the visible line is not the server\u2019s own sentence');
+  assert.ok(!awayText.includes('3.'), 'the counts are rendered inline rather than behind the disclosure');
+  assert.equal(awayMoreShown, false, 'the disclosure carrying the counts is hidden');
+  assert.match(awayDetailText, /not the pinned peer: 3/, 'the disclosure does not carry the counts');
+  assert.equal(awayRole, 'status', 'the turned-away line has no status role');
+  assert.equal(awayLive, 'polite',
+    'the turned-away line is not polite: a stranger knocking must not interrupt whoever is waiting');
+  assert.equal(awayCleared, true,
+    'the server stopped reporting a refusal and the sentence stayed up — it is live state, as the diagnosis is');
+  assert.equal(awayMoreCleared, true, 'the counts disclosure stayed up after the line cleared');
 
   assert.equal(hiddenWithNoDiagnosis, true,
     'the "why" line is up before the server has diagnosed anything — a line that always shows is one the user stops reading');

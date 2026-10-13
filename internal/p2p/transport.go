@@ -164,7 +164,7 @@ func verifyPinnedPeer(rawCerts [][]byte, pinnedSPKI []byte, now time.Time) ([]by
 	// PIN: the peer's identity key must be exactly the one pinned out-of-band.
 	fp := sign.FingerprintCert(idCert)
 	if subtle.ConstantTimeCompare(fp, pinnedSPKI) != 1 {
-		return nil, errors.New("peer identity does not match the pinned peer")
+		return nil, ErrPeerNotPinned
 	}
 	// SIGNATURE: the live leaf must be signed by that pinned identity key. Use the
 	// low-level CheckSignature, NOT leaf.CheckSignatureFrom(idCert): the identity is
@@ -372,7 +372,7 @@ func Dial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM, pin
 // routable bind for a real session; the armed listener (P2P 6) owns the bind and
 // lifecycle. The signing logic lives in Receive.
 func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Listener, error) {
-	cfg, err := SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI, true)
+	cfg, refused, err := listenTLS(identityCertPEM, identityKeyPEM, pinnedSPKI)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +380,9 @@ func Listen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte) (Li
 	if err != nil {
 		return nil, err
 	}
-	return newTLSListener(ln), nil
+	l := newTLSListener(ln)
+	l.refused = refused
+	return l, nil
 }
 
 // newTLSListener wires a net.Listener onto the shared termination protocol.

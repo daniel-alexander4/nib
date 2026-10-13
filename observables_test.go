@@ -230,6 +230,9 @@ var published = map[string][]string{
 	// state — which is the point: "has party k signed" is already implemented three times in this
 	// tree with two different rules, so this type exists so that a fourth is never written.
 	"p2p.Progress": {"internal/p2p/l3.go", "internal/server/ceremonynext.go"},
+	// What a listener's pinned-peer check turned away (ADR-156). `refusalCause` is the one reader:
+	// every count, the clock reading and the time become the arm's status line and its deadline reason.
+	"p2p.RefusalReport": {"internal/server/refused.go"},
 	// Two readers named at /pending 575, each the file that reads the field by type and not by a
 	// word: `nib verify-ceremony` reads `Version`, `Intent` and `Roster` (`verifyceremony.go:181,138,
 	// 197`), and the co-sign arrival gate reads `DocHash` (`ceremonyid.go:856`). `ceremonynet.go`

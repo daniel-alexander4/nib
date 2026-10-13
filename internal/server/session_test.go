@@ -1187,6 +1187,7 @@ type stubListener struct{ closed bool }
 
 func (l *stubListener) Accept() (*p2p.Conn, error) { return nil, net.ErrClosed }
 func (l *stubListener) Transport() string          { return "tcp" }
+func (l *stubListener) Refusals() *p2p.Refusals    { return nil }
 func (l *stubListener) Close() error               { l.closed = true; return nil }
 
 // Addr must be non-nil: session.arm records ln.Addr().String() as the address it

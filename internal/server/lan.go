@@ -602,8 +602,12 @@ func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, di
 			// skewed at another would report a generic failure roughly half the time.
 			// Cause 5 is actionable — check the clock — and cause 4 is not, so the
 			// specific one wins.
-			var skew *p2p.ClockSkewError
-			if last == nil || errorsAs(r.err, &skew) {
+			//
+			// **And a NAMED refusal outranks an unnamed loss (ADR-156).** "Something answered and
+			// was not the pinned peer" and "the peer turned this machine away" are facts a person can
+			// act on; a timeout on another address is not, and under a race it would win half the
+			// time by finishing last.
+			if last == nil || dialErrRank(r.err) == 2 || dialErrRank(r.err) > dialErrRank(last) {
 				last = r.err
 			}
 			continue
@@ -612,6 +616,19 @@ func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, di
 		closeTheRest()
 		return r.conn, nil
 	}
+}
+
+// dialErrRank orders a lost dial's error by how much it tells the user: a clock disagreement (2),
+// a refusal at the pinned-peer check on either side (1), anything else (0).
+func dialErrRank(err error) int {
+	var skew *p2p.ClockSkewError
+	if errorsAs(err, &skew) {
+		return 2
+	}
+	if _, named := dialRefusalSentence(err); named {
+		return 1
+	}
+	return 0
 }
 
 // raceFailure is the one sentence a lost race produces, so the two exits above cannot

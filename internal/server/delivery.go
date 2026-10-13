@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/atomicfile"
@@ -454,8 +455,15 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 		defer safe.Recover("delivery arm")
 		defer s.sess.disarmCeremony(cer)
 		defer ln.Close()
+		// **Who this arm turns away is named, and is the reason if the wait runs out (ADR-156)** —
+		// the same two doors the hop arms call. `gotThrough` is read by the expiry timer's goroutine.
+		s.sess.watchRefusals(consentAnchor{cer: cer, kind: armDelivery}, ln.Refusals())
+		var gotThrough atomic.Bool
 		timer := time.AfterFunc(window, func() {
 			defer safe.Recover("delivery arm expiry")
+			if !gotThrough.Load() {
+				s.sess.noteWaitEnded(armDelivery, ln.Refusals())
+			}
 			// Closing the listener is what ends the Accept below — the same mechanism
 			// `runSession`'s deadline uses, rather than a second cancellation path.
 			ln.Close()
@@ -535,6 +543,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			if aerr != nil {
 				return // net.ErrClosed: disarmed, or the arm's window elapsed
 			}
+			gotThrough.Store(true)
 			// ── This arm serves BOTH roles, and that is /pending 385's fix ──────────────
 			//
 			// A party that has committed its contribution has a record, so the hop sweep skips

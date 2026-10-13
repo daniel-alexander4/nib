@@ -206,6 +206,10 @@ type arm struct {
 	// `0.0.0.0:0`, a caller may ask for TCP on a bound address, and answering success to a request
 	// this machine did not honour is the silent downgrade `checkTransport` exists to refuse.
 	byPolicy bool
+	// refused is where this arm's listener counts the peers it turned away at the pinned-peer
+	// check (ADR-156). Set through `watchRefusals`, the one door, by the arm's own goroutine; nil
+	// until then, which reads as nothing refused.
+	refused *p2p.Refusals
 }
 
 // pendingVerify is the spoken verification string waiting on the user (D4, L2).
@@ -1220,11 +1224,20 @@ func (se *session) status() sessionStatus {
 		st.Verify = &verifyView{Words: se.verify.words}
 	}
 	var cer *ceremonyID
+	var refused *p2p.Refusals
 	if shown != nil {
 		cer = shown.cer
+		refused = shown.refused
 	}
 	inSession := se.pending != nil || se.verify != nil
 	se.mu.Unlock()
+
+	// **Who was turned away, while the arm waits (ADR-156).** Read OUTSIDE `se.mu`: the count has
+	// a lock of its own, taken inside every handshake, and this poll must not queue behind one.
+	// Not shown once a session is in progress — somebody got through, and the screen is theirs.
+	if !inSession {
+		st.TurnedAway = turnedAwayOf(refused)
+	}
 
 	// A waiting ceremony arm (not yet in a session) shows why nothing has connected — computed from
 	// signals safe to read while the feed runs (rz.Stats mutex-guarded, peerSeen atomic). Outside the
@@ -1916,8 +1929,16 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// the co-signed document opening ONCE across re-deliveries. Both mirror runCeremonyReceive.
 	var postSign time.Time
 	opened := false
+	// **Who this arm turns away is named, and is the reason if the wait runs out (ADR-156).** The
+	// sixth rule both arm functions need; it is two doors, and `TestEveryArmNamesItsRefusals`
+	// holds that every arm calls both. `gotThrough` is read by the expiry timer's goroutine.
+	s.sess.watchRefusals(consentAnchor{ln: ln, kind: armInteractive}, ln.Refusals())
+	var gotThrough atomic.Bool
 	timer := time.AfterFunc(armWindow, func() {
 		defer safe.Recover("arm window expiry")
+		if !gotThrough.Load() {
+			s.sess.noteWaitEnded(armInteractive, ln.Refusals())
+		}
 		s.sess.disarmIf(ln)
 	})
 	defer timer.Stop()
@@ -2023,6 +2044,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			}
 			continue
 		}
+		gotThrough.Store(true) // a pinned peer completed a handshake: the wait did not end on refusals
 		timer.Stop()
 		if spent := handle(conn); spent {
 			return
@@ -2465,6 +2487,10 @@ type sessionStatus struct {
 	// yet, rather than a blank wait (P05.S11). Computed lazily from safe signals; nil for a manual
 	// arm or once a session is in progress.
 	Diagnosis *diagnosisView `json:"diagnosis,omitempty"`
+	// TurnedAway says that this arm refused somebody at the pinned-peer check, or was refused, and
+	// why — live, beside the diagnosis and never instead of it (ADR-156, /pending 669 #3). The arm
+	// keeps waiting; this is the reason it gives meanwhile. Nil when nothing was refused.
+	TurnedAway *turnedAwayView `json:"turnedAway,omitempty"`
 	// Until is when this arm gives up. Present so the window can be checked rather than inferred
 	// from whether the ceremony happened to finish in time — see session.until.
 	Until *time.Time `json:"until,omitempty"`
@@ -2864,6 +2890,11 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	// The TRIPWIRE (see its comment) is honoured as "SIGNS at most once", which the cache enforces:
 	// a re-delivery hands back the same bytes, never a second signature.
 	overallDeadline := time.Now().Add(armWindowFor(armInteractive, cer))
+	// **Who this arm turns away is named, and is the reason if the wait runs out (ADR-156)** — see
+	// runSession's twin. This arm also DIALS, so what its own dials meet is noted on the same count.
+	refused := hl.Refusals()
+	s.sess.watchRefusals(consentAnchor{cer: cer, kind: armInteractive}, refused)
+	gotThrough := false
 	var postSignDeadline time.Time
 	opened := false // the co-signed document opens once, not per re-delivery
 	// The two retry counters, one per arm, because they pace against different deadlines and a
@@ -2903,6 +2934,7 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			conn, cerr = s.connect(cctx, cer, hl, cands, cert, key, peerFP, myFP, false, label, label)
 			ccancel()
 			if cerr != nil {
+				refused.NoteDial(cerr)
 				// A peer that connected and dropped BEFORE the exchange (a pre-gate channel loss)
 				// surfaces as a connect error; re-race it while the ceremony window has time. The
 				// deadline itself is a net.Error too, but by then Before(overallDeadline) is false, so
@@ -2914,6 +2946,9 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 					// whole ceremony window — up to MaxCeremonyLife.
 					d, ok := reraceWait(reraces, time.Now(), overallDeadline)
 					if !ok {
+						if !gotThrough {
+							s.sess.noteWaitEnded(armInteractive, refused)
+						}
 						return // the ceremony deadline passed while we were losing channels
 					}
 					reraces++
@@ -2922,9 +2957,15 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 					}
 					continue
 				}
+				// The deadline, not a cancel (the arm's own context is still live) and not an
+				// earlier decided failure: the wait ran out.
+				if !gotThrough && ctx.Err() == nil && !time.Now().Before(overallDeadline) {
+					s.sess.noteWaitEnded(armInteractive, refused)
+				}
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
+		gotThrough = true
 		role, rerr := p2p.ReadRole(conn.Channel)
 		if rerr != nil {
 			conn.Close()
@@ -2936,6 +2977,9 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			opened = true
 		}
 		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
+		// Over TLS 1.3 the far side's refusal of a connection this arm DIALLED can arrive at the
+		// first read rather than at the dial (`p2p.RefusedByPeer`), which is here.
+		refused.NoteDial(xerr)
 		if postSignDeadline.IsZero() && cer.hasSigned() {
 			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
 			// **And STOP ANNOUNCING, because the window needs the listener and not the
@@ -3769,6 +3813,12 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 				"time, so nothing was sent.")
 			return
 		}
+		// Over TCP a listener's refusal of this machine arrives HERE, at the first read, not at the
+		// dial (`p2p.RefusedByPeer`) — the same sentence the dial gives (ADR-156).
+		if named, ok := dialRefusalSentence(err); ok {
+			httpError(w, http.StatusBadGateway, named)
+			return
+		}
 		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())
 		return
 	}
@@ -3846,6 +3896,11 @@ func connectFailure(err error) string {
 	// "could not connect" invites the retry that is wrong advice for every one of these.
 	if p2p.IsContributionRefusal(err) {
 		return err.Error()
+	}
+	// **And being turned away at the pinned-peer check is named (ADR-156).** Something DID answer,
+	// so "could not connect" is false, and the raw text is a TLS alert.
+	if named, ok := dialRefusalSentence(err); ok {
+		return named
 	}
 	return "could not connect to peer: " + err.Error()
 }
