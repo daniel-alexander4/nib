@@ -896,3 +896,5 @@ home today.
   turn through one local route**
   — the hop targets the next signer, so at the convener's own turn no route the window calls signed;
   `POST /api/ceremony/sign-turn` is a hop with the dial taken out, offered as *Sign now* on the rail.
+- [ADR-136](136-an-associated-file-only-af-reaches-is-refused-at-the-write-door.md) — **an associated file only /AF reaches is refused at the write door**
+  — pdfcpu's writer carries the `/AF` key and not the file; `pdfread.Write` refuses such a document (422 `associated-file`) instead of deleting the file on every save.

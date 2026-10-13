@@ -29,6 +29,7 @@ import (
 	"nib/internal/instance"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 	"nib/internal/vault"
 
@@ -2102,7 +2103,17 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// httpError answers code with msg as the body's `error`.
+//
+// **One refusal is recognised here, whatever route's words carry it** (`/pending 655`, ADR-072): a document
+// holding an associated file the writer would delete is refused by `pdfread.Write`, the one door every mutation
+// writes through, and some eighty handlers each voice a `pdfops` error with a status of their own. This is the
+// door all of them answer through, so the refusal is a 422 naming its cause from every one that says why it failed.
 func httpError(w http.ResponseWriter, code int, msg string) {
+	if strings.Contains(msg, pdfread.AssociatedFileRefusal) {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "associated-file"})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
