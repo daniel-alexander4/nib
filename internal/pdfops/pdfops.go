@@ -261,7 +261,7 @@ func ReorderPages(pdf []byte, order []string) (out []byte, filesDropped int, err
 // the output. The ceremony record is an embedded file, and a delete that silently took it would destroy the
 // record and answer 200, so in that case alone the files are re-added from their BYTES (`CarryAttachments`, which
 // copies each entry's names and streams and nothing else it points at). filesDropped is how many even that could
-// not carry. `DuplicatePage` needs none of this: it drops no page, so nothing can reach one.
+// not carry.
 func sameDocument(pdf []byte, pick func(total int) ([]int, error)) (out []byte, filesDropped int, err error) {
 	out, filesWithheld, err := subsetCarryingFiles(pdf, pick, true)
 	return filesFromBytes(pdf, out, filesWithheld, err)
@@ -272,9 +272,11 @@ func sameDocument(pdf []byte, pick func(total int) ([]int, error)) (out []byte, 
 // entry reaches a page the operation dropped, each file is re-added to out from its bytes in src
 // (`CarryAttachments`). filesDropped is how many even that could not carry.
 //
-// Its callers are the two doors that can drop a page: `sameDocument` (delete, reorder) and `replacePage` (the two
-// splits, which remove the page they cut). **`InsertPDF` and `DuplicatePage` do not come here, and that is named
-// rather than forgotten**: neither drops a page, so no entry can reach a dropped one.
+// Its callers are every door whose output is the document itself: `sameDocument` (delete, reorder), `replacePage`
+// (the two splits, which remove the page they cut), and `InsertPDF` and `DuplicatePage`. The last two drop no
+// page, and were left out for that reason — but "reaches a dropped page" is answered YES for an entry that could
+// not be walked (`reachesObject`: a value nested past its depth cap, a reference that will not dereference), so
+// one such entry had every file of the document withheld from an insert or a duplicate, silently (`/pending 870`).
 func filesFromBytes(src, out []byte, filesWithheld bool, err error) ([]byte, int, error) {
 	if err != nil || !filesWithheld {
 		return out, 0, err
@@ -721,22 +723,22 @@ func InsertBlank(pdf []byte, page int, before bool) ([]byte, error) {
 // Before page 1 prepends; after the last page is Append with this document's language
 // carried. There is no native pdfcpu positional merge, so it goes through splice, which merges pdf
 // with other in one context and sets the page order there — the same door replacePage uses.
-func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
+//
+// filesDropped is how many of pdf's embedded files could not be kept (`filesFromBytes`).
+func InsertPDF(pdf, other []byte, page int, before bool) (out []byte, filesDropped int, err error) {
 	n, err := PageCount(pdf)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := pageInDocument(page, n); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	// The files-withheld answer is dropped by name: an insert drops no page, so no embedded file can reach a dropped
-	// one (`filesFromBytes`).
+	leftEnd := page
 	if before {
-		out, _, err := splice(pdf, page-1, page, n, other)
-		return out, err
+		leftEnd = page - 1
 	}
-	out, _, err := splice(pdf, page, page+1, n, other)
-	return out, err
+	out, filesWithheld, err := splice(pdf, leftEnd, leftEnd+1, n, other)
+	return filesFromBytes(pdf, out, filesWithheld, err)
 }
 
 // DuplicatePage returns pdf with page (1-based) duplicated in place: the copy is
@@ -747,15 +749,18 @@ func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 // **The output is the document itself**, so it keeps the title, the `/ID`, the embedded files and the metadata
 // packet a page selection takes from an extract (`subsetCarrying`'s `itself`, `/pending 870`) — measured before:
 // no title, a new `/ID[0]`, no attachments and no packet, from duplicating one page.
-func DuplicatePage(pdf []byte, page int) ([]byte, error) {
+//
+// filesDropped is how many of its embedded files could not be kept (`filesFromBytes`).
+func DuplicatePage(pdf []byte, page int) (out []byte, filesDropped int, err error) {
 	n, err := PageCount(pdf)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := pageInDocument(page, n); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return subsetCarrying(pdf, collectPick([]string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)}), true)
+	out, filesWithheld, err := subsetCarryingFiles(pdf, collectPick([]string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)}), true)
+	return filesFromBytes(pdf, out, filesWithheld, err)
 }
 
 // CreateFromJSON renders a brand-new PDF from a pdfcpu "create" JSON page

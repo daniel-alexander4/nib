@@ -84,8 +84,8 @@ func TestAnOperationWhoseOutputIsTheDocumentKeepsWhatDescribesIt(t *testing.T) {
 		run   func() ([]byte, error)
 		pages int
 	}{
-		{"DuplicatePage", func() ([]byte, error) { return DuplicatePage(host, 2) }, 4},
-		{"InsertPDF", func() ([]byte, error) { return InsertPDF(host, other, 2, true) }, 4},
+		{"DuplicatePage", func() ([]byte, error) { return withoutCount(DuplicatePage(host, 2)) }, 4},
+		{"InsertPDF", func() ([]byte, error) { return withoutCount(InsertPDF(host, other, 2, true)) }, 4},
 		{"SplitPage", func() ([]byte, error) { return withoutCount(SplitPage(host, 2, 2, 1, false)) }, 4},
 		{"spliceWithoutStructure before page 1", func() ([]byte, error) { return withoutWithheld(spliceWithoutStructure(host, 0, 1, 3, other)) }, 4},
 	} {
@@ -137,7 +137,7 @@ func TestADuplicateThatLosesItsTreeIsStillTheDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, wantID, _ := documentFactsOf(t, src)
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +185,8 @@ func TestAPacketPutBackNeverBringsAClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, run := range map[string]func() ([]byte, error){
-		"DuplicatePage":          func() ([]byte, error) { return DuplicatePage(labelled, 1) },
-		"InsertPDF":              func() ([]byte, error) { return InsertPDF(labelled, other, 1, false) },
+		"DuplicatePage":          func() ([]byte, error) { return withoutCount(DuplicatePage(labelled, 1)) },
+		"InsertPDF":              func() ([]byte, error) { return withoutCount(InsertPDF(labelled, other, 1, false)) },
 		"spliceWithoutStructure": func() ([]byte, error) { return withoutWithheld(spliceWithoutStructure(labelled, 1, 2, 1, other)) },
 	} {
 		out, err := run()

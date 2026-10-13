@@ -355,7 +355,7 @@ func TestACarryThatAnchorsNothingIsRefused(t *testing.T) {
 // TestADuplicatedPageGetsItsOwnParentTreeKey — one key names one row, so two pages cannot share one.
 func TestADuplicatedPageGetsItsOwnParentTreeKey(t *testing.T) {
 	src := subsetFixture()
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1132,7 @@ func TestTheOutputGateFallsBackToTheHonestLoss(t *testing.T) {
 	if !carryIsComplete(src) {
 		t.Fatal("setup: the fixture's own carry is not complete")
 	}
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1169,7 +1169,7 @@ func TestTheClaimantWalksAgreeOnWhoOwnsAKey(t *testing.T) {
 		case "the rich fixture":
 			pdf = subsetFixture()
 		case "a duplicate":
-			pdf, err = DuplicatePage(subsetFixture(), 1)
+			pdf, err = withoutCount(DuplicatePage(subsetFixture(), 1))
 		case "a subset":
 			pdf, err = Collect(subsetFixture(), []string{"2", "1"})
 		}
@@ -1220,7 +1220,7 @@ func TestACarriedTreeKeepsItsRoleMap(t *testing.T) {
 		{"a prune", func(b []byte) ([]byte, error) { return Collect(b, []string{"1", "2"}) }},
 		{"a reorder", func(b []byte) ([]byte, error) { return Collect(b, []string{"2", "1"}) }},
 		{"a delete", func(b []byte) ([]byte, error) { return RemovePages(b, []string{"4"}) }},
-		{"a duplicate", func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
+		{"a duplicate", func(b []byte) ([]byte, error) { return withoutCount(DuplicatePage(b, 1)) }},
 	} {
 		out, err := c.op(src)
 		if err != nil {
@@ -1499,7 +1499,7 @@ func TestADuplicatedChildElementNamesTheCOPYSParent(t *testing.T) {
 	if v, d, _, _ := carryOf(t, src); v != "carried" || len(d) > 0 {
 		t.Fatalf("setup: the fixture is %s with %d defect(s): %v", v, len(d), d)
 	}
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -115,7 +115,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		if !ok2 {
 			return
 		}
-		result, err = pdfops.InsertPDF(pdfBytes, other, page, before)
+		result, err = sameDocument(pdfops.InsertPDF(pdfBytes, other, page, before))
 		brought = annotationsIn(other)
 	case "duplicate":
 		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
@@ -123,7 +123,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "duplicate needs a whole-number page")
 			return
 		}
-		result, err = pdfops.DuplicatePage(pdfBytes, pageNum)
+		result, err = sameDocument(pdfops.DuplicatePage(pdfBytes, pageNum))
 	case "split":
 		cols, cErr := strconv.Atoi(r.FormValue("cols"))
 		rows, rErr := strconv.Atoi(r.FormValue("rows"))

@@ -114,7 +114,7 @@ func TestInsertingATaggedDocumentGraftsItWhereItIsRead(t *testing.T) {
 	host, mid := subsetFixture(), taggedFixture()
 	_, _, _, hostElems := carryOf(t, host)
 	_, _, _, midElems := carryOf(t, mid)
-	out, err := InsertPDF(host, mid, 2, false)
+	out, err := withoutCount(InsertPDF(host, mid, 2, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestInsertingATaggedDocumentGraftsItWhereItIsRead(t *testing.T) {
 		for n, o := range v.objs {
 			objs[n] = o
 		}
-		got, err := InsertPDF(assembleFixture(objs), taggedFixture(), 2, false)
+		got, err := withoutCount(InsertPDF(assembleFixture(objs), taggedFixture(), 2, false))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +177,7 @@ func TestInsertingBeforePageOneKeepsTheOriginalAsTheHost(t *testing.T) {
 	host := subsetFixture()
 	_, _, _, hostElems := carryOf(t, host)
 
-	out, err := InsertPDF(host, untaggedFixture(), 1, true)
+	out, err := withoutCount(InsertPDF(host, untaggedFixture(), 1, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestInsertingBeforePageOneKeepsTheOriginalAsTheHost(t *testing.T) {
 	}
 
 	// And the mirror: a tagged page inserted into an UNTAGGED document is not grafted onto nothing.
-	plain, err := InsertPDF(untaggedFixture(), taggedFixture(), 1, true)
+	plain, err := withoutCount(InsertPDF(untaggedFixture(), taggedFixture(), 1, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestInsertingBeforePageOneKeepsTheOriginalAsTheHost(t *testing.T) {
 		}
 	}
 
-	tagged, err := InsertPDF(host, taggedFixture(), 1, true)
+	tagged, err := withoutCount(InsertPDF(host, taggedFixture(), 1, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestAnIncompleteInsertFallsBackToTheHonestLoss(t *testing.T) {
 		t.Fatal("setup: the grafting attempt passes the gate, so the fallback is never exercised")
 	}
 
-	out, err := InsertPDF(host, mid, 1, false)
+	out, err := withoutCount(InsertPDF(host, mid, 1, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestAnIncompleteInsertFallsBackToTheHonestLoss(t *testing.T) {
 // TestInsertingBeforeTheLastPage — the host's LAST page is a page an element can start on, so inserting
 // in front of it must place the inserted content ahead of that element.
 func TestInsertingBeforeTheLastPage(t *testing.T) {
-	out, err := InsertPDF(subsetFixture(), taggedFixture(), 4, true)
+	out, err := withoutCount(InsertPDF(subsetFixture(), taggedFixture(), 4, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestFirstPageIsTheLowestPageAndTheNearestPgWins(t *testing.T) {
 // /P whose kid is an MCID, and descending into it would make the inserted document a child of a
 // paragraph.
 func TestAnInsertIsNeverPlacedInsideAnElementsContent(t *testing.T) {
-	out, err := InsertPDF(taggedFixture(), taggedFixture(), 1, false)
+	out, err := withoutCount(InsertPDF(taggedFixture(), taggedFixture(), 1, false))
 	if err != nil {
 		t.Fatal(err)
 	}

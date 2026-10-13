@@ -48,7 +48,7 @@ func TestInsertPDF(t *testing.T) {
 		{"after page 2", 2, false, [][2]int{b0, b1, o0, o1, b2}},
 		{"after the last page appends", 3, false, [][2]int{b0, b1, b2, o0, o1}},
 	} {
-		out, err := InsertPDF(base, other, tc.page, tc.before)
+		out, err := withoutCount(InsertPDF(base, other, tc.page, tc.before))
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
@@ -68,7 +68,7 @@ func TestInsertPDF(t *testing.T) {
 	}
 
 	// After the last page is Append, page for page.
-	after, _ := InsertPDF(base, other, 3, false)
+	after, _ := withoutCount(InsertPDF(base, other, 3, false))
 	appended, err := Append(base, other)
 	if err != nil {
 		t.Fatal(err)
@@ -85,10 +85,10 @@ func TestInsertPDF(t *testing.T) {
 	}
 
 	for _, before := range []bool{true, false} {
-		if _, err := InsertPDF(base, other, 0, before); err == nil {
+		if _, err := withoutCount(InsertPDF(base, other, 0, before)); err == nil {
 			t.Errorf("insert at page 0 (before=%v) should error", before)
 		}
-		if _, err := InsertPDF(base, other, 4, before); err == nil {
+		if _, err := withoutCount(InsertPDF(base, other, 4, before)); err == nil {
 			t.Errorf("insert past the last page (before=%v) should error", before)
 		}
 	}

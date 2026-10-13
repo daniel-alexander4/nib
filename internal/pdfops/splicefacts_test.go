@@ -77,7 +77,7 @@ func TestAnInsertOrASplitKeepsTheDocumentsOwnFacts(t *testing.T) {
 	if other, err = AddAttachment(other, "theirs.txt", []byte("theirs")); err != nil {
 		t.Fatal(err)
 	}
-	inserted, err := InsertPDF(host, other, 2, true)
+	inserted, err := withoutCount(InsertPDF(host, other, 2, true))
 	if err != nil {
 		t.Fatal(err)
 	}
