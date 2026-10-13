@@ -307,6 +307,114 @@ func TestALeaderJoinsItsPageNumberAcrossAGutter(t *testing.T) {
 	}
 }
 
+// TestATableInsideAColumnIsReadRowByRowAndCellByCell — /pending 871, with the numbers of the page that showed it
+// (`designer/irs-fw9.pdf` p4): a two-column table with no rules, inside a page column whose paragraphs are drawn across
+// both of its cells. Read line by line down the page its cells were woven — "Exempt payees 1 through 4." and "payment
+// card or third-party", from two cells, were one paragraph. Each thing the rule asks for is taken away in turn.
+func TestATableInsideAColumnIsReadRowByRowAndCellByCell(t *testing.T) {
+	above := []textRun{
+		run("The following chart shows types of payments that may be exempt", 44, 512.26, 237.5, 8),
+		run("from backup withholding. The chart applies to the exempt payees listed", 36, 503.26, 258.1, 8),
+		run("above, 1 through 13.", 36, 494.26, 74.1, 8),
+	}
+	rows := [][]textRun{
+		{run("IF the payment is for . . .", 36, 480.26, 91.6, 8), run("THEN the payment is exempt", 169.6, 480.26, 113, 8),
+			run("for . . .", 169.6, 471.26, 24, 8)},
+		{run("•  Broker transactions", 38, 436.26, 78.4, 8), run("Exempt payees 1 through 4 and 6", 169.6, 436.26, 123.2, 8),
+			run("through 11 and all C corporations.", 169.6, 427.26, 124.5, 8)},
+		{run("•  Barter exchange transactions", 38, 370.26, 115.7, 8), run("Exempt payees 1 through 5.", 169.6, 370.26, 100.8, 8),
+			run("and patronage dividends", 38, 361.26, 88.9, 8)},
+		{run("•  Payments made in settlement of", 38, 317.26, 126, 8), run("Exempt payees 1 through 4.", 169.6, 317.26, 100.8, 8),
+			run("payment card or third-party", 38, 308.26, 100.8, 8)},
+	}
+	below := []textRun{
+		run("1See Form 1099-MISC, Miscellaneous Information, and its instructions.", 36, 285.69, 254.9, 8),
+		run("2However, the following payments made to a corporation and", 36, 273.69, 225.2, 8),
+	}
+	page := func(parts ...[]textRun) []textRun {
+		var out []textRun
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	const head = "The following chart shows types of payments that may be exempt from backup withholding. The chart applies to the exempt payees listed above, 1 through 13."
+	const woven = "Exempt payees 1 through 4. payment card or third-party"
+	for _, c := range []struct {
+		name string
+		runs []textRun
+		want []string
+	}{
+		{"four rows", page(above, rows[0], rows[1], rows[2], rows[3], below), []string{head,
+			"IF the payment is for . . .", "THEN the payment is exempt for . . .",
+			"•  Broker transactions", "Exempt payees 1 through 4 and 6 through 11 and all C corporations.",
+			"•  Barter exchange transactions", "and patronage dividends", "Exempt payees 1 through 5.",
+			"•  Payments made in settlement of payment card or third-party", "Exempt payees 1 through 4.",
+			"1See Form 1099-MISC, Miscellaneous Information, and its instructions.",
+			"2However, the following payments made to a corporation and"}},
+		// Fewer rows than a stretch needs: the lines are read down the page as they were, and two cells are one paragraph
+		// (with two rows the page shows no gutter either, so the last row's two cells are one line).
+		{"two rows", page(above, rows[0], rows[3], below), []string{head,
+			"IF the payment is for . . .", "THEN the payment is exempt for . . .",
+			"•  Payments made in settlement of " + woven,
+			"1See Form 1099-MISC, Miscellaneous Information, and its instructions.",
+			"2However, the following payments made to a corporation and"}},
+		// A line drawn across the gap ends the stretch above it: the rows after it are too few to be one of their own.
+		{"a line across the gap after the second row", page(above, rows[0], rows[1],
+			[]textRun{run("The chart goes on for payments of the kinds that are listed below.", 36, 400, 250, 8)}, rows[2], rows[3], below), []string{head,
+			"IF the payment is for . . .", "THEN the payment is exempt for . . .",
+			"•  Broker transactions", "Exempt payees 1 through 4 and 6 through 11 and all C corporations.",
+			"The chart goes on for payments of the kinds that are listed below.",
+			"•  Barter exchange transactions", "Exempt payees 1 through 5.", "and patronage dividends",
+			"•  Payments made in settlement of", woven,
+			"1See Form 1099-MISC, Miscellaneous Information, and its instructions.",
+			"2However, the following payments made to a corporation and"}},
+		// A row of three cells is one row: the second cell shares its baseline with the third, and does not open a row
+		// of its own that would part the first cell's two lines.
+		{"three cells to a row", []textRun{
+			run("The chart is drawn across the three cells below it,", 36, 584, 230, 8), run("and it is a paragraph of the column it is in, whose", 36, 575, 230, 8),
+			run("lines are set nine points apart as a cell's lines are,", 36, 566, 230, 8), run("so that a step of nine points is the usual one here", 36, 557, 230, 8),
+			run("and a cell's second line is read as following its", 36, 548, 230, 8), run("first, where a column of cells alone has no usual", 36, 539, 230, 8),
+			run("step but the one from a cell to the cell beside it,", 36, 530, 230, 8), run("which is no step at all and parts every line from", 36, 521, 230, 8),
+			run("the next one.", 36, 512, 50, 8),
+			run("Kind of payment", 36, 480, 70, 8), run("Exempt payees", 150, 480, 60, 8), run("Code", 250, 480, 20, 8),
+			run("Interest paid on a deposit", 36, 460, 108, 8), run("All but 7", 150, 460, 40, 8), run("A", 250, 460, 6, 8),
+			run("by a bank", 36, 451, 40, 8),
+			run("Dividends", 36, 431, 40, 8), run("1 through 4", 150, 431, 50, 8), run("B", 250, 431, 6, 8),
+			run("Royalties", 36, 411, 40, 8), run("1 through 5", 150, 411, 50, 8), run("C", 250, 411, 6, 8),
+		}, []string{"The chart is drawn across the three cells below it, and it is a paragraph of the column it is in, whose " +
+			"lines are set nine points apart as a cell's lines are, so that a step of nine points is the usual one here " +
+			"and a cell's second line is read as following its first, where a column of cells alone has no usual " +
+			"step but the one from a cell to the cell beside it, which is no step at all and parts every line from the next one.",
+			"Kind of payment", "Exempt payees", "Code",
+			"Interest paid on a deposit by a bank", "All but 7", "A", "Dividends", "1 through 4", "B", "Royalties", "1 through 5", "C"}},
+		// A paragraph ends at a stretch even where nothing else parts it: the lines either side of this one are as far
+		// apart as the column's lines usually are, begin at one edge and are one size.
+		{"a paragraph set either side of a table", page(func() []textRun {
+			var out []textRun
+			for _, y := range []float64{800, 750, 700, 650, 600, 540, 490, 440, 390, 340} {
+				out = append(out, run("a line that is drawn the full width of the column it is in", 36, y, 258, 8))
+			}
+			return out
+		}(), []textRun{
+			run("•  Broker transactions", 38, 580, 78.4, 8), run("Exempt payees 1 through 4", 169.6, 580, 100, 8),
+			run("•  Barter exchange", 38, 571, 70, 8), run("Exempt payees 1 through 5", 169.6, 571, 100, 8),
+			run("•  Interest", 38, 562, 40, 8), run("All exempt payees", 169.6, 562, 70, 8),
+		}), []string{
+			strings.TrimSpace(strings.Repeat("a line that is drawn the full width of the column it is in ", 5)),
+			"•  Broker transactions", "Exempt payees 1 through 4", "•  Barter exchange", "Exempt payees 1 through 5", "•  Interest", "All exempt payees",
+			strings.TrimSpace(strings.Repeat("a line that is drawn the full width of the column it is in ", 5))}},
+	} {
+		l := groupRuns(c.runs)
+		if got := paragraphTexts(l); strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s: the paragraphs read\n  %q\nwant\n  %q", c.name, got, c.want)
+		}
+		if l.columns != 1 {
+			t.Errorf("%s: the page reads as %d columns, want the one it has — a table's cells are not columns of the page", c.name, l.columns)
+		}
+	}
+}
+
 // TestAHeadingInTheNextColumnDoesNotJoinTheLineBesideIt — /pending 871 (`antennahouse/irs-p15.pdf` p11): two 10pt
 // columns 18pt apart are parted by joinGapEm, but the gap is measured in ems of the LARGER run, so a 14pt heading
 // opening the right-hand column joined the body line beside it — and one line across both made the page one column,
