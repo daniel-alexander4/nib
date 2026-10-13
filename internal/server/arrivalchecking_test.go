@@ -48,8 +48,8 @@ func watchChecking(se *session) (seen *atomic.Bool, stop func()) {
 //
 // **Four arms, because "cleared on every exit" is the half that is easy to get wrong**: the anchor
 // that passes, the anchor that REFUSES (a different document under the same record), an arrival
-// refused before the anchor is reached, and a signed arrival, for which there is no anchor and the
-// status must never say there is.
+// refused before the anchor is reached, and a signed arrival, which has no anchor and still waits
+// on the record check — seconds on a large document, on every hop — so it is said there too.
 func TestTheStatusSaysTheDocumentIsBeingCheckedForTheAnchorAndNoLonger(t *testing.T) {
 	cert, key, err := sign.GenerateIdentity("Convener")
 	if err != nil {
@@ -117,12 +117,15 @@ func TestTheStatusSaysTheDocumentIsBeingCheckedForTheAnchorAndNoLonger(t *testin
 		name    string
 		doc     []byte
 		refused bool
-		anchor  bool
+		// said is whether the status must have said so while the gate ran. An arrival with no
+		// record is refused at once, with nothing to wait on, so that arm is held only to
+		// "cleared afterwards".
+		said bool
 	}{
 		{"the convened document", out.Document, false, true},
 		{"a different document under the same record", decoy, true, true},
 		{"a document with no record, refused before the anchor", plain, true, false},
-		{"a signed arrival, which has no anchor", signed, false, false},
+		{"a signed arrival, which waits on the record check alone", signed, false, true},
 	} {
 		se := &session{}
 		if se.status().Checking {
@@ -134,14 +137,9 @@ func TestTheStatusSaysTheDocumentIsBeingCheckedForTheAnchorAndNoLonger(t *testin
 		if (err != nil) != arm.refused {
 			t.Fatalf("%s: setup: checkArrival answered %v, so this arm is not the exit it names", arm.name, err)
 		}
-		if seen.Load() != arm.anchor {
-			if arm.anchor {
-				t.Errorf("%s: the status never said the document was being checked while the "+
-					"anchor ran — the window shows a wait with no words for the whole hash", arm.name)
-			} else {
-				t.Errorf("%s: the status said a document was being checked and no anchor runs "+
-					"for this arrival", arm.name)
-			}
+		if arm.said && !seen.Load() {
+			t.Errorf("%s: the status never said the document was being checked while the "+
+				"gate ran — the window shows a wait with no words for the whole check", arm.name)
 		}
 		if se.status().Checking {
 			t.Errorf("%s: the status still says the document is being checked after the gate "+

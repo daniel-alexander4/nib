@@ -1,11 +1,11 @@
 --- a/internal/server/ceremonyid.go
 +++ b/internal/server/ceremonyid.go
-@@ -870,7 +870,7 @@
+@@ -875,7 +875,7 @@
  	//
- 	// **So the wait says what it is.** `telling.checkingDocument()` brackets the hash and nothing
- 	// else, and the deferred call clears it on every way out of it.
+ 	// **So the wait says what it is**: `telling.checkingDocument()`, at the top of this function,
+ 	// covers this hash and the record check before it.
 -	if !sign.HasSignatureBlob(pdf) {
 +	if true {
  		// Under the rule the record names (ADR-080): `CheckRecord` above has already refused a rule
  		// this build cannot compute, so `herr` here is the document's, never a version skew.
- 		got, herr := func() (string, error) {
+ 		got, herr := ceremony.DocumentHashFor(pdf, rec)

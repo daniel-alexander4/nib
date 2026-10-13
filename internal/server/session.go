@@ -145,11 +145,11 @@ type session struct {
 	// field cleared on disarm would be no better: the disarm IS the symptom, and a message that
 	// vanishes with it is a message nobody reads.
 	notice *noticeView
-	// checking counts the arrival content anchors running right now — see checkingDocument.
+	// checking counts the arrival gates running right now — see checkingDocument.
 	checking int
 }
 
-// checkingDocument marks one arrival content anchor as under way, and returns what ends it
+// checkingDocument marks one arrival gate (the record check and, on hop 1, the content anchor) as under way, and returns what ends it
 // (/pending 359).
 //
 // **The anchor stays on the request path; this is the wait saying what it is.** `checkArrival`
