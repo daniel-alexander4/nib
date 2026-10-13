@@ -439,9 +439,18 @@ func (l *tlsListener) acceptLoop() {
 			_ = l.Close()
 			return
 		}
+		// **Per source, before the pool** (/pending 775, ADR-149): a source already holding its
+		// share is closed here rather than queued behind the pool, so it cannot put the genuine
+		// peer behind everything it sends. See `maxHandshakesPerSource`.
+		release, ok := l.admit(c.RemoteAddr())
+		if !ok {
+			c.Close()
+			continue
+		}
 		select {
 		case l.sem <- struct{}{}:
 		case <-l.done:
+			release()
 			c.Close()
 			return
 		}
@@ -450,6 +459,7 @@ func (l *tlsListener) acceptLoop() {
 		go func() {
 			defer safe.Recover("tls handshake")
 			defer func() { <-l.sem }()
+			defer release()
 			conn, herr := l.handshake(c)
 			if herr != nil {
 				return // not the pinned peer, or it never spoke — dropped, not surfaced

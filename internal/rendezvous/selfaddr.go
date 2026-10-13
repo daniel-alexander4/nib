@@ -344,6 +344,46 @@ func classify(all []Observation, want6 bool) Class {
 	return c
 }
 
+// MajorityIP is the address — the IP alone, whatever the port — that a strict majority of this
+// probe's sources placed us at, for one family; ok is false when no majority did, or fewer than two
+// sources answered (/pending 775, ADR-149).
+//
+// **The IP and not `Class.Addr`, because the caller that needs it is the one `Class.Addr` cannot
+// serve.** A port-mapped candidate matters most behind an endpoint-DEPENDENT NAT, where every
+// source sees a different port, no address-and-port group forms and `Class.Addr` is the zero value
+// by design — while every one of those sources still saw the same IP. The counting is `classify`'s:
+// distinct source prefixes, a strict majority, never one source agreeing with itself.
+//
+// L1 holds as it does for the probe: this decides which candidate is PUBLISHED, never which peer is
+// accepted.
+func (s SelfAddress) MajorityIP(want6 bool) (netip.Addr, bool) {
+	groups := make(map[netip.Addr]map[netip.Prefix]bool)
+	sources := make(map[netip.Prefix]bool)
+	for _, o := range s.Observations {
+		if o.Self.Addr().Is4() == want6 {
+			continue
+		}
+		p, ok := sourcePrefix(o.From)
+		if !ok {
+			continue
+		}
+		sources[p] = true
+		if groups[o.Self.Addr()] == nil {
+			groups[o.Self.Addr()] = make(map[netip.Prefix]bool)
+		}
+		groups[o.Self.Addr()][p] = true
+	}
+	if len(sources) < 2 {
+		return netip.Addr{}, false
+	}
+	for ip, srcs := range groups {
+		if len(srcs)*2 > len(sources) {
+			return ip, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
 // disagreements counts observations of a family that differed from a majority that
 // formed anyway.
 //
