@@ -63,11 +63,14 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	if aside != nil {
 		putBack = aside(ctx)
 	}
+	// What the document says about XFA is read HERE: the validator deletes an XFA-only form (`xfa.go`, ADR-145).
+	xfa := xfaIn(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
 	err = api.ValidateContext(ctx)
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
 		rememberAssociatedFiles(ctx)
+		rememberXFA(ctx, xfa)
 	}
 	putBack()
 	putPacket()

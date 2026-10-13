@@ -205,6 +205,9 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 		if dest.XRefTable.Version() < model.V20 && src.XRefTable.Version() == model.V20 {
 			return nil, pdfcpu.ErrUnsupportedVersion
 		}
+		if err := RefuseDynamicXFA(src); err != nil { // the mark does not follow its pages into dest (`xfa.go`)
+			return nil, err
+		}
 		PutBackValidatorLosses(src) // before the merge renumbers its references (`write.go`)
 		layers := SourceOptionalContent(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {

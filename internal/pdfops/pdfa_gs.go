@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"nib/internal/pdfread"
 )
 
 // The general, vector-preserving PDF/A path: shell out to an installed Ghostscript.
@@ -65,6 +67,12 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 	gs := ghostscriptPath()
 	if gs == "" {
 		return nil, ErrGhostscriptMissing
+	}
+	// Ghostscript reads the file itself and would convert a dynamic XFA form's placeholder page into a PDF/A
+	// copy of "Please wait…" — the write door never sees it, so its refusal is asked here (ADR-145; the census
+	// caught this door). One unvalidated parse, beside a conversion measured in seconds.
+	if xfa, err := pdfread.ReadXFA(pdf); err == nil && xfa == pdfread.XFADynamic {
+		return nil, pdfread.ErrDynamicXFA
 	}
 	dir, err := os.MkdirTemp("", "nib-pdfa-")
 	if err != nil {

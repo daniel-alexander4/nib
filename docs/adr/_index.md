@@ -914,3 +914,5 @@ home today.
   — every remaining slot is re-sealed from its stored public key, the staged file is opened with the new key before the rename, and a generation in the envelope (no format change) stops a stale process writing its old slots back; nothing already copied is taken back.
 - [ADR-143](143-rule-6-follows-every-kind-of-resource-a-page-binds.md) — **rule 6 follows every kind of resource a page binds**
   — `ContentDigestVersion` 5 → 6: the digest follows every kind in the effective resource dictionary, not a list; rule 5 is still computed for its records, rule 4 is retired, and a rule skew says which build is behind (wire codes 18, 19).
+- [ADR-145](145-an-xfa-form-is-dropped-by-every-write-and-a-placeholder-is-not-written.md) — **an XFA form is dropped by every write, and a placeholder is not written**
+  — `pdfread.Write` drops `/XFA` and `/NeedsRendering` together and refuses a document read with `/NeedsRendering true` (422 `dynamic-xfa`); the reading is taken before validation, the window announces it, and a ceremony is not convened over XFA (422 `xfa`).

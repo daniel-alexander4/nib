@@ -2393,6 +2393,25 @@ body.presenting .presentbar { display: flex; }
   border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
 }
 #lostNotice #lostNoticeDismiss:hover { border-color: var(--text); color: var(--text); }
+
+/* The XFA form notice (ADR-145). #tagNotice's box again, one step further up so all three can be on screen
+   together, with no glyph: the sentence names the thing itself. */
+#xfaNotice {
+  position: absolute; bottom: 172px; right: 14px; z-index: 11;
+  display: flex; align-items: center; gap: 12px;
+  max-width: 46ch;
+  padding: 7px 10px 7px 14px; border-radius: 8px;
+  background: var(--surface0); color: var(--text);
+  border: 1px solid var(--yellow);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 25%);
+  font-size: 13px;
+}
+#xfaNotice #xfaNoticeDismiss {
+  flex: none;
+  background: none; border: 1px solid var(--surface1); color: var(--subtext1);
+  border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+#xfaNotice #xfaNoticeDismiss:hover { border-color: var(--text); color: var(--text); }
 #fitNotice #fitNoticeDismiss:hover { background: var(--surface2); }
 
 /* --- light theme: words are never carried in --green, --yellow or --peach (/pending 671) ---

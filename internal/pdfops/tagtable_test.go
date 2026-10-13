@@ -331,6 +331,7 @@ var tagFates = map[string]tagFate{
 	"ExportFormCSV":      {verdict: "untouched", why: "returns a report, not a document"},
 	"ExportFormXFDF":     {verdict: "untouched", why: "returns a report, not a document"},
 	"FlagsJSON":          {verdict: "untouched", why: "returns a report, not a document"},
+	"FlagsAndXFA":        {verdict: "untouched", why: "FlagsJSON with one more fact from the same read; returns a report, not a document"},
 	"ExtractImagesZip":   {verdict: "untouched", why: "returns a ZIP of images, not a document"},
 	"ConvertDocToPDF":    {verdict: "untouched", why: "its input is not a PDF — it produces one from an office document"},
 	"ConvertOfficeToPDF": {verdict: "untouched", why: "as ConvertDocToPDF"},

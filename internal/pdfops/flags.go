@@ -73,6 +73,14 @@ var errFlagsRoundTrip = errors.New("flags did not round-trip after embedding")
 // carries none. A malformed value reads as none rather than an error, so a
 // hand-mangled property can never break opening a document.
 func FlagsJSON(pdf []byte) ([]byte, error) {
+	flags, _, err := FlagsAndXFA(pdf)
+	return flags, err
+}
+
+// FlagsAndXFA is FlagsJSON together with what the document says about XFA (`pdfread.XFAOf`: "", "static" or
+// "dynamic"), from the ONE read. The server asks both of every document it answers for, and the second is a
+// reading the door takes before validation on a read it is already making (ADR-145) — never a parse of its own.
+func FlagsAndXFA(pdf []byte) (flags []byte, xfa string, err error) {
 	// `api.Properties` restated over the read door (pkg/api/property.go:29, v0.13.0: `LISTPROPERTIES`, then the
 	// context's properties), because the server runs this on every document it answers for: the reader door that
 	// once stood in front of the wrapper parsed each file twice (measured +30-85% here on 100 KB-6 MB producer
@@ -82,18 +90,19 @@ func FlagsJSON(pdf []byte) ([]byte, error) {
 	conf.Cmd = model.LISTPROPERTIES
 	ctx, err := pdfread.ReadOptimized(pdf, conf)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	xfa = pdfread.XFAOf(ctx)
 	props := ctx.Properties
 	enc, ok := props[flagsKey]
 	if !ok || enc == "" {
-		return nil, nil
+		return nil, xfa, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(enc)
 	if err != nil {
-		return nil, nil // unreadable => treat as no flags
+		return nil, xfa, nil // unreadable => treat as no flags
 	}
-	return raw, nil
+	return raw, xfa, nil
 }
 
 // SetFlags embeds the given flag-set JSON as the NibFlags property and returns

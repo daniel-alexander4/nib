@@ -834,6 +834,11 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The result is assembled from images and page runs, never by writing this context, so the write door's
+	// refusal of a placeholder for a dynamic XFA form is asked here (ADR-145; the census caught this door).
+	if err := pdfread.RefuseDynamicXFA(octx); err != nil {
+		return nil, err
+	}
 	n := octx.PageCount
 	lang := ""
 	if root, cerr := octx.XRefTable.Catalog(); cerr == nil {
@@ -1186,6 +1191,9 @@ func nUpSeparated(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []
 	}
 	// `NUpFromPDF` copies each page's resources into the form it builds: a font pdfcpu's validator took out goes
 	// back before the copy (`pdfread.Write`, ADR-129).
+	if err := pdfread.RefuseDynamicXFA(ctx); err != nil { // the imposition is a new document (ADR-145)
+		return nil, err
+	}
 	pdfread.PutBackValidatorLosses(ctx)
 	if err := pdfcpu.NUpFromPDF(ctx, pages, nup); err != nil {
 		return nil, err
@@ -1588,6 +1596,9 @@ func cutSeparated(ctx *model.Context, page int, cut *model.Cut) (*model.Context,
 	}
 	// `CutPage` copies the page into a context of its own, which no read remembered anything about: a font
 	// pdfcpu's validator took out of this one goes back before the copy (`pdfread.Write`, ADR-129).
+	if err := pdfread.RefuseDynamicXFA(ctx); err != nil { // the cut page is a new document (ADR-145)
+		return nil, err
+	}
 	pdfread.PutBackValidatorLosses(ctx)
 	return pdfcpu.CutPage(ctx, page, cut)
 }

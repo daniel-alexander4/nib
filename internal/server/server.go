@@ -157,6 +157,9 @@ type document struct {
 	// both at once.
 	flags    json.RawMessage
 	flagsFor []byte
+	// xfa is docResponse.XFA for the bytes `flags` was computed from — read by the same parse, cached by the
+	// same rule (ADR-145).
+	xfa string
 
 	// historyEvicted records that this document's history was dropped to keep the
 	// global budget, rather than never having existed. Without it the two are
@@ -726,6 +729,11 @@ type docResponse struct {
 	// Omitted while false, so a document that never carried tagging — which is nearly all of them —
 	// serializes exactly as it did before.
 	TaggingDropped bool `json:"taggingDropped,omitempty"`
+	// XFA says this document carries an XFA form, which Nib does not show or fill (ADR-145): "static" (a packet
+	// beside pages that are the document — any change removes it), "dynamic" (`/NeedsRendering true`: the pages
+	// are a placeholder, and Nib refuses to change the document), or "removed" (it arrived with one and a change
+	// took it out). Sticky for the reason TaggingDropped is; omitted for a document that never had one.
+	XFA string `json:"xfa,omitempty"`
 	// LostAnnots and LostFields are what operations on this document have destroyed and could not
 	// carry — comments, links and form fields (/pending 574). `omitempty`, so the overwhelmingly
 	// common case of a document that lost nothing puts nothing on the wire.
@@ -1205,7 +1213,10 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		// operation of nib's — lose a PDF/UA identification nib cannot verify survived the edit
 		// (`/pending 492`). Before the write, so the file and the document agree. An unchanged save is
 		// not an edit and keeps its claim.
-		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
+		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); errors.Is(derr, pdfread.ErrDynamicXFA) {
+			httpError(w, http.StatusUnprocessableEntity, derr.Error()) // ADR-145: the one error that is a refusal
+			return
+		} else if derr != nil {
 			log.Printf("save: the PDF/UA or PDF/A identification could not be checked, so the bytes are saved as posted: %v", derr)
 		} else {
 			data = dropped
@@ -1852,6 +1863,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// mutating doc.data in place would silently reintroduce the race.
 	data := doc.data
 	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
+	xfaWas := doc.xfa
 	// Snapshotted here with everything else and compared AFTER the unlock, for the
 	// reason the paragraph above gives about FlagsJSON: diskChanged stats the file and
 	// may read it, and a syscall under the server mutex serializes every route behind
@@ -1879,21 +1891,43 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// /api/flags). A parse failure just means "no flags" — never blocks the open.
 	if fresh {
 		resp.Flags = cached
+		resp.XFA = xfaWas
 		return resp
 	}
-	if flags, err := pdfops.FlagsJSON(data); err == nil && json.Valid(flags) {
+	flags, xfa, err := pdfops.FlagsAndXFA(data)
+	if err == nil && json.Valid(flags) {
 		resp.Flags = flags
 	}
+	resp.XFA = xfaAfter(xfaWas, xfa, err)
 	// Store it back, but only if this document still holds the bytes it was computed
 	// from: another request may have replaced them while the parse ran, and caching a
 	// result against bytes the document no longer has is worse than not caching.
 	s.mu.Lock()
 	if s.isRegisteredLocked(doc) && sameBytes(doc.data, data) {
-		doc.flags, doc.flagsFor = resp.Flags, data
+		doc.flags, doc.flagsFor, doc.xfa = resp.Flags, data, resp.XFA
 	}
 	s.mu.Unlock()
 	return resp
 }
+
+// xfaAfter is docResponse.XFA for a document whose bytes now read as now, having last been reported as was
+// (ADR-145). A document that had a static form and has none now had it REMOVED by a change, and goes on saying
+// so; an undo that brings the form back brings the first notice back with it. A read that failed says nothing
+// new.
+func xfaAfter(was, now string, readErr error) string {
+	switch {
+	case readErr != nil:
+		return was
+	case now != "":
+		return now
+	case was == pdfread.XFAStatic || was == xfaRemoved:
+		return xfaRemoved
+	}
+	return ""
+}
+
+// xfaRemoved is docResponse.XFA's third value; the other two are `pdfread.XFAStatic` and `pdfread.XFADynamic`.
+const xfaRemoved = "removed"
 
 // unverifiedSigners counts the signatures this machine cannot vouch for — /pending 390.
 //
@@ -2112,6 +2146,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 func httpError(w http.ResponseWriter, code int, msg string) {
 	if strings.Contains(msg, pdfread.AssociatedFileRefusal) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "associated-file"})
+		return
+	}
+	// The second such refusal, from the same door (ADR-145): pages that are a placeholder for a dynamic XFA form.
+	if strings.Contains(msg, pdfread.DynamicXFARefusal) {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "dynamic-xfa"})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

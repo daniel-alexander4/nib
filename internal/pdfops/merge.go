@@ -133,6 +133,11 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		layers := pdfread.SourceOptionalContent(src)
 		// Before the merge renumbers the source's references: a font pdfcpu's validator took out of it goes back
 		// into the numbering it came from (`pdfread.Write`, ADR-129).
+		// And a source whose pages are a placeholder for a dynamic XFA form is refused here: what `Write` knows
+		// of it does not follow its pages into dest (`pdfread/xfa.go`, ADR-145).
+		if err := pdfread.RefuseDynamicXFA(src); err != nil {
+			return nil, false, err
+		}
 		pdfread.PutBackValidatorLosses(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, false, err

@@ -12,6 +12,7 @@ import (
 
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -81,6 +82,18 @@ type conveneResponse struct {
 	Doc      docResponse        `json:"doc"`
 }
 
+// conveneXFARefusal is the sentence a convener reads when the document carries an XFA form: what it is, why a
+// ceremony cannot cover it, and — where there is one — the thing to do about it.
+func conveneXFARefusal(xfa string) string {
+	if xfa == pdfread.XFADynamic {
+		return "This document's pages are only a placeholder for a dynamic XFA form, which Nib does not show or " +
+			"fill, so there is nothing here for the parties to sign. Nothing was convened."
+	}
+	return "This document also carries an XFA form — a second copy of its form that some readers show instead of " +
+		"the pages, and that a ceremony's fingerprint does not cover. Nothing was convened. Remove active content " +
+		"(Secure) takes the XFA form out; then convene."
+}
+
 func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	// **The ceremony switch, at the door that CREATES a proceeding** (`/pending 451`). Convening
 	// and accepting are the two ways this machine becomes party to one; the sweep that keeps a
@@ -126,6 +139,15 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	}
 
 	before := s.docBytes(doc)
+	// **No ceremony over a document that still carries an XFA form** (ADR-145, `/pending 843`). The fingerprint
+	// every party signs covers the pages and nothing of `/AcroForm /XFA`, so a reader that draws the form instead
+	// of the pages could be shown something other than what was agreed while every check still passed. Refused
+	// here, before `ceremony.Convene` mints anything, and as a 422 naming its cause (ADR-072) — 409 on this
+	// route already means "a ceremony is running". A read that fails says nothing: Convene refuses those itself.
+	if xfa, xerr := pdfread.ReadXFA(before); xerr == nil && xfa != "" {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": conveneXFARefusal(xfa), "cause": "xfa"})
+		return
+	}
 	out, err := ceremony.Convene(before, ceremony.ConveneRequest{
 		Roster:         roster,
 		Intent:         req.Intent,

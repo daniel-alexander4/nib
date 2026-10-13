@@ -22,6 +22,7 @@ import (
 	"nib/internal/ots"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 	"nib/internal/uacheck"
 )
@@ -1197,7 +1198,10 @@ func cmdSign(args []string) int {
 	// A document pdfcpu cannot read is signed as it was read, per ADR-032 ("passed through too, logged").
 	// This dropped the error silently (`/pending 504`), so a claim the signature then sealed permanently
 	// left no trace. Warned, not refused: the ADR decides a metadata step never costs the signature.
-	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); derr != nil {
+	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); errors.Is(derr, pdfread.ErrDynamicXFA) {
+		errf("%s: %v", inputName(in), derr) // ADR-145: the one error from this door that is a refusal
+		return 1
+	} else if derr != nil {
 		errf("warning: the PDF/UA or PDF/A identification could not be checked, so %s is signed as it was read — "+
 			"if it claims PDF/UA, the signature now seals that claim: %v", inputName(in), derr)
 	} else {

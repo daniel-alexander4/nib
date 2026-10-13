@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -91,7 +92,12 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// A document already carrying one keeps its claim rather than lose that signature.
 	// A failed check signs the bytes as they were, and ADR-032 says so — "passed through too, logged".
 	// It was not logged here (`/pending 504`), so a claim the signature then sealed left no trace.
-	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdfBytes, sign.HasSignatureBlob(pdfBytes)); derr != nil {
+	// The one error that IS a refusal (ADR-145): pages that are only a placeholder for a dynamic XFA form are not
+	// signed — the signature would seal a page reading "Please wait…".
+	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdfBytes, sign.HasSignatureBlob(pdfBytes)); errors.Is(derr, pdfread.ErrDynamicXFA) {
+		httpError(w, http.StatusUnprocessableEntity, derr.Error())
+		return
+	} else if derr != nil {
 		log.Printf("finalize: the PDF/UA or PDF/A identification could not be checked, so the document is signed "+
 			"as it was read — if it claims PDF/UA, the signature now seals that claim: %v", derr)
 	} else {
