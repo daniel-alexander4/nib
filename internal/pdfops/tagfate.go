@@ -115,6 +115,10 @@ type tagState struct {
 	// deliberately, because /pending 573's whole finding was that the two can disagree.
 	annots     int
 	formFields int
+	// fieldNames is every TERMINAL form field by its fully qualified name (`terminalFieldNames`) — what the
+	// commit door compares by identity (`/pending 582`). `formFields` cannot say what was lost: a merge puts
+	// the incoming document's fields under ONE new parent, so two fields arriving add one to that length.
+	fieldNames []string
 	// source is the tier `setTagSource` recorded on the tree, or "" when none is recorded (or the value
 	// is not one this code writes). `claimTagging` reads it so a door adding to a tree never raises it.
 	source tagSource
@@ -219,6 +223,7 @@ func inspectTags(pdf []byte) tagState {
 	if form, ferr := ctx.DereferenceDict(cat["AcroForm"]); ferr == nil && form != nil {
 		if fields, aerr := ctx.DereferenceArray(form["Fields"]); aerr == nil {
 			s.formFields = len(fields)
+			s.fieldNames = terminalFieldNames(ctx, fields)
 		}
 	}
 	if _, ok := cat["StructTreeRoot"]; !ok {
@@ -300,6 +305,9 @@ type DocumentFacts struct {
 	Tagged      bool
 	Annotations int
 	FormFields  int
+	// FieldNames is every terminal form field by its fully qualified name, in the form's order — the
+	// fields themselves, where FormFields is only the length of the form's top-level array.
+	FieldNames []string
 }
 
 // Inspect reports the facts a commit door compares across an operation. See DocumentFacts.
@@ -310,7 +318,62 @@ func Inspect(pdf []byte) DocumentFacts {
 		Tagged:      s.claims(),
 		Annotations: s.annots,
 		FormFields:  s.formFields,
+		FieldNames:  s.fieldNames,
 	}
+}
+
+// maxFieldNodes bounds the field walk: a form is a tree a stranger wrote, read on every commit.
+const maxFieldNodes = 100000
+
+// terminalFieldNames is every terminal field under an `/AcroForm /Fields` array, by fully qualified name
+// (ISO 32000-1 12.7.3.2: the partial names from the root down, joined by a period). A field is terminal when
+// none of its kids has a `/T` — its kids, if any, are its widgets. A node that only groups other fields is not
+// one. Each object is visited once, to a depth of 32 and `maxFieldNodes` in all, so a looped or enormous tree
+// costs a bounded walk and reports what it reached.
+func terminalFieldNames(ctx *model.Context, fields types.Array) []string {
+	var out []string
+	seen := map[int]bool{}
+	nodes := 0
+	var walk func(o types.Object, prefix string, depth int)
+	walk = func(o types.Object, prefix string, depth int) {
+		if nodes++; nodes > maxFieldNodes || depth > 32 {
+			return
+		}
+		if ir, ok := o.(types.IndirectRef); ok {
+			if seen[ir.ObjectNumber.Value()] {
+				return
+			}
+			seen[ir.ObjectNumber.Value()] = true
+		}
+		d, err := ctx.DereferenceDict(o)
+		if err != nil || d == nil {
+			return
+		}
+		name := prefix
+		if d["T"] != nil {
+			if t, terr := ctx.DereferenceStringOrHexLiteral(d["T"], model.V10, nil); terr == nil {
+				if name != "" {
+					name += "."
+				}
+				name += t
+			}
+		}
+		kids, _ := ctx.DereferenceArray(d["Kids"])
+		terminal := true
+		for _, k := range kids {
+			if kd, kerr := ctx.DereferenceDict(k); kerr == nil && kd != nil && kd["T"] != nil {
+				terminal = false
+				walk(k, name, depth+1)
+			}
+		}
+		if terminal {
+			out = append(out, name)
+		}
+	}
+	for _, f := range fields {
+		walk(f, "", 0)
+	}
+	return out
 }
 
 // honest is the one door. It returns the document unchanged unless the document claims tagging over

@@ -113,7 +113,7 @@ func (s *Server) commitMutation(doc *document, base mutationBase, result []byte,
 	// to change. After the cheap refusals above, so a refused commit does not pay for it.
 	var fate docFate
 	if doc != nil {
-		fate = fateOf(input, result, base.broughtAnnots)
+		fate = fateOf(input, result, base.broughtAnnots, base.broughtFields)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,6 +161,9 @@ type mutationBase struct {
 	// broughtAnnots is how many annotations the operation brought in from ANOTHER document (an
 	// append, an insert), counted by the caller before the commit. See noteTaggingFate.
 	broughtAnnots int
+	// broughtFields is how many form fields that other document carries, counted the same way. The page
+	// route sets it; nothing else brings a document in.
+	broughtFields int
 }
 
 // snapshotBase is bytes this operation read from the document with `docBytes`.
@@ -337,7 +340,7 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	for attempt := 0; ; attempt++ {
 		if doc != nil && attempt < barrierFateAttempts {
 			before = s.docBytes(doc)
-			fate = fateOf(before, result, 0) // a barrier brings nothing in
+			fate = fateOf(before, result, 0, 0) // a barrier brings nothing in
 		}
 		s.mu.Lock()
 		if doc == nil || !s.isRegisteredLocked(doc) || attempt >= barrierFateAttempts || sameSlice(doc.data, before) {
@@ -357,7 +360,7 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	}
 	if !sameSlice(doc.data, before) {
 		// The named fallback: the document kept moving under every capture.
-		fate = fateOf(doc.data, result, 0)
+		fate = fateOf(doc.data, result, 0, 0)
 	}
 	clearUndo(doc)
 	clearRedo(doc)
@@ -860,9 +863,15 @@ func ceremonyFreeze(docBytes []byte) error {
 // insert carries the other document's annotations, so the totals alone are a NET figure: three
 // links dropped and three notes brought in read as nothing lost. `broughtAnnots` is the other
 // document's count, taken by the route before the commit and outside `s.mu`; with it the
-// comparison is what the result should hold against what it does. Form fields are still compared
-// net: appending a form to itself leaves 3 fields of 4 (measured), and whether a merged field is a
-// lost one is not this door's to say.
+// comparison is what the result should hold against what it does.
+//
+// **Form fields are compared BY NAME, never by count (/pending 582, ADR-147).** A field the document had
+// and the result has not is lost, whatever else arrived: an operation that drops one field and adds another
+// is one lost, where the totals said none. And the "3 fields of 4" measured on a form appended to itself
+// was never a merge: pdfcpu puts the incoming fields under ONE new parent (`2.fullName`, `2.agree`), so the
+// top-level length grew by one while all four fields stood. Nothing merges, so nothing is reported as merged;
+// the incoming document's fields change name, so they are counted — `broughtFields` against the names the
+// result holds that the document did not — and a shortfall is a loss.
 //
 // # Read outside the lock, recorded under it (/pending 581)
 //
@@ -873,7 +882,7 @@ func noteTaggingFate(doc *document, input, result []byte, broughtAnnots int) {
 	if doc == nil {
 		return
 	}
-	doc.note(fateOf(input, result, broughtAnnots))
+	doc.note(fateOf(input, result, broughtAnnots, 0))
 }
 
 // docFate is what one operation cost a document: see noteTaggingFate. The zero value is "nothing".
@@ -889,7 +898,7 @@ var inspectFacts = pdfops.Inspect
 
 // fateOf reads what turning input into result cost. Two full parses and nothing else: it touches
 // no document, so it needs no lock.
-func fateOf(input, result []byte, broughtAnnots int) docFate {
+func fateOf(input, result []byte, broughtAnnots, broughtFields int) docFate {
 	var f docFate
 	before, after := inspectFacts(input), inspectFacts(result)
 	if !before.Readable || !after.Readable {
@@ -899,10 +908,34 @@ func fateOf(input, result []byte, broughtAnnots int) docFate {
 	if n := before.Annotations + broughtAnnots - after.Annotations; n > 0 {
 		f.lostAnnots = n
 	}
-	if n := before.FormFields - after.FormFields; n > 0 {
-		f.lostFields = n
-	}
+	f.lostFields = lostFieldsByName(before.FieldNames, after.FieldNames, broughtFields)
 	return f
+}
+
+// lostFieldsByName is how many form fields an operation cost: the document's own fields that the result
+// no longer holds under their names, and any of the `brought` fields another document carried in that did
+// not arrive. Names are counted as a multiset — two fields may share a name in a file nobody validated.
+func lostFieldsByName(before, after []string, brought int) int {
+	left := map[string]int{}
+	for _, n := range after {
+		left[n]++
+	}
+	lost := 0
+	for _, n := range before {
+		if left[n] > 0 {
+			left[n]--
+		} else {
+			lost++
+		}
+	}
+	arrived := 0 // what the result holds that the document did not
+	for _, k := range left {
+		arrived += k
+	}
+	if brought > arrived {
+		lost += brought - arrived
+	}
+	return lost
 }
 
 // note records an operation's fate on the document. Caller holds s.mu, or has the document to itself.

@@ -189,3 +189,29 @@ func TestTheAnswerFactsReadALabelAndATaggingClaim(t *testing.T) {
 		t.Error("the answer's reading of the tagging claim and the commit door's disagree")
 	}
 }
+
+// TestInspectNamesEveryTerminalField — `/pending 582`: the commit door compares form fields by fully
+// qualified name. A node that only groups other fields is not a field; its named kids are.
+func TestInspectNamesEveryTerminalField(t *testing.T) {
+	form, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Inspect(form).FieldNames; len(got) != 2 || got[0] != "fullName" || got[1] != "agree" {
+		t.Fatalf("the form fixture's fields read %q, want fullName and agree", got)
+	}
+	doubled, err := Append(form, form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Inspect(doubled).FieldNames
+	want := []string{"fullName", "agree", "2.fullName", "2.agree"}
+	if len(got) != len(want) {
+		t.Fatalf("a form appended to itself reads %q, want %q — the incoming fields are under one parent, and the parent is not a field", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("a form appended to itself reads %q, want %q", got, want)
+		}
+	}
+}

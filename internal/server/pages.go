@@ -70,6 +70,8 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		// so the loss notice is not a net figure (/pending 582). One parse of that document, here
 		// and not at the commit door, which holds s.mu.
 		brought int
+		// broughtFields is the same count for that document's form fields.
+		broughtFields int
 	)
 	switch r.FormValue("op") {
 	case "rotate":
@@ -100,7 +102,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.Append(pdfBytes, other)
-		brought = annotationsIn(other)
+		brought, broughtFields = broughtIn(other)
 	case "insertpdf":
 		page, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -116,7 +118,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = sameDocument(pdfops.InsertPDF(pdfBytes, other, page, before))
-		brought = annotationsIn(other)
+		brought, broughtFields = broughtIn(other)
 	case "duplicate":
 		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -219,6 +221,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// The revision the window built these bytes on, so a document that moved since is refused rather
 	// than overwritten (ADR-146). Spelled out for the same guard as the field above.
 	base, err := echoedBase(pdfBytes, brought, r.FormValue("baseRev"))
+	base.broughtFields = broughtFields
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -229,14 +232,15 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.docResponse(doc))
 }
 
-// annotationsIn counts the annotations a document being appended or inserted carries. An unreadable
-// one counts none, which leaves the loss notice the net comparison it was.
-func annotationsIn(pdf []byte) int {
+// broughtIn counts the annotations and the form fields a document being appended or inserted carries,
+// from one parse. An unreadable one counts none, which leaves the loss notice comparing the document
+// with itself.
+func broughtIn(pdf []byte) (annots, fields int) {
 	facts := pdfops.Inspect(pdf)
 	if !facts.Readable {
-		return 0
+		return 0, 0
 	}
-	return facts.Annotations
+	return facts.Annotations, len(facts.FieldNames)
 }
 
 // insertSide reads an insert's `side` — "before" or "after" the page — and reports whether it goes
