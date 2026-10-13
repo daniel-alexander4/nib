@@ -683,6 +683,15 @@ var errLibraryWouldOverread = errors.New("a signature's /ByteRange would make th
 // the library before any range is read, and refusing on it would turn /pending 661's second decoy
 // into an `Invalid` document instead of a refused record.
 //
+// **`sum` is per record on purpose, and the total across records is the ceiling's** (/pending 735,
+// ADR-141). The library holds ONE record's ranges at a time, so the per-record sum is what bounds
+// memory. Across records no bound tighter than records × size exists that an honest document
+// passes — every signature of an honest N-signature document covers nearly the whole file, so it
+// asks N × size — and `maxLibrarySignatures` supplies that factor: at most 64 records reach this
+// function's caller, each held to `size` here, so the library hashes at most 64 × size. A running
+// total across records compared with that product could never refuse anything this loop and the
+// ceiling do not, and compared with anything smaller it refuses honest documents.
+//
 // The arithmetic cannot overflow: every effective read is in `[0, limit]`, and it is compared with
 // `limit-sum`, which never goes negative because `sum` never exceeds `limit`.
 func libraryWouldOverread(revs []Revision, size int) bool {
@@ -713,6 +722,35 @@ func libraryWouldOverread(revs []Revision, size int) bool {
 		}
 	}
 	return false
+}
+
+// maxLibrarySignatures is how many signature records one document may hand the library (ADR-141,
+// /pending 735). The library hashes every record's ranges, so its cost is records × signed bytes and
+// the per-record gate above cannot bound it: M records each naming `[0 size]` pass that gate one by
+// one. Measured before the ceiling, on a ~2.2 MB file whose extra records were ~60-110 bytes each
+// and shared one real PKCS#7: 0.58 s at 100 records, 2.1 s at 400, 9.9 s at 1,600 and 19.1 s at
+// 2,000, the verdict still `valid` — paid on every install, mutation and undo.
+//
+// **It counts the records the LIBRARY processes (`libPos >= 0`), never every swept record.** A
+// record the library drops before reading a range — a blob that does not parse, a filter it does
+// not know, a `/Perms` signature with no `/SigFlags` — costs it nothing, and counting those would
+// let 65 inert dictionaries turn a document with one honest signature `Invalid`.
+//
+// A product limit, and Dan's (2026-10-12): the most signatures on any document measured here is 30.
+const maxLibrarySignatures = 64
+
+// errTooManySignatures refuses a document before the library hashes any of its signatures.
+var errTooManySignatures = fmt.Errorf("the document carries more than %d signatures, which is more than nib will check", maxLibrarySignatures)
+
+// libraryRecords is how many records the library will process.
+func libraryRecords(revs []Revision) int {
+	n := 0
+	for i := range revs {
+		if revs[i].libPos >= 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // errJoin is a disagreement between the library's enumeration and the sweep's. Every caller

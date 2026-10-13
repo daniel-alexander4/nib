@@ -120,6 +120,8 @@ func TestDescribeStatusComposesTheFacts(t *testing.T) {
 			"INVALID — modified since signing", 0},
 		{"invalid, a hybrid file nothing checked (/pending 741)", sign.Status{State: sign.Invalid, AddedAfter: true, AddedAfterCause: sign.AddedAfterCouldNotCheck, Unchecked: sign.UncheckedHybridReference},
 			"INVALID — a signature is present that Nib could not check: this file stores part of its structure in a hybrid cross-reference stream (/XRefStm), which Nib's signature reader does not follow", 0},
+		{"invalid, more signatures than Nib checks (/pending 735)", sign.Status{State: sign.Invalid, AddedAfter: true, AddedAfterCause: sign.AddedAfterCouldNotCheck, Refused: ref, Unchecked: sign.UncheckedTooManySignatures},
+			"INVALID — a signature is present that Nib could not check: this document carries more than 64 signatures, which is more than Nib will check, so it checked none of them", 0},
 	} {
 		got := describeStatus(tc.st)
 		if got != tc.want {
