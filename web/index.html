@@ -1374,6 +1374,14 @@
         <span id="lostNoticeText"></span>
         <button id="lostNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
       </div>
+      <!-- The document carries an XFA form (ADR-145). A THIRD banner, for the reason the second is not a
+           sentence in the first: it says something else — that there is a form here Nib does not show, and what
+           Nib will do or has done about it — and is dismissed on its own. Same role/polite reasoning as its
+           neighbours; a page-level notice and never a dialog, because nothing here needs an answer. -->
+      <div id="xfaNotice" role="status" aria-live="polite" hidden>
+        <span id="xfaNoticeText"></span>
+        <button id="xfaNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <!-- The recipient's "Keep a copy for my records" (/pending 814, ADR-078): the same opt-in as the Finalize modal's

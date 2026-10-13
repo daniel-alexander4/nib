@@ -488,6 +488,11 @@ func rewriteOrDropClaim(pdf []byte, fn func(*model.Context) error) []byte {
 //
 // **A document pdfcpu cannot read is returned unchanged too**, with the error: the save or the signature
 // the user asked for goes ahead, and a metadata step never costs them either.
+//
+// **It is the same door for an XFA form** (ADR-145): an unsigned document that carries one comes back rewritten
+// without it and without `/NeedsRendering`, and one whose pages are only a placeholder for a dynamic form comes
+// back with `pdfread.ErrDynamicXFA` — the ONE error here a caller must treat as a refusal, never log and pass.
+// A signed document keeps its XFA form for the reason it keeps its claim; that is the same declared gap.
 func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 	if signed {
 		return pdf, nil
@@ -499,8 +504,8 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 	return out, nil
 }
 
-// dropUAIdentificationBytes returns pdf without its PDF/UA or PDF/A identification, and whether it carried one. A
-// document that carried none comes back as the SAME bytes, unwritten — a caller holding a signed document
+// dropUAIdentificationBytes returns pdf without its PDF/UA or PDF/A identification, and whether it carried one —
+// and without an XFA form (ADR-145). A document that carried neither comes back as the SAME bytes, unwritten — a caller holding a signed document
 // that carries no claim must not pay a rewrite for asking.
 //
 // It is the door for the paths that change a document without running an operation in this package:
@@ -515,7 +520,15 @@ func dropUAIdentificationBytes(pdf []byte) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if had, err := dropUAIdentification(probe); err != nil || !had {
+	// An XFA form goes with the claim, in the same write (ADR-145): these bytes are a changed document, and
+	// `pdfread.Write` drops the form from every document it writes. Asked of the read's own record, because the
+	// validator has already deleted an XFA-only form from the context. A placeholder for a dynamic form is
+	// refused before anything is read twice.
+	xfa := pdfread.XFAOf(probe)
+	if xfa == pdfread.XFADynamic {
+		return pdf, false, pdfread.ErrDynamicXFA
+	}
+	if had, err := dropUAIdentification(probe); err != nil || (!had && xfa == "") {
 		return pdf, had, err
 	}
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
@@ -523,7 +536,7 @@ func dropUAIdentificationBytes(pdf []byte) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	had, err := dropUAIdentification(ctx)
-	if err != nil || !had {
+	if err != nil || (!had && xfa == "") {
 		return pdf, had, err
 	}
 	out, err := pdfread.Write(ctx)

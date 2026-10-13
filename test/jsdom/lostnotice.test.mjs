@@ -21,12 +21,14 @@ import { setNextDocument } from './stub-pdfjs.mjs';
 const DOC = '/tmp/nib-harness/noted.pdf';
 let lostAnnots = 0;
 let lostFields = 0;
+let xfa = '';
 
 const meta = () => ({
   id: 'test-epoch:1', name: 'noted.pdf', path: DOC, canSave: true,
   signature: { state: 'unsigned' }, canUndo: true, canRedo: false,
   lostAnnots: lostAnnots || undefined,
   lostFields: lostFields || undefined,
+  xfa: xfa || undefined,
 });
 
 const h = await boot({
@@ -106,4 +108,59 @@ test('dismissing it is remembered, so the user is not nagged', async () => {
   assert.equal(shown(), false,
     'the banner came back after a dismissal — a user who read it and decided they do not care is '
     + 'nagged for the rest of the session');
+});
+
+// ── The XFA form notice (ADR-145) ────────────────────────────────────────────
+// The Go tests prove the server SAYS which case a document is (`xfa` on its answer) and refuses what it must.
+// Only this tier sees whether the user is told, in which words, and whether a dismissal of one sentence hides
+// the next one. In this file because it is the third banner of the same channel — one boot per file.
+const xfaShown = () => { const n = doc.getElementById('xfaNotice'); return !!n && !n.hidden; };
+const xfaText = () => doc.getElementById('xfaNoticeText').textContent;
+
+test('a document with no XFA form says nothing about one', async () => {
+  lostAnnots = 0; lostFields = 0; xfa = '';
+  await openDocument();
+  assert.equal(xfaShown(), false, 'the XFA notice is up on a document that carries no XFA form');
+});
+
+test('a static XFA form is announced at the open, with what a change will do', async () => {
+  xfa = 'static';
+  await openDocument();
+  assert.equal(xfaShown(), true,
+    'a document carrying an XFA form opened with no notice — the first the user hears of it is never');
+  assert.match(xfaText(), /does not show or fill XFA forms/, `the notice says ${JSON.stringify(xfaText())}`);
+  assert.match(xfaText(), /any change you make here removes it/, `the notice says ${JSON.stringify(xfaText())}`);
+  const n = doc.getElementById('xfaNotice');
+  assert.equal(n.getAttribute('role'), 'status', 'the notice carries no role');
+  assert.equal(n.getAttribute('aria-live'), 'polite', 'the notice is not a polite live region');
+  assert.equal(n.closest('dialog'), null, 'the notice is in a dialog — it is a page-level banner');
+});
+
+test('a dismissed "a change removes it" does not hide "a change removed it"', async () => {
+  doc.getElementById('xfaNoticeDismiss').click();
+  await settle();
+  assert.equal(xfaShown(), false, 'Dismiss did not take the notice down');
+  await anEdit();
+  assert.equal(xfaShown(), false, 'the same notice came back after a dismissal');
+  xfa = 'removed';
+  await anEdit();
+  assert.equal(xfaShown(), true,
+    'the edit removed the XFA form and nothing said so: dismissing the warning silenced the report');
+  assert.match(xfaText(), /a change removed it/, `the notice says ${JSON.stringify(xfaText())}`);
+  await anEdit();
+  assert.equal(xfaShown(), true, 'a later edit took the notice down; the form is still gone');
+});
+
+test('a dynamic XFA form is announced as a placeholder Nib will not change', async () => {
+  xfa = 'dynamic';
+  await openDocument();
+  assert.equal(xfaShown(), true, 'a dynamic XFA document opened with no notice');
+  assert.match(xfaText(), /only a placeholder/, `the notice says ${JSON.stringify(xfaText())}`);
+  assert.match(xfaText(), /will not change this document/, `the notice says ${JSON.stringify(xfaText())}`);
+});
+
+test('a state the window does not know shows nothing rather than an empty box', async () => {
+  xfa = 'constructor';
+  await openDocument();
+  assert.equal(xfaShown(), false, 'an unknown xfa value drew a notice');
 });

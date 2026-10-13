@@ -13901,6 +13901,7 @@ function reflectUndoControls(enabled) {
   }
   reflectTagNotice(m);
   reflectLostNotice(m);
+  reflectXfaNotice(m);
 }
 
 // ── The accessibility-structure notice (ADR-031, law 2's `dropped-with-notice`) ──
@@ -13994,6 +13995,66 @@ function reflectLostNotice(m) {
       + 'past that edit, or go back to the version you started from.';
   }
   box.hidden = false;
+}
+
+// ── The XFA form notice (ADR-145) ────────────────────────────────────────────
+//
+// A PDF can carry its form twice: as fields on its pages, and as an XFA form some readers draw INSTEAD of the
+// pages. Nib shows only the pages. The server says which case this document is (`xfa` on its answer, read from
+// the file before anything validated it) and this only words it: `static` — any change removes the XFA form;
+// `dynamic` — the page on screen is a placeholder and Nib refuses to change the document; `removed` — it arrived
+// with one and a change took it out.
+//
+// Sticky, as its neighbours are and for their reason. Dismissed per document AND per state: a user who
+// dismissed "any change removes it" has not been told "a change removed it".
+//
+// A function and not a table at module level: a document's answer is reflected while this file is still loading,
+// before a `const` down here would exist.
+function xfaNoticeWords(state) {
+  switch (state) {
+    case 'static':
+      return 'This document also carries an XFA form — a second copy of its form that some other PDF readers '
+        + 'show instead of these pages. Nib does not show or fill XFA forms, and any change you make here '
+        + 'removes it.';
+    case 'dynamic':
+      return 'This document is a dynamic XFA form: the page you see is only a placeholder, and the real form is '
+        + 'drawn by PDF readers that support XFA. Nib does not show or fill XFA forms, and it will not change '
+        + 'this document — a changed copy would keep the placeholder and lose the form.';
+    case 'removed':
+      return 'This document arrived with an XFA form, and a change removed it. PDF readers that showed the XFA '
+        + 'form will now show these pages instead. Undo, or the original file, still has it.';
+    default:
+      return '';
+  }
+}
+
+function xfaNoticeKey(state) {
+  return ((view.docMeta && view.docMeta.id) || '\u0000no-id') + ':' + state;
+}
+
+function reflectXfaNotice(m) {
+  const box = document.getElementById('xfaNotice');
+  if (!box) return;
+  const state = (m && m.xfa) || '';
+  const words = xfaNoticeWords(state);
+  if (!words || view.xfaNoticeDismissed === xfaNoticeKey(state)) {
+    box.hidden = true;
+    return;
+  }
+  const text = document.getElementById('xfaNoticeText');
+  if (text) text.textContent = words;
+  box.dataset.xfa = state;
+  box.hidden = false;
+}
+
+els.xfaNoticeDismiss = $('xfaNoticeDismiss');
+if (els.xfaNoticeDismiss) {
+  els.xfaNoticeDismiss.onclick = () => {
+    const box = document.getElementById('xfaNotice');
+    if (!box) return;
+    view.xfaNoticeDismissed = xfaNoticeKey(box.dataset.xfa || '');
+    box.hidden = true;
+  };
 }
 
 els.lostNoticeDismiss = $('lostNoticeDismiss');

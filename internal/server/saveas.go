@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 )
 
@@ -187,7 +188,10 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	// export or an edit nib cannot vouch for, and loses it. A signed file keeps it (a rewrite would break
 	// the signature) — see DropUAIdentificationUnlessSigned.
 	if !s.holdsBytes(data) {
-		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
+		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); errors.Is(derr, pdfread.ErrDynamicXFA) {
+			httpError(w, http.StatusUnprocessableEntity, derr.Error()) // ADR-145: the one error that is a refusal
+			return
+		} else if derr != nil {
 			log.Printf("save as: the PDF/UA or PDF/A identification could not be checked, so the bytes are written as posted: %v", derr)
 		} else {
 			data = dropped

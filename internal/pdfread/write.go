@@ -47,10 +47,17 @@ import (
 // **It refuses a document read with an associated file only `/AF` reaches** (`ErrAssociatedFileLost`,
 // `assocfile.go`, `/pending 655`): pdfcpu's writer would leave the key and delete the file. The same holds for any
 // other catalog or page key off the writer's fixed lists — unmeasured which occur.
+//
+// **It refuses a document whose pages are a placeholder for a dynamic XFA form, and writes no other with an XFA
+// packet or `/NeedsRendering`** (`ErrDynamicXFA`, `dropXFA`, `xfa.go`, ADR-145).
 func Write(ctx *model.Context) ([]byte, error) {
 	if err := refuseAssociatedFileLoss(ctx); err != nil {
 		return nil, err
 	}
+	if err := RefuseDynamicXFA(ctx); err != nil {
+		return nil, err
+	}
+	dropXFA(ctx)
 	PutBackValidatorLosses(ctx)
 	var out bytes.Buffer
 	if err := api.WriteContext(ctx, &out); err != nil {

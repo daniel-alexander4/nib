@@ -432,8 +432,8 @@ const CeremonyRecordName = "nib-ceremony.json"
 // dictionary outside page /Annots (every field a reader shows is a widget under /Annots, and a
 // signature rewrites /AcroForm by design); outlines, page labels, named destinations and viewer
 // preferences (navigation, not content); the structure tree (accessibility, not what is drawn).
-// The AcroForm's /XFA is the one of these that can change what some readers DRAW, and it is
-// filed rather than covered. Rule 5, still computed for the records written under it, follows a
+// The AcroForm's /XFA is the one of these that can change what some readers DRAW; it is not covered, and
+// no ceremony is convened over a document that carries one (ADR-145). Rule 5, still computed for the records written under it, follows a
 // page's resources into /Font and /XObject only.
 //
 // This comment used to carry an exclusion list reading "annotations, form field values,
