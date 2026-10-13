@@ -908,3 +908,5 @@ home today.
   — supersedes ADR-060 §Consequences for a RETURNED document only: `returnedWithOneSignature` is the one door for `Initiate` and `Carry`; all three `AddedAfter` causes are refused, and a carry goes only to the roster's next signer.
 - [ADR-141](141-nib-checks-at-most-64-signatures-on-one-document-and-says-so-past-that.md) — **Nib checks at most 64 signatures on one document, and says so past that**
   — the library's cost is records × signed bytes; the ceiling counts only records the library processes, refuses the document whole with `Unchecked: too-many-signatures`, and makes a cross-record total redundant.
+- [ADR-142](142-nib-carries-a-patched-pdfsign-and-the-patch-is-one-buffer-per-signature.md) — **Nib carries a patched pdfsign, and the patch is one buffer per signature**
+  — `third_party/digitorus-pdfsign` via `replace`, differing from upstream in `verify/signature.go` and `verify/verify.go` only; allocation per signature 6-7× the file → 1.0-1.3×, held by a root guard and an allocation test.

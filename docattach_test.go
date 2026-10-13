@@ -71,7 +71,9 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 			switch d.Name() {
 			// `.claude` holds a second session's git worktrees — a full copy of the tree, and
 			// walking it doubles every count here exactly as it does for the goroutine census.
-			case ".git", ".claude", "node_modules", "web", "docs", "test":
+			// `third_party` is upstream code kept byte-identical to its release except where its
+			// NOTICE.nib says (ADR-066, ADR-142): a comment there is not nib's to re-attach.
+			case ".git", ".claude", "node_modules", "web", "docs", "test", "third_party":
 				return fs.SkipDir
 			}
 			return nil
@@ -215,7 +217,7 @@ func TestEveryTypeConstAndVarDocNamesItsOwnDeclaration(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".claude", "node_modules", "web", "docs", "test":
+			case ".git", ".claude", "node_modules", "web", "docs", "test", "third_party":
 				return fs.SkipDir
 			}
 			return nil
