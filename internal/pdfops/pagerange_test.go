@@ -30,7 +30,7 @@ func TestEveryPageDoorRefusesAPageTheDocumentDoesNotHave(t *testing.T) {
 		{"delete page 5", func() ([]byte, error) { return RemovePages(one, []string{"5"}) }},
 		{"crop page 5", func() ([]byte, error) { return Crop(one, [4]float64{0.1, 0.1, 0.5, 0.5}, []string{"5"}) }},
 		{"collect 1 and 5", func() ([]byte, error) { return Collect(one, []string{"1", "5"}) }},
-		{"duplicate page 5", func() ([]byte, error) { return DuplicatePage(one, 5) }},
+		{"duplicate page 5", func() ([]byte, error) { return withoutCount(DuplicatePage(one, 5)) }},
 		{"stamp an image on page 0", func() ([]byte, error) {
 			return StampImages(one, []Stamp{{Page: 0, Rect: rect, PNG: png}})
 		}},

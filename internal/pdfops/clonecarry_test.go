@@ -68,7 +68,7 @@ func TestADuplicatedPageCARRIESItsOwnGroupingElements(t *testing.T) {
 		t.Fatalf("setup: the source has %v list items on page 1, and this needs three — the "+
 			"grouping elements are what the defect is about", kindsOf(before)["LI"])
 	}
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestADuplicatedPagesStructureReadsPageThenPage(t *testing.T) {
 		build func() ([]byte, error)
 		pages int
 	}{
-		{"DuplicatePage", func() ([]byte, error) { return DuplicatePage(src, 1) }, 2},
+		{"DuplicatePage", func() ([]byte, error) { return withoutCount(DuplicatePage(src, 1)) }, 2},
 		{"Collect 1,1,1", func() ([]byte, error) { return Collect(src, []string{"1", "1", "1"}) }, 3},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestADuplicatedTableIsATableAndTheOriginalKeepsItsWIDTH(t *testing.T) {
 	if v, d, _, _ := carryOf(t, src); v != "carried" || len(d) > 0 {
 		t.Fatalf("setup: the fixture is %s with %d defect(s): %v", v, len(d), d)
 	}
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestATableSPANNINGThePageCarriesItsRowsRatherThanRefusing(t *testing.T) {
 	if v, d, _, _ := carryOf(t, src); v != "carried" || len(d) > 0 {
 		t.Fatalf("setup: the fixture is %s with %d defect(s): %v", v, len(d), d)
 	}
-	out, err := DuplicatePage(src, 1)
+	out, err := withoutCount(DuplicatePage(src, 1))
 	if err != nil {
 		t.Fatal(err)
 	}

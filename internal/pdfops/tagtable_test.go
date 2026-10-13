@@ -253,7 +253,7 @@ var tagFates = map[string]tagFate{
 	// the reason this row's `knownUA1Deltas` entry exists; nilling the drive was tried and is wrong,
 	// because it took the row out of the differential too.
 	"RemovePages":   {verdict: "carried", twoPages: true, drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
-	"DuplicatePage": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
+	"DuplicatePage": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return withoutCount(DuplicatePage(b, 1)) }},
 	// The same-document doors (`/pending 870`): `RemovePages` and `Collect` with the document's own facts put back.
 	"DeletePages": {verdict: "carried", twoPages: true, drive: func(b []byte) ([]byte, error) {
 		out, _, err := DeletePages(b, []string{"1"})
@@ -284,7 +284,7 @@ var tagFates = map[string]tagFate{
 	}},
 	// `InsertPDF` left this group at P02.S07b: the ORIGINAL is the host of one merge now, so its tree is
 	// kept and the inserted untagged page is undescribed under its claim — `Append`'s `partial`, below.
-	"InsertPDF": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
+	"InsertPDF": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return withoutCount(InsertPDF(b, untaggedFixture(), 1, true)) }},
 	// **Its destination is a subset of the census document, not the untagged fixture** (P02.S04b).
 	// The old drive measured what an untagged destination looks like — the destination's own loss,
 	// not the operation's — and the server's delete and reorder routes do exactly this: a subset,

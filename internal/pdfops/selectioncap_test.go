@@ -70,7 +70,7 @@ func TestASelectionCannotAmplifyTheDocumentItSelectsFrom(t *testing.T) {
 		if _, err := Booklet(pdf, false); err != nil {
 			t.Errorf("Booklet: %v", err)
 		}
-		if _, err := DuplicatePage(pdf, 3); err != nil {
+		if _, err := withoutCount(DuplicatePage(pdf, 3)); err != nil {
 			t.Errorf("DuplicatePage: %v", err)
 		}
 	})

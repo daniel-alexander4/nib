@@ -684,7 +684,7 @@ func TestDuplicatePageEmitsDistinctPageObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := DuplicatePage(src, 2)
+	out, err := withoutCount(DuplicatePage(src, 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1292,7 +1292,7 @@ func TestADuplicatedPageGetsItsOwnAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build annotated fixture: %v", err)
 	}
-	out, err := DuplicatePage(src, 2)
+	out, err := withoutCount(DuplicatePage(src, 2))
 	if err != nil {
 		t.Fatal(err)
 	}

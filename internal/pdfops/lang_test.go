@@ -276,7 +276,7 @@ func TestInsertingADocumentKeepsTHISDocumentsLanguage(t *testing.T) {
 	// Both sides (/pending 483): after the last page is the tail case, before page 1 the head case.
 	for _, before := range []bool{true, false} {
 		for _, at := range []int{1, 2, 3} {
-			out, err := InsertPDF(src, other, at, before)
+			out, err := withoutCount(InsertPDF(src, other, at, before))
 			if err != nil {
 				t.Fatalf("InsertPDF at %d (before=%v): %v", at, before, err)
 			}

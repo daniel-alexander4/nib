@@ -66,7 +66,7 @@ func TestAMergedInHiddenLayerStaysHidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inserted, err := InsertPDF(plain, layered, 1, true)
+	inserted, err := withoutCount(InsertPDF(plain, layered, 1, true))
 	if err != nil {
 		t.Fatal(err)
 	}
