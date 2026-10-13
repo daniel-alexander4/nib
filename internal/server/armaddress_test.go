@@ -18,9 +18,9 @@ import (
 // condition — it was in the absence of one. A unit test on a helper could not have been written,
 // since there was no helper to write it against.
 //
-// The last assertion is the one that pins WHERE the refusal sits. `handleSessionArm` tears down
-// this machine's accept-time arm (`displacePolicyArm`) a few lines below, and a guard placed after
-// that would answer 400 having already closed a listener the caller never asked it to close.
+// The last assertion is the one that pins what a refusal costs: this machine's accept-time arm is
+// displaced only by an arm that is INSTALLED (`armIn`), so a 400 must leave the listener the caller
+// never asked it to close exactly where it was.
 func TestAnArmRefusesAnAddressItCannotUse(t *testing.T) {
 	ts, srv := startServerWith(t)
 	srv.EnableDeliveryRearm()
@@ -82,7 +82,7 @@ func TestAnArmRefusesAnAddressItCannotUse(t *testing.T) {
 	sessGet(t, c, ts.URL+"/api/session/status", &after)
 	if !after.Armed || after.Address != before.Address {
 		t.Errorf("a refused arm tore down the accept-time arm: was armed=%v at %q, now armed=%v "+
-			"at %q — the guard must run before displacePolicyArm, or a 400 closes a listener the "+
+			"at %q — a refusal must displace nothing, or a 400 closes a listener the "+
 			"caller never asked it to close",
 			before.Armed, before.Address, after.Armed, after.Address)
 	}

@@ -171,6 +171,16 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 	}
 	me := hex.EncodeToString(myFP)
 	for _, st := range stored {
+		if st.State == ceremony.LoadAbsent {
+			// A party that accepted and never signed: no record, so nothing below can speak for it.
+			if state, ok := attestedEndWithoutRecord(v, root, st.ID); ok {
+				s.stopListeningFor(st.ID)
+				if cerr := s.closeOutCeremony(v, st.ID, state, now); cerr != nil {
+					log.Printf("close-out %s: %v", st.ID, cerr)
+				}
+			}
+			continue
+		}
 		rec, _, rerr := ceremony.ReadMirror(root, st.ID, now)
 		if rerr != nil {
 			// Unreadable from the stronger door even though the listing classified it `LoadOK`.
@@ -193,6 +203,42 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 	}
 }
 
+// attestedEndWithoutRecord decides whether a ceremony this machine holds NO RECORD for is over, and
+// what to call it (`/pending 623` part 5).
+//
+// **The party it exists for accepted an invitation and never signed.** Their hop never happened, so
+// `WriteMirror` never ran and `closeOutReason` — which opens by refusing anything that is not
+// `LoadOK` — could not speak for them. A proceeding that was declined or stopped before the baton
+// reached them therefore left its ceremony secret, its stored invitation and its ceremony-scoped
+// pins in the vault for good: key material for a proceeding nothing will ever add to.
+//
+// **Only an ATTESTED end, never an inferred one.** The one thing that answers yes is the convener's
+// signed termination, read back from this ceremony's folder and verified against the INVITATION out
+// of the vault (`ReadTerminationFor`) — the anchor a local writer cannot choose, and the same one
+// the hop sweep refuses to arm on. That is also how this party tells an end from silence: a live
+// proceeding has no termination (`ErrNoTermination`), and a file that does not verify is not one.
+// Either leaves the ceremony exactly as it is, as does a missing or unparseable invitation — there
+// is then nothing to verify against.
+//
+// **No deadline branch, deliberately.** `closeOutReason`'s grace reads the record's own `Expires`;
+// an invitation carries no deadline (`/pending 247`), so "abandoned" cannot be concluded here, and
+// a party still waiting for their turn must not lose their invitation to a guess.
+func attestedEndWithoutRecord(v *vault.Vault, root, id string) (string, bool) {
+	text, ok := v.CeremonyInvitationFor(id)
+	if !ok {
+		return "", false
+	}
+	inv, err := ceremony.ParseInvitation(text)
+	if err != nil || inv.ID != id {
+		return "", false
+	}
+	t, err := ceremony.ReadTerminationFor(root, inv)
+	if err != nil {
+		return "", false
+	}
+	return t.State, true
+}
+
 // closeOutReason decides whether one stored ceremony is over, and what to call it.
 //
 // **Two ways in, and the delivery round gates the first.** A ceremony that ended — declined or
@@ -210,7 +256,9 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 // **A ceremony that cannot be READ is never closed out.** An unparseable or unverifiable
 // `record.json` has no trustworthy `Expires`, and moving a directory on the strength of a field
 // that did not verify is how a live ceremony disappears because one file was damaged. P08.S03
-// built those four classes for exactly this decision and they all mean "leave it".
+// built those four classes for exactly this decision and they all mean "leave it". (A ceremony with
+// NO record is not this function's: `attestedEndWithoutRecord` answers for it, on a signed
+// termination alone.)
 func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time.Time) (string, bool) {
 	if st.State != ceremony.LoadOK {
 		return "", false

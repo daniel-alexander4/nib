@@ -200,7 +200,7 @@ func TestEveryWriteToTheArmsTableAnnouncesIt(t *testing.T) {
 	// STIMULUS: the scan found the writers at all. A rename makes every check below vacuous.
 	if len(writers) < 3 {
 		t.Fatalf("the scan found %d function(s) writing se.arms, want at least 3 (armIn, "+
-			"displacePolicyArm, disarmWhen) — it is not reading session.go", len(writers))
+			"yieldPolicyArmLocked, disarmWhen) — it is not reading session.go", len(writers))
 	}
 
 	var silent []string
