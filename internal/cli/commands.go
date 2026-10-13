@@ -127,7 +127,7 @@ func cmdPDFA(args []string) int {
 // PDF/UA verdict, and the output says so.
 func cmdUA(args []string) int {
 	fs := flag.NewFlagSet("nib ua", flag.ContinueOnError)
-	fs.Usage = usageFunc(fs, "nib ua IN", "Check a document against the PDF/UA-1 accessibility clauses nib can verify (not the whole standard). Prints each clause with its verdict — passes, fails, does not apply, or could not check — and exits 1 with every reason when a checked clause fails or could not be checked. Exit 0 is not a PDF/UA certificate; use veraPDF for that.")
+	fs.Usage = usageFunc(fs, "nib ua IN", "Check a document against the PDF/UA-1 accessibility clauses nib can verify (not the whole standard). Prints each clause with its verdict — passes, fails, does not apply, or could not check — and exits 2 with every reason when a checked clause fails or could not be checked; a file nib cannot read is exit 1. Exit 0 is not a PDF/UA certificate; use veraPDF for that.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -155,7 +155,10 @@ func cmdUA(args []string) int {
 	if standing == uacheck.StandingAllCheckedPass {
 		return 0
 	}
-	return 1
+	// **2, as `nib verify` answers a document it read and did not accept** (/pending 670): 1 is a file nib could
+	// not read or a usage error, in both commands, so a script can tell "this document fails" from "nib never
+	// looked". Both used to be 1 here.
+	return 2
 }
 
 // uaReport is `nib ua`'s report: the table, one line per clause, and the sentences meant for a person —
