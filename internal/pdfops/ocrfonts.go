@@ -53,15 +53,21 @@ var ocrFontFS embed.FS
 // is OFL, already a licence class this repo ships, and metrically a Courier New substitute —
 // which matters not at all for layout, because `mdpdf` measures an embedded face by RUNE
 // (`style.width`), but does mean code blocks look like what they replaced.
+//
+// # The keys are the names nib INSTALLS them under, not upstream's
+//
+// `NibText…` is Roboto and `NibMono` is Liberation Mono, renamed on the way in (`renamedFace`, `/pending 560`,
+// extending ADR-044): the name is the whole of pdfcpu's font match, and a document carrying its own `Roboto`
+// collided with nib's. The vendored FILES keep upstream's names and bytes.
 var authoringFontFiles = map[string]string{
-	"Roboto-Regular":    "fonts/Roboto-Regular.ttf",
-	"Roboto-Bold":       "fonts/Roboto-Bold.ttf",
-	"Roboto-Italic":     "fonts/Roboto-Italic.ttf",
-	"Roboto-BoldItalic": "fonts/Roboto-BoldItalic.ttf",
-	// PostScript name "LiberationMono"; the FILE is *-Regular.ttf. Same split as
+	"NibText-Regular":    "fonts/Roboto-Regular.ttf",
+	"NibText-Bold":       "fonts/Roboto-Bold.ttf",
+	"NibText-Italic":     "fonts/Roboto-Italic.ttf",
+	"NibText-BoldItalic": "fonts/Roboto-BoldItalic.ttf",
+	// A regular face's PostScript name carries no style; its FILE is *-Regular.ttf. Same split as
 	// DroidSansFallback above, and mdpdf refuses a mismatch rather than installing under a
 	// name nothing can reference — which is how this was found.
-	"LiberationMono": "fonts/LiberationMono-Regular.ttf",
+	"NibMono": "fonts/LiberationMono-Regular.ttf",
 }
 
 // authoringFaces is the base face set handed to `mdpdf`.
@@ -76,22 +82,31 @@ var authoringFontFiles = map[string]string{
 // catches at tier 1. The failure this function's degrade actually exists for is the one that can
 // happen on a user's machine: an install into an unwritable font directory (P04.S03), which is
 // detected in `mdpdf` and announced by the callers.
+//
+// **Under nib's own names** (`/pending 560`, extending ADR-044): upstream's glyphs, widths and character map
+// with only the name records rewritten — `renamedFace`, the door the stamp faces take. A face that cannot be
+// renamed arrives as a zero Font and the set degrades whole, as an unreadable one does; a name in
+// `authoringFontFiles` that is not what the rename produces is refused by mdpdf's install the same way.
 func authoringFaces() *mdpdf.Faces {
 	read := func(name string) mdpdf.Font {
 		bb, err := ocrFontFS.ReadFile(authoringFontFiles[name])
 		if err != nil {
 			return mdpdf.Font{}
 		}
-		return mdpdf.Font{Name: name, Data: bb}
+		renamed, err := renamedFace(bb)
+		if err != nil {
+			log.Printf("authored text: %s could not be given nib's name (%v)", name, err)
+			return mdpdf.Font{}
+		}
+		return mdpdf.Font{Name: name, Data: renamed}
 	}
-	f := &mdpdf.Faces{
-		Body:       read("Roboto-Regular"),
-		Bold:       read("Roboto-Bold"),
-		Italic:     read("Roboto-Italic"),
-		BoldItalic: read("Roboto-BoldItalic"),
-		Code:       read("LiberationMono"),
+	return &mdpdf.Faces{
+		Body:       read("NibText-Regular"),
+		Bold:       read("NibText-Bold"),
+		Italic:     read("NibText-Italic"),
+		BoldItalic: read("NibText-BoldItalic"),
+		Code:       read("NibMono"),
 	}
-	return f
 }
 
 // ocrFontFiles maps each font's PostScript name (the name pdfcpu registers it

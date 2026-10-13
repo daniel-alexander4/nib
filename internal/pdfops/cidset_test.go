@@ -259,8 +259,8 @@ func TestTheOCRLayerLeavesTheDocumentsOwnCIDSetsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stimulus first: the host's own font carries a /CIDSet for the door to leave alone.
-	if found, with := descriptorCIDSets(t, host, "Roboto-Regular"); found == 0 || with == 0 {
-		t.Fatalf("setup: the host has %d Roboto-Regular descriptor(s), %d with a /CIDSet", found, with)
+	if found, with := descriptorCIDSets(t, host, "NibText-Regular"); found == 0 || with == 0 {
+		t.Fatalf("setup: the host has %d NibText-Regular descriptor(s), %d with a /CIDSet", found, with)
 	}
 	out, err := StampTextLayer(host, []Word{{Page: 1, Rect: [4]float64{20, 40, 70, 50}, Text: "สวัสดี"}}, "tha")
 	if err != nil {
@@ -269,7 +269,7 @@ func TestTheOCRLayerLeavesTheDocumentsOwnCIDSetsAlone(t *testing.T) {
 	if found, with := descriptorCIDSets(t, out, "NotoSansThai-Regular"); found == 0 || with != 0 {
 		t.Errorf("the OCR face: %d descriptor(s), %d still with a /CIDSet", found, with)
 	}
-	if _, with := descriptorCIDSets(t, out, "Roboto-Regular"); with == 0 {
+	if _, with := descriptorCIDSets(t, out, "NibText-Regular"); with == 0 {
 		t.Error("the OCR layer removed the /CIDSet of a font it did not draw")
 	}
 }
