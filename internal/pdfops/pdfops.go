@@ -941,7 +941,7 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 	}
 
 	// The spans are decided BEFORE the first part is collected, so the cap refuses before any of the
-	// work it bounds is done — each part is a full `Collect` of the whole document.
+	// work it bounds is done — each part is a `Collect` (`collectEach`, splitshare.go).
 	type span struct {
 		sel, title string
 	}
@@ -963,20 +963,24 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 	if err := refuseTooManyParts(len(spans)); err != nil {
 		return nil, err
 	}
+	sels := make([]string, len(spans))
+	for i, sp := range spans {
+		sels[i] = sp.sel
+	}
+	datas, _, err := collectEach(pdf, sels)
+	if err != nil {
+		return nil, err
+	}
 	parts := make([]SplitPart, 0, len(spans))
 	seen := map[string]int{}
-	for _, sp := range spans {
-		data, err := Collect(pdf, []string{sp.sel})
-		if err != nil {
-			return nil, err
-		}
-		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+sp.title), len(parts)+1, seen), Data: data})
+	for i, sp := range spans {
+		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+sp.title), len(parts)+1, seen), Data: datas[i]})
 	}
 	return parts, nil
 }
 
 // maxSplitParts caps how many files a split may produce, so a tiny every-N on a huge document — or a
-// document with thousands of top-level bookmarks — can't spew thousands of files, each a full parse.
+// document with thousands of top-level bookmarks — can't spew thousands of files, each a parse and a write.
 const maxSplitParts = 500
 
 // refuseTooManyParts is the cap's one door (ADR-009): both page-sequence splitters and the CSV mail merge
@@ -1001,14 +1005,14 @@ func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error
 	if err := refuseTooManyParts(len(spans)); err != nil {
 		return nil, err
 	}
+	datas, failed, err := collectEach(pdf, spans)
+	if err != nil {
+		return nil, fmt.Errorf("range %q: %w", spans[failed], err)
+	}
 	parts := make([]SplitPart, 0, len(spans))
 	seen := map[string]int{}
-	for _, span := range spans {
-		data, err := Collect(pdf, []string{span})
-		if err != nil {
-			return nil, fmt.Errorf("range %q: %w", span, err)
-		}
-		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+span), len(parts)+1, seen), Data: data})
+	for i, span := range spans {
+		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+span), len(parts)+1, seen), Data: datas[i]})
 	}
 	return parts, nil
 }
