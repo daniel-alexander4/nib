@@ -1063,8 +1063,9 @@ els.updateGet.onclick = () => runUpdateCheck(false);
 // --- authorized keys ---------------------------------------------------------
 // The vault's content key is sealed to one or more SSH public keys; this dialog
 // lists them, lets the user authorize another (paste a line or pick a local
-// key), and revoke old ones. The server blocks removing the only key or the one
-// in use this session.
+// key), and remove old ones. The server blocks removing the only key or the one
+// in use this session. Removing drops the key's slot and does NOT rotate the content
+// key (/pending 668), so the dialog says what removal does and does not do.
 
 // keyLabel derives a friendly label for an authorized_keys line: its comment if
 // present, otherwise a truncated key blob.

@@ -924,8 +924,9 @@
           </div>
           <div class="setrow">
             <button id="manageKeysBtn">Manage authorized keys…</button>
-            <p class="sethelp">The SSH keys that can unlock your vault. Add one to use Nib from a second machine;
-              remove one to revoke its access.</p>
+            <p class="sethelp">The SSH keys that can unlock your vault. Add one to use Nib from a second machine.
+              A key you remove can no longer unlock this vault from then on; a copy of the vault file made
+              before you removed it can still be opened with that key.</p>
           </div>
         </div>
       </section>
@@ -2277,7 +2278,9 @@
     <div class="sigcard">
       <h3>Authorized keys</h3>
       <p class="libhint">These SSH keys can unlock your vault. Add another to use
-        Nib from a second machine; remove one to revoke its access.</p>
+        Nib from a second machine. A key you remove can no longer unlock this vault from
+        then on; a copy of the vault file made before you removed it can still be opened
+        with that key.</p>
       <div id="keysList" class="keyslist"></div>
       <div class="sep"></div>
       <div id="keyCandidates" class="keycands"></div>

@@ -444,6 +444,10 @@ func serializeSequence(s sequence) []byte {
 // minAgree of them to return the same block merkle root: fewer than minAgree
 // responding is untrustworthy (can't cross-check), and any disagreement among
 // those that did respond is treated as untrustworthy too.
+//
+// **One disagreeing explorer vetoes, and that is kept (/pending 784 part 6):** a majority rule
+// would let two colluding explorers confirm a block the third denies, where this fails closed and
+// costs only a "try again".
 func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int, height uint64) ([]byte, time.Time, int, error) {
 	type res struct {
 		merkle []byte
