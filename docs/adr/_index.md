@@ -904,3 +904,5 @@ home today.
   — a reordered document's tags read in the order its pages come out; a booklet's stay in the source's order, and a tree that was not in page order is left alone.
 - [ADR-139](139-print-in-an-unembedded-standard-font-is-boxed-to-the-top-of-adobes-box.md) — **print in an unembedded standard font is boxed to the top of Adobe's box for it**
   — extends ADR-098/132: a simple font with no program, named as a Core text font, tightens the top of the box to the font's FontBBox; per-glyph bounds were refused by measurement — they leak under a substitute.
+- [ADR-140](140-a-returned-document-is-what-was-sent-plus-one-signature-and-ends-there.md) — **a returned document is what was sent plus one signature, and ends there**
+  — supersedes ADR-060 §Consequences for a RETURNED document only: `returnedWithOneSignature` is the one door for `Initiate` and `Carry`; all three `AddedAfter` causes are refused, and a carry goes only to the roster's next signer.

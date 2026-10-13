@@ -63,7 +63,7 @@ func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
 	// Genuine mutual co-sign: Alice signs accepting Bob, Bob co-signs accepting Alice.
 	aSigned := signAsInitiator(t, aCert, aKey, bFP)
 	mutual := contribute(t, aSigned, bCert, bKey, bAcceptsA)
-	if err := confirmCoSigned(mutual, bFP, aFP, false); err != nil {
+	if err := confirmCoSigned(aSigned, mutual, bFP, aFP, false); err != nil {
 		t.Errorf("genuine mutual co-sign rejected: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func TestConfirmCoSignedRequiresBothSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	bOnly := contribute(t, prepared, bCert, bKey, bAcceptsA)
-	if err := confirmCoSigned(bOnly, bFP, aFP, false); err == nil {
+	if err := confirmCoSigned(aSigned, bOnly, bFP, aFP, false); err == nil {
 		t.Error("accepted a reply missing the initiator's own signature")
 	}
 }
@@ -96,8 +96,9 @@ func TestInitiateRejectsReplayedCoSignature(t *testing.T) {
 		bAcceptsA := Attestation{Signer: "Bob", AcceptedPeer: hex.EncodeToString(aFP), AcceptedPeerLabel: "Alice", Intent: "I accept", When: time.Now()}
 
 		// An earlier, genuine mutual co-signature between the same two identities.
-		replay := contribute(t, signAsInitiator(t, aCert, aKey, bFP), bCert, bKey, bAcceptsA)
-		if err := confirmCoSigned(replay, bFP, aFP, false); err != nil {
+		earlier := signAsInitiator(t, aCert, aKey, bFP)
+		replay := contribute(t, earlier, bCert, bKey, bAcceptsA)
+		if err := confirmCoSigned(earlier, replay, bFP, aFP, false); err != nil {
 			t.Fatalf("fixture is not a valid mutual co-signature: %v", err)
 		}
 
