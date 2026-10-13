@@ -310,6 +310,11 @@ func readmeRoles(lines []string) []mdpdf.Role {
 // is a deliberate limit, and readmeOverflow does not catch it because it is a
 // horizontal defect. ErrReadmeOverflow is vertical only; the column is guarded by
 // TestEveryReadmeLineFitsTheColumn.
+//
+// It is one of the two line wrappers outside `mdpdf.BreakGreedy`, on purpose (`/pending 796`; the census is the
+// root package's `TestEveryLineBreakerIsTheOneOrNamedExempt`):
+//
+//breaker:exempt a token longer than the column is emitted alone, where the shared breaker splits or refuses it, and swapping would move lines on a page parties sign over.
 func wrapText(s string, maxW float64, fontPt int, f readmeFaces) []string {
 	var lines []string
 	var cur string

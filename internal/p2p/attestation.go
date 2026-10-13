@@ -296,6 +296,11 @@ const maxBlockLines = 8
 // its edge. That is the exact silent truncation this whole bound exists to prevent, reintroduced
 // inside the thing meant to fix it. The rune-at-a-time fallback also guarantees termination: it
 // consumes at least one rune per iteration even when a single glyph does not fit.
+//
+// It is one of the two line wrappers outside `mdpdf.BreakGreedy`, on purpose (`/pending 796`; the census is the
+// root package's `TestEveryLineBreakerIsTheOneOrNamedExempt`):
+//
+//breaker:exempt it keeps a half-line floor on word boundaries that the shared breaker lacks, and swapping would move lines in a block parties sign over.
 func wrapBlockLine(prefix, value string) []string {
 	full := prefix + value
 	if blockLineFits(prefix, value) {
