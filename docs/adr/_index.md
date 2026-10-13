@@ -916,3 +916,5 @@ home today.
   — `ContentDigestVersion` 5 → 6: the digest follows every kind in the effective resource dictionary, not a list; rule 5 is still computed for its records, rule 4 is retired, and a rule skew says which build is behind (wire codes 18, 19).
 - [ADR-145](145-an-xfa-form-is-dropped-by-every-write-and-a-placeholder-is-not-written.md) — **an XFA form is dropped by every write, and a placeholder is not written**
   — `pdfread.Write` drops `/XFA` and `/NeedsRendering` together and refuses a document read with `/NeedsRendering true` (422 `dynamic-xfa`); the reading is taken before validation, the window announces it, and a ceremony is not convened over XFA (422 `xfa`).
+- [ADR-146](146-a-document-counts-its-installs-and-a-posted-operation-names-the-count-it-was-built-on.md) — **a document counts its installs, and a posted operation names the count it was built on**
+  — `document.install` is the one writer of `document.data` and moves `rev`; the window echoes it as `baseRev` on the page and outline routes, and a stale echo is `errDocChanged` (409), as a stale snapshot is.

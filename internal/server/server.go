@@ -122,6 +122,10 @@ type document struct {
 	name string
 	data []byte
 	sig  sign.Status
+	// rev counts the installs of `data` since this document was registered: 0 as opened, +1 at every
+	// write of `data`. Written only by `install` (ADR-146), under s.mu; sent as docResponse.Rev and
+	// echoed by the routes that commit a client's posted bytes. See commitMutation.
+	rev uint64
 
 	// ceremony is the id of the ceremony this document is the baton for, or "" for every
 	// ordinary document (P07.S05). Written by `installCeremonyResult` and, on the convener's own
@@ -706,6 +710,11 @@ type docResponse struct {
 	Flags       json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
 	CanUndo     bool            `json:"canUndo"`         // an undoable operation is on the stack
 	CanRedo     bool            `json:"canRedo"`         // an undone operation can be re-applied
+	// Rev is how many times this document's bytes have been replaced since it was opened (ADR-146).
+	// The window keeps the value that came with the bytes it loaded and sends it back as `baseRev` on
+	// the routes that post a PDF of its own, so a commit built on bytes the document no longer holds
+	// is refused. Omitted at 0, which is what an absent field reads as.
+	Rev uint64 `json:"rev,omitempty"`
 
 	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
 	// from "you have not edited this document" — states that canUndo:false reports
@@ -1291,8 +1300,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "the file was saved, but Nib cannot hold the saved copy open: "+err.Error())
 		return
 	}
-	doc.data = data
-	doc.sig = sig
+	doc.install(data, sig)
 	// Re-stamp the baseline against the file this save just wrote. **Not optional**:
 	// WriteDurable renames into place, so the inode and the mtime both change on every
 	// save Nib performs. Without this the document reports "changed on disk" from the
@@ -1698,8 +1706,7 @@ func (s *Server) installCeremonyResult(ceremonyID, name string, data []byte) (*d
 			if err := s.byteCapLocked(d, data); err != nil {
 				return nil, err
 			}
-			d.data = data
-			d.sig = sig
+			d.install(data, sig)
 			s.activeID = d.id
 			return d, nil
 		}
@@ -1853,6 +1860,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		LostAnnots:     doc.lostAnnots,
 		LostFields:     doc.lostFields,
 		InCeremony:     doc.ceremony != "",
+		Rev:            doc.rev,
 	}
 	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses
 	// the PDF, and holding the server mutex across a parse would serialize every

@@ -216,7 +216,14 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// or a named constant would make this field invisible to the one check that verifies a client
 	// still sends it. Three routes can erase a signature; each states so in its own words.
 	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
-	if err := s.commitMutation(doc, postedBase(pdfBytes, brought), result, acceptLoss); wroteCommitFailure(w, err) {
+	// The revision the window built these bytes on, so a document that moved since is refused rather
+	// than overwritten (ADR-146). Spelled out for the same guard as the field above.
+	base, err := echoedBase(pdfBytes, brought, r.FormValue("baseRev"))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.commitMutation(doc, base, result, acceptLoss); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

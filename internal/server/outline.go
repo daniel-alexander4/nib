@@ -73,7 +73,13 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.commitMutation(doc, postedBase(pdfBytes, 0), result, false); wroteCommitFailure(w, err) {
+	// The revision the window built these bytes on (ADR-146); see handlePages.
+	base, err := echoedBase(pdfBytes, 0, r.FormValue("baseRev"))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.commitMutation(doc, base, result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

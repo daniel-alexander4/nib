@@ -13,6 +13,14 @@ import { setNextDocument } from './stub-pdfjs.mjs';
 
 const DOC = '/tmp/nib-harness/insert.pdf';
 const posted = [];
+// The document's revision as the server would report it (ADR-146), and whether the next page
+// operation is refused as built on an older one.
+let serverRev = 0;
+let refuseNext = false;
+const metaNow = () => ({
+  id: 'test-epoch:1', name: 'insert.pdf', path: DOC, canSave: true,
+  signature: { state: 'unsigned' }, canUndo: serverRev > 0, canRedo: false, rev: serverRev || undefined,
+});
 
 const h = await boot({
   routes: {
@@ -22,12 +30,17 @@ const h = await boot({
     }),
     '/api/pages': (opts) => {
       const form = opts.body;
-      posted.push({ op: form.get('op'), page: form.get('page'), side: form.get('side') });
-      return {
-        id: 'test-epoch:1', name: 'insert.pdf', path: DOC, canSave: true,
-        signature: { state: 'unsigned' }, canUndo: true, canRedo: false,
-      };
+      posted.push({ op: form.get('op'), page: form.get('page'), side: form.get('side'), baseRev: form.get('baseRev') });
+      if (refuseNext) {
+        refuseNext = false;
+        return new Response(JSON.stringify({ error: 'this document changed while the operation was running' }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } });
+      }
+      serverRev++;
+      return metaNow();
     },
+    '/api/save': () => { serverRev++; return metaNow(); },
+    '/api/docs': () => ({ docs: [metaNow()], activeId: 'test-epoch:1' }),
   },
 });
 const { document: doc, window: win, settle } = h;
@@ -67,4 +80,33 @@ test('the insert-PDF buttons send the side each one names, through the one file 
   // The side is the button's, not left over from the previous click.
   const again = await lastPost(() => { doc.getElementById('insertPdfBtn').click(); choosePdf('insertPdfInput'); });
   assert.equal(again.side, 'before', 'Insert PDF before… after an Insert PDF after… still sent the old side');
+});
+
+// ── The revision a page operation names (ADR-146, /pending 792) ──────────────
+// The Go tests prove the server refuses a stale `baseRev`. They cannot see that the window sends one,
+// that it is the revision of the bytes the view HOLDS, or that a refused view can ever succeed again.
+test('a page operation names the revision of the bytes its view holds', async () => {
+  const first = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  const held = serverRev - 1; // what the view held when it posted; the answer moved the server on
+  assert.equal(first.baseRev, String(held), 'the page operation did not send the revision its view loaded');
+  const second = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  assert.equal(second.baseRev, String(held + 1), 'the next operation did not name the revision the last answer brought');
+});
+
+test('a save leaves the view at the saved revision, so the next page operation is not refused', async () => {
+  doc.getElementById('saveBtn').click();
+  await settle();
+  const after = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  assert.equal(after.baseRev, String(serverRev - 1), 'after a save the view still names the revision before it');
+});
+
+test('a refused operation reloads a view the document has moved past, and the next one goes through', async () => {
+  serverRev += 3; // another window edited the document
+  refuseNext = true;
+  const refused = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  assert.notEqual(refused.baseRev, String(serverRev), 'the fixture is wrong: the view was not stale');
+  const toastText = doc.getElementById('toast').textContent;
+  assert.match(toastText, /reloaded/, `the refusal did not say the document was reloaded: ${toastText}`);
+  const again = await lastPost(() => doc.getElementById('insertBlankBtn').click());
+  assert.equal(again.baseRev, String(serverRev - 1), 'the reloaded view still names the old revision — "run it again" is refused for ever');
 });
