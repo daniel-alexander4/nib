@@ -276,7 +276,7 @@ func Initiate(ch Channel, mySignedPDF, myFingerprint []byte, v Verifier, roster 
 	if !bytes.HasPrefix(final, mySignedPDF) {
 		return nil, errors.New("returned document is not the one sent this session")
 	}
-	if err := confirmCoSigned(final, peerFP, myFingerprint, len(roster.Entries) > 0); err != nil {
+	if err := confirmCoSigned(mySignedPDF, final, peerFP, myFingerprint, len(roster.Entries) > 0); err != nil {
 		return nil, err
 	}
 	return final, nil
@@ -319,10 +319,25 @@ func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]
 		// degrading into an unchecked relay.
 		return nil, errors.New("carrying a ceremony document needs its roster")
 	}
-	// Whose turn it is BEFORE the hop, so the advance below is measured rather than assumed.
-	want, err := NextContributor(pdf, roster)
+	// Whose turn it is BEFORE the hop, so the advance below is measured rather than assumed. The
+	// document is verified once here: the turn is read off it now, and what comes back is held
+	// against the same Status afterwards (`returnedWithOneSignature`).
+	sentSt := sign.Verify(pdf)
+	want, err := nextContributorFrom(sentSt, roster)
 	if err != nil {
 		return nil, fmt.Errorf("this document is not ready to be carried: %w", err)
+	}
+	// **The party on the wire IS the roster's next signer, asked before a document byte is sent.**
+	// The rule is the roster's: the signing order's entry at the count of signatures already on the
+	// document (`Progress.Order[Done]`) is the only party this hop can be for, so it is the only
+	// party the document is handed to. Until this, nothing compared the two: a carrier connected to
+	// any pinned peer sent it the ceremony's document, and took back whatever advanced the chain.
+	// The receiving side's own turn rule (`AdmitContribution`) is an HONEST receiver's refusal; this
+	// is the carrier's, which does not depend on the other end running it.
+	if !SameParty(hex.EncodeToString(ch.PeerFP), want.Fingerprint) {
+		return nil, fmt.Errorf("%w: this hop is for %s, the ceremony's next signer, and the "+
+			"connected peer is %s", ErrNotYourTurn, shortFP(want.Fingerprint),
+			shortFP(hex.EncodeToString(ch.PeerFP)))
 	}
 	conn := ch.Stream
 	_ = conn.SetDeadline(time.Now().Add(exchangeDeadline))
@@ -360,8 +375,11 @@ func Carry(ch Channel, pdf, myFingerprint []byte, v Verifier, roster Roster) ([]
 		return nil, fmt.Errorf("%w: the document came back still waiting for %s, so nothing was "+
 			"contributed", ErrPrefixMismatch, shortFP(want.Fingerprint))
 	}
-	// And it stops at that party's signature — the same door `Initiate` asks through.
-	if err := nothingAfterTheLastSignature(st); err != nil {
+	// And it is what was handed over plus exactly that party's signature, which ends it — the same
+	// door `Initiate` asks through. The walk above establishes that the signatures are the
+	// roster's prefix, in order and cross-bound, and that the chain moved; it accepted a chain that
+	// moved by MORE than one (the next two signers answering one hop), which this refuses.
+	if err := returnedWithOneSignature(sentSt, st, len(pdf), want.Fingerprint); err != nil {
 		return nil, err
 	}
 	return final, nil
@@ -1233,7 +1251,12 @@ func PersistFailed(err error) bool {
 // about the chain's direction that L3's prefix rule already owns, and owns better, because it
 // checks against the record this party verified at arm time rather than against the document.
 // My own signature must still be present and valid, or the peer has returned something else.
-func confirmCoSigned(final, peerFP, myFP []byte, inCeremony bool) error {
+//
+// `sent` is what this party sent, and `final` what came back: the return is held against it by
+// `returnedWithOneSignature` — one new signature, the peer's, and nothing after it. The sent
+// document is verified here, once per exchange, after the peer has answered: the cost is one more
+// hash per signature already on it, on a path that has just waited for a person.
+func confirmCoSigned(sent, final, peerFP, myFP []byte, inCeremony bool) error {
 	peer, me := hex.EncodeToString(peerFP), hex.EncodeToString(myFP)
 	var gotPeer, gotMe bool
 	// Verified ONCE: the attestations and the coverage verdict below are read off the same Status.
@@ -1264,27 +1287,98 @@ func confirmCoSigned(final, peerFP, myFP []byte, inCeremony bool) error {
 	if !gotMe {
 		return errors.New("returned document is missing your own signature")
 	}
-	return nothingAfterTheLastSignature(st)
+	return returnedWithOneSignature(sign.Verify(sent), st, len(sent), peer)
 }
 
-// nothingAfterTheLastSignature refuses a RETURNED document that carries content no valid signature
-// covers (/pending 629), and is the one door for it (ADR-009): `Initiate`, through
-// `confirmCoSigned`, and `Carry`.
+// returnedWithOneSignature is the one door for what a RETURNED document may be (ADR-140, ADR-009):
+// `Initiate`, through `confirmCoSigned`, and `Carry`. A return is what was sent plus exactly one
+// signature — the signature of the party the document was sent to — and it ends there.
 //
-// Both check that what came back grew from what went out and that the right party signed the part
-// that grew — and neither asked whether the document STOPS there. What went out, the peer's valid
-// signature, then an unsigned incremental update passed every check and was kept as the co-signed
-// result; only the badge said so, afterwards. The peer's signature is the last act of a hop, so
-// anything after it is content nobody signed.
+// `sent` and `final` are the two documents' verifications, `sentLen` the length of what went out
+// (both callers have already established that the return's bytes begin with it), and `by` the hex
+// fingerprint of the party whose signature the hop was for: the wire peer.
 //
-// It reads `Status.AddedAfter` (ADR-059) and refuses two of its three causes: `appended`, which
-// is measured, and `could-not-check`, which is nib unable to say and fails closed.
+// Four facts, in this order:
 //
-// **`refused-signature-present` is the named exemption, and it is a gap.** ADR-060 binds
-// `confirmCoSigned` to answer on a document carrying a refused copy as it does on the untouched
-// file, and a copy written after the last signature reads as that cause. So a peer that appends a
-// refused signature dictionary along with its content is not refused here; the badge still names
-// both facts. Closing it changes ADR-060 and is not done in passing.
+//   - **Nothing follows the last signature** (`nothingAfterTheLastSignature`, all three causes).
+//   - **Every signature that was sent is still there, as it was.** A signature whose coverage ends
+//     inside the sent bytes is one of the sent document's, and those must be the sent document's
+//     signers one for one — same signer, same reach, same verdict, same order. An update can
+//     redefine an earlier signature's object, which takes its record out of the sweep; without
+//     this a return could trade a sent signature for a new one and keep the count.
+//   - **Exactly one signature reaches past the sent bytes.** None is a document nobody signed; two
+//     is somebody else's signature riding on the hop — a third key outside a ceremony, or the next
+//     TWO rostered signers answering one carry, both of which every earlier check passed.
+//   - **It verifies, and it is `by`'s.**
+//
+// **That one is then the LAST signature, by measurement and not by position.** `Signers` is in the
+// library's object-number order, which says nothing about time; `CoverageEnd` does. With nothing
+// after the last signature, some valid signature reaches the end of the file; every signature but
+// the new one ends inside the sent bytes; so the new one is the signature that reaches the end.
+//
+// Under a join error no signer has a position or a fingerprint (`Status.Signers`' own doc) and the
+// cause is `could-not-check`, which the first fact refuses before the rest is read.
+//
+// Not asked of an ARRIVING document, and not of one that is merely opened: reading and counting
+// signers there is ADR-060's, unchanged.
+func returnedWithOneSignature(sent, final sign.Status, sentLen int, by string) error {
+	if err := nothingAfterTheLastSignature(final); err != nil {
+		return err
+	}
+	var kept, added []sign.SignerInfo
+	for _, s := range final.Signers {
+		if s.CoverageEnd > int64(sentLen) {
+			added = append(added, s)
+		} else {
+			kept = append(kept, s)
+		}
+	}
+	lost := len(kept) != len(sent.Signers)
+	for i := 0; !lost && i < len(kept); i++ {
+		was := sent.Signers[i]
+		// Through `SameParty`, so a signer with no fingerprint is the same as nobody — a sent
+		// signature nib could not name does not come back "as it was sent".
+		lost = !SameParty(kept[i].Fingerprint, was.Fingerprint) || kept[i].CoverageEnd != was.CoverageEnd || kept[i].Valid != was.Valid
+	}
+	if lost {
+		return fmt.Errorf("the returned document does not carry the %d signature(s) it was sent "+
+			"with as they were sent", len(sent.Signers))
+	}
+	switch len(added) {
+	case 0:
+		return errors.New("the returned document carries no new signature")
+	case 1:
+	default:
+		return fmt.Errorf("the returned document carries %d new signatures, and a return adds "+
+			"exactly one", len(added))
+	}
+	if !added[0].Valid {
+		return errors.New("the new signature on the returned document does not verify")
+	}
+	if !SameParty(added[0].Fingerprint, by) {
+		return fmt.Errorf("the new signature on the returned document is %s's, and the document "+
+			"was sent to %s", shortFP(added[0].Fingerprint), shortFP(by))
+	}
+	return nil
+}
+
+// nothingAfterTheLastSignature refuses a RETURNED document that carries anything no valid signature
+// covers (/pending 629). Its one caller is `returnedWithOneSignature`.
+//
+// Both return paths check that what came back grew from what went out and that the right party
+// signed the part that grew — and neither asked whether the document STOPS there. What went out,
+// the peer's valid signature, then an unsigned incremental update passed every check and was kept
+// as the co-signed result; only the badge said so, afterwards. The peer's signature is the last act
+// of a hop, so anything after it is content nobody signed.
+//
+// It reads `Status.AddedAfter` (ADR-059) and refuses every cause, each in its own words:
+// `appended`, which is measured; `could-not-check`, which is nib unable to say and fails closed;
+// and `refused-signature-present`, which is measured content with a signature-shaped dictionary nib
+// refused beside it. The third was an exemption while ADR-060's Consequences bound
+// `confirmCoSigned` to answer on a refused copy as on the untouched file; for a returned document
+// that binding is superseded (ADR-140) — a peer that appended a refused dictionary along with its content
+// passed. A refused record INSIDE the last signature's coverage sets no cause and is not refused
+// here: the bit is a coverage fact.
 //
 // Not asked of an ARRIVING document: content between signatures is expected (`Status.AddedAfter`'s
 // own doc), and the signature this party is about to make covers what it was shown.
@@ -1294,7 +1388,8 @@ func nothingAfterTheLastSignature(st sign.Status) error {
 	}
 	switch st.AddedAfterCause {
 	case sign.AddedAfterRefusedSignature:
-		return nil
+		return errors.New("the returned document carries content added after the last signature, " +
+			"and with it a signature Nib refused; no signature covers either")
 	case sign.AddedAfterCouldNotCheck:
 		return errors.New("the returned document could not be checked for content added after the last signature")
 	}

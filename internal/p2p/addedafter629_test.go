@@ -26,7 +26,7 @@ func TestACoSignedReturnStopsAtTheLastSignature(t *testing.T) {
 
 	// The control first: the honest return is accepted, or the refusal below is a check that
 	// refuses everything.
-	if err := confirmCoSigned(mutual, bFP, aFP, false); err != nil {
+	if err := confirmCoSigned(mine, mutual, bFP, aFP, false); err != nil {
 		t.Fatalf("setup: the honest co-signed return was refused: %v", err)
 	}
 
@@ -38,7 +38,7 @@ func TestACoSignedReturnStopsAtTheLastSignature(t *testing.T) {
 			"signatures and `appended`", st.State, len(st.Signers), st.AddedAfterCause)
 	}
 	for _, inCeremony := range []bool{false, true} {
-		err := confirmCoSigned(appended, bFP, aFP, inCeremony)
+		err := confirmCoSigned(mine, appended, bFP, aFP, inCeremony)
 		if err == nil {
 			t.Fatalf("inCeremony=%t: a return carrying content after the peer's signature was "+
 				"accepted as the co-signed document", inCeremony)
@@ -48,8 +48,9 @@ func TestACoSignedReturnStopsAtTheLastSignature(t *testing.T) {
 		}
 	}
 
-	// The named exemption (ADR-060): a refused copy after the last signature answers as the
-	// untouched file does. Pinned so that closing the gap is a decision and not a side effect.
+	// The third cause. A refused copy after the last signature was the named exemption while
+	// ADR-060's Consequences bound `confirmCoSigned` to answer on it as on the untouched file; for
+	// a RETURNED document that binding is superseded, and the copy is refused in its own words.
 	copied, _, err := testpdf.CopiedSignatureDictionary(mutual, testpdf.CopyExact)
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +58,15 @@ func TestACoSignedReturnStopsAtTheLastSignature(t *testing.T) {
 	if cs := sign.Verify(copied); cs.AddedAfterCause != sign.AddedAfterRefusedSignature {
 		t.Fatalf("setup: the copy reads cause %q, want %q", cs.AddedAfterCause, sign.AddedAfterRefusedSignature)
 	}
-	if err := confirmCoSigned(copied, bFP, aFP, false); err != nil {
-		t.Errorf("a refused copy moved confirmCoSigned off its answer on the untouched file: %v", err)
+	for _, inCeremony := range []bool{false, true} {
+		err := confirmCoSigned(mine, copied, bFP, aFP, inCeremony)
+		if err == nil {
+			t.Fatalf("inCeremony=%t: a return carrying a refused signature copy after the peer's "+
+				"signature was accepted as the co-signed document", inCeremony)
+		}
+		if !strings.Contains(err.Error(), "a signature Nib refused") {
+			t.Errorf("inCeremony=%t: refused with %q, which does not name the refused signature", inCeremony, err)
+		}
 	}
 }
 

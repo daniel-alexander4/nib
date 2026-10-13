@@ -62,8 +62,11 @@ func TestARefusedCopyMovesNoCeremonyReader(t *testing.T) {
 			"NextPlacement":        fmt.Sprintf("%v %v", pl.Rect, perr),
 			"ContributionProgress": fmt.Sprintf("done=%d complete=%v err=%v", pr.Done, pr.Complete, prErr),
 			"Completeness":         fmt.Sprintf("%d/%d", signed, obliged),
-			"confirmCoSigned":      fmt.Sprint(confirmCoSigned(doc, afp, bfp, true)),
-			"ReadAttestations":     fmt.Sprint(len(ReadAttestations(doc))),
+			// `confirmCoSigned` was a row here until a RETURNED document got its own rule: what
+			// was sent plus exactly one signature, with nothing after it — a refused copy
+			// included (ADR-140, `TestACoSignedReturnStopsAtTheLastSignature`). ADR-060's binding stands
+			// for every reader of a document that is merely read, which is every row left.
+			"ReadAttestations": fmt.Sprint(len(ReadAttestations(doc))),
 		}
 	}
 	want := outcomes(untouched)
