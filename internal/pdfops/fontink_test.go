@@ -166,9 +166,11 @@ func TestAnAuthoredPagesPrintCarriesTheInkOfTheGlyphsItShows(t *testing.T) {
 	}
 }
 
-// TestPrintInAFontThatIsNotEmbeddedHasNoInk: the same page set in the core faces carries no program, so no run is
-// given ink and every box stays the line's reach.
-func TestPrintInAFontThatIsNotEmbeddedHasNoInk(t *testing.T) {
+// TestPrintInACoreFaceThatIsNotEmbeddedTakesNothingFromAProgram: the same page set in the core faces carries no
+// program, so no run's ink comes from one. It was `…HasNoInk` until `/pending 851`: a standard font now has the top
+// of Adobe's box for it (fontinkcore.go) — lower than the reach, never lower than the letters — and the bottom stays
+// the reach's own, which is all a font nobody embedded can say.
+func TestPrintInACoreFaceThatIsNotEmbeddedTakesNothingFromAProgram(t *testing.T) {
 	pdf, err := mdpdf.ConvertWithFonts([]byte(inkProbeMarkdown), markdownFallbackFonts())
 	if err != nil {
 		t.Fatal(err)
@@ -181,8 +183,13 @@ func TestPrintInAFontThatIsNotEmbeddedHasNoInk(t *testing.T) {
 		t.Fatal("the page maps no text")
 	}
 	for _, mt := range m.Text {
-		if len(mt.Ink) != 0 {
-			t.Errorf("%q, set in a font the document does not carry, was given ink %v", mt.Text, mt.Ink)
+		if len(mt.Ink) == 0 {
+			continue // a run with a character outside ASCII keeps the reach
+		}
+		tall := mt.Rect[3] - mt.Rect[1] // 1.25 of the size
+		if top := (mt.Rect[3] - mt.Ink[0]) / tall * 1.25; math.Abs(mt.Ink[1]-mt.Rect[3]) > 1e-9 || top < 1.05 || top > 1.25 {
+			t.Errorf("%q, set in a font the document does not carry, was given ink %v in a reach of %v..%v: its bottom "+
+				"must be the reach's and its top no lower than 0.8 of a size above the baseline", mt.Text, mt.Ink, mt.Rect[1], mt.Rect[3])
 		}
 	}
 }

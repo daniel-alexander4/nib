@@ -386,6 +386,9 @@ type runFont struct {
 	// ink is where the font's embedded program can be read for how far its glyphs reach (fontink.go), or nil. Read
 	// only when a reader asks, and once.
 	ink *inkSource
+	// coreTop is the top of Adobe's box for an unembedded standard text font, in ems, or 0 (fontinkcore.go): set
+	// only where a code in 0x20–0x7E is known to draw its ASCII glyph.
+	coreTop float64
 }
 
 // codesFor answers which codes of this font draw text — `PLAN-text-reflow.md` P06.S02, D8's trigger. It is `textFor`
@@ -460,6 +463,9 @@ func loadRunFont(xt *model.XRefTable, obj types.Object, shared ...*formWalkBudge
 	}
 	if !f.twoByte && f.splittable {
 		f.simple = simpleDecoderFor(d)
+		if f.simple != nil { // a named encoding, or a standard font's own: never `/Differences`
+			f.coreTop, _ = coreFontTop(xt, d)
+		}
 	}
 	return f
 }

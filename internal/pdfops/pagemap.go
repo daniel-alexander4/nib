@@ -274,14 +274,16 @@ func fittedInk(r textRun) (bottom, top float64, ok bool) {
 }
 
 // printInk is how far a run of print's own ink reaches, in user space, from its font's embedded program (ADR-098,
-// fontink.go) — or ok false where the font gives nothing, and the run is covered to its box as before.
+// fontink.go), or for an unembedded standard font from Adobe's box for it (fontinkcore.go) — or ok false where the
+// font gives nothing, and the run is covered to its box as before.
 func printInk(r textRun) (bottom, top float64, ok bool) {
 	if r.face == nil || r.rotated || r.state.tr != 0 || r.size <= 0 {
 		return 0, 0, false
 	}
 	ink := r.face.ink.read()
 	if ink == nil {
-		return 0, 0, false
+		// No program this reads. An unembedded standard font has Adobe's box for it; nothing else has anything.
+		return coreInk(r)
 	}
 	lo, hi := ink.lo, ink.hi
 	if ink.byCode {
@@ -306,6 +308,21 @@ func printInk(r textRun) (bottom, top float64, ok bool) {
 		return 0, 0, false
 	}
 	return r.y + lo*r.size, r.y + hi*r.size, true
+}
+
+// coreInk is printInk's answer for a run in an unembedded standard font (fontinkcore.go): the reach's own bottom,
+// and the top of Adobe's box for the font where that is lower than the reach's — for a run whose every code is one
+// of the ninety-five ASCII glyphs, and no other.
+func coreInk(r textRun) (bottom, top float64, ok bool) {
+	if r.face.coreTop <= 0 || r.face.coreTop >= ascentEm || len(r.glyphs) == 0 {
+		return 0, 0, false
+	}
+	for _, g := range r.glyphs {
+		if len(g.code) != 1 || g.code[0] < 0x20 || g.code[0] > 0x7E {
+			return 0, 0, false
+		}
+	}
+	return r.y - descentEm*r.size, r.y + r.face.coreTop*r.size, true
 }
 
 // paintedOverBudget is how many pieces one page's grounds may be compared against, in all. Each ground is checked
