@@ -900,3 +900,5 @@ home today.
   — pdfcpu's writer carries the `/AF` key and not the file; `pdfread.Write` refuses such a document (422 `associated-file`) instead of deleting the file on every save.
 - [ADR-137](137-a-standard-types-mapping-can-be-removed-and-a-type-picked-is-the-type-read.md) — **a standard type's mapping can be removed and never set, and a type picked for a tag is the type read**
   — amends ADR-127: `rolemap` may remove a mapping whose name is a standard type; retype, create and region refuse a standard type the role map sends elsewhere.
+- [ADR-138](138-a-carried-tree-follows-page-order-for-a-selection-never-for-an-imposition.md) — **a carried tree follows page order for a selection, never for an imposition**
+  — a reordered document's tags read in the order its pages come out; a booklet's stay in the source's order, and a tree that was not in page order is left alone.
