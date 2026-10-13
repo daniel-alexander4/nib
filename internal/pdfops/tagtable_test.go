@@ -254,6 +254,15 @@ var tagFates = map[string]tagFate{
 	// because it took the row out of the differential too.
 	"RemovePages":   {verdict: "carried", twoPages: true, drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
 	"DuplicatePage": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
+	// The same-document doors (`/pending 870`): `RemovePages` and `Collect` with the document's own facts put back.
+	"DeletePages": {verdict: "carried", twoPages: true, drive: func(b []byte) ([]byte, error) {
+		out, _, err := DeletePages(b, []string{"1"})
+		return out, err
+	}},
+	"ReorderPages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		out, _, err := ReorderPages(b, []string{"1"})
+		return out, err
+	}},
 	// `Booklet` is `InsertBlank`×pad → `Collect` → `NUp`: it dropped only because `Collect` did, and
 	// it carries now because `Collect` carries and `NUp` has carried since P01.S06.
 	"Booklet": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},

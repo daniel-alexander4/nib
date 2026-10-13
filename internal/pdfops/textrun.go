@@ -1528,15 +1528,14 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	return true
 }
 
-// streamContent returns a stream's decoded bytes, decoding it if nothing has yet.
+// streamContent returns a stream's decoded bytes, decoding it if nothing has yet — a font's `/ToUnicode` map,
+// which the document sizes, so only as far as one page's allowance (`/pending 795`): measured on a map inflating
+// to 20 / 64 / 200 MiB, 64 / 256 / 512 MiB allocated per font read. A map past it reads as no map.
 func streamContent(sd *types.StreamDict) []byte {
 	if sd.Content != nil {
 		return sd.Content
 	}
-	if err := sd.Decode(); err != nil {
-		return nil
-	}
-	return sd.Content
+	return newFormWalkBudget(1).formContent(sd, nil)
 }
 
 // splitCodes cuts shown bytes into character codes: two bytes under Identity, otherwise one.

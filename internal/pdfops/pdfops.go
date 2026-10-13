@@ -137,14 +137,14 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 // `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
 // selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
 func subset(pdf []byte, pick func(total int) ([]int, error), policy unreadablePolicy) ([]byte, error) {
-	out, _, err := subsetOnce(pdf, pick, false, policy, false)
+	out, _, _, err := subsetOnce(pdf, pick, false, policy, false)
 	return out, err
 }
 
 // subsetOnce is one read-change-write of a page selection: carrying the structure tree or not, and — where the
 // output is the document ITSELF (itself) — with what the selection reduces an extract by held aside and put back
-// (splicefacts.go). carried is whether a tree was carried.
-func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, policy unreadablePolicy, itself bool) (out []byte, carried bool, err error) {
+// (splicefacts.go). carried is whether a tree was carried; filesWithheld is `documentFacts.restore`'s.
+func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, policy unreadablePolicy, itself bool) (out []byte, carried, filesWithheld bool, err error) {
 	out, err = rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
 		keep, perr := pick(ctx.PageCount)
 		if perr != nil {
@@ -157,11 +157,11 @@ func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, pol
 		c, serr := selectPages(ctx, keep, carry, policy)
 		carried = c
 		if serr == nil && itself {
-			facts.restore(ctx)
+			filesWithheld = facts.restore(ctx)
 		}
 		return serr
 	})
-	return out, carried, err
+	return out, carried, filesWithheld, err
 }
 
 // subsetConf is the configuration both subset doors read with.
@@ -213,15 +213,61 @@ func subsetConf() *model.Configuration {
 // `/ID`, its embedded files and its metadata packet, as `splice` does and through the same door. Both attempts
 // keep them: the fallback is the same document without its tree.
 func subsetCarrying(pdf []byte, pick func(total int) ([]int, error), itself bool) ([]byte, error) {
-	out, carried, err := subsetOnce(pdf, pick, true, keepUnreadable, itself)
+	out, _, err := subsetCarryingFiles(pdf, pick, itself)
+	return out, err
+}
+
+// subsetCarryingFiles is `subsetCarrying` also saying whether the document's embedded files were withheld from
+// the output it returns (`documentFacts.restore`) — always false for an extract, which keeps none by decision.
+func subsetCarryingFiles(pdf []byte, pick func(total int) ([]int, error), itself bool) (out []byte, filesWithheld bool, err error) {
+	out, carried, filesWithheld, err := subsetOnce(pdf, pick, true, keepUnreadable, itself)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !carried || carryIsComplete(out) {
-		return out, nil
+		return out, filesWithheld, nil
 	}
-	out, _, err = subsetOnce(pdf, pick, false, keepUnreadable, itself)
-	return out, err
+	out, _, filesWithheld, err = subsetOnce(pdf, pick, false, keepUnreadable, itself)
+	return out, filesWithheld, err
+}
+
+// DeletePages is `RemovePages` where the output IS the document — the open document with pages deleted, not
+// something made from it to hand over. See `sameDocument`.
+func DeletePages(pdf []byte, pages []string) (out []byte, filesDropped int, err error) {
+	return sameDocument(pdf, removePick(pages))
+}
+
+// ReorderPages is `Collect` where the output IS the document — the open document with its pages in another order
+// (a page left out of the order is deleted). See `sameDocument`.
+func ReorderPages(pdf []byte, order []string) (out []byte, filesDropped int, err error) {
+	return sameDocument(pdf, collectPick(order))
+}
+
+// sameDocument is the ONE door for a page selection whose output is the document itself (`/pending 870`,
+// ADR-009): the app's delete and reorder. `Collect` and `RemovePages` stay what an extract, a split, an export and
+// a redaction go through, and write a new document — no title, no `/ID` of the source, none of its files.
+//
+// Measured through `/api/pages` before this door, on a three-page document with a title, an `/ID`, one embedded
+// file and a metadata packet: delete and reorder each kept the file (a second read and write of both documents,
+// `CarryAttachments`) and returned no `/Info` title, a new `/ID[0]` and no packet, while append, insert, duplicate
+// and split through the same route kept all four.
+//
+// It is `subsetCarrying` with `itself`, so everything is put back by `documentFacts` in the selection's own
+// context and write: the structure of the pages kept (ADR-034), the labels following their pages (ADR-046), and
+// the packet with any conformance claim already dropped from it by the rewrite this runs in (ADR-032).
+//
+// **The embedded files are the one group with a second way back, and it is taken.** `documentFacts` withholds the
+// name tree when an entry reaches a page the selection dropped — putting it back would write the deleted page into
+// the output. The ceremony record is an embedded file, and a delete that silently took it would destroy the
+// record and answer 200, so in that case alone the files are re-added from their BYTES (`CarryAttachments`, which
+// copies each entry's names and streams and nothing else it points at). filesDropped is how many even that could
+// not carry. `DuplicatePage` needs none of this: it drops no page, so nothing can reach one.
+func sameDocument(pdf []byte, pick func(total int) ([]int, error)) (out []byte, filesDropped int, err error) {
+	out, filesWithheld, err := subsetCarryingFiles(pdf, pick, true)
+	if err != nil || !filesWithheld {
+		return out, 0, err
+	}
+	return CarryAttachments(pdf, out)
 }
 
 // selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
@@ -492,6 +538,10 @@ func withLang(dst []byte, lang string) ([]byte, error) {
 // attachments there shipped an embedded un-redacted original inside a redacted document.
 // Rearranging pages is a different act from producing something to hand over, and only the
 // caller knows which one it is doing.
+//
+// **Its one caller is `sameDocument`** (`/pending 870`), and only as that door's second way back: a delete or a
+// reorder keeps the document's own name tree in the selection's write, and comes here only when an entry reaches
+// a page the selection dropped. The server no longer calls it after every delete and reorder.
 //
 // It reports how many it could not carry rather than returning silently, because the record
 // this exists to preserve is exactly what a silent drop loses.

@@ -241,6 +241,9 @@ func embeddedStreamBytes(xt *model.XRefTable, o types.Object) ([]byte, error) {
 	if sd.FilterPipeline == nil {
 		return sd.Raw, nil
 	}
+	// Exempt from the budgeted decode (`/pending 795`), on purpose: the whole file is what was asked for — an
+	// extraction hands it to the user, the carry re-embeds it — so there is no size past which a shorter answer is
+	// right. pdfcpu's own 512 MiB decode ceiling is the bound.
 	if err := sd.Decode(); err != nil {
 		return nil, err
 	}
@@ -1252,6 +1255,9 @@ func decodeStream(sd *types.StreamDict, sc *streamMemo, num int) decodedStream {
 		sc.st.decodes++
 	}
 	d := decodedStream{marker: 0, body: sd.Raw}
+	// Exempt from the budgeted decode (`/pending 795`), on purpose: the digest is OF the decoded bytes, so a
+	// stream read only part-way would hash as something else and every document holding one would change digest
+	// — a `ContentDigestVersion` bump, not a cost fix. pdfcpu's own 512 MiB decode ceiling is the bound.
 	if derr := sd.Decode(); derr == nil {
 		d = decodedStream{marker: 1, body: sd.Content}
 	}
