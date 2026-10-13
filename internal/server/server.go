@@ -191,6 +191,12 @@ type document struct {
 	// unlike `path` it is NOT write-once (handleSave re-records it), so the unlocked
 	// reads `path` gets away with would be a real race on this one. See diskstate.go.
 	disk *diskState
+	// wrote is the stamp of a file Nib ITSELF wrote at `path` in a save whose bytes the document then
+	// could not take (the late cap refusal in handleSave), or nil. `disk` is left alone there, so the
+	// banner goes on saying the file differs from what is open — which is true — and the next save's
+	// 412 test accepts a file that still matches this stamp, because it is Nib's own write and not
+	// someone else's (/pending 784 part 1). Cleared wherever `disk` is re-stamped: see `agreeWithDisk`.
+	wrote *diskState
 }
 
 // Server holds the embedded UI, the auth session, and the current document.
@@ -1251,7 +1257,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// no way past it is not the safe option here: the edits live in the browser, so a hard
 	// block would strand the user's unsaved work behind the very warning meant to protect
 	// it. The default is refuse; the override is explicit, per-request, and never sticky.
-	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
+	if r.URL.Query().Get("overwrite") != "1" && s.changedByAnother(doc) {
 		httpError(w, http.StatusPreconditionFailed,
 			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
 		return
@@ -1300,7 +1306,13 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// grew in the window since the check above. The bytes are on disk — the user asked for them
 	// there — but the document is NOT re-stamped, so it reports the file as changed and the banner
 	// says so, rather than holding bytes past the ceiling or claiming the file matches.
+	//
+	// **What Nib wrote is remembered beside the baseline (/pending 784 part 1).** Without it the next
+	// save was refused 412 "this file has changed on disk since Nib opened it" about the file this
+	// save had just written — a refusal naming someone else's change where there was none, and asking
+	// the user to confirm an overwrite of their own bytes.
 	if err := s.byteCapLocked(doc, data); err != nil {
+		doc.wrote = stamp
 		s.mu.Unlock()
 		httpError(w, http.StatusConflict, "the file was saved, but Nib cannot hold the saved copy open: "+err.Error())
 		return
@@ -1311,7 +1323,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// save Nib performs. Without this the document reports "changed on disk" from the
 	// moment the user first saves it — armed forever, against Nib's own write, and the
 	// banner becomes the thing the user learns to ignore.
-	doc.disk = stamp
+	doc.agreeWithDisk(stamp)
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse(doc))
 }

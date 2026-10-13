@@ -1,12 +1,10 @@
-diff --git a/internal/server/server.go b/internal/server/server.go
-index ac98ff5..336f41a 100644
 --- a/internal/server/server.go
 +++ b/internal/server/server.go
-@@ -1020,11 +1020,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+@@ -1246,11 +1246,6 @@
  	// no way past it is not the safe option here: the edits live in the browser, so a hard
  	// block would strand the user's unsaved work behind the very warning meant to protect
  	// it. The default is refuse; the override is explicit, per-request, and never sticky.
--	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
+-	if r.URL.Query().Get("overwrite") != "1" && s.changedByAnother(doc) {
 -		httpError(w, http.StatusPreconditionFailed,
 -			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
 -		return
@@ -14,15 +12,15 @@ index ac98ff5..336f41a 100644
  	// **ADR-008's byte cap, and this door was a sixth writer of doc.data that nothing refused
  	// (/pending 499).** The posted bytes become the document below, so a save that grows it past
  	// the aggregate ceiling is a growth door like every other. Checked BEFORE the write so a refusal
-@@ -1043,6 +1038,11 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+@@ -1272,6 +1267,11 @@
+ 	// would have (/pending 572) — the same rule at all three doors, named at each.
+ 	if err := atomicfile.ReplaceDurable(doc.path, data, atomicfile.UserFileMode); err != nil {
  		httpError(w, http.StatusInternalServerError, "could not write file")
- 		return
- 	}
-+	if r.URL.Query().Get("overwrite") != "1" && diskChanged(doc.path, s.diskOf(doc)) {
-+		httpError(w, http.StatusPreconditionFailed,
-+			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
 +		return
 +	}
++	if r.URL.Query().Get("overwrite") != "1" && s.changedByAnother(doc) {
++		httpError(w, http.StatusPreconditionFailed,
++			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
+ 		return
+ 	}
  
- 	sig := sign.Verify(data)
- 	s.mu.Lock()

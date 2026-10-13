@@ -114,6 +114,29 @@ func (s *Server) diskOf(doc *document) *diskState {
 	return doc.disk
 }
 
+// agreeWithDisk records that the document and the file at its path now hold the same bytes: the save
+// that installed what it wrote, and the reload that installed what it read. Caller holds s.mu. The
+// one place `wrote` is cleared, so a baseline cannot be re-stamped beside a stale own-write stamp.
+func (d *document) agreeWithDisk(stamp *diskState) {
+	d.disk = stamp
+	d.wrote = nil
+}
+
+// changedByAnother is handleSave's 412 test: has the file at this document's path changed since Nib
+// last agreed with it, by a hand other than Nib's? It is `diskChanged` against the baseline, except
+// that a file still holding what Nib itself last wrote there (`document.wrote`) is not another's
+// change. docResponse does NOT ask this — its banner is about the file differing from what is open,
+// and after a save the document could not take, it does.
+func (s *Server) changedByAnother(doc *document) bool {
+	s.mu.Lock()
+	disk, wrote := doc.disk, doc.wrote
+	s.mu.Unlock()
+	if !diskChanged(doc.path, disk) {
+		return false
+	}
+	return wrote == nil || diskChanged(doc.path, wrote)
+}
+
 // diskChanged reports whether path now holds content other than what was recorded.
 //
 // **The comparison is against the RECORDED bytes, never against doc.data**, and that is
@@ -280,7 +303,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// reports diskChanged from the moment it is reloaded, so the banner is armed forever
 	// and the user learns to ignore it — the trap handleSave names at its own re-stamp.
 	if s.isRegisteredLocked(doc) {
-		doc.disk = stamp
+		doc.agreeWithDisk(stamp)
 	}
 	s.mu.Unlock()
 	writeJSON(w, s.docResponse(doc))
