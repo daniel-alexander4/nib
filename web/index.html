@@ -1200,6 +1200,7 @@
           <p class="pagelead">The steps of signing a document, in order. It is a checklist, not a wizard: nothing is
             enforced and nothing is done for you. Two steps cannot be undone — applying a redaction, and
             signing — and the order puts everything else before them.</p>
+          <p class="stampwarn signlabelnote" hidden></p>
           <div class="setrow">
             <h3 class="rowtitle">How to read it</h3>
             <ul class="pagelist">
@@ -1542,6 +1543,8 @@
         <label class="check"><input id="fzKeep" type="checkbox" aria-describedby="fzKeepHint" /> Keep a copy for my records</label>
         <p id="fzKeepHint" class="libhint">Saved unencrypted in ~/nib/signed — anyone who can read your files, and your backups, can read it.</p>
       </div>
+      <!-- What signing does to a PDF/UA or PDF/A label (ADR-147): filled by reflectSigningLabel, on every signing surface. -->
+      <p class="stampwarn signlabelnote" hidden></p>
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>
@@ -2178,6 +2181,9 @@
     <div class="sigcard">
       <h3>Crop to the box</h3>
       <p class="libhint">Each page is trimmed to the rectangle you drew. Cropping <em>hides</em> the content outside the box — it stays in the file behind the smaller page. To remove it for good, use Flatten or Redact.</p>
+      <!-- On a TAGGED document the hidden part is still read aloud (/pending 577, ADR-147): said here before
+           the crop, and again when it is done. Filled by reflectCropTagged from the document's `tagged` fact. -->
+      <p id="cropTaggedNote" class="stampwarn" hidden></p>
       <div class="splitcontrols">
         <label class="check"><input id="cropAllPages" type="checkbox" checked /> Apply to all pages (otherwise just this page)</label>
       </div>
@@ -2402,6 +2408,7 @@
         <strong>Identity &amp; peers</strong>. <button type="button" class="pinpeers">Open Identity &amp; peers</button></p>
       <label>What you're agreeing to
         <textarea id="cosignIntent" rows="2">I agree to sign this document.</textarea></label>
+      <p class="stampwarn signlabelnote" hidden></p>
       <div class="sigbtns">
         <button id="cosignCancel">Cancel</button>
         <span class="grow"></span>

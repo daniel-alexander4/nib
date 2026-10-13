@@ -213,14 +213,7 @@ func inspectTags(pdf []byte) tagState {
 	if cerr != nil {
 		return s
 	}
-	if mi, ok := cat["MarkInfo"]; ok {
-		if d, e := ctx.DereferenceDict(mi); e == nil && d != nil {
-			// readBool dereferences: `BooleanEntry` reads an indirect /Marked as absent (/pending 489).
-			if readBool(ctx.XRefTable, d["Marked"]) {
-				s.marked = true
-			}
-		}
-	}
+	s.marked, _ = taggingClaimOf(ctx, cat)
 	// Counted BEFORE the untagged early return below, or every untagged document — which is most of
 	// them — would report zero fields and an operation that destroyed a form would say nothing.
 	if form, ferr := ctx.DereferenceDict(cat["AcroForm"]); ferr == nil && form != nil {
@@ -263,6 +256,20 @@ func inspectTags(pdf []byte) tagState {
 		}
 	}
 	return s
+}
+
+// taggingClaimOf reads the two assertions law 1 names off a catalog: `/MarkInfo /Marked true`, and a
+// `/StructTreeRoot` key. It is the ONE reading of both — `inspectTags` and the server's per-answer read
+// (`ReadAnswerFacts`) ask it, so "is this document tagged" cannot come to mean two things.
+func taggingClaimOf(ctx *model.Context, cat types.Dict) (marked, tree bool) {
+	if mi, ok := cat["MarkInfo"]; ok {
+		if d, e := ctx.DereferenceDict(mi); e == nil && d != nil {
+			// readBool dereferences: `BooleanEntry` reads an indirect /Marked as absent (/pending 489).
+			marked = readBool(ctx.XRefTable, d["Marked"])
+		}
+	}
+	_, tree = cat["StructTreeRoot"]
+	return marked, tree
 }
 
 // ClaimsTagging reports whether a document asserts that it is tagged — **either** assertion law 1

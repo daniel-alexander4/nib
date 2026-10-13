@@ -135,3 +135,57 @@ func TestRedactingPageOneKeepsTheLanguage(t *testing.T) {
 		}
 	}
 }
+
+// TestTheAnswerFactsReadALabelAndATaggingClaim — ADR-147: the two facts `ReadAnswerFacts` added to the read
+// the server already makes for every document. The label is asked through the drop's own door, so it is true
+// of exactly the documents the next change would take a label from; a signed copy says "kept".
+func TestTheAnswerFactsReadALabelAndATaggingClaim(t *testing.T) {
+	plain, err := testpdf.Text("no label, no tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err = SetTitle(plain, "No label, no tags"); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := ReadAnswerFacts(plain); err != nil || f.Labelled || f.Tagged {
+		t.Fatalf("a plain document reads labelled=%v tagged=%v (err %v)", f.Labelled, f.Tagged, err)
+	}
+	if note := SigningLabelNote(plain, false); note != "" {
+		t.Errorf("a document with no label is given a note about one: %q", note)
+	}
+	labelled, err := testpdf.WithUAIdentification(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, err := ReadAnswerFacts(labelled); err != nil || !f.Labelled {
+		t.Fatalf("a document carrying pdfuaid:part reads labelled=%v (err %v)", f.Labelled, err)
+	}
+	pdfa, err := testpdf.WithPDFAIdentification(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, err := ReadAnswerFacts(pdfa); err != nil || !f.Labelled {
+		t.Fatalf("a document carrying pdfaid:part reads labelled=%v (err %v) — the drop takes that label too", f.Labelled, err)
+	}
+	if got := SigningLabelNote(labelled, false); got != LabelRemovedBySigning {
+		t.Errorf("unsigned and labelled: %q", got)
+	}
+	if got := SigningLabelNote(labelled, true); got != LabelKeptBySigning {
+		t.Errorf("signed and labelled: %q", got)
+	}
+	// The asking must not have changed what is asked: the same bytes still carry the label.
+	if f, _ := ReadAnswerFacts(labelled); !f.Labelled {
+		t.Error("asking whether a document is labelled took the label from the caller's bytes")
+	}
+	tagged, err := taggedTwoPageFixture(), error(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ReadAnswerFacts(tagged)
+	if err != nil || !f.Tagged {
+		t.Fatalf("a document that claims tagging reads tagged=%v (err %v)", f.Tagged, err)
+	}
+	if f.Tagged != Inspect(tagged).Tagged {
+		t.Error("the answer's reading of the tagging claim and the commit door's disagree")
+	}
+}

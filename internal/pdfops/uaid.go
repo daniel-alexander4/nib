@@ -504,6 +504,29 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 	return out, nil
 }
 
+// The two sentences a signing surface says about a labelled document BEFORE it signs (ADR-147, `/pending 520`).
+// `nib sign` prints them; the window's own copies (`signingLabelWords`, web/app.js) are held equal to these by
+// a jsdom test. They say what signing does and no more: no signing path runs a conformance check.
+const (
+	LabelRemovedBySigning = "This document carries a PDF/UA or PDF/A conformance label. Signing removes the " +
+		"label, because Nib has not checked that the signed document conforms."
+	LabelKeptBySigning = "This document carries a PDF/UA or PDF/A conformance label and is already signed. " +
+		"Signing it again keeps the label, which Nib has not checked."
+)
+
+// SigningLabelNote is the sentence for pdf, or "" when it carries no label (or cannot be read — and then
+// `DropUAIdentificationUnlessSigned` reports the read). signed is `sign.HasSignatureBlob`, as at that door.
+func SigningLabelNote(pdf []byte, signed bool) string {
+	f, err := ReadAnswerFacts(pdf)
+	switch {
+	case err != nil || !f.Labelled:
+		return ""
+	case signed:
+		return LabelKeptBySigning
+	}
+	return LabelRemovedBySigning
+}
+
 // dropUAIdentificationBytes returns pdf without its PDF/UA or PDF/A identification, and whether it carried one —
 // and without an XFA form (ADR-145). A document that carried neither comes back as the SAME bytes, unwritten — a caller holding a signed document
 // that carries no claim must not pay a rewrite for asking.
