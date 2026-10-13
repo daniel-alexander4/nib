@@ -24,12 +24,22 @@ import (
 // `rolemap` sets, replaces or removes ONE entry. It names no element.
 //
 //   - The name mapped is never a standard type: *"standard structure types … shall not be remapped"*
-//     (ISO 14289-1 §7.1; veraPDF's ua1 7.1 t7, `uacheck`'s `checkStandardTypeNotRemapped`).
+//     (ISO 14289-1 §7.1; veraPDF's ua1 7.1 t7, `uacheck`'s `checkStandardTypeNotRemapped`). **A mapping a
+//     producer wrote FROM a standard type can be removed, and only removed** (`/pending 632` part 7): it is the
+//     one remedy for the rule it breaks, and it is removed whether or not tags are of that type — a standard
+//     type needs no mapping to say what it means, so nothing is left unexplained.
 //   - What it is mapped TO is always a standard type. A mapping onto another custom name is how a chain is
 //     made, and a chain is how a loop is made (ua1 7.1 t6); an edit that can only write an arrow onto a
 //     standard type can write neither. Chains a producer wrote are read as they always were and left alone.
-//   - A mapping is not removed while an element is still typed with the name: those elements would be left
-//     with a type nothing explains, which is the failure the map exists to prevent.
+//   - A custom type's mapping is not removed while an element is still typed with the name: those elements
+//     would be left with a type nothing explains, which is the failure the map exists to prevent.
+//
+// # A type a reviewer picks is the type a reader reads
+//
+// `typeAsChosen` is the one check of a type picked for an element — a retype, a create, a region (ADR-009).
+// It refuses a standard type the document's role map sends elsewhere: `/P → /Span` in the map makes a tag
+// retyped to P read as Span, by every reader and by this package's own (`standardRole`), with nothing saying
+// so. The refusal names the mapping and the remedy, which is the removal above.
 //
 // # Names
 //
@@ -71,7 +81,7 @@ func setRoleMapping(ctx *model.Context, tree *structTree, ed structEdit) error {
 	if role == "" {
 		return fmt.Errorf("%w: a role map edit needs the name of the custom type it maps", ErrTagsReview)
 	}
-	if standardStructTypes[role] {
+	if standardStructTypes[role] && ed.value != "" {
 		return fmt.Errorf("%w: %s is a standard structure type, and a standard type cannot be mapped to another (PDF/UA-1 §7.1: the standard types shall not be remapped)", ErrTagsReview, role)
 	}
 	var rm types.Dict
@@ -91,7 +101,8 @@ func setRoleMapping(ctx *model.Context, tree *structTree, ed structEdit) error {
 		}
 		used := 0
 		for _, e := range tree.elems {
-			if e.kind == role {
+			// A standard type says what it means without a mapping, so tags of that type do not hold one in place.
+			if e.kind == role && !standardStructTypes[role] {
 				used++
 			}
 		}
@@ -116,5 +127,21 @@ func setRoleMapping(ctx *model.Context, tree *structTree, ed structEdit) error {
 		tree.root["RoleMap"] = rm
 	}
 	rm[role] = types.Name(ed.value)
+	return nil
+}
+
+// typeAsChosen is the ONE check of a structure type picked for an element (retype, create, region): it is a
+// standard type, and the document's role map does not send it elsewhere.
+func typeAsChosen(tree *structTree, value string) error {
+	if !standardStructTypes[value] {
+		return fmt.Errorf("%w: %q is not a standard structure type", ErrTagsReview, value)
+	}
+	if to, mapped := tree.roleMap[value]; mapped && to != value {
+		reads := standardRole(tree, value)
+		if reads == value {
+			reads = to
+		}
+		return fmt.Errorf("%w: this document's role map sends %s to %s, so a tag of type %s would be read as %s — remove the mapping of %s in the role map first", ErrTagsReview, value, to, value, reads, value)
+	}
 	return nil
 }
