@@ -126,6 +126,10 @@ var knownUA1Deltas = map[string]struct {
 	"RemovePages": {[]string{"7.4.2 t1"}, "its drive removes page 1, which carries the document's " +
 		"only /H1 — so the remaining document genuinely starts at /H2 and genuinely mis-nests. " +
 		"The tree is carried; the heading it needed went with the page the caller asked to delete"},
+	// `DeletePages` is `RemovePages` with the document's own facts put back (/pending 870): same drive,
+	// same page 1, same honest clause.
+	"DeletePages": {[]string{"7.4.2 t1"}, "RemovePages' reason, through the same-document door: its drive " +
+		"removes page 1, which carries the document's only /H1"},
 
 	// ── **The splits and `InsertPDF` lost `pageSetLoss` at P02.S07b**: `splice` makes the ORIGINAL the
 	// host of one merge and keeps its tree. What is left is what each operation genuinely does. (`Crop`
