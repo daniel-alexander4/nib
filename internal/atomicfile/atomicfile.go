@@ -380,6 +380,29 @@ const UserFileMode os.FileMode = 0o644
 // perm is applied to the temp file BEFORE the rename, so the file is never briefly readable
 // at the process umask's default under its final name.
 func WriteDurable(path string, data []byte, perm os.FileMode) error {
+	return WriteDurableChecked(path, data, perm, nil)
+}
+
+// WriteDurableChecked is WriteDurable with one question asked between the staging and the rename:
+// check is handed the path of the staged file — complete, at its final mode, synced and closed —
+// and anything it returns means NOTHING IS REPLACED: the staged file is removed, path is exactly
+// as it was, and the error comes back as check gave it.
+//
+// **It is here because a write that replaces the only copy of something has two things worth
+// knowing first, and both are only knowable at this point** (ADR-009: the temp file, the sync and
+// the rename are this package's, so a caller that wants to look between them asks this door rather
+// than staging a file of its own). Whether the bytes about to become the file can be read back as
+// what the caller meant — check reads `staged`, which is the file the rename will move, not the
+// buffer it was written from. And whether the file about to be replaced is still one the caller
+// may replace — check reads `path`. The vault asks both (ADR-144).
+//
+// **What the second question does NOT buy**: check and the rename are two steps, and nothing holds
+// `path` between them. Another process that renames its own file into place after check has
+// answered and before this rename is replaced without being seen. The window is this function's
+// last few lines; a caller for whom that matters needs a lock, and this is not one.
+//
+// A nil check is WriteDurable.
+func WriteDurableChecked(path string, data []byte, perm os.FileMode, check func(staged string) error) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 	if err != nil {
@@ -401,6 +424,11 @@ func WriteDurable(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if check != nil {
+		if err := check(tmpName); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return err

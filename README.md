@@ -1327,7 +1327,10 @@ your vault. (Defaults to dark.)
 - The vault is **sealed to your SSH key**: it unlocks at startup with *no
   password*. Authorize more than one key to use it across machines, and back it
   up / restore it fully encrypted. (Lose every authorized key and the vault is
-  unrecoverable — by design.)
+  unrecoverable — by design.) Removing an authorized key gives the vault a new
+  key of its own, so the removed one cannot open the vault as saved from then
+  on. It takes nothing back: a copy of the vault file made before that still
+  opens with it, your signing identity inside.
 - **Passphrase-protected SSH keys are supported.** If your unlock key is
   encrypted with a passphrase, Nib prompts for it at startup and decrypts the key
   *in memory* — the key file stays encrypted on disk, so a stolen disk plus key

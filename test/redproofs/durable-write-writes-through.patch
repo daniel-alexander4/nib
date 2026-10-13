@@ -1,9 +1,9 @@
 --- a/internal/atomicfile/atomicfile.go
 +++ b/internal/atomicfile/atomicfile.go
-@@ -329,39 +329,7 @@
- // perm is applied to the temp file BEFORE the rename, so the file is never briefly readable
- // at the process umask's default under its final name.
- func WriteDurable(path string, data []byte, perm os.FileMode) error {
+@@ -403,44 +403,7 @@
+ //
+ // A nil check is WriteDurable.
+ func WriteDurableChecked(path string, data []byte, perm os.FileMode, check func(staged string) error) error {
 -	dir := filepath.Dir(path)
 -	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 -	if err != nil {
@@ -25,6 +25,11 @@
 -	}
 -	if err := tmp.Close(); err != nil {
 -		return err
+-	}
+-	if check != nil {
+-		if err := check(tmpName); err != nil {
+-			return err
+-		}
 -	}
 -	if err := os.Rename(tmpName, path); err != nil {
 -		return err

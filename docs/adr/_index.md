@@ -910,3 +910,5 @@ home today.
   — the library's cost is records × signed bytes; the ceiling counts only records the library processes, refuses the document whole with `Unchecked: too-many-signatures`, and makes a cross-record total redundant.
 - [ADR-142](142-nib-carries-a-patched-pdfsign-and-the-patch-is-one-buffer-per-signature.md) — **Nib carries a patched pdfsign, and the patch is one buffer per signature**
   — `third_party/digitorus-pdfsign` via `replace`, differing from upstream in `verify/signature.go` and `verify/verify.go` only; allocation per signature 6-7× the file → 1.0-1.3×, held by a root guard and an allocation test.
+- [ADR-144](144-removing-an-authorized-key-replaces-the-vaults-content-key.md) — **removing an authorized key replaces the vault's content key**
+  — every remaining slot is re-sealed from its stored public key, the staged file is opened with the new key before the rename, and a generation in the envelope (no format change) stops a stale process writing its old slots back; nothing already copied is taken back.

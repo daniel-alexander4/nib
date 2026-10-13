@@ -1155,7 +1155,9 @@ async function addKey(body) {
 }
 
 async function removeKey(pubKey, label) {
-  if (!confirm(`Remove authorized key “${label}”? It will no longer be able to unlock this vault.`)) return;
+  // What is true, and no more (ADR-144): the vault's own key is replaced, so the removed key opens
+  // nothing saved from now on — and nothing it could already open is taken back.
+  if (!confirm(`Remove authorized key “${label}”?\n\nThe vault gets a new key of its own, so this key cannot open the vault as it is saved from now on.\n\nWhat it could already open is not taken back: a copy of the vault file made before now still opens with it.`)) return;
   const res = await apiFetch('/api/ssh/keys/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -925,8 +925,9 @@
           <div class="setrow">
             <button id="manageKeysBtn">Manage authorized keys…</button>
             <p class="sethelp">The SSH keys that can unlock your vault. Add one to use Nib from a second machine.
-              A key you remove can no longer unlock this vault from then on; a copy of the vault file made
-              before you removed it can still be opened with that key.</p>
+              Removing a key gives the vault a new key of its own, so the removed one cannot open the vault as
+              it is saved from then on. What it could already open is not taken back: a copy of the vault
+              file made before you removed it still opens with that key, your signing identity inside it.</p>
           </div>
         </div>
       </section>
@@ -2281,9 +2282,10 @@
     <div class="sigcard">
       <h3>Authorized keys</h3>
       <p class="libhint">These SSH keys can unlock your vault. Add another to use
-        Nib from a second machine. A key you remove can no longer unlock this vault from
-        then on; a copy of the vault file made before you removed it can still be opened
-        with that key.</p>
+        Nib from a second machine. Removing a key gives the vault a new key of its own, so
+        the removed one cannot open the vault as it is saved from then on. What it could
+        already open is not taken back: a copy of the vault file made before you removed
+        it still opens with that key, your signing identity inside it.</p>
       <div id="keysList" class="keyslist"></div>
       <div class="sep"></div>
       <div id="keyCandidates" class="keycands"></div>

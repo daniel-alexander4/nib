@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
@@ -66,6 +67,14 @@ var (
 	ErrCurrentKey = errors.New("cannot remove the key in use this session")
 	// ErrBadKey: the public-key line could not be parsed.
 	ErrBadKey = errors.New("invalid public key")
+	// ErrKeyNotSealable: removing an authorized key was refused, and nothing was changed, because
+	// one of the keys that STAY could not be sealed to. See RemoveKey.
+	ErrKeyNotSealable = errors.New("no key was removed, because the vault cannot be sealed to one of the keys that stay")
+	// ErrKeyChanged: the vault file on disk is under a newer content key than the one this value
+	// holds — another running Nib removed an authorized key — so nothing was written. See
+	// beforeReplacing.
+	ErrKeyChanged = errors.New("another running Nib removed an authorized key from this vault, so " +
+		"the change was not stored; close and reopen Nib")
 	// ErrReadOnlyImage: refused to modify a built-in (binary-shipped) image.
 	ErrReadOnlyImage = errors.New("built-in image is read-only")
 )
@@ -81,8 +90,14 @@ type Slot struct {
 // envelope is the on-disk JSON. v2 stores the content ciphertext plus SSH slots;
 // the KDF field is retained only so an old v1 (password) vault still parses for
 // one-time migration.
+//
+// Gen counts how many times the content key has been replaced (ADR-144). It is NOT a format change:
+// a build that predates it ignores the key when reading (encoding/json drops what it does not
+// know) and omits it when writing, and a file without it reads as generation 0 — which is also
+// what a vault whose key has never been replaced writes, so such a file is the shape it always was.
 type envelope struct {
 	Version int    `json:"version"`
+	Gen     uint64 `json:"gen,omitempty"`
 	Nonce   []byte `json:"nonce"`
 	Cipher  []byte `json:"cipher"`
 	SSH     []Slot `json:"ssh,omitempty"`
@@ -416,6 +431,16 @@ type Vault struct {
 	// from a built-in key. They appear in the library read-only and are never
 	// persisted (Save writes only contents).
 	builtinImages []Image
+	// gen is the content key's generation — what the next save writes into the envelope — and
+	// onDisk is the generation this value last read from the file or wrote to it. They differ only
+	// between RemoveKey's apply and the save that follows it. save() refuses to replace a file whose
+	// generation is above onDisk (ErrKeyChanged). Guarded by mu.
+	gen    uint64
+	onDisk uint64
+	// unproven is true while key has never opened a file that is on disk: a vault just sealed, or
+	// one whose key RemoveKey has just replaced. The next save proves the staged file opens with
+	// key before it replaces anything, and clears this. Guarded by mu.
+	unproven bool
 	// replaced is set by Replace once another vault has been written over this one's file. From
 	// then on save() refuses with ErrReplaced, so a holder of this value cannot write it back over
 	// the import. Guarded by mu.
@@ -650,7 +675,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, derr)
 		}
 		env.SSH[i].KeyPath = keyPath // the repair
-		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}
+		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen}
 		// Saved immediately: an unlock that did not persist the new path leaves the user
 		// in key-missing on the next launch, having been told it was fixed.
 		//
@@ -705,7 +730,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 			zero(key) // discard path: the unwrapped content key won't be retained — scrub it too
 			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, err)
 		}
-		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}, nil
+		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen}, nil
 	}
 	return nil, noSlotOpened(slotErr, undecryptable)
 }
@@ -854,6 +879,9 @@ func newSealed(path, pubLine, keyPath string, c Contents) (*Vault, error) {
 		current:       pubLine,
 		contents:      c,
 		builtinImages: loadBuiltinSignatures(),
+		// A key minted a moment ago has opened nothing yet. Migrate's write replaces the password
+		// vault — the only copy of the signing identity — so the staged file is opened first.
+		unproven: true,
 	}, nil
 }
 
@@ -905,8 +933,40 @@ func (v *Vault) AddKey(pubLine, keyPath string) error {
 	})
 }
 
-// RemoveKey drops the slot for pubLine. It refuses to remove the only enrolled
-// key (which would orphan the vault) or the key this session unlocked with.
+// RemoveKey drops the slot for pubLine AND REPLACES THE CONTENT KEY (ADR-144). It refuses to remove
+// the only enrolled key (which would orphan the vault) or the key this session unlocked with.
+//
+// # Why the key changes
+//
+// Dropping the slot alone took nothing away. A slot is the content key sealed to one SSH key, so
+// whoever holds that SSH key and ANY copy of the vault file made while the slot existed can recover
+// the content key — and the content key was never changed, so it opened every later vault too,
+// including ceremony secrets pruned from it since (/pending 668 #6). Now a fresh key is drawn, the
+// contents are encrypted under it, and it is sealed to each key that stays; the removed key's old
+// slot unwraps to a key that opens nothing written from here on.
+//
+// # What it does not do
+//
+// It takes back nothing the removed key could already open. A copy of the vault file made before
+// the removal still opens with it, and what was inside — the signing identity's private key, an
+// imported certificate, ceremony secrets — may have been copied. A lost machine is answered by a
+// new signing identity, which this is not. Importing a backup made before the removal brings the
+// old key and the removed slot back; that is what importing a backup means.
+//
+// # Values only
+//
+// Every remaining slot is rebuilt from the PubKey it already stores (age, to an SSH recipient);
+// PubKey and KeyPath are carried unchanged. newSealed is deliberately not used: it enrols the
+// built-in keys, and would put back a built-in slot the user had removed.
+//
+// # All or nothing
+//
+// A slot whose stored PubKey cannot be sealed to refuses the whole removal, naming it — skipping it
+// would silently lock that key out too. The door writes the file; before the rename it opens the
+// STAGED file with the new key (beforeReplacing, unproven), so the old file is replaced only by one
+// this process has read back. On any failure the file, the slots and the key in memory are the old
+// ones. What cannot be proven here: that the other slots unwrap, because their private keys are on
+// other machines.
 func (v *Vault) RemoveKey(pubLine string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -927,9 +987,72 @@ func (v *Vault) RemoveKey(pubLine string) error {
 	if keyID(v.ssh[idx].PubKey) == keyID(v.current) {
 		return ErrCurrentKey
 	}
-	return v.mutateLocked(func() {
-		v.ssh = append(v.ssh[:idx], v.ssh[idx+1:]...)
+	// crypto/rand, as newSealed draws the first one.
+	newKey := make([]byte, keyLen)
+	if _, err := rand.Read(newKey); err != nil {
+		return err
+	}
+	kept, err := resealSlots(newKey, v.ssh, idx)
+	if err != nil {
+		zero(newKey)
+		return err
+	}
+	oldKey := v.key
+	err = v.mutateLocked(func() {
+		v.ssh = kept
+		v.key = newKey
+		v.gen++
+		v.unproven = true
 	})
+	// Whichever key the vault is NOT holding is scrubbed. Asked of the vault rather than of err:
+	// the door puts the old key back on every failure it can roll back, and on the one it reports
+	// it could not, memory holds the new state and the new key must survive.
+	if sameArray(v.key, newKey) {
+		zero(oldKey)
+	} else {
+		zero(newKey)
+	}
+	return err
+}
+
+// sameArray reports whether two slices start at the same byte — whether they are one key, not
+// merely equal ones.
+func sameArray(a, b []byte) bool {
+	return len(a) > 0 && len(b) > 0 && &a[0] == &b[0]
+}
+
+// resealSlots seals key to every slot but slots[drop], in order, from the PubKey each one stores.
+//
+// **One failure refuses them all.** sealBuiltins skips a line it cannot seal to, and that is right
+// at creation, where the key is being offered to machines that may not exist. Here every slot is a
+// key that opens the vault TODAY, so a skipped one is a second, unasked-for removal. The error
+// names the slot by what the user can recognise — the key's comment, else where its private half
+// was recorded, else its position — and nothing else: not the line, not the sealing library's
+// own error, which quotes the line back.
+func resealSlots(key []byte, slots []Slot, drop int) ([]Slot, error) {
+	out := make([]Slot, 0, len(slots))
+	for i, s := range slots {
+		if i == drop {
+			continue
+		}
+		wrapped, err := sshkey.Wrap(key, s.PubKey)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrKeyNotSealable, slotName(i, s))
+		}
+		out = append(out, Slot{PubKey: s.PubKey, KeyPath: s.KeyPath, Wrapped: wrapped})
+	}
+	return out, nil
+}
+
+// slotName is how an error names an authorized key to the person who enrolled it.
+func slotName(i int, s Slot) string {
+	if f := strings.Fields(s.PubKey); len(f) > 2 {
+		return fmt.Sprintf("the key %q", strings.Join(f[2:], " "))
+	}
+	if s.KeyPath != "" {
+		return fmt.Sprintf("the key recorded at %s", s.KeyPath)
+	}
+	return fmt.Sprintf("authorized key %d", i+1)
 }
 
 // keyID returns the comparable identity of an authorized_keys line — its
@@ -1662,11 +1785,124 @@ func (v *Vault) save() error {
 	if err != nil {
 		return err
 	}
-	out, err := json.Marshal(envelope{Version: envelopeVersion, Nonce: nonce, Cipher: ct, SSH: v.ssh})
+	out, err := json.Marshal(envelope{Version: envelopeVersion, Gen: v.gen, Nonce: nonce, Cipher: ct, SSH: v.ssh})
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(v.path, out)
+	if err := writeFileAtomic(v.path, out, v.beforeReplacing); err != nil {
+		return err
+	}
+	v.onDisk = v.gen
+	v.unproven = false
+	return nil
+}
+
+// beforeReplacing is what save() asks between staging the new vault file and renaming it over the
+// old one (atomicfile.WriteDurableChecked). An error means the old file stays. Called under v.mu.
+//
+// # A file under a newer key is not replaced (ADR-144)
+//
+// No lock is held on the vault file, and a second Nib process opened before a key was removed still
+// holds the OLD content key and the OLD slots — the removed one among them. Its next save, of
+// anything at all, would write that state back over the rotated file and undo the removal without
+// a word. So the file's generation is read here and a higher one than this value last saw refuses
+// the write with ErrKeyChanged. Higher only: a LOWER one means a stale writer got there first (a
+// build that predates the counter, or the window below), and writing this value's state over it is
+// what restores the removal.
+//
+// What it costs is one open and a read of the file's first bytes per save (generationOf).
+// What it does not buy: this check and the rename are two steps. A stale process that passes its
+// check, then loses the race to a rotation's rename, then renames, overwrites the rotated file. The
+// rotating process's next save restores it; nothing tells the user in between. Closing that needs a
+// lock held across processes.
+//
+// A file that is absent, empty (Create's placeholder) or unreadable has no generation to defend.
+//
+// # A key that has opened nothing is proven against the staged file
+//
+// When unproven, the STAGED file — the bytes the rename will move, read back from disk — must
+// carry this value's generation and slots and decrypt with v.key to a payload this build decodes.
+// So the old file is replaced only by one this process has opened with the new key.
+func (v *Vault) beforeReplacing(staged string) error {
+	if gen, ok := generationOf(v.path); ok && gen > v.onDisk {
+		return ErrKeyChanged
+	}
+	if !v.unproven {
+		return nil
+	}
+	raw, err := os.ReadFile(staged)
+	if err != nil {
+		return fmt.Errorf("the new vault file could not be read back, so the old one was kept: %w", err)
+	}
+	var env envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("the new vault file did not read back as a vault, so the old one was kept: %w", err)
+	}
+	same := env.Version == envelopeVersion && env.Gen == v.gen && len(env.SSH) == len(v.ssh)
+	for i := 0; same && i < len(env.SSH); i++ {
+		same = env.SSH[i].PubKey == v.ssh[i].PubKey && bytes.Equal(env.SSH[i].Wrapped, v.ssh[i].Wrapped)
+	}
+	if !same {
+		return errors.New("the new vault file did not read back with the keys it was written with, so the old one was kept")
+	}
+	plain, err := decrypt(v.key, env.Nonce, env.Cipher)
+	if err != nil {
+		return errors.New("the new vault file did not open with its new key, so the old one was kept")
+	}
+	_, err = decodeContents(plain)
+	zero(plain)
+	if err != nil {
+		return fmt.Errorf("the new vault file's contents did not read back, so the old one was kept: %w", err)
+	}
+	return nil
+}
+
+// generationHead is how much of a vault file generationOf reads. `{"version":2,"gen":` and twenty
+// digits are under forty bytes.
+const generationHead = 128
+
+// generationOf reads the content-key generation of the vault file at path. ok is false when there
+// is no file, or it is empty, or its head is not a JSON object — none of which is a generation.
+//
+// **It reads the HEAD of the file, not the file, and that rests on who writes it.** Every vault
+// file is json.Marshal of `envelope`, by this build or an older one, and Marshal writes fields in
+// the struct's order: version, then gen when it is not zero, then the nonce and the ciphertext. So
+// the generation is the second key or it is absent, and the first key that is neither says it is 0.
+// Parsing the whole file to learn that was measured first and refused: 12.7µs, 1.4ms and 33.7ms at
+// 621 B, 274 KB and 7.3 MB — a seventh of a save at the middle size and nearly half of one at the
+// largest, on every AddRecent. A file some other program wrote with the key further in reads as
+// generation 0 and is not defended; TestAStaleProcessCannotWriteItsOldKeyOverTheRotatedFile goes
+// red if `envelope` is ever reordered so that this build's own files are among them.
+func generationOf(path string) (gen uint64, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	dec := json.NewDecoder(io.LimitReader(f, generationHead))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return 0, false
+	}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, false
+		}
+		switch tok {
+		case "version":
+			var version int
+			if dec.Decode(&version) != nil {
+				return 0, false
+			}
+		case "gen":
+			if dec.Decode(&gen) != nil {
+				return 0, false
+			}
+			return gen, true
+		default:
+			return 0, true
+		}
+	}
 }
 
 // mutateLocked applies apply to the vault held in memory, persists the result, and puts memory
@@ -1745,6 +1981,14 @@ func (v *Vault) mutateLocked(apply func()) error {
 	// Wrapped keys are ciphertext rather than secrets, but this package zeroes on every other
 	// discard path and an exception nobody wrote down is how that discipline erodes.
 	defer zero(beforeSlots)
+	// The content key, its generation and whether it is proven are the third thing save() writes
+	// from, since RemoveKey replaces the key (ADR-144). The key is kept as its slice AND its bytes:
+	// the slice so a mutation that swaps in a new one is undone by putting the old one back, the
+	// bytes so one that wrote into it in place is undone too. A header alone is the shallow copy
+	// the two sections above are about.
+	keyBefore, genBefore, unprovenBefore := v.key, v.gen, v.unproven
+	keyBytes := append([]byte(nil), v.key...)
+	defer zero(keyBytes)
 
 	apply()
 
@@ -1776,6 +2020,9 @@ func (v *Vault) mutateLocked(apply func()) error {
 	}
 	v.contents = restored
 	v.ssh = restoredSlots
+	v.key = keyBefore
+	copy(v.key, keyBytes)
+	v.gen, v.unproven = genBefore, unprovenBefore
 	return serr
 }
 
@@ -1878,11 +2125,11 @@ var ErrReplaced = errors.New("this vault was replaced by an imported backup, so 
 // already gone (/pending 287). That twin is gone; this keeps the fsync on the file and its parent.
 func Replace(path string, held *Vault, raw []byte) error {
 	if held == nil {
-		return writeFileAtomic(path, raw)
+		return writeFileAtomic(path, raw, nil)
 	}
 	held.mu.Lock()
 	defer held.mu.Unlock()
-	if err := writeFileAtomic(path, raw); err != nil {
+	if err := writeFileAtomic(path, raw, nil); err != nil {
 		return err
 	}
 	held.replaced = true
@@ -1897,9 +2144,13 @@ func Replace(path string, held *Vault, raw []byte) error {
 // ceremony mirror); it had two implementations with different contracts before, and this
 // file's own comment above records what that cost.
 //
+// check is atomicfile.WriteDurableChecked's: asked between the staging and the rename, and an
+// error from it leaves the file at path as it was. save() passes beforeReplacing; Replace, which
+// writes a backup the caller has validated over a vault it is retiring, passes nil.
+//
 // A var so a test can make a Save fail after Create has claimed the name.
-var writeFileAtomic = func(path string, data []byte) error {
-	return atomicfile.WriteDurable(path, data, 0o600)
+var writeFileAtomic = func(path string, data []byte, check func(staged string) error) error {
+	return atomicfile.WriteDurableChecked(path, data, 0o600, check)
 }
 
 // --- ceremony secrets (P07.S02a) ---------------------------------------------
