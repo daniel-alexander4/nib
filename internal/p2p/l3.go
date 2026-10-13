@@ -64,10 +64,13 @@ type Roster struct {
 	Entries []RosterEntry
 	// Commitment is the record's RosterHash, hex, or "" when the caller has none to offer.
 	//
-	// **Checked where present and never REQUIRED, and that is a stated limit rather than
-	// leniency.** A document signed before this build carries no commitment, and a gate that
-	// demanded one would refuse every such hop — the same mistake P07.S02b caught one door over,
-	// where `CheckDocument` would have refused every honest hop-1 arrival.
+	// **REQUIRED of every signature already on the document when it is set, with one excuse**
+	// (/pending 691 R7-4). It used to be checked where present and never required, on the
+	// reasoning that a document signed before the commitment existed carries none. No such
+	// document was ever made by a released build: the release before the Ceremony Record is
+	// v1.109.24 and the next is v1.117.357, after `StampCommitment` (v1.117.180) and after the
+	// token took its versioned form (v1.116.12). The excuse is `UnreadTag` — a newer build's
+	// signature, whose fields this one did not parse.
 	//
 	// **The paragraph that stood here said no production attestation carries one, and named
 	// P07.S04 as the slice that would change it. S04 did not, and nothing noticed** — it built
@@ -200,7 +203,7 @@ var (
 	// evidence is not — L3 and D23 both say "each one valid and cross-bound", and a check that
 	// only compared identities would satisfy the sentence while missing half of it.
 	ErrPrefixUnproven = errors.New("a signature already on this document does not prove what the roster requires")
-	// ErrProceedingMismatch: a signature carries a commitment to a different ceremony.
+	// ErrProceedingMismatch: a signature carries a commitment to a different ceremony, or to none.
 	ErrProceedingMismatch = errors.New("this document's signatures are not all from this ceremony")
 	// ErrNoSignaturePages: this document does not carry the signature pages its roster needs.
 	//
@@ -372,6 +375,19 @@ func progressFrom(st sign.Status, r Roster) (Progress, error) {
 			return Progress{}, fmt.Errorf("%w: signature %d (%s) accepts %s, and the signer "+
 				"before it is %s", ErrPrefixUnproven, i+1, shortFP(a.Fingerprint),
 				shortFP(a.AcceptedPeer), shortFP(signing[i-1].Fingerprint))
+		}
+		// **A signature that names no proceeding is not from this one** (/pending 691 R7-4).
+		//
+		// This compared only where the signature carried a commitment, so a signature with a tag
+		// this build reads and no `[NibRoster:…]` token was admitted into a proceeding that has
+		// one — while `markOneProceeding` calls the same signature disqualifying, and the verifier
+		// then refuses the finished document. The gate admitted what the verifier would not.
+		// `UnreadTag` is the one excuse, as it is there: a newer tag's fields were not parsed, so
+		// its commitment is uninterpreted rather than absent.
+		if r.Commitment != "" && a.RosterHash == "" && !a.UnreadTag() {
+			return Progress{}, fmt.Errorf("%w: signature %d (%s) commits to no proceeding and "+
+				"this one is %s", ErrProceedingMismatch, i+1, shortFP(a.Fingerprint),
+				shortFP(r.Commitment))
 		}
 		if r.Commitment != "" && a.RosterHash != "" &&
 			!strings.EqualFold(a.RosterHash, r.Commitment) {

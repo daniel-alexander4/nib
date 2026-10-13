@@ -466,7 +466,7 @@ func TestADecisionEndsTheArmAndALostChannelKeepsItOnBothTransports(t *testing.T)
 				pinPeer(t, c, csrf, ts.URL, aFPHex)
 				prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFPHex, me.Fingerprint)
 				place, _ := p2p.NextPlacement(prepared)
-				att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+				att := inCeremony(t, bobInv, p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()})
 				aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, place)
 				if err != nil {
 					t.Fatal(err)
