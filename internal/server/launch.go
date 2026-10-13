@@ -142,7 +142,15 @@ type launchResponse struct {
 
 // handleLaunchTrade is `POST /api/launch`: a launch key in, the token out. The key is retired on
 // success, so a fragment left in browser history opens nothing.
+//
+// **A key offered by another OS user is refused BEFORE it is looked at** (ADR-157): the key is in the
+// browser's command line until the page trades it, and looking first would spend the key on the
+// thief's attempt and leave the real window with *Open Nib again*.
 func (s *Server) handleLaunchTrade(w http.ResponseWriter, r *http.Request) {
+	if s.tradedByAnotherUser(r) {
+		httpError(w, http.StatusForbidden, "this launch key was issued to another user")
+		return
+	}
 	if !s.consumeLaunchKey(r.Header.Get(headerLaunch)) {
 		httpError(w, http.StatusForbidden, "unknown or used launch key")
 		return

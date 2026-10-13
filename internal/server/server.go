@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/netip"
 	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
@@ -252,6 +253,11 @@ type Server struct {
 	csrf  string       // per-process token, handed only to a caller holding a launch key (ADR-053/054); vault-independent
 	// launchKeys are the outstanding single-use keys a window's URL fragment carries (launch.go).
 	launchKeys []launchKey
+	// launchPeerOwner stands in for the kernel's answer to "who owns the connection this trade
+	// arrived on" (launchpeer.go, ADR-157); nil outside tests. peerUnknownOnce says once that the
+	// question cannot be asked here.
+	launchPeerOwner func(local, peer netip.AddrPort) (uint32, peerState)
+	peerUnknownOnce sync.Once
 
 	// legMu guards legs: the delivery round's in-flight leg, per ceremony (/pending 370).
 	//
