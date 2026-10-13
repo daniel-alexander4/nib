@@ -1672,8 +1672,8 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 	mustWrite(t, in, textPDF)
 	var code int
 	stderr := captureStderr(t, func() { code = cmdUA([]string{in}) })
-	if code != 1 {
-		t.Fatalf("nib ua on a Courier page exit = %d, want 1 — the page fails clauses nib checks", code)
+	if code != 2 {
+		t.Fatalf("nib ua on a Courier page exit = %d, want 2 — the page fails clauses nib checks", code)
 	}
 	if !strings.Contains(stderr, "not PDF/UA: 7.21.4.1 t1 fails") || !strings.Contains(stderr, "Courier") {
 		t.Errorf("the refusal does not name the non-embedded font:\n%s", stderr)
@@ -1685,7 +1685,7 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 		t.Errorf("nib ua does not say where the structure came from (D4):\n%s", stderr)
 	}
 
-	// An unreadable input is an error, not a report full of failures.
+	// An unreadable input is an error, not a report full of failures — and its own exit code (/pending 670).
 	bad := filepath.Join(dir, "bad.pdf")
 	mustWrite(t, bad, []byte("not a pdf"))
 	stderr = captureStderr(t, func() { code = cmdUA([]string{bad}) })

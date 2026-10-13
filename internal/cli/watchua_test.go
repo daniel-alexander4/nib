@@ -21,8 +21,8 @@ func TestWatchUAWritesTheReportNibUAPrints(t *testing.T) {
 	var stdout string
 	var code int
 	stderr := captureStderr(t, func() { stdout, code = captureStdout(t, func() int { return cmdUA([]string{p}) }) })
-	if code != 1 || strings.TrimSpace(stdout) == "" {
-		t.Fatalf("setup: nib ua on an untagged document exited %d with table %q — want 1 and a table", code, stdout)
+	if code != 2 || strings.TrimSpace(stdout) == "" {
+		t.Fatalf("setup: nib ua on an untagged document exited %d with table %q — want 2 and a table", code, stdout)
 	}
 
 	status, err := watchUA(p)
