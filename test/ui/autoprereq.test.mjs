@@ -130,8 +130,19 @@ test('Save as fillable form… with no fields runs Detect fields and goes on to 
   await h.topOfDocument();
   await h.mode('file');
   await h.card('Save a Copy');
+  // **The wait is for the command's END, and it has two** (/pending 475): the naming dialog, or the sentence the
+  // command stops on when it opens none ("Nothing detected on this page", "Scroll the page into view…", "There are
+  // no fields to save…"). Waiting for the dialog alone made every one of those a thirty-second timeout naming
+  // nothing — which is how this test reported, three nights running, that Detect had run on the WRONG document
+  // (`openDocument` returned before the open landed; see harness.mjs). Press to dialog measured 0.5–1.0 s idle and
+  // 3.4–6.5 s beside 48 spinning shells on 8 cores, so thirty seconds is a watchdog and not a pace.
+  await page.evaluate(() => { const t = document.getElementById('toast'); if (t) t.textContent = ''; });
   await page.click('#saveFillableBtn');
-  await page.waitForFunction(() => !document.getElementById('fieldNameModal').hidden, null, { timeout: 30000 });
+  await page.waitForFunction(() => !document.getElementById('fieldNameModal').hidden
+    || /^(Nothing detected|Scroll the page|There are no fields|Open a PDF)/.test(document.getElementById('toast')?.textContent ?? ''),
+  null, { timeout: 30000 }).catch(() => { /* neither end in thirty seconds: the assertion below says what was on screen */ });
+  assert.ok(await page.$eval('#fieldNameModal', (m) => !m.hidden),
+    `Save as fillable form… opened no naming dialog on a page with two ruled blanks; it said ${JSON.stringify(await toast())}`);
   assert.equal(await page.$$eval('#fieldNameList input', (els) => els.length), 2,
     'the naming dialog does not list the two blanks Detect fields finds on this page');
 });

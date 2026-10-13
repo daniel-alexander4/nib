@@ -90,13 +90,31 @@ func TestAFullHopTrimsTheTailAtTheCap(t *testing.T) {
 // The sender emits to each IPv4 candidate, shares one budget, stops at the cap, and skips
 // non-IPv4 targets — driven on the REAL loop with a fast interval (grill CONFIRMED-5), not the
 // pure function alone.
+//
+// **The loop is ended by the BUDGET here, never by a clock** (/pending 475). The test used to
+// give the loop a 3 s context and a 1 ms interval and then want exactly the cap — which holds
+// only where 1,500 one-millisecond timers per target fire inside 3 s. Beside another suite they
+// do not ("spent 2413, want the cap 3000"; 20 of 20 red beside 48 spinning shells), and the
+// message then blamed a bound nothing had broken. How long 3,000 sends take is a fact about
+// the machine; that the 3,001st is never sent, and that the loop then RETURNS by itself, is
+// the property. So: no interval, no deadline the loop can lose to, and an overshoot is caught
+// at the send that makes it. The watchdog only turns a loop that never returns into a failure
+// instead of a hung package, and it says which of the two it saw.
 func TestPunchLoopEmitsBoundedByTheBudget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var mu sync.Mutex
 	hits := map[string]int{}
+	total, over := 0, 0
 	punch := func(a net.Addr) error {
 		mu.Lock()
+		defer mu.Unlock()
 		hits[a.String()]++
-		mu.Unlock()
+		total++
+		if total > punchBudgetPerSide {
+			over++
+			cancel() // a loop that ignores the budget must not run for ever
+		}
 		return nil
 	}
 	budget := &punchBudget{}
@@ -106,29 +124,47 @@ func TestPunchLoopEmitsBoundedByTheBudget(t *testing.T) {
 	cands <- candidate{Addr: "198.51.100.7:6000"}  // second IPv4 target
 	close(cands)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	fast := func(time.Duration) time.Duration { return time.Millisecond }
-	punchLoop(ctx, punch, budget, cands, fast)
+	// One runnable goroutine gives the other target no turn until this one waits — and with no
+	// interval it would otherwise never wait, so one target could spend the whole budget alone.
+	yield := func(time.Duration) time.Duration { return 50 * time.Microsecond }
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		punchLoop(ctx, punch, budget, cands, yield)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Minute):
+		cancel()
+		<-done
+		spent, _ := budget.report()
+		t.Fatalf("punchLoop had not returned after 5 minutes with %d of %d spent — it does not end when the budget does (or this machine cannot send 3,000 datagrams to a function in five minutes)", spent, punchBudgetPerSide)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
+	if over != 0 {
+		t.Fatalf("punch was called %d time(s) past the cap of %d — the loop did not stop at the budget", over, punchBudgetPerSide)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("the context was ended while the loop ran: %v", ctx.Err())
+	}
 	// The IPv6 candidate got nothing.
 	if hits["[2001:db8::1]:5000"] != 0 {
 		t.Errorf("an IPv6 candidate was punched %d times — v6 is dialled directly, no hole needed", hits["[2001:db8::1]:5000"])
 	}
-	// The two IPv4 targets shared the budget, and the total equals the cap (the loop ran until
-	// the budget was spent, since the fast interval keeps it going past 3000 inside 3s).
-	total := 0
-	for _, n := range hits {
-		total += n
-	}
-	spent, _ := budget.report()
+	// The two IPv4 targets shared the budget, and the total equals the cap: the loop returned
+	// by itself, with the context still live, so nothing but the budget can have ended it.
+	spent, dropped := budget.report()
 	if total != spent {
 		t.Errorf("punch emitted %d datagrams but the budget recorded %d spent", total, spent)
 	}
 	if spent != punchBudgetPerSide {
-		t.Errorf("the shared budget spent %d, want the cap %d — the loop did not stop at the budget", spent, punchBudgetPerSide)
+		t.Errorf("the loop returned by itself with %d spent, want the cap %d — something other than the budget ended it", spent, punchBudgetPerSide)
+	}
+	// Each target is refused exactly once and then stops asking: drop-and-report, not drop-and-retry.
+	if dropped != 2 {
+		t.Errorf("the budget recorded %d refused sends, want 2 — one per IPv4 target, each stopping at its first refusal", dropped)
 	}
 	if hits["203.0.113.9:5000"] == 0 || hits["198.51.100.7:6000"] == 0 {
 		t.Errorf("one of the two IPv4 targets was never punched: %v", hits)
@@ -137,28 +173,47 @@ func TestPunchLoopEmitsBoundedByTheBudget(t *testing.T) {
 
 // The loop stops promptly on context cancel, well before the budget — a ceremony that connects
 // via a faster tier must not keep punching.
+//
+// **Cancelled at the tenth SEND, not after a sleep** (/pending 475): "well before the budget"
+// was a 50 ms sleep against a 1 ms interval, i.e. a guess about how many sends 50 ms holds.
+// Counted, the claim is exact: after the cancel the loop may finish the send it is in and no
+// more, and it returns.
 func TestPunchLoopStopsOnCancel(t *testing.T) {
+	const cancelAt = 10
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var n int32
-	punch := func(net.Addr) error { atomic.AddInt32(&n, 1); return nil }
+	punch := func(net.Addr) error {
+		if atomic.AddInt32(&n, 1) == cancelAt {
+			cancel()
+		}
+		return nil
+	}
 	budget := &punchBudget{}
 	cands := make(chan candidate, 1)
 	cands <- candidate{Addr: "203.0.113.9:5000"}
 	// left open, like a live feed
 
-	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		punchLoop(ctx, punch, budget, cands, func(time.Duration) time.Duration { return time.Millisecond })
+		// An interval no test could wait out: after the cancel, only the context can end the wait.
+		punchLoop(ctx, punch, budget, cands, func(time.Duration) time.Duration {
+			if atomic.LoadInt32(&n) >= cancelAt {
+				return time.Hour
+			}
+			return 0
+		})
 		close(done)
 	}()
-	time.Sleep(50 * time.Millisecond)
-	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("punchLoop did not stop within 2s of cancel — it keeps punching after a faster tier won")
+	case <-time.After(5 * time.Minute):
+		t.Fatal("punchLoop had not returned 5 minutes after its context was cancelled — it keeps punching after a faster tier won")
 	}
-	if spent, _ := budget.report(); spent >= punchBudgetPerSide {
-		t.Errorf("the loop spent the whole budget (%d) despite an early cancel", spent)
+	if got := atomic.LoadInt32(&n); got != cancelAt {
+		t.Errorf("the loop sent %d datagrams, want exactly %d — the context was cancelled inside send %d and nothing may follow it", got, cancelAt, cancelAt)
+	}
+	if spent, _ := budget.report(); spent != cancelAt {
+		t.Errorf("the budget recorded %d spent after a cancel at send %d", spent, cancelAt)
 	}
 }
