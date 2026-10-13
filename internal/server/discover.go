@@ -522,7 +522,15 @@ type networkTestResponse struct {
 // **On-link only.** These are link-local multicast announcements on the discovery port; nothing
 // here touches the DHT, so ADR-011's rule about the local link getting its window first is not
 // engaged. It is the same traffic an armed session already emits.
+//
+// **It asks the discovery switch, through the routes' one refusal (`refuseIfOff`, /pending 666).**
+// It announces on the link for its whole window, and "off" means nothing announces: the armed
+// session's announcer already refuses (`startAnnouncing`), and a diagnostic that broadcast past
+// the switch would be the one sender left on a machine whose user turned discovery off.
 func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
+	if refuseIfOff(w, vaultFrom(r), featDiscovery) {
+		return
+	}
 	out := networkTestResponse{WindowMs: int(networkTestWindow / time.Millisecond)}
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {

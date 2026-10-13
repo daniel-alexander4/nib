@@ -466,10 +466,14 @@ func (c *ceremonyID) persistedFor(inbound []byte) ([]byte, error) {
 }
 
 // Store records THIS hop's co-signed output for `inbound`, so a later reconnect re-delivers it. A
-// Store arriving after close is dropped (the closed-flag pattern setStopNet/setPortMap use), so no
-// signed bytes are stored on a ceremony nothing will tear down.
+// Store arriving after close stores nothing (the closed-flag pattern setStopNet/setPortMap use), so
+// no signed bytes are kept on a ceremony nothing will tear down — **and it SAYS so, with
+// `errStoreAfterClose` (/pending 666).** It used to answer nil, which `Receive` reads as "kept": the
+// signature went to the peer, this machine held no copy in memory or on disk, and D24's "Signed,
+// but not saved" never fired. Nothing is written for it either: the close may be the proceeding's
+// own close-out, which has MOVED the folder a mirror would be written into (ADR-012).
 //
-// **It returns an error and never produces one (P08.S02).** The in-memory record cannot fail; the
+// **The in-memory half never produces an error (P08.S02).** That record cannot fail; the
 // signature is returned by the interface so the DURABLE half — which `Receive` performs, because it
 // owns the ordering against the frame — has somewhere to be reported from. Keeping both halves on
 // one method would put an fsync inside `c.mu`, which `diagnose` also takes on the 800 ms status
@@ -481,7 +485,7 @@ func (c *ceremonyID) Store(inbound, final []byte) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil
+		return errStoreAfterClose
 	}
 	if c.reDelivery == nil {
 		c.reDelivery = map[string][]byte{}
@@ -501,6 +505,11 @@ func (c *ceremonyID) Store(inbound, final []byte) error {
 	// channel was a `log.Printf` into a stderr a double-clicked launch sends nowhere.
 	return c.persistContribution(final)
 }
+
+// errStoreAfterClose is why a signature made on an arm that had already closed was not kept. It
+// reaches the signer as the reason on "Signed, but not saved", so it is a sentence for a person.
+var errStoreAfterClose = errors.New("Nib had stopped listening for this ceremony by the time the " +
+	"signature was made, so it kept no copy of its own")
 
 // persistContribution writes this hop's co-signed document to the mirror, durably (D24, P08.S02).
 //
