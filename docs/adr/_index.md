@@ -924,3 +924,5 @@ home today.
   — at most 4 of the 16 TCP handshake slots per source (IPv4 address or IPv6 /64; loopback exempt; QUIC needs none), and a port-mapped candidate only at the address a strict majority of the DHT probe's sources saw.
 - [ADR-148](148-the-accessibility-checker-reads-the-files-own-objects-with-pdfcpus-optimize-pass-off.md) — **the checker reads the file's own objects, with pdfcpu's optimize pass off**
   — supersedes ADR-074 §3: equal forms and identical fonts are counted as veraPDF counts them; `formTwins`, the DuplicateFonts refusal and the checker's unaffordable-pass refusal are retired; no agreement figure moved.
+- [ADR-150](150-the-faces-nib-authors-in-are-named-nibs-too.md) — **the faces Nib authors in are named Nib's too**
+  — extends ADR-044 to the authoring faces: installed as `NibText-*` and `NibMono` through one rename table, so a stamp on a document carrying its own Roboto keeps an embedded face; the OCR layer's Latin face is the declared gap.

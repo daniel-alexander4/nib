@@ -57,6 +57,33 @@ const nibFaceToken = "Nib"
 // `Liberation Sans` and `Ascender - Liberation Sans` alike.
 const upstreamFaceToken = "Liberation"
 
+// The AUTHORING faces' rename — `/pending 560`, ADR-044's declared gap. Roboto is what nib sets its own prose
+// in (Markdown conversions, the co-signing readme, watermarks and page numbers), and Roboto is also what any
+// number of other producers embed, so it collided at the same by-name match the stamp faces did: a document
+// carrying a foreign `Roboto` dropped `StampWatermark` and `StampPageNumbers` to Base-14. Roboto is under the
+// Apache License 2.0, which reserves no font name; the rename is for the match, not for the licence, and the
+// copyright, trademark and licence records are left alone exactly as Liberation's are.
+const (
+	authoringUpstreamToken = "Roboto"
+	authoringFaceToken     = "NibText"
+)
+
+// faceRenames is every upstream name token and what nib installs it as — the ONE table `nibFaceName` and
+// `renameEncoded` both read, so a face's installed name and the name in its bytes cannot disagree.
+var faceRenames = [][2]string{
+	{upstreamFaceToken, nibFaceToken},
+	{authoringUpstreamToken, authoringFaceToken},
+}
+
+// renameTokens replaces every upstream token in one decoded name record.
+var renameTokens = func() *strings.Replacer {
+	var pairs []string
+	for _, r := range faceRenames {
+		pairs = append(pairs, r[0], r[1])
+	}
+	return strings.NewReplacer(pairs...)
+}()
+
 // renameableNameIDs are the name records that carry the face's NAME. Everything else — and in
 // particular 0 (copyright), 7 (trademark), 13 (licence) and 14 (licence URL) — is carried through
 // byte for byte.
@@ -67,14 +94,16 @@ var renameableNameIDs = map[uint16]bool{
 
 var errNotATrueTypeFile = errors.New("pdfops: not a TrueType file this can rename")
 
-// nibFaceName is the name nib installs `face` under — `LiberationSans-Bold` → `NibSans-Bold`. A name
-// that does not start with the upstream token comes back unchanged, so a face that is already nib's
-// (or never was Liberation's) is its own answer.
+// nibFaceName is the name nib installs `face` under — `LiberationSans-Bold` → `NibSans-Bold`,
+// `Roboto-Bold` → `NibText-Bold`. A name that does not start with an upstream token comes back unchanged,
+// so a face that is already nib's (or never was one of these) is its own answer.
 func nibFaceName(face string) string {
-	if !strings.HasPrefix(face, upstreamFaceToken) {
-		return face
+	for _, r := range faceRenames {
+		if strings.HasPrefix(face, r[0]) {
+			return r[1] + strings.TrimPrefix(face, r[0])
+		}
 	}
-	return nibFaceToken + strings.TrimPrefix(face, upstreamFaceToken)
+	return face
 }
 
 // renamedFace returns ttf with its name records rewritten so pdfcpu installs and names it
@@ -257,7 +286,7 @@ func renamedNameTable(t []byte) ([]byte, error) {
 	return append(head.Bytes(), store.Bytes()...), nil
 }
 
-// renameEncoded replaces the reserved token in one name record, in that record's own encoding —
+// renameEncoded replaces the upstream tokens (`faceRenames`) in one name record, in that record's own encoding —
 // UTF-16BE on the Windows platform (3) and one byte per character on Macintosh (1).
 func renameEncoded(platform uint16, value []byte) ([]byte, error) {
 	if platform == 3 {
@@ -268,12 +297,12 @@ func renameEncoded(platform uint16, value []byte) ([]byte, error) {
 		for i := range units {
 			units[i] = binary.BigEndian.Uint16(value[2*i:])
 		}
-		s := strings.ReplaceAll(string(utf16.Decode(units)), upstreamFaceToken, nibFaceToken)
+		s := renameTokens.Replace(string(utf16.Decode(units)))
 		out := make([]byte, 0, len(s)*2)
 		for _, u := range utf16.Encode([]rune(s)) {
 			out = binary.BigEndian.AppendUint16(out, u)
 		}
 		return out, nil
 	}
-	return []byte(strings.ReplaceAll(string(value), upstreamFaceToken, nibFaceToken)), nil
+	return []byte(renameTokens.Replace(string(value))), nil
 }
