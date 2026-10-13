@@ -167,3 +167,42 @@ func TestAnXObjectWhoseSubtypeIsAReferenceSkipsThePass(t *testing.T) {
 		t.Fatalf("control: the same document with the name written in place: %d runs, %v; want one", runs, err)
 	}
 }
+
+// TestASkippedPassIsRememberedAgainstItsContext — /pending 766 part 7. `optimize` returned nil for a pass it ran
+// and for one it skipped, so nothing downstream of a write-path read could say the output was not compacted. The
+// skip is now a fact kept against the context.
+func TestASkippedPassIsRememberedAgainstItsContext(t *testing.T) {
+	skipped, err := pdfread.ReadOptimized(testpdf.PassSkipped(), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("setup: the document does not read: %v", err)
+	}
+	// STIMULUS: this is a document the pass is skipped for, and the read asked for the pass.
+	if pdfread.Unaffordable(skipped) == "" {
+		t.Fatal("setup: the fixture's pass is affordable; nothing below is about a skip")
+	}
+	if !pdfread.OptimizeSkipped(skipped) {
+		t.Error("the pass was skipped and the context does not say so")
+	}
+	f := fmt.Sprintf(dupHelv, "")
+	ran, err := pdfread.ReadOptimized(dupDoc(f, f, [2]string{}, nil), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pdfread.OptimizeSkipped(ran) {
+		t.Error("a document whose pass ran says it was skipped")
+	}
+	// Asked for and refused is not a skip: the strict door returns no context at all.
+	if _, err := pdfread.ReadOptimizedOrRefuse(testpdf.PassSkipped(), model.NewDefaultConfiguration()); !errors.Is(err, pdfread.ErrUnaffordable) {
+		t.Errorf("the strict read got %v, want ErrUnaffordable", err)
+	}
+	// And a context nobody asked to optimize says nothing.
+	conf := model.NewDefaultConfiguration()
+	conf.Optimize = false
+	unasked, err := pdfread.ReadOptimized(testpdf.PassSkipped(), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pdfread.OptimizeSkipped(unasked) {
+		t.Error("a read with the pass turned off says the pass was skipped")
+	}
+}

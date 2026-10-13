@@ -51,14 +51,25 @@
 //     ceremony the QUIC peer is the other party and the DHT nodes are strangers, so
 //     the collision is not reachable in practice; if it ever were, the loss is DHT
 //     traffic, not session traffic.
-//   - A QUIC short-header packet from an address never written to — a stateless
-//     reset from a peer this process never contacted, or a stale packet from a
-//     closed connection past its TTL — is handed to the DHT, which fails to parse
-//     it as bencode and discards it. That is the same outcome as dropping it.
+//   - A QUIC short-header packet that carries no connection id of ours — a stateless
+//     reset from a peer this process never contacted — is handed to the DHT, which
+//     fails to parse it as bencode and discards it. That is the same outcome as
+//     dropping it. (A stale packet for a CLOSED connection still carries an id of ours
+//     and goes to quic-go, which is the one equipped to answer it.)
+//
+// # A connection id is recognised, not remembered
+//
+// Rule 2 is refined once a connection-id generator is installed: a short header is QUIC
+// exactly when its destination connection id is one this Mux ISSUED, and that is decided
+// by a keyed check on the id's own bytes (NewConnectionID, knownCID) — there is no table
+// of issued ids, so nothing expires and nothing grows. See NewConnectionID for why.
 package udpmux
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
+	"hash/maphash"
 	"log"
 	"net"
 	"net/netip"
@@ -87,16 +98,28 @@ const (
 	// the address is free to be an ordinary DHT node again.
 	peerTTL = 5 * time.Minute
 
-	// sweepEvery is the least interval between two full sweeps of an expiring table
+	// sweepEvery is the least interval between two full sweeps of the peer table
 	// (/pending 711 R5-2). Sweeping on EVERY insert made an insert cost the table's size
-	// under the write lock, so filling it was quadratic: measured, 60k QUIC Initials'
-	// worth of connection ids took 57.9 s to register and 60k destinations 84.6 s to
-	// learn, one lock hold of about 1 ms each at the end, with the read loop waiting on
-	// the same locks for every inbound datagram. Swept at most this often, an insert is
+	// under the write lock, so filling it was quadratic: measured, 60k destinations took
+	// 84.6 s to learn, one lock hold of about 1 ms each at the end, with the read loop
+	// waiting on the same lock for every inbound datagram. (The connection-id table that
+	// shared this rule is gone — see NewConnectionID.) Swept at most this often, an insert is
 	// O(1) and a sweep's O(n) is paid once per interval. An entry therefore outlives its
 	// expiry by at most this long IN THE MAP, never in effect: every lookup compares the
 	// expiry itself, so a stale entry routes nothing.
 	sweepEvery = peerTTL / 8
+
+	// ConnectionIDLen is how long the connection ids this Mux issues are: cidNonce random
+	// bytes, then the keyed tag over them that knownCID recomputes (see NewConnectionID).
+	//
+	// Sixteen bytes, of QUIC's twenty: the tag is 64 bits, so a bencode dictionary or a stray
+	// datagram reading as one of ours by chance is 2^-64 — the same figure the eight random
+	// bytes of the table this replaced gave — and the 64-bit nonce keeps two issued ids from
+	// colliding. The cost is eight more bytes in every short header the PEER sends us. A
+	// connection id is opaque to the peer and any length up to twenty is the protocol's, so a
+	// peer on an older build sees nothing it has to understand.
+	ConnectionIDLen = 16
+	cidNonce        = 8
 )
 
 // Mux owns one UDP socket and hands out two net.PacketConn views of it.
@@ -111,13 +134,12 @@ type Mux struct {
 	// peersSweep is when the peer table may next be swept (sweepDue). Guarded by mu.
 	peersSweep time.Time
 
-	// cidMu guards the connection-ID table and its length. Separate from mu because
-	// the two are read on different rules and a short-header packet touches only one.
-	cidMu  sync.RWMutex
-	cidLen int
-	cids   map[string]time.Time
-	// cidsSweep is when the id table may next be swept (sweepDue). Guarded by cidMu.
-	cidsSweep time.Time
+	// cidSeed keys the tag inside every connection id this Mux issues. Drawn once at
+	// construction and never written again, so NewConnectionID and knownCID read it with no
+	// lock. cidsOn says a generator is installed (UseConnectionIDs), which is what switches
+	// short-header routing off the address rule.
+	cidSeed maphash.Seed
+	cidsOn  atomic.Bool
 
 	// now is fixed at construction so the read loop never observes it changing.
 	// A test that reassigned it on a live Mux would race with route().
@@ -177,9 +199,10 @@ func New(pc net.PacketConn) *Mux { return newWithClock(pc, time.Now) }
 
 func newWithClock(pc net.PacketConn, now func() time.Time) *Mux {
 	m := &Mux{
-		pc:    pc,
-		peers: make(map[netip.AddrPort]time.Time),
-		now:   now,
+		pc:      pc,
+		peers:   make(map[netip.AddrPort]time.Time),
+		now:     now,
+		cidSeed: maphash.MakeSeed(),
 	}
 	m.quic = newSide(m, true)
 	m.dht = newSide(m, false)
@@ -240,7 +263,7 @@ func (m *Mux) route(p []byte, addr net.Addr) *side {
 		m.byCID.Add(1)
 		return m.quic
 	} else if any {
-		// Connection IDs ARE registered and this is not one of them, so the packet
+		// A generator IS installed and this is not an id it issued, so the packet
 		// is not for any connection this endpoint owns. That is a decision the
 		// address rule cannot make, and it is the whole point: a KRPC reply from a
 		// host we also have a QUIC session with reaches the DHT.
@@ -255,112 +278,89 @@ func (m *Mux) route(p []byte, addr net.Addr) *side {
 	return m.dht
 }
 
-// UseConnectionIDs tells the mux how long this endpoint's connection IDs are, and
-// switches short-header routing onto them.
+// UseConnectionIDs tells the mux that this endpoint's connection ids come from
+// NewConnectionID, and switches short-header routing onto them.
 //
-// **The address rule survives only until the first ID is registered**, and that
-// asymmetry is deliberate. Routing on the connection ID is exact; routing on the
-// address over-claims for QUIC and swallows a DHT reply from a session peer — the
-// collision P02.S03 documented and P04.S01 hit on its first driven test. But a
-// generator that a later change forgets to install would send EVERY short header to
-// the DHT and break the session, which is the worse failure of the two. So the mux
-// falls back to the address rule while it has been told nothing, and stops the moment
-// it has been told something.
+// **The address rule survives only until this is called**, and that asymmetry is
+// deliberate. Routing on the connection ID is exact; routing on the address over-claims
+// for QUIC and swallows a DHT reply from a session peer — the collision P02.S03
+// documented and P04.S01 hit on its first driven test. But a generator that a later
+// change forgets to install would send EVERY short header to the DHT and break the
+// session, which is the worse failure of the two. So the mux falls back to the address
+// rule while it has been told nothing, and stops the moment it has been told something.
 //
 // Stats().RoutedByPeer is what makes a missed wiring visible rather than silent.
-func (m *Mux) UseConnectionIDs(length int) {
-	m.cidMu.Lock()
-	m.cidLen = length
-	if m.cids == nil {
-		m.cids = map[string]time.Time{}
-	}
-	m.cidMu.Unlock()
-}
+func (m *Mux) UseConnectionIDs() { m.cidsOn.Store(true) }
 
-// RegisterConnectionID records an ID this endpoint has issued.
+// NewConnectionID issues a connection id this Mux will recognise for as long as it lives.
 //
-// quic-go has no hook for a RETIRED id, so entries expire on the same TTL the peer
-// table uses, refreshed whenever one is matched. A live connection refreshes
-// constantly; a closed one falls out.
-func (m *Mux) RegisterConnectionID(cid []byte) {
-	if len(cid) == 0 {
-		return
+// **The id carries its own proof, and the mux keeps no record of it** (/pending 669 #2,
+// /pending 691 R7-3). An id is cidNonce random bytes followed by a tag over them, keyed with
+// a seed only this Mux holds; knownCID recomputes the tag from the packet. It replaced a
+// table of issued ids with a five-minute expiry refreshed on a match, which was wrong at
+// both ends, for one reason — **quic-go tells nobody when a connection ends or an id is
+// retired** (`ConnectionIDGenerator` is two methods, and neither names a connection), so a
+// table can only guess an id's lifetime from a clock:
+//
+//   - Too SHORT for a live connection. quic-go issues three spare ids at the handshake and
+//     the peer moves to the next one every 5,000-15,000 packets it sends
+//     (conn_id_manager.go, `shouldUpdateConnID`). A spare is never matched until then, so it
+//     aged out while the session sat on the safety words or the consent prompt — the keep-alive
+//     refreshes only the id IN USE — and the first rotation of the document transfer that
+//     followed put every later packet in the DHT's queue. Measured over real quic-go on two
+//     muxes with the clock moved six minutes (three 2-minute steps, a byte each): a 40 MiB
+//     write stalled at about 13,000 packets with 270 datagrams routed to the DHT.
+//   - Too LONG for a stranger. Every Initial quic-go accepts draws an id before any
+//     pin check, so each cost a table entry for five minutes.
+//
+// With the proof in the id there is no lifetime to get wrong and nothing a stranger's packet
+// can grow.
+//
+// **It is a discriminator and not an authenticator, on purpose.** All it decides is which of
+// two parsers sees a datagram. A forged tag would send a datagram to quic-go — which is where
+// a single set bit (rule 1) already sends anything — and quic-go authenticates every packet
+// itself. So the tag is `hash/maphash`, a keyed 64-bit hash, rather than a MAC: measured on
+// the per-datagram path, about 8 ns and no allocation against about 90 ns for the table's
+// read-lock, map index and clock read (3,000,000 iterations, five rounds, same run; one AES
+// block was about 77 ns and two allocations). Nothing may come to rest on this check as
+// evidence of who sent a packet.
+func (m *Mux) NewConnectionID() ([]byte, error) {
+	b := make([]byte, ConnectionIDLen)
+	if _, err := rand.Read(b[:cidNonce]); err != nil {
+		return nil, err
 	}
-	now := m.now()
-	m.cidMu.Lock()
-	if m.cids == nil {
-		m.cids = map[string]time.Time{}
-	}
-	if m.cidLen == 0 {
-		m.cidLen = len(cid)
-	}
-	m.cids[string(cid)] = now.Add(peerTTL)
-	if sweepDue(now, &m.cidsSweep) {
-		for k, exp := range m.cids {
-			if !now.Before(exp) {
-				delete(m.cids, k)
-			}
-		}
-	}
-	m.cidMu.Unlock()
+	binary.BigEndian.PutUint64(b[cidNonce:], maphash.Bytes(m.cidSeed, b[:cidNonce]))
+	m.cidsOn.Store(true)
+	return b, nil
 }
 
-// sweepDue reports whether an expiring table may be swept now, and if so books the next
-// sweep. It is the one rule both tables follow; the caller holds the table's write lock.
+// knownCID reports whether a short-header packet carries an ID this Mux issued, and whether
+// a generator is installed at all. The second return is what keeps the address rule alive
+// until the generator is wired.
+//
+// **No lock and no clock**, which is also what keeps `handle`'s recover sound (/pending 512):
+// a read loop that carries on after a recovered panic is only safe if nothing on the
+// per-datagram path can panic while holding a lock, and this path now holds none. The slice
+// expressions are inside the length check above them.
+func (m *Mux) knownCID(p []byte) (known, any bool) {
+	if !m.cidsOn.Load() {
+		return false, false
+	}
+	if len(p) < 1+ConnectionIDLen {
+		return false, true
+	}
+	id := p[1 : 1+ConnectionIDLen]
+	return maphash.Bytes(m.cidSeed, id[:cidNonce]) == binary.BigEndian.Uint64(id[cidNonce:]), true
+}
+
+// sweepDue reports whether the peer table may be swept now, and if so books the next
+// sweep. The caller holds the table's write lock.
 func sweepDue(now time.Time, next *time.Time) bool {
 	if now.Before(*next) {
 		return false
 	}
 	*next = now.Add(sweepEvery)
 	return true
-}
-
-// knownCID reports whether a short-header packet carries an ID we issued, and whether
-// any ID is registered at all. The second return is what keeps the address rule alive
-// until the generator is wired.
-//
-// **The clock is read OUTSIDE the lock, and that is what makes `handle`'s recover sound**
-// (/pending 512). A read loop that carries on after a recovered panic is only safe if nothing
-// on the per-datagram path can panic while holding a lock: none of these mutexes is released by
-// a `defer`, so a panic under one leaks it and the next writer blocks forever — a deader mux
-// than the one the recover was added to prevent. `m.now` is the only injectable call `route`
-// makes, and it used to sit between this RLock and its RUnlock. It now sits after, so the
-// locked region is a length read and a map index on a slice the line above bounds-checked, and
-// the other locked region on this path (`isQUICPeer`) already released before calling `now()`.
-//
-// **After the lookup rather than before it, and that choice is measured rather than tidy.**
-// Hoisting the clock ABOVE the RLock gets the same property, and it reads the clock on the
-// EARLY-RETURN path too — the path every datagram takes until the first connection id is
-// registered, which is every DHT datagram on a socket with no live session yet. One run, three
-// variants, `benchtime 3000000x -count=7`, medians on an i5-1155G7: clock above the lock
-// **144.0 ns**, clock below the RUnlock (this shape) **29.6 ns**, clock inside the lock (the
-// shape before this change) **30.8 ns**. So moving it down costs nothing measurable and hoisting
-// it up costs 4.7x. The absolute figures are on a loaded box; the comparison is same-run.
-func (m *Mux) knownCID(p []byte) (known, any bool) {
-	m.cidMu.RLock()
-	n, have := m.cidLen, len(m.cids) > 0
-	if !have || n <= 0 || len(p) < 1+n {
-		m.cidMu.RUnlock()
-		return false, have
-	}
-	exp, ok := m.cids[string(p[1:1+n])]
-	m.cidMu.RUnlock()
-	now := m.now()
-	fresh := ok && now.Before(exp)
-	// Refresh on use: a connection that is still carrying traffic keeps its id.
-	//
-	// **Only once the entry is past half its TTL, the rule `learn` already follows** (/pending
-	// 501). This took the write lock on EVERY inbound short-header datagram carrying a known id —
-	// the steady state of a live QUIC session — so each one contended with every reader of
-	// `cids`, to move an expiry five minutes out by a few milliseconds. Refreshing at half the TTL
-	// keeps an active id comfortably alive and touches the write lock once per id per two and a
-	// half minutes.
-	if fresh && !now.Add(peerTTL/2).Before(exp) {
-		m.cidMu.Lock()
-		m.cids[string(p[1:1+n])] = now.Add(peerTTL)
-		m.cidMu.Unlock()
-	}
-	return fresh, true
 }
 
 // peerKey reduces an address to the comparable key the table is built on. It is a

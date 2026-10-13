@@ -166,10 +166,15 @@ func TestTheClockOutranksAStrangerAndTheWaitsEndGivesTheReason(t *testing.T) {
 // goroutines calls both doors.
 func TestEveryArmNamesItsRefusals(t *testing.T) {
 	// The function that installs an arm → where its arm goroutine's body is.
-	runs := map[string]struct{ file, fn string }{
-		"handleSessionArm": {"session.go", "func (s *Server) runSession("},
-		"armCeremonyHop":   {"session.go", "func (s *Server) runCeremonyReceive("},
-		"armForDelivery":   {"delivery.go", "func (s *Server) armForDelivery("},
+	// `paces` is the call that waits before the arm takes a connection after one that FAILED and
+	// left it standing (/pending 766 part 2): the rule was written for the QUIC ceremony arm and had
+	// not reached the delivery arm, whose door also says a tamper check. The TCP arm is the named
+	// exemption — a racer's losing candidates reach its loop as failures — and must say so at the
+	// site, so its entry is the sentence and is looked for in the source WITH its comments.
+	runs := map[string]struct{ file, fn, paces string }{
+		"handleSessionArm": {"session.go", "func (s *Server) runSession(", "is NOT paced here, by name"},
+		"armCeremonyHop":   {"session.go", "func (s *Server) runCeremonyReceive(", "reraceWait("},
+		"armForDelivery":   {"delivery.go", "func (s *Server) armForDelivery(", "s.deliveryArmKept("},
 	}
 	door := regexp.MustCompile(`sess\.(arm|armCeremony|armCeremonyByPolicy|armDeliveryForCeremony)\b`)
 	funcName := regexp.MustCompile(`(?m)^func (?:\([^)]*\) )?(\w+)\(`)
@@ -225,6 +230,37 @@ func TestEveryArmNamesItsRefusals(t *testing.T) {
 					"the rule reaching some arms and not others", name, at.fn, strings.TrimSuffix(call, "("))
 			}
 		}
+		if raw := funcBodyFrom(string(b), strings.Index(string(b), at.fn)); !strings.Contains(body, at.paces) && !strings.Contains(raw, at.paces) {
+			t.Errorf("the arm %s installs (%s) never calls %s. A pinned peer that completes the "+
+				"handshake and then fails is taken again as fast as it fails, for the whole of the "+
+				"arm's window — the pacing rule reaching some arms and not others",
+				name, at.fn, strings.TrimSuffix(at.paces, "("))
+		}
+	}
+	// And the exemption is an exemption: the TCP arm's loop really does not wait.
+	sb, serr := os.ReadFile("session.go")
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	scode := stripLineComments(string(sb))
+	if tcp := funcBodyFrom(scode, strings.Index(scode, "func (s *Server) runSession(")); strings.Contains(tcp, "reraceWait(") {
+		t.Error("runSession paces through reraceWait and still carries the sentence saying it does not. " +
+			"If pacing is now wanted there, the winner of a TCP race must not wait behind its losers " +
+			"(TestManyAbandonedConnectionsAreFollowedByExactlyOneSession)")
+	}
+	// And the delivery arm's door is itself on the one pacing door.
+	b, rerr := os.ReadFile("delivery.go")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	code := stripLineComments(string(b))
+	i := strings.Index(code, "func (s *Server) deliveryArmKept(")
+	if i < 0 {
+		t.Fatal("cannot find deliveryArmKept in delivery.go — the guard is pinned to a function that is gone")
+	}
+	if kept := funcBodyFrom(code, i); !strings.Contains(kept, "reraceWait(") || !strings.Contains(kept, "sleepOrDone(") {
+		t.Error("deliveryArmKept does not pace through reraceWait and sleepOrDone; the delivery arm " +
+			"would route every failure through a door that waits for nothing")
 	}
 }
 

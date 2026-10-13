@@ -28,18 +28,19 @@ import (
 // behaviour was never observed.
 //
 // The CLOCK is the seam, and it is the one this package's own `TestAPeerExpires` already
-// drives: `newWithClock` is how a test supplies `now`, and `knownCID` calls it on every
-// datagram. Arming it to panic puts a panic inside `route` while a real datagram is being
-// routed off a real socket — the shape the recover exists for — without pretending the wire
-// can produce one.
+// drives: `newWithClock` is how a test supplies `now`, and the address rule (`isQUICPeer`) reads
+// it for every short header from an address this process has written QUIC to. Arming it to panic
+// puts a panic inside `route` while a real datagram is being routed off a real socket — the
+// shape the recover exists for — without pretending the wire can produce one. (The connection-id
+// rule used to be the seam; it reads no clock now.)
 func TestAPanicRoutingOneDatagramCostsThatDatagramAndNotTheSocket(t *testing.T) {
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Armed after construction, never during: `RegisterConnectionID` below reads the clock on
-	// this goroutine, and a clock that panicked there would fail the test from the setup rather
-	// than from the read loop.
+	// Armed after construction, never during: the QUIC write below reads the clock on this
+	// goroutine (`learn`), and a clock that panicked there would fail the test from the setup
+	// rather than from the read loop.
 	var armed atomic.Bool
 	m := newWithClock(pc, func() time.Time {
 		if armed.Load() {
@@ -49,15 +50,16 @@ func TestAPanicRoutingOneDatagramCostsThatDatagramAndNotTheSocket(t *testing.T) 
 	})
 	defer m.Close()
 
-	// A registered connection id is what makes `knownCID` reach the clock at all.
-	m.UseConnectionIDs(8)
-	m.RegisterConnectionID([]byte{9, 9, 9, 9, 9, 9, 9, 9})
-
 	peer, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer peer.Close()
+
+	// A QUIC write to the peer is what makes the address rule reach the clock for its datagrams.
+	if _, err := m.QUIC().WriteTo([]byte("x"), peer.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
 
 	// STIMULUS: the same datagram routes before the clock is armed, so arming it is the only
 	// difference between this arrival and the loss below.
@@ -65,7 +67,7 @@ func TestAPanicRoutingOneDatagramCostsThatDatagramAndNotTheSocket(t *testing.T) 
 		t.Fatal(err)
 	}
 	if !arrives(t, m.QUIC(), quicShortHeader) {
-		t.Fatal("a short header carrying a registered connection id did not reach QUIC with the " +
+		t.Fatal("a short header from an address QUIC has written to did not reach QUIC with the " +
 			"clock unarmed; nothing below could fail")
 	}
 
@@ -87,9 +89,15 @@ func TestAPanicRoutingOneDatagramCostsThatDatagramAndNotTheSocket(t *testing.T) 
 	}
 
 	// AND THE POINT: the socket is still being read. Disarm and send a real KRPC ping; it must
-	// reach the DHT view, which it cannot do unless the read loop survived the panic.
+	// reach the DHT view, which it cannot do unless the read loop survived the panic. From a
+	// second socket: `peer` is an address QUIC has written to, so the address rule claims it.
 	armed.Store(false)
-	if _, err := peer.WriteTo(krpcPing, m.LocalAddr()); err != nil {
+	node, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Close()
+	if _, err := node.WriteTo(krpcPing, m.LocalAddr()); err != nil {
 		t.Fatal(err)
 	}
 	if !arrives(t, m.DHT(), krpcPing) {

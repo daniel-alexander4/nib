@@ -55,7 +55,7 @@ func NewSharedEndpoint(bind string) (*SharedEndpoint, error) {
 	mux := udpmux.New(sock)
 	return &SharedEndpoint{
 		mux: mux,
-		tr:  &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux)},
+		tr:  &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux), VerifySourceAddress: newSourceCheck()},
 	}, nil
 }
 

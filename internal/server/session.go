@@ -2086,6 +2086,16 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		}
 		return false // the loop resumes the timer to the remainder of whichever deadline is live
 	}
+	// **A connection after one that failed is NOT paced here, by name (/pending 766 part 2; ADR-009's
+	// exemption at the site).** `runCeremonyReceive` and the delivery arm wait out `reraceWait` before
+	// they take a peer again after a failure, and this loop does not, on purpose: over TCP a racer's
+	// LOSING candidates reach this loop by ordinary behaviour (P05.S02 — several pinned handshakes
+	// complete here and the dialler keeps one), each ending as a channel lost before anything was
+	// said. Over QUIC a loser never leaves the listener (`quicListener.acceptLoop` drops a connection
+	// that opens no stream; the glare promotes only the survivor), so there a failure in the loop is a
+	// failure. Pacing was built here and run: the winner was held behind its own losers, and
+	// `TestManyAbandonedConnectionsAreFollowedByExactlyOneSession` went red. What bounds a failing
+	// pinned peer on this arm is the listener's handshake pool and its per-source share (ADR-149).
 	for {
 		conn, err := ln.Accept()
 		if err != nil {

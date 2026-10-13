@@ -14097,6 +14097,16 @@ function reflectUndoControls(enabled) {
     view.lastEvictionSeen = view.docMeta.id;
     toast('Earlier undo history for this document was released to stay within the memory budget');
   }
+  // Nib does not compact this document when it changes it (`unoptimized` on the answer, /pending 766
+  // part 7): the pass that merges its duplicate fonts and images would not finish over it, so a changed copy
+  // is larger than it needs to be. Said ONCE per document, when the answer first says it, and for long enough
+  // to read. It is a standing fact and a toast is the weaker delivery for one, for the reason given just
+  // above — but it costs nobody anything they can act on (nothing is lost, only bytes), every corner a
+  // standing notice could take is spoken for (/pending 462), and silence was the defect.
+  if (m.unoptimized && view.unoptimizedSaid !== view.docMeta.id) {
+    view.unoptimizedSaid = view.docMeta.id;
+    toast(unoptimizedWords(), 12000);
+  }
   reflectTagNotice(m);
   reflectLostNotice(m);
   reflectXfaNotice(m);
@@ -14257,6 +14267,12 @@ function reflectSigningLabel(m) {
     el.textContent = words;
     el.hidden = !words;
   }
+}
+
+// The one sentence for `unoptimized` on a document's answer. A function for xfaNoticeWords' reason.
+function unoptimizedWords() {
+  return 'Nib cannot compact this document when it changes it, so a changed copy may be larger than it '
+    + 'needs to be. Nothing in it is lost.';
 }
 
 function xfaNoticeKey(state) {

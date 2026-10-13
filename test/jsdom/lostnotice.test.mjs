@@ -22,6 +22,7 @@ const DOC = '/tmp/nib-harness/noted.pdf';
 let lostAnnots = 0;
 let lostFields = 0;
 let xfa = '';
+let unoptimized = false;
 
 const meta = () => ({
   id: 'test-epoch:1', name: 'noted.pdf', path: DOC, canSave: true,
@@ -29,6 +30,7 @@ const meta = () => ({
   lostAnnots: lostAnnots || undefined,
   lostFields: lostFields || undefined,
   xfa: xfa || undefined,
+  unoptimized: unoptimized || undefined,
 });
 
 const h = await boot({
@@ -163,4 +165,28 @@ test('a state the window does not know shows nothing rather than an empty box', 
   xfa = 'constructor';
   await openDocument();
   assert.equal(xfaShown(), false, 'an unknown xfa value drew a notice');
+});
+
+// ── A document Nib does not compact (/pending 766 part 7) ────────────────────
+// The Go tests prove the server SAYS it (`unoptimized` on the answer, from the read that skipped the pass). Only
+// this tier sees whether the user is told, in which words, and that it is said once and not on every answer.
+const toastText = () => doc.getElementById('toast')?.textContent || '';
+
+test('a document Nib compacts is told nothing about size', async () => {
+  lostAnnots = 0; lostFields = 0; xfa = ''; unoptimized = false;
+  await openDocument();
+  assert.doesNotMatch(toastText(), /compact/, `an ordinary document was told: ${JSON.stringify(toastText())}`);
+});
+
+test('a document Nib cannot compact says so once, at the first answer that says it', async () => {
+  unoptimized = true;
+  await openDocument();
+  assert.match(toastText(), /cannot compact this document/,
+    `the answer says the document is not compacted and the user was told ${JSON.stringify(toastText())}`);
+  assert.match(toastText(), /may be larger than it needs to be/, `it does not say what that costs: ${toastText()}`);
+  assert.match(toastText(), /Nothing in it is lost/, `it does not say nothing is lost: ${toastText()}`);
+  // Once: the next answer for the same document says it again on the wire and must not on the screen.
+  doc.getElementById('toast').textContent = '';
+  await anEdit();
+  assert.doesNotMatch(toastText(), /compact/, 'the same document was told a second time, on its next answer');
 });

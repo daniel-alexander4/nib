@@ -176,9 +176,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"built by byte surgery so the p2p, server, cli and sign tests measure one fixture (P01.S03, ADR-060).",
 		"DocTimeStamped": "test-support — a real PAdES document timestamp from a loopback TSA, shared by the sign " +
 			"and cli tests so a timestamp is measured on one fixture whose token encapsulates a TSTInfo (ADR-060).",
+		"PassSkipped": "test-support — a document pdfcpu's optimize pass is skipped for, shared by the pdfread, pdfops " +
+			"and server tests so the skip, the fact and the answer are measured on one fixture (/pending 766 part 7).",
 		"FormChain": "test-support — /pending 706's 400-form comparison shape, the unaffordable-optimize fixture mdpdf's exhibit test takes (ADR-055)",
 
-		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*side).SetWriteDeadline":       "interface — net.Conn. Its three siblings on the same type are called; this one is not, and dropping it would stop the type satisfying the interface.",
 		"(blockFontmap).ResolveFace":     "interface — go-text/typesetting's shaping.Fontmap, dispatched by its segmenter when a line of a signature block is split by face (ADR-158).",

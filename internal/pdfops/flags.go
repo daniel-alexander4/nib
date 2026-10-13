@@ -102,6 +102,11 @@ type AnswerFacts struct {
 	Labelled bool
 	// Tagged says the document claims tagging (`taggingClaimOf`: `/MarkInfo /Marked true`, or a tree).
 	Tagged bool
+	// Unoptimized says pdfcpu's optimize pass is skipped for this document (`pdfread.OptimizeSkipped`): what
+	// Nib writes from it keeps every duplicate font and image the pass would have merged, so a changed copy is
+	// larger than it needs to be. Read off the read this function already makes — the pass was asked for by
+	// that read and skipped by the same rule every write-path read follows (/pending 766 part 7).
+	Unoptimized bool
 }
 
 // ReadAnswerFacts reads all of AnswerFacts from ONE read: each is a reading of a read the server is already
@@ -117,6 +122,7 @@ func ReadAnswerFacts(pdf []byte) (AnswerFacts, error) {
 		return f, err
 	}
 	f.XFA = pdfread.XFAOf(ctx)
+	f.Unoptimized = pdfread.OptimizeSkipped(ctx)
 	if enc, ok := ctx.Properties[flagsKey]; ok && enc != "" {
 		if raw, derr := base64.StdEncoding.DecodeString(enc); derr == nil { // unreadable => treat as no flags
 			f.Flags = raw

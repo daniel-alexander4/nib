@@ -371,22 +371,23 @@ func isLocalSendFault(err error) bool {
 	return strings.Contains(err.Error(), "error writing ")
 }
 
-// cidGen mirrors what internal/p2p installs on its transports: it registers every
-// connection id this endpoint issues with the mux, so short headers route on the
-// DESTINATION connection id rather than on the sender's address.
-type cidGen struct {
-	m *Mux
-	n int
+// cidGen mirrors what internal/p2p installs on its transports: every connection id this
+// endpoint issues comes from the mux, so short headers route on the DESTINATION
+// connection id rather than on the sender's address.
+type cidGen struct{ m *Mux }
+
+func newCIDGen(m *Mux) *cidGen {
+	m.UseConnectionIDs()
+	return &cidGen{m: m}
 }
 
-func (g *cidGen) ConnectionIDLen() int { return g.n }
+func (g *cidGen) ConnectionIDLen() int { return ConnectionIDLen }
 
 func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
-	b := make([]byte, g.n)
-	if _, err := rand.Read(b); err != nil {
+	b, err := g.m.NewConnectionID()
+	if err != nil {
 		return quic.ConnectionID{}, err
 	}
-	g.m.RegisterConnectionID(b)
 	return quic.ConnectionIDFromBytes(b), nil
 }
 
@@ -413,9 +414,9 @@ func TestKRPCFromAQUICPeerReachesTheDHT(t *testing.T) {
 	// learns A as a "QUIC peer" from B's own handshake WRITES, so B swallowed A's
 	// ping by the same address rule, at the other end of the same exchange. The
 	// collision is symmetric; a fix on one side is not a fix.
-	tr := &quic.Transport{Conn: a.mux.QUIC(), ConnectionIDGenerator: &cidGen{m: a.mux, n: 8}}
+	tr := &quic.Transport{Conn: a.mux.QUIC(), ConnectionIDGenerator: newCIDGen(a.mux)}
 	defer tr.Close()
-	srvTr := &quic.Transport{Conn: b.mux.QUIC(), ConnectionIDGenerator: &cidGen{m: b.mux, n: 8}}
+	srvTr := &quic.Transport{Conn: b.mux.QUIC(), ConnectionIDGenerator: newCIDGen(b.mux)}
 	defer srvTr.Close()
 
 	ln, err := srvTr.Listen(&tls.Config{
