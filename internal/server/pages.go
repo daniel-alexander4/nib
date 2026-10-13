@@ -10,7 +10,8 @@ import (
 	"nib/internal/pdfops"
 )
 
-// sameDocument answers for a page operation whose output IS the open document — delete and reorder.
+// sameDocument answers for a page operation whose output IS the open document and that can drop a page —
+// delete, reorder and the two splits (a split removes the page it cuts).
 //
 // Those go through `pdfops.DeletePages` / `pdfops.ReorderPages`, the same-document door, which keeps what
 // describes the document (title, `/ID`, metadata packet, embedded files). Every other op through the selection
@@ -132,7 +133,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resize := r.FormValue("resize") == "1" || r.FormValue("resize") == "true"
-		result, err = pdfops.SplitPage(pdfBytes, pageNum, cols, rows, resize)
+		result, err = sameDocument(pdfops.SplitPage(pdfBytes, pageNum, cols, rows, resize))
 	case "splitrects":
 		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -144,7 +145,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "could not read split regions")
 			return
 		}
-		result, err = pdfops.SplitRegions(pdfBytes, pageNum, rects)
+		result, err = sameDocument(pdfops.SplitRegions(pdfBytes, pageNum, rects))
 	case "crop":
 		var frac [4]float64 // keep-box as page fractions [fx, fy, fw, fh], top-left origin
 		if uErr := json.Unmarshal([]byte(r.FormValue("rect")), &frac); uErr != nil {

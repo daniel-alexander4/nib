@@ -217,7 +217,7 @@ func TestInsertingBeforePageOneKeepsTheOriginalAsTheHost(t *testing.T) {
 // but splitting one page no longer destroys every OTHER page's tags.
 func TestSplittingAPageKeepsTheRestOfTheDocumentsTree(t *testing.T) {
 	host := subsetFixture()
-	out, err := SplitPage(host, 3, 2, 1, false)
+	out, _, err := SplitPage(host, 3, 2, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestAnIncompleteInsertFallsBackToTheHonestLoss(t *testing.T) {
 	}
 	// The stimulus, asserted: the grafting attempt really is refused by the gate. Without this the test
 	// passes on an insert that grafts cleanly and never reaches the fallback — which it once did.
-	grafted, _, carried, err := spliceOnce(host, 1, 2, 1, mid, true, true)
+	grafted, _, carried, _, err := spliceOnce(host, 1, 2, 1, mid, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}

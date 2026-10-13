@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"bytes"
 	"encoding/binary"
 	"strings"
 	"testing"
@@ -117,6 +118,63 @@ func TestAUTF16IdentificationIsDropped(t *testing.T) {
 	if _, kept := packetIn(t, ctx); !had || kept {
 		t.Errorf("a UTF-16 packet naming the identification schema was left in place (claim reported: %v, "+
 			"/Metadata kept: %v)", had, kept)
+	}
+}
+
+// TestAUTF16IdentificationSpelledWithACharacterReferenceIsDropped — `/pending 870`. In UTF-16 neither the URI nor
+// `&#` is in the bytes as the door searched for them, and veraPDF 1.30.2 reads the claim all the same (measured:
+// `5 t1` passes on each of the four packets below and fails on the same packet naming another URI). nib cannot
+// edit a UTF-16 packet, so one that claims goes whole; the control, which claims nothing, is kept as it stood.
+func TestAUTF16IdentificationSpelledWithACharacterReferenceIsDropped(t *testing.T) {
+	encode := func(p string, order binary.ByteOrder, mark []byte) []byte {
+		b := append([]byte{}, mark...)
+		for _, u := range utf16.Encode([]rune(p)) {
+			var two [2]byte
+			order.PutUint16(two[:], u)
+			b = append(b, two[:]...)
+		}
+		return b
+	}
+	spelled := func(p, uri string) string {
+		if strings.Count(p, pdfuaidNS) == 0 {
+			t.Fatal("setup: the labelled packet does not name the schema")
+		}
+		return strings.ReplaceAll(p, pdfuaidNS, uri)
+	}
+	claim := strings.TrimSuffix(pdfuaidNS, "/") + "&#x2F;"
+	for _, c := range []struct {
+		name  string
+		order binary.ByteOrder
+		mark  []byte
+	}{
+		{"little-endian with a byte-order mark", binary.LittleEndian, []byte{0xFF, 0xFE}},
+		{"big-endian with a byte-order mark", binary.BigEndian, []byte{0xFE, 0xFF}},
+		{"little-endian with no mark", binary.LittleEndian, nil},
+		{"big-endian with no mark", binary.BigEndian, nil},
+	} {
+		ctx := withCatalogPacket(t, func(p string) []byte { return encode(spelled(p, claim), c.order, c.mark) })
+		if before, _ := packetIn(t, ctx); namesIdentification([]byte(before)) || bytes.Contains([]byte(before), []byte("&#")) {
+			t.Fatalf("setup (%s): the packet's bytes must hold neither the URI nor a UTF-8 character reference", c.name)
+		}
+		had, err := dropUAIdentification(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, kept := packetIn(t, ctx); !had || kept {
+			t.Errorf("%s: a UTF-16 packet spelling the identification's namespace with a character reference was left "+
+				"in place (claim reported: %v, /Metadata kept: %v) — veraPDF reads it, so the document goes on "+
+				"claiming PDF/UA through every change", c.name, had, kept)
+		}
+		// Control: the same packet naming another URI the same way claims nothing and keeps everything.
+		ctx = withCatalogPacket(t, func(p string) []byte {
+			return encode(spelled(p, "http://example.org/ns/id&#x2F;"), c.order, c.mark)
+		})
+		want, _ := packetIn(t, ctx)
+		had, err = dropUAIdentification(ctx)
+		if got, kept := packetIn(t, ctx); had || err != nil || !kept || got != want {
+			t.Errorf("control (%s): a UTF-16 packet with a character reference and no claim: had = %v, err = %v, "+
+				"kept = %v, unchanged = %v", c.name, had, err, kept, got == want)
+		}
 	}
 }
 

@@ -214,6 +214,16 @@ func fileSpecName(xt *model.XRefTable, fs types.Dict) string {
 // (or →UF) stream. It mirrors pdfcpu's own (unexported) decodeFileSpecStreamDict:
 // an unfiltered stream's content is its raw bytes.
 func fileSpecBytes(xt *model.XRefTable, fs types.Dict) ([]byte, error) {
+	o, err := fileSpecStream(xt, fs)
+	if err != nil {
+		return nil, err
+	}
+	return embeddedStreamBytes(xt, o)
+}
+
+// fileSpecStream is the /EF value `fileSpecBytes` reads — /F, else /UF — undecoded, so a caller that knows how
+// large its file can be decodes it within that (`CeremonyRecord`).
+func fileSpecStream(xt *model.XRefTable, fs types.Dict) (types.Object, error) {
 	ef := derefDict(xt, fs["EF"])
 	if ef == nil {
 		return nil, fmt.Errorf("attachment has no embedded file")
@@ -225,7 +235,7 @@ func fileSpecBytes(xt *model.XRefTable, fs types.Dict) ([]byte, error) {
 	if !found || o == nil {
 		return nil, fmt.Errorf("attachment has no embedded file stream")
 	}
-	return embeddedStreamBytes(xt, o)
+	return o, nil
 }
 
 // embeddedStreamBytes is the decoded content of one /EF value — the stream `fileSpecBytes` picks,
@@ -1433,8 +1443,38 @@ func CeremonyRecord(pdf []byte) ([]byte, error) {
 	if err != nil || fs == nil {
 		return nil, fmt.Errorf("the ceremony record has no file specification")
 	}
-	return fileSpecBytes(xt, fs)
+	o, err := fileSpecStream(xt, fs)
+	if err != nil {
+		return nil, err
+	}
+	sd, _, err := xt.DereferenceStreamDict(o)
+	if err != nil {
+		return nil, err
+	}
+	if sd == nil {
+		return nil, fmt.Errorf("attachment stream is empty")
+	}
+	if err := pdfread.DecodeWithin(sd, maxCeremonyRecord); err != nil {
+		return nil, fmt.Errorf("the ceremony record: %w", err)
+	}
+	return sd.Content, nil
 }
+
+// maxCeremonyRecord is the most `CeremonyRecord` will inflate (`/pending 870`). The record was read through
+// `embeddedStreamBytes`, whose decode is uncapped on purpose — an extraction owes the user the whole file — but
+// this reader is not an extraction: it runs on documents nobody chose to trust (every arrival, every install),
+// and a "record" inflating to 200 MiB was inflated whole and handed to the JSON decoder (measured: 512 MiB
+// allocated and 209,715,200 bytes returned before; 16 MiB and a refusal after).
+//
+// A record is small by construction. The largest `ceremony.Record.Verify` accepts is 32 parties
+// (`ceremony.MaxRoster`), each with a label and a capacity of at most 4,096 characters, one 4,096-character
+// intent, and the convener's certificate: about 1.6 MiB with every character one JSON writes as six bytes, and a
+// few kilobytes in practice. 4 MiB is above anything that verifies and far under what a hostile one costs.
+// A record past it is an error, which `ceremony.Extract` reads as it reads any record it cannot read: none.
+//
+// NOT the bound on `ContentDigest`'s own decodes — the digest leaves this entry out, and a cap there changes
+// which documents hash, which is a `ContentDigestVersion` matter.
+const maxCeremonyRecord = 4 << 20
 
 // attachmentName reduces a user-supplied name to a clean basename: any directory
 // path is dropped (the name keys the embedded-files tree and lands in the

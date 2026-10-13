@@ -246,12 +246,20 @@ func TestTwoLinesAreJustifiedOnlyOnEvidence(t *testing.T) {
 // re-set line's spaces even (none keeps an old line's stretch; the review of S03, W3). Lines are found by baseline, as the
 // read-back test finds them. A sample: at most thirty justified paragraphs a document; refusals are counted by cause.
 // **The stimulus is asserted**: justified paragraphs must have been re-set, or the test proved nothing.
+// justifiedCheckedFloor is the least share, in percent, of the re-set justified paragraphs in which
+// `TestRealJustifiedParagraphsReWrapFlush` must have measured a flush line.
+const justifiedCheckedFloor = 90
+
 func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 	corp := externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers"))
 	if corp.absent != "" {
 		t.Skip("SKIP (not a measurement): " + corp.absent)
 	}
 	reset, flush, lines := 0, 0, 0
+	// unread is the read-backs `paragraphWords` refused, oneLine the ones that read as a single line, and checked
+	// the paragraphs a flush line was measured in — the census's CASE. It counted `reset` before the read-back and
+	// skipped past both checks for a read-back it could not use, so "0 of 0 lines flush" was green (/pending 797 I1).
+	unread, oneLine, checked := 0, 0, 0
 	refused := map[string]int{}
 	for _, doc := range corp.docs {
 		ctx, err := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
@@ -312,9 +320,16 @@ func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 					n += editLetters(ln.text)
 				}
 				ws, _, cause := paragraphWords(textParagraph{lines: got, column: para.column})
-				if cause != "" || len(ws) < 2 {
+				if cause != "" {
+					unread++
+					t.Errorf("%s p%d ¶%d: the re-set paragraph does not read back (%s), so none of its lines was checked", doc.name, p, pi, cause)
 					continue
 				}
+				if len(ws) < 2 {
+					oneLine++
+					continue
+				}
+				before := lines
 				for i, ln := range ws {
 					for k := 2; k < len(ln); k++ {
 						g0, g := ln[1].startX-ln[0].startX-ln[0].width, ln[k].startX-ln[k-1].startX-ln[k-1].width
@@ -334,11 +349,21 @@ func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 						t.Errorf("%s p%d ¶%d line %d ends at %v, the flush edge is %v", doc.name, p, pi, i, end.startX+end.width, a.edge)
 					}
 				}
+				if lines > before {
+					checked++
+				}
 			}
 		}
 	}
 	if reset == 0 {
 		t.Fatal("no justified paragraph was re-set — the justification was never exercised")
+	}
+	// The case must be MET, not only attempted: a flush line measured in most of what was re-set. A read-back that
+	// stops reading, or reads as one line, checks nothing, and a census of those alone was green.
+	if lines == 0 || checked*100 < reset*justifiedCheckedFloor {
+		t.Errorf("a flush line was checked in %d of %d re-set paragraphs (%d lines; %d read back as one line, %d did "+
+			"not read back) — under %d%%, so the census did not meet the case it is named for",
+			checked, reset, lines, oneLine, unread, justifiedCheckedFloor)
 	}
 	// The door's own floor (the review's R2-C1: an evenness rule silently vetoed 76 of 284): of the multi-line paragraphs
 	// whose lines before the last end together and whose lines after the first begin together, the door reads nearly all
@@ -385,6 +410,7 @@ func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 	}
 	t.Logf("the door reads %d of %d flush paragraphs as justified", detected, flushPara)
 	t.Logf("%d justified paragraphs re-set; %d of %d lines before the last flush; refused by cause %v", reset, flush, lines, refused)
+	t.Logf("a flush line checked in %d of %d re-set paragraphs; %d read back as one line, %d did not read back", checked, reset, oneLine, unread)
 }
 
 // TestAJustifiedLineNeverRunsPastItsEdge — the review of S03's own build, by construction: a paragraph justified by `TJ`

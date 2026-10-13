@@ -264,10 +264,22 @@ func ReorderPages(pdf []byte, order []string) (out []byte, filesDropped int, err
 // not carry. `DuplicatePage` needs none of this: it drops no page, so nothing can reach one.
 func sameDocument(pdf []byte, pick func(total int) ([]int, error)) (out []byte, filesDropped int, err error) {
 	out, filesWithheld, err := subsetCarryingFiles(pdf, pick, true)
+	return filesFromBytes(pdf, out, filesWithheld, err)
+}
+
+// filesFromBytes is the second way back for the embedded files of an operation whose output is the document
+// itself, and the ONE place it is taken (ADR-009): where `documentFacts.restore` withheld the name tree because an
+// entry reaches a page the operation dropped, each file is re-added to out from its bytes in src
+// (`CarryAttachments`). filesDropped is how many even that could not carry.
+//
+// Its callers are the two doors that can drop a page: `sameDocument` (delete, reorder) and `replacePage` (the two
+// splits, which remove the page they cut). **`InsertPDF` and `DuplicatePage` do not come here, and that is named
+// rather than forgotten**: neither drops a page, so no entry can reach a dropped one.
+func filesFromBytes(src, out []byte, filesWithheld bool, err error) ([]byte, int, error) {
 	if err != nil || !filesWithheld {
 		return out, 0, err
 	}
-	return CarryAttachments(pdf, out)
+	return CarryAttachments(src, out)
 }
 
 // selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
@@ -539,8 +551,8 @@ func withLang(dst []byte, lang string) ([]byte, error) {
 // Rearranging pages is a different act from producing something to hand over, and only the
 // caller knows which one it is doing.
 //
-// **Its one caller is `sameDocument`** (`/pending 870`), and only as that door's second way back: a delete or a
-// reorder keeps the document's own name tree in the selection's write, and comes here only when an entry reaches
+// **Its one caller is `filesFromBytes`** (`/pending 870`), and only as the second way back of `sameDocument` and
+// `replacePage`: a delete, a reorder or a split keeps the document's own name tree in the selection's write, and comes here only when an entry reaches
 // a page the selection dropped. The server no longer calls it after every delete and reorder.
 //
 // It reports how many it could not carry rather than returning silently, because the record
@@ -717,10 +729,14 @@ func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 	if err := pageInDocument(page, n); err != nil {
 		return nil, err
 	}
+	// The files-withheld answer is dropped by name: an insert drops no page, so no embedded file can reach a dropped
+	// one (`filesFromBytes`).
 	if before {
-		return splice(pdf, page-1, page, n, other)
+		out, _, err := splice(pdf, page-1, page, n, other)
+		return out, err
 	}
-	return splice(pdf, page, page+1, n, other)
+	out, _, err := splice(pdf, page, page+1, n, other)
+	return out, err
 }
 
 // DuplicatePage returns pdf with page (1-based) duplicated in place: the copy is
@@ -1184,27 +1200,27 @@ func nUpSeparated(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []
 // hand rather than via api.Resize: CutPage's tiles carry an offset MediaBox, and
 // api.Resize scales content about the origin while leaving the box's lower-left
 // unscaled, which mis-positions every tile but the origin-anchored one.
-func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
+func SplitPage(pdf []byte, page, cols, rows int, resize bool) (out []byte, filesDropped int, err error) {
 	if cols < 1 || rows < 1 || cols*rows < 2 {
-		return nil, fmt.Errorf("split needs at least 2 sub-pages (got %d×%d)", cols, rows)
+		return nil, 0, fmt.Errorf("split needs at least 2 sub-pages (got %d×%d)", cols, rows)
 	}
 	// The same ceiling as hand-drawn regions, for the same reason: every tile is a page, and the grid
 	// arrives from the request unbounded — 10000×10000 is a hundred million pages. Each side is checked
 	// before the product so the product cannot overflow.
 	if cols > maxRegions || rows > maxRegions || cols*rows > maxRegions {
-		return nil, fmt.Errorf("too many sub-pages (%d×%d, max %d)", cols, rows, maxRegions)
+		return nil, 0, fmt.Errorf("too many sub-pages (%d×%d, max %d)", cols, rows, maxRegions)
 	}
 	n, err := PageCount(pdf)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := pageInDocument(page, n); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Uniform grid: cut fractions are 0, 1/cols, 2/cols, … (the leading 0 is
 	// required when calling CutPage directly; the public api.Cut adds it for you).
@@ -1218,11 +1234,11 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	}
 	ctxDest, err := cutSeparated(ctx, page, &model.Cut{Hor: hor, Vert: vert})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tilesBuf, err := pdfread.Write(ctxDest)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// CutPage prepends a full-size outline/preview page; drop it, keep the tiles.
 	//
@@ -1232,7 +1248,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	// live carry the day it changes. P02.S06 owns what a tile should say.
 	tiles, err := collectWithoutStructure(tilesBuf, []string{"2-"}, keepUnreadable)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resize {
 		s := cols
@@ -1240,7 +1256,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 			s = rows
 		}
 		if tiles, err = scaleTiles(tiles, float64(s)); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	return replacePage(pdf, page, n, tiles)
@@ -1266,24 +1282,27 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 // and the ORIGINAL's tree still carried — `mergeDocs`'s own fallback, and the loss is only the insert's
 // tags, which were what failed. Only when that is refused too does it fall back to the same merge with no tree
 // carried at all. Going straight there wiped the host's whole tree over a defect in the document inserted into it.
-func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
-	out, grafted, carried, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, true, true)
+//
+// filesWithheld is whether the embedded files were withheld from the output returned (`documentFacts.restore`) — the
+// answer of whichever attempt produced that output (`/pending 870`).
+func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) (out []byte, filesWithheld bool, err error) {
+	out, grafted, carried, filesWithheld, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, true, true)
 	// A graft that cannot be placed failed on the insert's tree, exactly as a refused one does.
 	unplaced := errors.Is(err, errUnplaced)
 	if err != nil && !unplaced {
-		return nil, err
+		return nil, false, err
 	}
 	// Gated only when a tree was carried: `carryIsComplete` answers false for an untagged document, and
 	// the selection already says which this is without a second parse.
 	if !unplaced && (!carried || carryIsComplete(out)) {
-		return out, nil
+		return out, filesWithheld, nil
 	}
 	if grafted || unplaced {
-		if out, _, carried, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false, true); err != nil {
-			return nil, err
+		if out, _, carried, filesWithheld, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false, true); err != nil {
+			return nil, false, err
 		}
 		if !carried || carryIsComplete(out) {
-			return out, nil
+			return out, filesWithheld, nil
 		}
 	}
 	return spliceWithoutStructure(pdf, leftEnd, rightStart, n, mid)
@@ -1293,7 +1312,7 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 // point (graft), or mid's claims stripped and pdf's tree carried alone. carried says whether the page
 // selection carried a tree, so the caller knows whether there is anything to gate. With carry false the selection
 // carries no tree at all (`spliceWithoutStructure`).
-func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft, carry bool) (out []byte, grafted, carried bool, err error) {
+func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft, carry bool) (out []byte, grafted, carried, filesWithheld bool, err error) {
 	out, grafted, err = mergeOnce([][]byte{pdf, mid}, graft, func(ctx *model.Context, host *hostTree) error {
 		if host != nil && len(host.grafted) > 0 {
 			if err := placeInserted(ctx, host, leftEnd, n); err != nil {
@@ -1316,11 +1335,11 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft, carry
 		c, err := selectPages(ctx, keep, carry, keepUnreadable)
 		carried = c
 		if err == nil {
-			facts.restore(ctx)
+			filesWithheld = facts.restore(ctx)
 		}
 		return err
 	})
-	return out, grafted, carried, err
+	return out, grafted, carried, filesWithheld, err
 }
 
 // spliceWithoutStructure is splice's last resort: the same ONE merge with the original as the host, and the page
@@ -1333,15 +1352,21 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft, carry
 // metadata packet were gone whichever side came first. Nothing about refusing a tree needs the cut: the tree is
 // dropped by the selection's allowlist, in the merged context, exactly as each segment's was — and no carried
 // subset is fed to a merge, which is all `collectWithoutStructure`'s header asks of a composition.
-func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
-	out, _, _, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, false, false)
-	return out, err
+func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) (out []byte, filesWithheld bool, err error) {
+	out, _, _, filesWithheld, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false, false)
+	return out, filesWithheld, err
 }
 
 // replacePage returns pdf with page p (1-based, of n total) replaced in place by
 // the pages of tiles: pages[1..p-1] + tiles + pages[p+1..n].
-func replacePage(pdf []byte, page, n int, tiles []byte) ([]byte, error) {
-	return splice(pdf, page-1, page+1, n, tiles)
+//
+// It DROPS page p, so an embedded file that reaches that page is withheld by the splice and re-added from its
+// bytes (`filesFromBytes`, `/pending 870`) — before, a split of the page a file reached returned the document
+// with no files and said nothing. The tiles carry no files of their own (they come through a selection), so the
+// document's are all there is to carry.
+func replacePage(pdf []byte, page, n int, tiles []byte) (out []byte, filesDropped int, err error) {
+	out, filesWithheld, err := splice(pdf, page-1, page+1, n, tiles)
+	return filesFromBytes(pdf, out, filesWithheld, err)
 }
 
 const (
@@ -1363,19 +1388,19 @@ const (
 // normalized (any /Rotate flattened, CropBox resolved) before cropping. Like the
 // grid split it is a rasterization-free re-crop; vector/text stays live, and the
 // per-region clip keeps neighbouring content from bleeding in.
-func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
+func SplitRegions(pdf []byte, page int, rects [][4]float64) (out []byte, filesDropped int, err error) {
 	if len(rects) == 0 {
-		return nil, fmt.Errorf("no regions selected")
+		return nil, 0, fmt.Errorf("no regions selected")
 	}
 	if len(rects) > maxRegions {
-		return nil, fmt.Errorf("too many regions (%d, max %d)", len(rects), maxRegions)
+		return nil, 0, fmt.Errorf("too many regions (%d, max %d)", len(rects), maxRegions)
 	}
 	n, err := PageCount(pdf)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := pageInDocument(page, n); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// **`collectWithoutStructure`: this is a real subset of a tagged source feeding a composition.**
@@ -1384,14 +1409,14 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	// the prologue goes from ~37 ms to ~172 ms for a byte-for-byte identical result.
 	pageOnly, err := collectWithoutStructure(pdf, []string{strconv.Itoa(page)}, keepUnreadable)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// Normalize so the client's display-space rectangles map straight onto the
 	// content: this bakes any /Rotate into the content and resolves CropBox→
 	// MediaBox, leaving a page whose coordinate space matches what pdf.js showed.
 	norm, err := normalizePage(pageOnly)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Standardize the output: every region becomes a page of the same size — the
@@ -1407,7 +1432,7 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	}
 	tiles, err := cropToRects(norm, rects, pageW, pageH)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	return replacePage(pdf, page, n, tiles)
 }

@@ -517,3 +517,138 @@ test('cancelling an every-page render stops it at the next page and uploads noth
     gate.restore();
   }
 });
+
+// ── Flatten and Reduce render every page with no Save dialog open (/pending 852) ──
+// Flatten says so in the reading note — the surface a command's read of a scan already uses — with the page count
+// and its Stop; Reduce in its own dialog, on its one busy line, with its Cancel. Both through the press shape the
+// Save dialog hands its makers. Not seen here: the note's place on screen, and a real render's pace (tier 3's).
+const noteLine = () => { const n = $('readingNote'); return n && !n.hidden ? n.firstChild : null; };
+const noteText = () => (noteLine() ? noteLine().textContent : '');
+
+test('Flatten counts its pages in the reading note, and Stop ends it at the next page with nothing uploaded and no dialog', async () => {
+  const gate = pageGate();
+  try {
+    await open('flat.pdf', { numPages: 5, renders: true });
+    const from = calls.length;
+    $('saveFlatBtn').click();
+    await settle();
+    assert.equal(gate.started(), 1, 'stimulus: Flatten did not reach the first page');
+    assert.equal(noteText(), 'Preparing a flattened copy… page 1 of 5');
+    await gate.next();
+    assert.equal(noteText(), 'Preparing a flattened copy… page 2 of 5', 'the count did not follow the render');
+    const count = noteLine().querySelector('span');
+    assert.equal(count.getAttribute('aria-hidden'), 'true', 'the count is spoken: the note is a polite live region');
+    assert.equal(noteLine().firstChild.textContent, 'Preparing a flattened copy…', 'the announced words changed with the count');
+    assert.equal(noteLine().querySelectorAll('span').length, 1, 'each page added a count instead of replacing it');
+
+    // A second press while it works starts nothing.
+    $('saveFlatBtn').click();
+    await settle();
+    assert.equal(gate.started(), 2, 'a second press started a second render');
+
+    $('readingStop').click();
+    await settle();
+    await gate.next();                 // the page in flight finishes; the loop must not take another
+    await settle(30);
+    assert.equal(gate.started(), 2, 'the render went on to the next page after Stop');
+    assert.equal(requests('/api/assemble', from).length, 0, 'a stopped flatten was uploaded');
+    assert.equal(noteText(), '', 'the note stayed up after the render stopped');
+    assert.equal($('saveAsModal').hidden, true, 'a stopped flatten opened the Save dialog');
+    assert.match(toastText(), /Stopped/);
+
+    // Stop during the LAST page: the loop has no next page to stop at, so the upload must ask too.
+    $('saveFlatBtn').click();
+    await settle();
+    for (let i = 0; i < 4; i++) await gate.next();
+    assert.equal(noteText(), 'Preparing a flattened copy… page 5 of 5', 'stimulus: the render is not on its last page');
+    $('readingStop').click();
+    await settle();
+    await gate.next();
+    await settle(30);
+    assert.equal(requests('/api/assemble', from).length, 0, 'a flatten stopped on its last page was uploaded');
+    assert.equal($('saveAsModal').hidden, true);
+
+    // And Escape is the same Stop while no dialog is in front.
+    $('saveFlatBtn').click();
+    await settle();
+    doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await settle();
+    await gate.next();
+    await settle(30);
+    assert.equal(requests('/api/assemble', from).length, 0, 'Escape did not stop the flatten');
+    assert.equal(noteText(), '');
+
+    // A flatten nobody stopped: every page, one upload, the Save dialog, and the note taken down.
+    const before = gate.started();
+    $('saveFlatBtn').click();
+    await settle();
+    for (let i = 0; i < 5; i++) await gate.next();
+    await settle(30);
+    assert.equal(gate.started(), before + 5, 'an unstopped flatten did not render every page');
+    assert.equal(requests('/api/assemble', from).length, 1, 'an unstopped flatten was not uploaded exactly once');
+    assert.equal($('saveAsModal').hidden, false, 'the Save dialog did not open');
+    assert.equal($('saveAsName').value, 'flat-flattened.pdf');
+    assert.equal(noteText(), '', 'the note stayed up beside the Save dialog');
+    await closeActive();
+  } finally {
+    gate.restore();
+  }
+});
+
+test('Reduce counts its pages on its button, and Cancel stops the render and keeps its result out of the next dialog', async () => {
+  const gate = pageGate();
+  // The JPEG path paints a white ground first (JPEG has no alpha), so it needs a context to paint on.
+  h.window.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {} });
+  const compress = async () => {
+    $('reduceBtn').click();
+    await settle();
+    const radio = $('reduceModal').querySelector('input[value="compress"]');
+    radio.checked = true;
+    radio.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    $('reduceGo').click();
+    await settle();
+  };
+  try {
+    await open('big.pdf', { numPages: 5, renders: true });
+    const from = calls.length;
+    await compress();
+    assert.equal(gate.started(), 1, 'stimulus: Reduce did not reach the first page');
+    assert.equal($('reduceGo').disabled, true);
+    assert.equal($('reduceGo').textContent, 'Working… page 1 of 5');
+    await gate.next();
+    assert.equal($('reduceGo').textContent, 'Working… page 2 of 5', 'the count did not follow the render');
+    $('reduceCancel').click();
+    await settle();
+    assert.equal($('reduceModal').hidden, true);
+    await gate.next();                 // the page in flight finishes; the loop must not take another
+    await settle(30);
+    assert.equal(gate.started(), 2, 'the render went on to the next page after Cancel');
+    assert.equal(requests('/api/assemble', from).length, 0, 'a cancelled reduce was uploaded');
+
+    // The dialog opened again is a fresh one: its button is ready, and the cancelled press wrote nothing into it.
+    $('reduceBtn').click();
+    await settle();
+    assert.equal($('reduceGo').disabled, false, 'the cancelled press left the button disabled');
+    assert.equal($('reduceGo').textContent, 'Reduce');
+    assert.equal($('reduceSave').hidden, true, 'the cancelled press offered a Save');
+    assert.equal($('reduceResult').hidden, true);
+    $('reduceCancel').click();
+    await settle();
+
+    // A reduce nobody cancelled: every page, one upload, the sizes and the Save.
+    const before = gate.started();
+    await compress();
+    for (let i = 0; i < 5; i++) await gate.next();
+    await settle(30);
+    assert.equal(gate.started(), before + 5, 'an uncancelled reduce did not render every page');
+    assert.equal(requests('/api/assemble', from).length, 1, 'an uncancelled reduce was not uploaded exactly once');
+    assert.equal($('reduceResult').hidden, false, 'the sizes were not shown');
+    assert.equal($('reduceSave').hidden, false, 'Save was not offered');
+    assert.equal($('reduceGo').textContent, 'Reduce');
+    $('reduceCancel').click();
+    await settle();
+    await closeActive();
+  } finally {
+    gate.restore();
+  }
+});

@@ -67,8 +67,8 @@ func TestPdfcpusPageOperationsKeepADividedPagesText(t *testing.T) {
 		for name, op := range map[string]func() ([]byte, error){
 			"n-up":    func() ([]byte, error) { return NUp(pdf, 2, false) },
 			"resize":  func() ([]byte, error) { return NormalizePageSizes(pdf) },
-			"split":   func() ([]byte, error) { return SplitPage(pdf, 1, 2, 1, false) },
-			"regions": func() ([]byte, error) { return SplitRegions(pdf, 1, [][4]float64{{0, 0, 612, 792}}) },
+			"split":   func() ([]byte, error) { return withoutCount(SplitPage(pdf, 1, 2, 1, false)) },
+			"regions": func() ([]byte, error) { return withoutCount(SplitRegions(pdf, 1, [][4]float64{{0, 0, 612, 792}})) },
 		} {
 			t.Run(shape.name+"/"+name, func(t *testing.T) {
 				out, err := op()

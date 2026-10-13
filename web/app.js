@@ -9259,7 +9259,10 @@ function ocrDoneSentence(replaced, left, total, words) {
 
 // ocrRun is the read in progress, if there is one: `stop()` ends it where it stands — nothing is sent.
 let ocrRun = null;
-function cancelRead() { if (ocrRun) ocrRun.stop(); }
+// noteRun is the many-page command the reading note is up for when it is not a read (`notePress`): the note's Stop
+// and Escape are its to answer then.
+let noteRun = null;
+function cancelRead() { if (noteRun) noteRun.stop(); else if (ocrRun) ocrRun.stop(); }
 
 // The recogniser is kept between reads, for one language, and let go when a document closes or after
 // OCR_WORKER_IDLE_MS with nothing to read (ADR-106). Since a command reads a scan by itself, reads come one page
@@ -9525,6 +9528,7 @@ async function ensureText(owner, pages = null, opts = {}) {
     return stop('refused', todo, `${which} and cannot be read here: this document is locked for signing, and reading a scan changes it.`);
   }
   if (ocrRun) return stop('refused', todo, 'Nib is already reading a scan — try again when it has finished.');
+  if (noteRun) return stop('refused', todo, `${which} and cannot be read while Nib is preparing a copy — try again when it has finished.`);
   if (!confirmSignatureLoss()) {
     return stop('refused', todo, `${which} and ${one || todo.length === 1 ? 'was' : 'were'} not read, so the signature stands.`);
   }
@@ -9576,9 +9580,37 @@ function readingNote(text) {
   readingEl.hidden = !text;
 }
 let readingEl = null;
+
+// notePress is the press of a many-page command that renders with NO dialog in front of it (Flatten, /pending
+// 852): the same shape the Save dialog hands its makers (`saveAsBytes`) — `still()` asked before every page and
+// before the upload, `page(n, of)` told each page — on the surface a read already uses for exactly this, the
+// reading note and its Stop. The words are announced once; the count goes in an `aria-hidden` child, as
+// `saveAsPage`'s does, so two hundred pages are not two hundred announcements. `done()` takes the note down;
+// `stopped()` says whether Stop (or Escape) ended it, so the caller opens nothing for a render nobody wants.
+function notePress(words) {
+  const run = { stopped: false, stop: () => { run.stopped = true; } };
+  noteRun = run;
+  readingNote(words);
+  return {
+    still: () => !run.stopped,
+    page: (n, of) => {
+      if (run.stopped || noteRun !== run || !(of > 1)) return;
+      const line = readingEl.firstChild;
+      let count = line.querySelector('span');
+      if (!count) {
+        count = document.createElement('span');
+        count.setAttribute('aria-hidden', 'true');
+        line.appendChild(count);
+      }
+      count.textContent = ` page ${n} of ${of}`;
+    },
+    stopped: () => run.stopped,
+    done: () => { if (noteRun === run) { noteRun = null; readingNote(''); } },
+  };
+}
 // Escape stops a read that has no dialog in front of it; with one, Escape is the dialog's (it clicks its Cancel).
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || e.defaultPrevented || !ocrRun || !readingEl || readingEl.hidden || topModal()) return;
+  if (e.key !== 'Escape' || e.defaultPrevented || !(ocrRun || noteRun) || !readingEl || readingEl.hidden || topModal()) return;
   e.preventDefault();
   cancelRead();
 });
@@ -9595,7 +9627,8 @@ document.addEventListener('keydown', (e) => {
 // `press` is the Save dialog's, when the render runs behind it (saveAsBytes): asked before every
 // page, so a cancelled dialog stops the render at the next page, and told each page it starts.
 // A render that was stopped answers null, never a short list — half the pages are not the export.
-// Without one (flatten, reduce, the one-page callers) every page is rendered, as before.
+// Flatten's is the reading note's (`notePress`) and Reduce's its own dialog's. Without one (the one-page callers)
+// every page is rendered, as before.
 async function renderFilledPages(scale, onlyPage, mime, quality, owner = view, press = null) {
   const bytes = await bakedBytes(owner.docMeta && owner.docMeta.id, owner);
   const doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: bytes }).promise;
@@ -9686,9 +9719,11 @@ async function assembleBlob(format, owner = view, press = null) {
 // any await inside this function — not "whatever is current when the request is
 // built", which is the defect (D7). A caller that has already awaited before reaching
 // here must pass its OWN captured view, because entry is already too late for it.
-async function compressBlob(scale, quality, owner = view) {
+// `press` is the Reduce dialog's (see renderFilledPages): a cancelled one stops at the next page and uploads nothing.
+async function compressBlob(scale, quality, owner = view, press = null) {
   const docId = owner.docMeta && owner.docMeta.id;
-  const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality, owner);
+  const pages = await renderFilledPages(scale, 0, 'image/jpeg', quality, owner, press);
+  if (!pages || (press && !press.still())) return null;
   const form = new FormData();
   pages.forEach((p, i) => {
     form.append('image', p.blob, `page-${i + 1}.jpg`);
@@ -9717,7 +9752,18 @@ els.saveFlatBtn.onclick = async () => {
   const exportName = exportBase();
   const owner = view;
   if (!owner.pdfDocument) return toast('Open a PDF first');
-  const blob = await assembleBlob('pdf', owner);
+  // Every page is rendered BEFORE the Save dialog opens, so there is no dialog to say so in (/pending 852: about
+  // 0.1 s a page, measured — a 200-page document was 17-20 s of nothing). The reading note says it, counts the
+  // pages, and its Stop ends the render at the next page with nothing uploaded and no dialog opened.
+  if (ocrRun || noteRun) return toast('Nib is busy with this — try again when it has finished.');
+  const press = notePress('Preparing a flattened copy…');
+  let blob = null;
+  try {
+    blob = await assembleBlob('pdf', owner, press);
+  } finally {
+    press.done();
+  }
+  if (press.stopped()) return toast('Stopped — no flattened copy was made.');
   if (blob) openSaveAs(blob, exportName + '-flattened.pdf', 'Save flattened PDF');
 };
 
@@ -9731,7 +9777,13 @@ let reduceBlob = null;
 // applied to a two-handler flow: capture at operation entry, then carry it to wherever the
 // result is consumed rather than re-deriving it there.
 let reduceName = '';
+// reduceSeq names the Reduce press in flight: Cancel and a fresh open move it on, so a render started for a dialog
+// that has since been cancelled stops at its next page, uploads nothing and writes nothing into the dialog that
+// replaced it (/pending 852 — Cancel used to hide the dialog while every page went on rendering behind it).
+let reduceSeq = 0;
 function resetReduce() {
+  reduceSeq++;
+  els.reduceGo.disabled = false; els.reduceGo.textContent = 'Reduce';
   reduceBlob = null; reduceName = '';
   els.reduceResult.hidden = true; els.reduceResult.textContent = '';
   els.reduceSave.hidden = true; els.reduceGo.hidden = false;
@@ -9739,7 +9791,7 @@ function resetReduce() {
   els.reduceQuality.hidden = true;
 }
 els.reduceBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); resetReduce(); els.reduceModal.hidden = false; };
-els.reduceCancel.onclick = () => { els.reduceModal.hidden = true; };
+els.reduceCancel.onclick = () => { resetReduce(); els.reduceModal.hidden = true; };
 all('input[name="reduceMode"]').forEach((r) => {
   r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
 });
@@ -9753,6 +9805,13 @@ els.reduceGo.onclick = async () => {
   const owner = view;
   const opDoc = owner.docMeta;
   const mode = els.reduceModal.querySelector('input[name="reduceMode"]:checked').value;
+  const seq = ++reduceSeq;
+  // The button is the dialog's one busy line: it counts the pages of a render there (it is disabled, and not a
+  // live region, so the count is seen and not spoken).
+  const press = {
+    still: () => seq === reduceSeq,
+    page: (n, of) => { if (seq === reduceSeq && of > 1) els.reduceGo.textContent = `Working… page ${n} of ${of}`; },
+  };
   els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
   let blob, before, after;
   try {
@@ -9766,11 +9825,16 @@ els.reduceGo.onclick = async () => {
       const presets = { low: [96 / 72, 0.55], med: [150 / 72, 0.7], high: [220 / 72, 0.82] };
       const [scale, q] = presets[els.reduceQ.value] || presets.med;
       before = (await bakedBytes(opDoc && opDoc.id, owner)).length;
-      blob = await compressBlob(scale, q, owner);
+      blob = await compressBlob(scale, q, owner, press);
       if (!blob) return;
       after = blob.size;
     }
-  } finally { els.reduceGo.disabled = false; els.reduceGo.textContent = 'Reduce'; }
+  } finally {
+    // Only this press's own button: a cancelled press must not re-enable the one a later press disabled.
+    if (seq === reduceSeq) { els.reduceGo.disabled = false; els.reduceGo.textContent = 'Reduce'; }
+  }
+  // Cancelled (or cancelled and opened again) while it worked: this result is one nobody is waiting for.
+  if (seq !== reduceSeq) return;
   reduceBlob = blob; reduceName = exportName;
   els.reduceResult.textContent = sizeSummary(before, after);
   els.reduceResult.hidden = false;

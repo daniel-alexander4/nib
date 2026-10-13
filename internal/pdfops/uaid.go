@@ -266,6 +266,23 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 		return true, nil
 	}
 	named := namesIdentification(sd.Content)
+	if !named {
+		// **A UTF-16 packet may spell the URI with a character reference too** (`/pending 870`), and then neither
+		// search finds anything: the URI is not in the bytes, and `&#` in UTF-16 is not the two bytes asked for
+		// below. Measured on veraPDF 1.30.2, on the labelled fixture's packet with the namespace written
+		// `…/ns/id&#x2F;`: `5 t1` PASSES in UTF-16 of either byte order, with a byte-order mark or without, and
+		// fails on the same packet naming another URI — while this door kept all four through every change. So
+		// such a packet is read as text. One that claims goes whole, as a UTF-16 packet naming the schema
+		// outright does (nib cannot edit one), and so does one that does not parse, because nib cannot rule on
+		// it; one that parses and claims nothing is kept as it stood.
+		if text, is := utf16PacketWithReference(sd.Content); is {
+			if _, claims, perr := withoutUAIdentification(text); claims || perr != nil {
+				dropKey(xt, root, "Metadata")
+				return true, nil
+			}
+			return false, nil
+		}
+	}
 	if !named && !bytes.Contains(sd.Content, []byte("&#")) {
 		return false, nil
 	}
@@ -327,6 +344,45 @@ func spellings(texts ...string) [][]byte {
 		}
 	}
 	return out
+}
+
+// characterReferences is the opening of a numeric character reference in UTF-16, big-endian then little-endian.
+var characterReferences = spellings("&#")[1:]
+
+// utf16PacketWithReference returns a UTF-16 packet as UTF-8 text, and whether it is one that holds a character
+// reference — the only UTF-16 packet whose claim the byte searches cannot see. The byte order is the byte-order
+// mark's, else the one in which the packet's ASCII has its zero bytes (XMP is markup, so most of it is ASCII).
+func utf16PacketWithReference(packet []byte) (text []byte, is bool) {
+	if !bytes.Contains(packet, characterReferences[0]) && !bytes.Contains(packet, characterReferences[1]) {
+		return nil, false
+	}
+	var order binary.ByteOrder
+	switch {
+	case bytes.HasPrefix(packet, []byte{0xFE, 0xFF}):
+		order, packet = binary.BigEndian, packet[2:]
+	case bytes.HasPrefix(packet, []byte{0xFF, 0xFE}):
+		order, packet = binary.LittleEndian, packet[2:]
+	default:
+		even, odd := 0, 0
+		for i, c := range packet {
+			if c == 0 {
+				if i%2 == 0 {
+					even++
+				} else {
+					odd++
+				}
+			}
+		}
+		order = binary.LittleEndian
+		if even > odd {
+			order = binary.BigEndian
+		}
+	}
+	units := make([]uint16, len(packet)/2)
+	for i := range units {
+		units[i] = order.Uint16(packet[2*i:])
+	}
+	return []byte(string(utf16.Decode(units))), true
 }
 
 // declaresEntity reports whether the packet's bytes open an entity declaration.
