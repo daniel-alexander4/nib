@@ -137,14 +137,15 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 // `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
 // selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
 func subset(pdf []byte, pick func(total int) ([]int, error), policy unreadablePolicy) ([]byte, error) {
-	out, _, _, err := subsetOnce(pdf, pick, false, policy, false)
+	out, _, _, err := subsetOnce(pdf, pick, false, policy, false, readInSourceOrder)
 	return out, err
 }
 
 // subsetOnce is one read-change-write of a page selection: carrying the structure tree or not, and — where the
 // output is the document ITSELF (itself) — with what the selection reduces an extract by held aside and put back
-// (splicefacts.go). carried is whether a tree was carried; filesWithheld is `documentFacts.restore`'s.
-func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, policy unreadablePolicy, itself bool) (out []byte, carried, filesWithheld bool, err error) {
+// (splicefacts.go). carried is whether a tree was carried; filesWithheld is `documentFacts.restore`'s. order says
+// whether a carried tree follows the selection's page order (treeorder.go, `/pending 556`).
+func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, policy unreadablePolicy, itself bool, order treeOrder) (out []byte, carried, filesWithheld bool, err error) {
 	out, err = rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
 		keep, perr := pick(ctx.PageCount)
 		if perr != nil {
@@ -156,6 +157,9 @@ func subsetOnce(pdf []byte, pick func(total int) ([]int, error), carry bool, pol
 		}
 		c, serr := selectPages(ctx, keep, carry, policy)
 		carried = c
+		if serr == nil && c && order == readInPageOrder {
+			orderCarriedTree(ctx, keep)
+		}
 		if serr == nil && itself {
 			filesWithheld = facts.restore(ctx)
 		}
@@ -212,22 +216,22 @@ func subsetConf() *model.Configuration {
 // primitive — a document with one page repeated is that document — so it passes true and keeps its `/Info`, its
 // `/ID`, its embedded files and its metadata packet, as `splice` does and through the same door. Both attempts
 // keep them: the fallback is the same document without its tree.
-func subsetCarrying(pdf []byte, pick func(total int) ([]int, error), itself bool) ([]byte, error) {
-	out, _, err := subsetCarryingFiles(pdf, pick, itself)
+func subsetCarrying(pdf []byte, pick func(total int) ([]int, error), itself bool, order treeOrder) ([]byte, error) {
+	out, _, err := subsetCarryingFiles(pdf, pick, itself, order)
 	return out, err
 }
 
 // subsetCarryingFiles is `subsetCarrying` also saying whether the document's embedded files were withheld from
 // the output it returns (`documentFacts.restore`) — always false for an extract, which keeps none by decision.
-func subsetCarryingFiles(pdf []byte, pick func(total int) ([]int, error), itself bool) (out []byte, filesWithheld bool, err error) {
-	out, carried, filesWithheld, err := subsetOnce(pdf, pick, true, keepUnreadable, itself)
+func subsetCarryingFiles(pdf []byte, pick func(total int) ([]int, error), itself bool, order treeOrder) (out []byte, filesWithheld bool, err error) {
+	out, carried, filesWithheld, err := subsetOnce(pdf, pick, true, keepUnreadable, itself, order)
 	if err != nil {
 		return nil, false, err
 	}
 	if !carried || carryIsComplete(out) {
 		return out, filesWithheld, nil
 	}
-	out, _, filesWithheld, err = subsetOnce(pdf, pick, false, keepUnreadable, itself)
+	out, _, filesWithheld, err = subsetOnce(pdf, pick, false, keepUnreadable, itself, order)
 	return out, filesWithheld, err
 }
 
@@ -263,7 +267,7 @@ func ReorderPages(pdf []byte, order []string) (out []byte, filesDropped int, err
 // copies each entry's names and streams and nothing else it points at). filesDropped is how many even that could
 // not carry.
 func sameDocument(pdf []byte, pick func(total int) ([]int, error)) (out []byte, filesDropped int, err error) {
-	out, filesWithheld, err := subsetCarryingFiles(pdf, pick, true)
+	out, filesWithheld, err := subsetCarryingFiles(pdf, pick, true, readInPageOrder)
 	return filesFromBytes(pdf, out, filesWithheld, err)
 }
 
@@ -293,7 +297,7 @@ func selectionError(err error) error {
 
 // RemovePages drops the given pages from the PDF.
 func RemovePages(pdf []byte, pages []string) ([]byte, error) {
-	return subsetCarrying(pdf, removePick(pages), false)
+	return subsetCarrying(pdf, removePick(pages), false, readInPageOrder)
 }
 
 // removePick is `RemovePages`' selection rule: every page but the ones named.
@@ -330,7 +334,7 @@ func removePick(pages []string) func(int) ([]int, error) {
 // page-selection primitive: reordering, deletion-by-omission, and extracting a
 // subset into a new PDF all route through it.
 func Collect(pdf []byte, order []string) ([]byte, error) {
-	return subsetCarrying(pdf, collectPick(order), false)
+	return subsetCarrying(pdf, collectPick(order), false, readInPageOrder)
 }
 
 // collectPick is the selection RULE the two collect doors share. They share the rule and not the
@@ -759,7 +763,7 @@ func DuplicatePage(pdf []byte, page int) (out []byte, filesDropped int, err erro
 	if err := pageInDocument(page, n); err != nil {
 		return nil, 0, err
 	}
-	out, filesWithheld, err := subsetCarryingFiles(pdf, collectPick([]string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)}), true)
+	out, filesWithheld, err := subsetCarryingFiles(pdf, collectPick([]string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)}), true, readInPageOrder)
 	return filesFromBytes(pdf, out, filesWithheld, err)
 }
 
@@ -2903,7 +2907,10 @@ func Booklet(pdf []byte, border bool) ([]byte, error) {
 		}
 		n++
 	}
-	ordered, err := Collect(padded, bookletOrder(n))
+	// **Sheet order is for the printer, not the reader** (`/pending 556`, treeorder.go): this is `Collect`'s
+	// selection with the carried tree left in the SOURCE's order, which is the order the folded booklet is
+	// read in. Ordering the tree by sheet put the census document's H2 before its H1 (ua1 7.4.2 t1).
+	ordered, err := subsetCarrying(padded, collectPick(bookletOrder(n)), false, readInSourceOrder)
 	if err != nil {
 		return nil, fmt.Errorf("could not put the pages in booklet order: %w", err)
 	}

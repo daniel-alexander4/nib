@@ -1133,18 +1133,14 @@ func (c *subtreeClone) kidsOf(o types.Object, parent types.IndirectRef) (types.A
 // (ISO 32000-1 table 323), so a direct dictionary there is a copy of a parent rather than the parent:
 // mutating it attaches the copy to nothing.
 //
-// # What this does NOT order, declared rather than implied
+// # What this does NOT order
 //
 // The block lands beside the original, which is the output's page order only where the repeat is
-// ADJACENT to what it repeats — every `DuplicatePage`, and `Collect`'s ordinary `["1","1"]`.
-// Measured on a two-page input, `Collect(["1","2","1","2"])` puts the top-level elements over output
-// pages **1, 3, 2, 4**: each original followed by its own copy, rather than the four pages in order.
-//
-// That is the same gap a pure reorder already has and this carry has never closed, because the tree
-// is ordered against the SOURCE and nothing here re-orders it — `prune.kids` appends in source order
-// and `tree.root["K"]` is never re-sorted. Measured on a three-page input, `Collect(["3","1","2"])`
-// leaves the top-level elements over output pages **2, 3, 1**. Closing it means ordering the whole
-// tree against the output's page sequence, which is a different job from copying a page.
+// ADJACENT to what it repeats — every `DuplicatePage`, and `Collect`'s ordinary `["1","1"]`. On a
+// two-page input, `Collect(["1","2","1","2"])` leaves the top-level elements over output pages 1, 3, 2,
+// 4 here: each original followed by its own copy. Ordering the tree against the output's page sequence
+// is a different job from copying a page, and it is `orderCarriedTree`'s (treeorder.go, `/pending 556`),
+// which runs after the carry for a selection that is the document's reading order.
 func (c *subtreeClone) attach(ctx *model.Context, tree *structTree) error {
 	xt := ctx.XRefTable
 	type group struct {
