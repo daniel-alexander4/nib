@@ -140,6 +140,13 @@ func findWord(lines [][]reflowWord, text string) *reflowWord {
 // or runs at another text-matrix scale (both refused before S06 — `styled-word`, `mixed-state`), is given a one-word
 // edit (its last word removed), re-set where it can be, and read back: every word it kept has, glyph by glyph, the font
 // and the size in user space it was drawn in. What still refuses is counted by cause.
+// styleTypedTries is how many of a document's paragraphs `TestStylesOverTheCorpus` also types a new word into, and
+// styleTypedFloor the least number it must have read back and judged.
+const (
+	styleTypedTries = 6
+	styleTypedFloor = 10
+)
+
 func TestStylesOverTheCorpus(t *testing.T) {
 	corp := externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers"))
 	if corp.absent != "" {
@@ -147,6 +154,11 @@ func TestStylesOverTheCorpus(t *testing.T) {
 	}
 	population, reset, checked := 0, 0, 0
 	still := map[string]int{}
+	// typed is the edit S06 added a path for and this census never made (/pending 797 I5): a word the paragraph does
+	// not draw, which must be set in the paragraph's USUAL look — never the look of the styled word beside it. Tried on
+	// the first `styleTypedTries` such paragraphs of a document; typed counts the words read back and judged.
+	typed := 0
+	typedRefused := map[string]int{}
 	// A glyph's font, its size in user space (the restated Tf size at the reference scale) and its height above its
 	// line's baseline (the rise, in user space) — every occurrence of a word, not the first alone (the review, W4, I2).
 	type glyphKey struct {
@@ -171,6 +183,7 @@ func TestStylesOverTheCorpus(t *testing.T) {
 		if err != nil {
 			continue
 		}
+		typedTries := 0
 		for p := 1; p <= ctx.PageCount; p++ {
 			l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 			if err != nil {
@@ -203,6 +216,38 @@ func TestStylesOverTheCorpus(t *testing.T) {
 					continue
 				}
 				ws := editWords(para.text())
+				if rev, isNew := backwards(ws[0], para.text()); isNew && typedTries < styleTypedTries {
+					typedTries++
+					e := strings.Join(append(ws[:len(ws)-1:len(ws)-1], rev), " ")
+					if got, why := resetLines(t, doc.pdf, l, p, pi, e); why != "" {
+						typedRefused[why]++
+					} else if gl, _, gcause := paragraphWords(textParagraph{lines: got, column: para.column}); gcause != "" {
+						t.Errorf("%s p%d ¶%d: the paragraph with a typed word cannot be read back (%s)", doc.name, p, pi, gcause)
+					} else {
+						u := usualLook(lines)
+						found := false
+						for _, ln := range gl {
+							for _, w := range ln {
+								if w.text() != rev {
+									continue
+								}
+								found = true
+								for _, lk := range w.looks {
+									if lk.font != u.font || math.Abs(lk.tfSize-u.tfSize) > 1e-6 {
+										t.Errorf("%s p%d ¶%d: the typed word %q reads in %s at %v, the paragraph's usual look is %s at %v",
+											doc.name, p, pi, rev, lk.font, lk.tfSize, u.font, u.tfSize)
+										break
+									}
+								}
+							}
+						}
+						if !found {
+							t.Errorf("%s p%d ¶%d: the typed word %q is not in what reads back", doc.name, p, pi, rev)
+						} else {
+							typed++
+						}
+					}
+				}
 				edit := strings.Join(ws[:len(ws)-1], " ")
 				c2, _ := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
 				out, err := reflowParagraph(c2, p, pi, edit)
@@ -261,6 +306,11 @@ func TestStylesOverTheCorpus(t *testing.T) {
 		population, reset, checked, still)
 	if reset == 0 || checked == 0 {
 		t.Errorf("re-set %d, checked %d — the census asked nothing", reset, checked)
+	}
+	t.Logf("a typed word read back in the paragraph's usual look in %d of them; refused %v", typed, typedRefused)
+	if typed < styleTypedFloor {
+		t.Errorf("a typed word was read back and judged in %d paragraphs, want at least %d — the census never took the "+
+			"usual-look path S06 added (refused %v)", typed, styleTypedFloor, typedRefused)
 	}
 }
 

@@ -81,7 +81,7 @@ func TestAnInsertOrASplitKeepsTheDocumentsOwnFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	split, err := SplitPage(host, 2, 2, 1, false)
+	split, _, err := SplitPage(host, 2, 2, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +114,12 @@ func TestAnInsertOrASplitKeepsTheDocumentsOwnFacts(t *testing.T) {
 	}
 }
 
-// TestASpliceCarriesNoFileThatReachesThePageItReplaced — pdfcpu writes by reachability, so an embedded
+// TestASpliceWritesNoPageThroughAFileThatReachesIt — pdfcpu writes by reachability, so an embedded
 // file whose specification references the page a split replaces would write that page out again. The
-// files are then not carried, which is the document this door wrote before `/pending 602`.
-func TestASpliceCarriesNoFileThatReachesThePageItReplaced(t *testing.T) {
+// name tree is then not put back; the file itself is re-added from its bytes (`filesFromBytes`,
+// `/pending 870` — until then the split returned no files and said nothing), and the `/Info` entry that
+// reaches the page is not carried at all.
+func TestASpliceWritesNoPageThroughAFileThatReachesIt(t *testing.T) {
 	host, err := writeMutated(spliceHost(t), func(ctx *model.Context) error {
 		pref, perr := ctx.PageDictIndRef(2)
 		if perr != nil {
@@ -138,7 +140,7 @@ func TestASpliceCarriesNoFileThatReachesThePageItReplaced(t *testing.T) {
 	if files, _, _, _ := documentFactsOf(t, host); len(files) != 1 {
 		t.Fatalf("the fixture carries %d files, want 1", len(files))
 	}
-	split, err := SplitPage(host, 2, 2, 1, false)
+	split, _, err := SplitPage(host, 2, 2, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,13 @@ func TestASpliceCarriesNoFileThatReachesThePageItReplaced(t *testing.T) {
 	if got := pageObjectCount(t, split); got != ctx.PageCount {
 		t.Errorf("the output holds %d page objects for %d pages: the replaced page was written through the file that names it", got, ctx.PageCount)
 	}
-	if files, _, _, _ := documentFactsOf(t, split); len(files) != 0 {
-		t.Errorf("files %v carried although one reaches the replaced page", files)
+	if files, _, _, _ := documentFactsOf(t, split); strings.Join(files, " ") != "record.txt" {
+		t.Errorf("files %v, want record.txt re-added from its bytes", files)
+	}
+	if e, err := treeEntries(ctx.XRefTable); err != nil || len(e) != 1 || derefDict(ctx.XRefTable, e[0].fs)["NibProbe"] != nil {
+		t.Errorf("the carried file's specification still holds its reference to the replaced page (%d entries, %v)", len(e), err)
+	}
+	if derefDict(ctx.XRefTable, *ctx.Info)["NibProbe"] != nil {
+		t.Error("the /Info entry reaching the replaced page was carried")
 	}
 }

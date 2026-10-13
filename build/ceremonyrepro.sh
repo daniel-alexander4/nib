@@ -369,8 +369,10 @@ if [ -s "$SP/convened1.pdf" ]; then
   else
     QPARTY=$(python3 -c "import json;print(json.load(open('$SP/hopquote.json')).get('party',''))" 2>/dev/null)
     QMINE=$(python3 -c "import json;print(json.load(open('$SP/hopquote.json')).get('mine'))" 2>/dev/null)
-    # **A signing convener is FIRST**, so a freshly convened ceremony's own next turn is the
-    # convener's — and the route says so rather than offering a dial to itself. Asserted because it
+    # **This ceremony's signing convener is named FIRST** (a roster may name one anywhere in the
+    # order since /pending 517; this harness convenes with the convener first, as the setup sheet
+    # does), so the freshly convened ceremony's own next turn is the convener's — and the route
+    # says so rather than offering a dial to itself. Asserted because it
     # is the state `#cerISign` produces by default, and offering a call there would be an action
     # that does not exist behind a label.
     if [ "$QMINE" = "True" ]; then
@@ -718,7 +720,8 @@ fi
 #
 # **8b proves the door exists and refuses; this proves it WORKS.** A second ceremony, convened with
 # a NON-signing convener so the next turn is genuinely B's rather than A's own — which is the shape
-# 8b cannot reach, because a signing convener is first in the signing order and has nobody to call.
+# 8b cannot reach, because its signing convener is named first in the signing order (a roster may
+# name one later — /pending 517 — and 8b's does not) and so has nobody to call.
 #
 # The request body is `{"ceremony": …}`, a dial hint, and a pinning header. **No invitation and no
 # transport**: A resolves whose turn it is from its own open document, mints B's invitation from its

@@ -47,7 +47,7 @@ func TestSplitPageGrid(t *testing.T) {
 	pdf := sizedPDF(t, 3, 120, 160) // pages 1..3, each 120×160
 
 	// 2×2 crop of page 2: 3 → 3 + (4-1) = 6 pages; tiles are 60×80.
-	out, err := SplitPage(pdf, 2, 2, 2, false)
+	out, _, err := SplitPage(pdf, 2, 2, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestSplitPageGrid(t *testing.T) {
 	}
 
 	// 2×2 with resize: s = min(2,2) = 2, so each tile fills the 120×160 footprint.
-	out, err = SplitPage(pdf, 2, 2, 2, true)
+	out, _, err = SplitPage(pdf, 2, 2, 2, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestSplitPageEdges(t *testing.T) {
 
 	// First page, 1×2 (two rows stacked): 3 → 4 pages; tiles 120×80, then the
 	// two original pages follow.
-	out, err := SplitPage(pdf, 1, 1, 2, false)
+	out, _, err := SplitPage(pdf, 1, 1, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestSplitPageEdges(t *testing.T) {
 
 	// Last page, 2×1 (two columns): 3 → 4 pages; the first two originals stay,
 	// tiles 60×160 at the end.
-	out, err = SplitPage(pdf, 3, 2, 1, false)
+	out, _, err = SplitPage(pdf, 3, 2, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSplitPageKeepsVectorContent(t *testing.T) {
 	}
 	// A4 page, text drawn at (100,700) — upper-left region. A 2×2 split keeps it
 	// in the top-left tile, with the glyphs still in the content stream.
-	out, err := SplitPage(pdf, 1, 2, 2, false)
+	out, _, err := SplitPage(pdf, 1, 2, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestSplitRegionsBasic(t *testing.T) {
 	pdf := sizedPDF(t, 3, 120, 160)
 	// Two side-by-side halves of page 2: 3 → 3 - 1 + 2 = 4 pages.
 	// Order: [p1, region, region, p3].
-	out, err := SplitRegions(pdf, 2, [][4]float64{{0, 0, 60, 160}, {60, 0, 120, 160}})
+	out, _, err := SplitRegions(pdf, 2, [][4]float64{{0, 0, 60, 160}, {60, 0, 120, 160}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestSplitRegionsBasic(t *testing.T) {
 // from the second region), with the smaller ones centred and padded.
 func TestSplitRegionsStandardizes(t *testing.T) {
 	pdf := sizedPDF(t, 1, 200, 200)
-	out, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 110, 60}, {0, 0, 200, 200}, {50, 50, 90, 190}})
+	out, _, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 110, 60}, {0, 0, 200, 200}, {50, 50, 90, 190}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestSplitRegionsKeepsOtherPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := SplitRegions(pdf, 2, [][4]float64{{50, 650, 400, 780}}) // crop of page 2
+	out, _, err := SplitRegions(pdf, 2, [][4]float64{{50, 650, 400, 780}}) // crop of page 2
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestSplitRegionsKeepsVectorContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := SplitRegions(pdf, 1, [][4]float64{{50, 650, 400, 780}})
+	out, _, err := SplitRegions(pdf, 1, [][4]float64{{50, 650, 400, 780}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,20 +223,20 @@ func TestSplitRegionsKeepsVectorContent(t *testing.T) {
 // TestSplitRegionsRejectsBadInput covers the guards.
 func TestSplitRegionsRejectsBadInput(t *testing.T) {
 	pdf := sizedPDF(t, 2, 120, 160)
-	if _, err := SplitRegions(pdf, 1, nil); err == nil {
+	if _, _, err := SplitRegions(pdf, 1, nil); err == nil {
 		t.Error("empty regions should error")
 	}
-	if _, err := SplitRegions(pdf, 5, [][4]float64{{0, 0, 50, 50}}); err == nil {
+	if _, _, err := SplitRegions(pdf, 5, [][4]float64{{0, 0, 50, 50}}); err == nil {
 		t.Error("out-of-range page should error")
 	}
-	if _, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 10.5, 50}}); err == nil {
+	if _, _, err := SplitRegions(pdf, 1, [][4]float64{{10, 10, 10.5, 50}}); err == nil {
 		t.Error("zero-width region should error")
 	}
 	too := make([][4]float64, maxRegions+1)
 	for i := range too {
 		too[i] = [4]float64{0, 0, 10, 10}
 	}
-	if _, err := SplitRegions(pdf, 1, too); err == nil {
+	if _, _, err := SplitRegions(pdf, 1, too); err == nil {
 		t.Error("too many regions should error")
 	}
 }
@@ -244,10 +244,10 @@ func TestSplitRegionsRejectsBadInput(t *testing.T) {
 // TestSplitPageRejectsBadInput covers the guards.
 func TestSplitPageRejectsBadInput(t *testing.T) {
 	pdf := sizedPDF(t, 2, 120, 160)
-	if _, err := SplitPage(pdf, 1, 1, 1, false); err == nil {
+	if _, _, err := SplitPage(pdf, 1, 1, 1, false); err == nil {
 		t.Error("1×1 split should error (no sub-pages)")
 	}
-	if _, err := SplitPage(pdf, 5, 2, 2, false); err == nil {
+	if _, _, err := SplitPage(pdf, 5, 2, 2, false); err == nil {
 		t.Error("out-of-range page should error")
 	}
 }
@@ -258,12 +258,12 @@ func TestSplitPageRejectsBadInput(t *testing.T) {
 // overflows into range: the product check is only sound once both sides are known to be small.
 func TestSplitPageRefusesAnUnboundedGrid(t *testing.T) {
 	src := subsetFixture()
-	if _, err := SplitPage(src, 1, 8, 8, false); err != nil {
+	if _, _, err := SplitPage(src, 1, 8, 8, false); err != nil {
 		t.Fatalf("setup: the GUI's largest grid was refused (%v), so a refusal below proves nothing", err)
 	}
 	// (2^62+1)×4 WRAPS to 4, a grid the product check alone accepts — and then asks for 2^62 columns.
 	for _, g := range [][2]int{{9, 8}, {65, 1}, {1, 65}, {1<<62 + 1, 4}, {4, 1<<62 + 1}} {
-		if _, err := SplitPage(src, 1, g[0], g[1], false); err == nil {
+		if _, _, err := SplitPage(src, 1, g[0], g[1], false); err == nil {
 			t.Errorf("a %d×%d grid was accepted; the ceiling is %d sub-pages", g[0], g[1], maxRegions)
 		}
 	}

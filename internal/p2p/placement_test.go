@@ -184,7 +184,7 @@ func TestAPlacementOnAnOffsetPageIsRefusedNotClamped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tiles, err := pdfops.SplitPage(base, 1, 2, 2, false)
+	tiles, _, err := pdfops.SplitPage(base, 1, 2, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}

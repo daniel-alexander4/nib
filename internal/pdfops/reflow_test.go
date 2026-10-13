@@ -1,11 +1,13 @@
 package pdfops
 
 import (
+	"bytes"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/pdfread"
@@ -101,11 +103,25 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 // edgeFirst is /pending 797's proposed remedy, measured and not adopted: a justified paragraph broken at its flush
 // edge from the start, at its natural spaces, never at its own measure.
 func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []string, justified bool, cause string) {
+	got, want, justified, _, cause = breakAsProduction(l, pi, nil, edgeFirst)
+	return got, want, justified, cause
+}
+
+// breakAsProduction is `rebreakAsProduction` for an EDITED paragraph too (/pending 797 W2): readback is the edit's
+// lines as the written document reads them, and they are broken with what production took from paragraph pi as it
+// stood BEFORE the edit — its alignment, its one word spacing, its spacer, its measures — which is what
+// `reflowParagraphIn` breaks an edit's words with. want is then the read-back's own lines. nil breaks the
+// paragraph's own words. The hooks of a hyphenated break are still not modelled: a break the rewrite kept reads
+// back as two words and one it rejoined as one, and each is broken as the word it now is.
+func breakAsProduction(l pageLayout, pi int, readback [][]reflowWord, edgeFirst bool) (got, want []string, justified, centred bool, cause string) {
 	lines, gap, cause := paragraphWords(l.paragraphs[pi])
 	if cause != "" {
-		return nil, nil, false, cause
+		return nil, nil, false, false, cause
 	}
 	want = lineTexts(lines)
+	if readback != nil {
+		want = lineTexts(readback)
+	}
 	align := paragraphAlignment(l, pi, lines)
 	if align.justified {
 		tw := lastSpacing(lines[len(lines)-1][len(lines[len(lines)-1])-1].spacing).tw
@@ -116,11 +132,18 @@ func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []stri
 		}
 		lines = withWordSpacing(lines, tw)
 		align = paragraphAlignment(l, pi, lines)
+		if readback != nil {
+			readback = withWordSpacing(readback, tw)
+		}
 	}
 	space := spacerOf(lines, gap)
 	var words []emitWord
 	var texts []string
-	for _, ln := range lines {
+	from := lines
+	if readback != nil {
+		from = readback
+	}
+	for _, ln := range from {
 		for _, w := range ln {
 			words = append(words, emitWord{face: w.face, tfSize: w.tfSize, spacing: w.spacing, width: w.width, seq: len(words) + 1})
 			texts = append(texts, w.text())
@@ -139,7 +162,7 @@ func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []stri
 	if edgeFirst && align.justified {
 		broken = atEdge()
 		if _, fits := justifiedLines(align, broken, lines, space); !fits {
-			return nil, want, true, causeWordTooWide
+			return nil, want, true, false, causeWordTooWide
 		}
 	} else {
 		measures := paragraphMeasures(l, pi, lines, space)
@@ -152,7 +175,7 @@ func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []stri
 		if _, fits := justifiedLines(align, broken, lines, space); !fits {
 			broken = atEdge()
 			if _, fits = justifiedLines(align, broken, lines, space); !fits {
-				return nil, want, align.justified, causeWordTooWide
+				return nil, want, align.justified, align.centred, causeWordTooWide
 			}
 		}
 	}
@@ -165,7 +188,62 @@ func rebreakAsProduction(l pageLayout, pi int, edgeFirst bool) (got, want []stri
 			got[i] += texts[w.seq-1]
 		}
 	}
-	return got, want, align.justified, ""
+	return got, want, align.justified, align.centred, ""
+}
+
+// resetLines rewrites paragraph pi of page p of pdf as edit, writes the document, and returns the lines the written
+// page reads at the baselines the rewrite set — the paragraph's own, then one pitch down for each line it grew by.
+// cause is the rewrite's refusal, and then there are no lines. For the corpus censuses' typed and grown edits
+// (/pending 797 I5).
+func resetLines(t *testing.T, pdf []byte, l pageLayout, p, pi int, edit string) (got []textLine, cause string) {
+	t.Helper()
+	para := l.paragraphs[pi]
+	c2, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := reflowParagraph(c2, p, pi, edit)
+	if err != nil {
+		t.Fatalf("p%d ¶%d: %v", p, pi, err)
+	}
+	if out.content == nil {
+		return nil, out.cause
+	}
+	d, _, _, _ := c2.PageDict(p, false)
+	if err := setPageContent(c2, d, out.content); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := api.WriteContext(c2, &buf); err != nil {
+		t.Fatal(err)
+	}
+	c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("p%d ¶%d: the rewritten document does not read: %v", p, pi, err)
+	}
+	l3, _ := readPageGlyphLayout(c3, pageAt(c3, nil, p))
+	pitch := paragraphPitch(l, pi)
+	for i, n := 0, 0; n < editLetters(edit); i++ {
+		y := para.lines[min(i, len(para.lines)-1)].y - float64(max(0, i-len(para.lines)+1))*pitch
+		ln, ok := lineAtBaseline(l3, paragraphBox(para), y, para.lines[0].size)
+		if !ok {
+			break
+		}
+		got = append(got, ln)
+		n += editLetters(ln.text)
+	}
+	return got, ""
+}
+
+// backwards is word spelled backwards, and whether that is a NEW word for a paragraph reading text: longer than two
+// letters, not a palindrome, and not a word the paragraph already draws — so the rewrite must TYPE it.
+func backwards(word, text string) (string, bool) {
+	rs := []rune(word)
+	for a, b := 0, len(rs)-1; a < b; a, b = a+1, b-1 {
+		rs[a], rs[b] = rs[b], rs[a]
+	}
+	rev := string(rs)
+	return rev, len(rs) > 2 && rev != word && !strings.Contains(" "+text+" ", " "+rev+" ")
 }
 
 // TestHowOftenARealProducersParagraphRebreaksInPlace is a MEASUREMENT, not an assertion: over the real-producer corpus, how

@@ -147,7 +147,7 @@ func TestASplitPageDoesNotLeaveAFormClaimingFieldsNothingDraws(t *testing.T) {
 	if _, widgets := formShape(t, src); widgets != 2 {
 		t.Fatalf("setup: the fixture carries %d widget(s), want 2", widgets)
 	}
-	out, err := SplitPage(src, 2, 2, 1, false)
+	out, _, err := SplitPage(src, 2, 2, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func TestSplitRegionsReadsThePageOnce(t *testing.T) {
 		var m0, m1 runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&m0)
-		b, err := SplitRegions(src, 1, regions(n))
+		b, _, err := SplitRegions(src, 1, regions(n))
 		runtime.ReadMemStats(&m1)
 		if err != nil {
 			t.Fatal(err)

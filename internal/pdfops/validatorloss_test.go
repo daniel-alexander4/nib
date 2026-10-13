@@ -263,7 +263,7 @@ func keysOf(m map[string]string) []string {
 func TestACutOrComposedPageKeepsTheFontTheValidatorTakes(t *testing.T) {
 	src := lostFontDoc(false)
 	for name, run := range map[string]func() ([]byte, error){
-		"SplitPage": func() ([]byte, error) { return SplitPage(src, 1, 2, 1, false) },
+		"SplitPage": func() ([]byte, error) { return withoutCount(SplitPage(src, 1, 2, 1, false)) },
 		"NUp":       func() ([]byte, error) { return NUp(src, 2, false) },
 	} {
 		out, err := run()

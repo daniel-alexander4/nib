@@ -219,7 +219,10 @@ func TestTheHopReadsTheDocumentUnderTheLock(t *testing.T) {
 	<-done
 }
 
-// TestTheConvenersOwnTurnIsNotADial — a signing convener is FIRST, so their turn has nobody to call.
+// TestTheConvenersOwnTurnIsNotADial — at a signing convener's own turn there is nobody to call. This
+// fixture's roster names the convener first, so that turn is the opening one; a roster may name the
+// convener anywhere in the order (`hopCarries`, `/pending 517`), and `convenerturn_test.go` drives one
+// named mid-order.
 //
 // This is the ordinary state of a ceremony that has just been convened with `convenerSigns`, which
 // `#cerISign` makes the default. Saying so is the honest answer; offering a call would be an action

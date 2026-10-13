@@ -86,8 +86,8 @@ func TestAnOperationWhoseOutputIsTheDocumentKeepsWhatDescribesIt(t *testing.T) {
 	}{
 		{"DuplicatePage", func() ([]byte, error) { return DuplicatePage(host, 2) }, 4},
 		{"InsertPDF", func() ([]byte, error) { return InsertPDF(host, other, 2, true) }, 4},
-		{"SplitPage", func() ([]byte, error) { return SplitPage(host, 2, 2, 1, false) }, 4},
-		{"spliceWithoutStructure before page 1", func() ([]byte, error) { return spliceWithoutStructure(host, 0, 1, 3, other) }, 4},
+		{"SplitPage", func() ([]byte, error) { return withoutCount(SplitPage(host, 2, 2, 1, false)) }, 4},
+		{"spliceWithoutStructure before page 1", func() ([]byte, error) { return withoutWithheld(spliceWithoutStructure(host, 0, 1, 3, other)) }, 4},
 	} {
 		out, err := c.run()
 		if err != nil {
@@ -187,7 +187,7 @@ func TestAPacketPutBackNeverBringsAClaim(t *testing.T) {
 	for name, run := range map[string]func() ([]byte, error){
 		"DuplicatePage":          func() ([]byte, error) { return DuplicatePage(labelled, 1) },
 		"InsertPDF":              func() ([]byte, error) { return InsertPDF(labelled, other, 1, false) },
-		"spliceWithoutStructure": func() ([]byte, error) { return spliceWithoutStructure(labelled, 1, 2, 1, other) },
+		"spliceWithoutStructure": func() ([]byte, error) { return withoutWithheld(spliceWithoutStructure(labelled, 1, 2, 1, other)) },
 	} {
 		out, err := run()
 		if err != nil {
@@ -203,7 +203,7 @@ func TestAPacketPutBackNeverBringsAClaim(t *testing.T) {
 		}
 	}
 	// And the last resort carries no tree, whatever the host had: that is all it is for.
-	out, err := spliceWithoutStructure(labelled, 1, 2, 1, other)
+	out, _, err := spliceWithoutStructure(labelled, 1, 2, 1, other)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,5 +307,91 @@ func TestAFileThatReachesADeletedPageIsCarriedFromItsBytes(t *testing.T) {
 	}
 	if !probe(kept) {
 		t.Error("a reorder that drops no page rebuilt the file instead of keeping the document's own entry")
+	}
+}
+
+// withoutCount drops a split's dropped-file count, for the tests that ask something else of its output.
+func withoutCount(out []byte, _ int, err error) ([]byte, error) { return out, err }
+
+// withoutWithheld drops a splice's files-withheld answer the same way.
+func withoutWithheld(out []byte, _ bool, err error) ([]byte, error) { return out, err }
+
+// fileReachingPage2 is withPacket with its one embedded file's specification holding a reference to page 2, and a
+// probe that says whether a document's entry still holds it.
+func fileReachingPage2(t *testing.T) (host []byte, probe func([]byte) bool) {
+	t.Helper()
+	host, err := writeMutated(withPacket(t), func(ctx *model.Context) error {
+		xt := ctx.XRefTable
+		entries, err := treeEntries(xt)
+		if err != nil || len(entries) != 1 {
+			return fmt.Errorf("setup: %d entries, %v", len(entries), err)
+		}
+		fs, err := xt.DereferenceDict(entries[0].fs)
+		if err != nil || fs == nil {
+			return fmt.Errorf("setup: the filespec does not resolve: %v", err)
+		}
+		pages := pdfread.Pages(ctx)
+		if len(pages) != 3 || pages[1].Ref == nil {
+			return fmt.Errorf("setup: %d pages", len(pages))
+		}
+		fs["NibProbe"] = *pages[1].Ref
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe = func(pdf []byte) bool {
+		ctx := readCtx(t, pdf)
+		e, err := treeEntries(ctx.XRefTable)
+		if err != nil || len(e) != 1 {
+			t.Fatalf("%d embedded-file entries, %v", len(e), err)
+		}
+		fs, _ := ctx.XRefTable.DereferenceDict(e[0].fs)
+		return fs["NibProbe"] != nil
+	}
+	if !probe(host) {
+		t.Fatal("setup: the filespec's reference to page 2 did not survive the write")
+	}
+	return host, probe
+}
+
+// TestAFileThatReachesASplitPageIsCarriedFromItsBytes — a split REMOVES the page it cuts, so a file reaching that
+// page is withheld by the splice exactly as a delete's is. Measured before the splits took the delete's second way
+// back: `SplitPage` and `SplitRegions` on the page a file reached each returned the document with NO embedded
+// files and no word of it. The control splits a page the file does not reach, which keeps the document's own entry.
+func TestAFileThatReachesASplitPageIsCarriedFromItsBytes(t *testing.T) {
+	host, probe := fileReachingPage2(t)
+	splits := map[string]func(page int) ([]byte, int, error){
+		"SplitPage": func(page int) ([]byte, int, error) { return SplitPage(host, page, 2, 1, false) },
+		"SplitRegions": func(page int) ([]byte, int, error) {
+			return SplitRegions(host, page, [][4]float64{{0, 0, 200, 200}, {200, 200, 400, 400}})
+		},
+	}
+	for name, split := range splits {
+		out, dropped, err := split(2)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		files, title, _, _ := documentFactsOf(t, out)
+		if strings.Join(files, " ") != "record.txt" || dropped != 0 {
+			t.Fatalf("%s of the page a file reaches left files %v with %d dropped, want record.txt carried from its bytes", name, files, dropped)
+		}
+		if title != "Lease" {
+			t.Errorf("%s: title %q, want Lease", name, title)
+		}
+		if probe(out) {
+			t.Errorf("%s: the carried file still points at the page that was cut, so that page was written into the output", name)
+		}
+		if got, err := ExtractAttachment(out, "record.txt"); err != nil || string(got) != "the record" {
+			t.Errorf("%s: the carried file reads %q (%v), want its own bytes", name, got, err)
+		}
+		// CONTROL: the file does not reach page 1, so splitting it keeps the tree as it stood.
+		kept, dropped, err := split(1)
+		if err != nil || dropped != 0 {
+			t.Fatalf("%s page 1: %d dropped, %v", name, dropped, err)
+		}
+		if !probe(kept) {
+			t.Errorf("%s of a page the file does not reach rebuilt the file instead of keeping the document's own entry", name)
+		}
 	}
 }

@@ -386,7 +386,7 @@ func TestANUpCarriesANoteThroughAPagesOwnCropOffset(t *testing.T) {
 		noteY   = 700.0
 	)
 	two := must(testpdf.Text("clause one", "clause two"))
-	split := must(SplitPage(two, 1, 2, 1, false))
+	split := must(withoutCount(SplitPage(two, 1, 2, 1, false)))
 	noted := must(AddNotes(split, []Note{{Page: 2, X: noteX, Y: noteY, Text: "split note"}}))
 	up := must(NUp(noted, 2, false))
 

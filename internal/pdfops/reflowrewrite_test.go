@@ -186,15 +186,30 @@ func TestAReflowItCannotDoExactlyNamesWhy(t *testing.T) {
 // TestEveryRewrittenParagraphReadsBackAsItsEdit — S04 over real documents (D12's law: the corpus is the oracle). For
 // every multi-word paragraph on every page of the generated and real-producer corpora, the edit swaps its first two
 // words — always drawable, since the paragraph already draws both — and every paragraph the rewrite ACCEPTS must read
-// back, from the written document, as exactly that text at the same paragraph index, re-broken as the one line breaker
-// sets it at the paragraph's own measure (P06's first exit criterion). Refusals are counted by cause; a paragraph
-// accepted and read back wrong is the failure this exists to find.
+// back, from the written document, as exactly that text at the same paragraph index, re-broken as PRODUCTION breaks
+// an edit (`breakAsProduction`: a justified paragraph's one word spacing and its re-break at the flush edge, a centred
+// paragraph's width about its axis — P06's first exit criterion as P08 left it). Refusals are counted by cause; a
+// paragraph accepted and read back wrong is the failure this exists to find.
 //
 // **A deterministic SAMPLE, and it says so**: the first two pages of each document and at most four paragraphs from
 // them — each edit re-reads and rewrites the whole document, and doing every paragraph of a 1,000-paragraph census file
 // was minutes. Every producer is still reached.
 //
+// **And one paragraph of each KIND the breaker treats apart, per document, wherever its first `rewriteKindPages`
+// pages hold one** (/pending 797 W2): a multi-line justified paragraph, a centred one, and one carrying a hyphenated
+// break. The oracle was `rebreak` at the paragraph's own measure, which models none of the three, and the sample was
+// green because it reached none of them — measured then: 81 accepted, justified 0, carrying a break 0. Each kind now
+// has a floor on how many the oracle JUDGED.
+//
 // **The stimulus is asserted**: some paragraph must have been rewritten, or the test proved nothing about the rewrite.
+// rewriteKindPages is how far into a document `TestEveryRewrittenParagraphReadsBackAsItsEdit` looks for a paragraph of
+// each kind, and rewriteKindFloor the least number of each kind its breaker oracle must have judged over the real
+// producers.
+const (
+	rewriteKindPages = 12
+	rewriteKindFloor = 3
+)
+
 func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 	corpora := []lawOneCorpus{
 		{name: "generated", docs: runCorpus(t)},
@@ -202,6 +217,9 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 	}
 	rewritten, respelled := 0, 0
 	causes, respellRefused := map[string]int{}, map[string]int{}
+	// judged is how many accepted edits the breaker oracle ruled on, by the kind of the paragraph edited; unjudged is
+	// the accepted edits it could not rule on, by cause.
+	judged, unjudged := map[string]int{}, map[string]int{}
 	for _, corp := range corpora {
 		if corp.absent != "" {
 			t.Logf("NOTE (a narrower population, not a pass over it): %s: %s", corp.name, corp.absent)
@@ -213,17 +231,42 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 				continue
 			}
 			tried := 0
-			for p := 1; p <= ctx.PageCount && p <= 2; p++ {
+			sampled := map[string]bool{} // the kinds this document has given a paragraph of
+			for p := 1; p <= ctx.PageCount && p <= rewriteKindPages; p++ {
+				if p > 2 && sampled["justified"] && sampled["centred"] && sampled["broken"] {
+					break
+				}
 				l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 				if err != nil {
 					continue
 				}
 				for pi, para := range l.paragraphs {
-					if tried >= 4 {
-						break
-					}
 					f := strings.Fields(para.text())
 					if len(f) < 2 || f[0] == f[1] {
+						continue
+					}
+					// The kinds the breaker treats apart, read as production reads them.
+					var kinds []string
+					if own, _, cause := paragraphWords(para); cause == "" {
+						a := paragraphAlignment(l, pi, own)
+						if a.justified && len(own) > 1 {
+							kinds = append(kinds, "justified")
+						}
+						if a.centred {
+							kinds = append(kinds, "centred")
+						}
+						for li := 0; li+1 < len(own); li++ {
+							if _, ok := breakHyphen(own[li][len(own[li])-1]); ok && startsLower(own[li+1][0]) {
+								kinds = append(kinds, "broken")
+								break
+							}
+						}
+					}
+					wanted := false
+					for _, k := range kinds {
+						wanted = wanted || !sampled[k]
+					}
+					if (tried >= 4 || p > 2) && !wanted {
 						continue
 					}
 					tried++
@@ -259,7 +302,6 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						// Checked by LINE, at the baselines the rewrite set, not by paragraph index: grouping reads the whole
 						// page, so a changed line width can join the edited paragraph to a neighbour (measured: fda-156618
 						// p1, whose widest line moved the column's right edge) with every glyph where the rewrite put it.
-						origLines, space, _ := paragraphWords(para)
 						pitch := paragraphPitch(l, pi)
 						baseline := func(i int) float64 {
 							if i < len(para.lines) {
@@ -282,13 +324,17 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 							return true, ""
 						}
 						newLines, _, cause := paragraphWords(got)
-						if cause == "" {
-							var words []reflowWord
-							for _, ln := range newLines {
-								words = append(words, ln...)
+						if cause != "" {
+							unjudged["read back: "+cause]++
+						} else if a, b, _, _, why := breakAsProduction(l, pi, newLines, false); why != "" {
+							unjudged["breaker: "+why]++
+						} else {
+							if strings.Join(a, "\n") != strings.Join(b, "\n") {
+								t.Errorf("%s / %s p%d ¶%d: written as %q, production's breaking sets %q", corp.name, doc.name, p, pi, b, a)
 							}
-							if a, b := lineTexts(rebreak(words, paragraphMeasures(l, pi, origLines, spacerOf(origLines, space)), spacerOf(origLines, space))), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
-								t.Errorf("%s / %s p%d ¶%d: written as %q, the breaker sets %q", corp.name, doc.name, p, pi, b, a)
+							judged["any"]++
+							for _, k := range kinds {
+								judged[k]++
 							}
 						}
 						// And the page reads, in order, as it did with the paragraph replaced by the edit: nothing else was
@@ -316,6 +362,9 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						continue
 					}
 					rewritten++
+					for _, k := range kinds {
+						sampled[k] = true // only an ACCEPTED edit spends the document's one of a kind
+					}
 					// A NEW word — the first word spelled backwards, which the paragraph does not already draw — reaches
 					// the path the swap never can: each character's code chosen by `codesFor`, its width by the font.
 					rs := []rune(f[0])
@@ -340,6 +389,16 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 		t.Errorf("no new word was spelled and read back (refusals %v) — codesFor's path was never exercised", respellRefused)
 	}
 	t.Logf("%d paragraphs rewritten and read back; refused by cause %v", rewritten, causes)
+	t.Logf("the breaker oracle judged %d accepted edits: %d in a justified paragraph, %d in a centred one, %d in one "+
+		"carrying a hyphenated break; not judged %v", judged["any"], judged["justified"], judged["centred"], judged["broken"], unjudged)
+	if corpora[1].absent == "" {
+		for _, k := range []string{"justified", "centred", "broken"} {
+			if judged[k] < rewriteKindFloor {
+				t.Errorf("the breaker oracle judged %d edits in a %s paragraph, want at least %d — the census did not "+
+					"reach the paragraphs production breaks its own way (not judged: %v)", judged[k], k, rewriteKindFloor, unjudged)
+			}
+		}
+	}
 	t.Logf("%d new words spelled from the font and read back; refused by cause %v", respelled, respellRefused)
 }
 

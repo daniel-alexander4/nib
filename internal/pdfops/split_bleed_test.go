@@ -67,7 +67,7 @@ func TestSplitPageNoBleed(t *testing.T) {
 		t.Skip("pdftoppm (poppler) not installed; skipping render-based no-bleed check")
 	}
 	pdf := fourQuadrantPDF(t, 300, 400)
-	out, err := SplitPage(pdf, 1, 2, 2, true) // 2×2, resize to full page
+	out, _, err := SplitPage(pdf, 1, 2, 2, true) // 2×2, resize to full page
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestSplitRegionsNoBleed(t *testing.T) {
 	pdf := fourQuadrantPDF(t, 300, 400)
 	// Bottom-left-origin point rects: top-left quadrant (red, quad 0) and
 	// bottom-right quadrant (yellow, quad 3).
-	out, err := SplitRegions(pdf, 1, [][4]float64{{0, 200, 150, 400}, {150, 0, 300, 200}})
+	out, _, err := SplitRegions(pdf, 1, [][4]float64{{0, 200, 150, 400}, {150, 0, 300, 200}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestSplitRegionsStandardizePadding(t *testing.T) {
 	pdf := fourQuadrantPDF(t, 300, 400)
 	// A: small region inside the top-left (red) quadrant; B: larger region inside
 	// the bottom-right (yellow) quadrant. A=100×160, B=130×180 → standardized 130×180.
-	out, err := SplitRegions(pdf, 1, [][4]float64{{20, 220, 120, 380}, {160, 10, 290, 190}})
+	out, _, err := SplitRegions(pdf, 1, [][4]float64{{20, 220, 120, 380}, {160, 10, 290, 190}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestSplitRegionsRotated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A 300×400 page rotated 90° displays as 400×300.
-	full, err := SplitRegions(rotated, 1, [][4]float64{{0, 0, 400, 300}})
+	full, _, err := SplitRegions(rotated, 1, [][4]float64{{0, 0, 400, 300}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -172,6 +172,13 @@ func TestACentredLabelNeverRunsUnderAFieldBesideIt(t *testing.T) {
 // (its last word dropped) and accepted, reads back as the edit on its baseline, centred on its axis within 0.05 em, and
 // as its own text alone — not merged into a neighbouring cell. Refusals are counted by cause. **The stimulus is
 // asserted**: centred lines must have been re-set. Skips without the corpus.
+// centredExtraTries is how many centred paragraphs of each document `TestCentredLinesOverTheCorpus` also types a word
+// into and grows, and centredExtraFloor the least number of each it must have re-set and measured.
+const (
+	centredExtraTries = 6
+	centredExtraFloor = 10
+)
+
 func TestCentredLinesOverTheCorpus(t *testing.T) {
 	corp := externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers"))
 	if corp.absent != "" {
@@ -179,11 +186,35 @@ func TestCentredLinesOverTheCorpus(t *testing.T) {
 	}
 	read, reset := 0, 0
 	refused := map[string]int{}
+	// typed and grown are the two edits S04 and S06 added a path for and this census never made (/pending 797 I5):
+	// a word the paragraph does not draw, set in its usual look, and a line made LONGER, which moves its start left
+	// of where it stood (or takes a second line). Each is tried on the first `centredExtraTries` centred paragraphs
+	// of a document, and each has a floor on how many were re-set and measured.
+	typed, grown, grewALine := 0, 0, 0
+	typedRefused, grownRefused := map[string]int{}, map[string]int{}
+	onAxis := func(doc string, p, pi int, what, edit string, got []textLine, a alignment, size float64) bool {
+		var texts []string
+		for _, ln := range got {
+			texts = append(texts, ln.text)
+		}
+		if len(got) == 0 || !readsAsEdit(strings.Join(texts, " "), edit) {
+			t.Errorf("%s p%d ¶%d (%s): reads back %q, want %q", doc, p, pi, what, texts, edit)
+			return false
+		}
+		for i, ln := range got {
+			if mid := (ln.x0 + ln.x1) / 2; math.Abs(mid-a.axis) > justifyTol*size {
+				t.Errorf("%s p%d ¶%d (%s) line %d %q: centred on %v, the axis is %v", doc, p, pi, what, i, ln.text, mid, a.axis)
+				return false
+			}
+		}
+		return true
+	}
 	for _, doc := range corp.docs {
 		ctx, err := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
 		if err != nil {
 			continue
 		}
+		extra := 0
 		for p := 1; p <= ctx.PageCount; p++ {
 			l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 			if err != nil {
@@ -202,6 +233,27 @@ func TestCentredLinesOverTheCorpus(t *testing.T) {
 				ws := editWords(para.text())
 				if len(ws) < 3 {
 					continue
+				}
+				if extra < centredExtraTries {
+					extra++
+					size := para.lines[0].size
+					if rev, isNew := backwards(ws[0], para.text()); isNew {
+						e := strings.Join(append(ws[:len(ws)-1:len(ws)-1], rev), " ")
+						if got, cause := resetLines(t, doc.pdf, l, p, pi, e); cause != "" {
+							typedRefused[cause]++
+						} else if onAxis(doc.name, p, pi, "a typed word", e, got, a, size) {
+							typed++
+						}
+					}
+					e := strings.Join(append(ws[:len(ws):len(ws)], ws[0], ws[1]), " ")
+					if got, cause := resetLines(t, doc.pdf, l, p, pi, e); cause != "" {
+						grownRefused[cause]++
+					} else if onAxis(doc.name, p, pi, "grown by two words", e, got, a, size) {
+						grown++
+						if len(got) > len(para.lines) {
+							grewALine++
+						}
+					}
 				}
 				edit := strings.Join(ws[:len(ws)-1], " ")
 				c2, _ := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
@@ -255,6 +307,13 @@ func TestCentredLinesOverTheCorpus(t *testing.T) {
 		t.Fatal("no centred line was re-set — the centring was never exercised")
 	}
 	t.Logf("%d paragraphs read as centred, %d re-set and read back centred; refused by cause %v", read, reset, refused)
+	t.Logf("a typed word: %d re-set and read back on the axis, refused %v; grown by two words: %d (%d onto another line), refused %v",
+		typed, typedRefused, grown, grewALine, grownRefused)
+	if typed < centredExtraFloor || grown < centredExtraFloor {
+		t.Errorf("a typed word was re-set and measured in %d centred paragraphs and a grown line in %d, want at least %d "+
+			"of each — the census never took the paths S04 and S06 added (refused: typed %v, grown %v)",
+			typed, grown, centredExtraFloor, typedRefused, grownRefused)
+	}
 }
 
 // TestALineOnASharedLeftEdgeIsNotCentred — a line that begins where two other lines of its column begin is set from that
