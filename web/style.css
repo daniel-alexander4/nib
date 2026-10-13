@@ -1717,6 +1717,10 @@ body.presenting .presentbar { display: flex; }
    outcome, and it must not move the layout as the seconds tick — hence a fixed line-height and no
    font change between its states. */
 .cercall, .cersign { display: block; width: 100%; margin-top: 6px; }
+/* Sign now's block preview (ADR-147): the receiving consent's page-and-outline (.srvpage/.srvblock), in the rail. */
+.cerblockpreview { margin-top: 6px; overflow: hidden; border: 1px solid var(--surface1); border-radius: 6px; }
+.cerblockpreview canvas { display: block; }
+.cersignback { display: block; width: 100%; margin-top: 4px; }
 .cercallstate { display: block; margin-top: 4px; color: var(--subtext1); font-size: 11px; line-height: 1.4; }
 /* The terminal refusal reads differently from an ordinary one: --peach is this file's warning
    accent, and the message carries itself in --text as .stampwarn and #staleBanner both do, because

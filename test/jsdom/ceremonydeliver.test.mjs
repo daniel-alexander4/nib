@@ -410,7 +410,7 @@ test('the convener is offered Sign now at their own turn, and a party who did no
   // SETUP: the sentence is the own-turn one, so the absence of a call below is about this branch.
   assert.match(mine.querySelector('.cernextline').textContent, /^It is your turn to sign/,
     `setup: the rail does not say it is this machine's turn: ${mine.querySelector('.cernextline').textContent}`);
-  const sign = mine.querySelectorAll('.cernextline button');
+  const sign = mine.querySelectorAll('.cernextline button:not([hidden])');
   assert.equal(sign.length, 1, `the convener's own turn offers ${sign.length} actions, want exactly one`);
   assert.equal(sign[0].className, 'cersign');
   assert.equal(sign[0].textContent, 'Sign now', 'the button does not say what it does in plain words');
@@ -459,7 +459,38 @@ test('Sign now quotes the block, signs the document that was open at the press, 
       when: '2030-01-01T00:00:00Z',
     };
     afterSigning = { ceremony: id, state: 'waiting', label: 'Bob Landlord', meKnown: true, isMe: false };
-    again.querySelector('.cersign').click();
+    hopQuote.block = { page: 1, rect: [100, 100, 380, 184] };
+    const signBtn = again.querySelector('.cersign');
+    const preview = again.querySelector('.cerblockpreview');
+    const back = again.querySelector('.cersignback');
+    assert.ok(preview && preview.hidden, 'setup: the block preview is not there, or is up before anything was quoted');
+
+    // FIRST press (ADR-147): the block is quoted and shown. Nothing is signed.
+    signBtn.click();
+    await settle();
+    await settle();
+    assert.equal(signTurns.length, 0, 'one press signed: the convener never saw the block before it went on the document');
+    assert.equal(preview.hidden, false, 'the first press showed no preview of the block');
+    assert.ok(preview.textContent || preview.querySelector('.srvpage'),
+      'the preview is empty: neither the page with the outline nor a sentence saying why not');
+    assert.equal(signBtn.textContent, 'Sign', `after the preview the button reads ${signBtn.textContent}`);
+    assert.equal(back.hidden, false, 'there is no way back from the preview');
+    assert.match(again.querySelector('.cercallstate').textContent, /Signing is permanent/,
+      'the permanence statement is gone at the press that signs');
+
+    // Not now: the preview goes, the button is Sign now again, and still nothing was signed.
+    back.click();
+    await settle();
+    assert.equal(signTurns.length, 0, 'Not now signed');
+    assert.equal(preview.hidden, true, 'Not now left the preview up');
+    assert.equal(signBtn.textContent, 'Sign now');
+
+    // And again, through to the signature: what is signed is what was quoted for the preview.
+    signBtn.click();
+    await settle();
+    await settle();
+    hopQuote = { ...hopQuote, when: '2031-12-31T00:00:00Z' }; // a later quote must not be what is signed
+    signBtn.click();
     await settle();
     await settle();
     assert.equal(signTurns.length, 1, `the press reached the signing route ${signTurns.length} time(s): ${again.textContent.slice(-200)}`);

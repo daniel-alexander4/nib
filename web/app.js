@@ -18262,9 +18262,13 @@ function ceremonyCallNext(c, who) {
 // it answers `mine` with the block's lines), the block rasterised here, and one POST. Nothing leaves
 // this machine and there is no spoken check, because there is no other party at this turn.
 //
-// **One press signs, and the sentence beside the button says what that means before it is
-// pressed** — the permanence statement every other signing surface shows. The recital on the block
-// is the one this convener wrote at setup; the server takes it from the record, not from here.
+// **Two presses sign (ADR-147, superseding ADR-135's one).** *Sign now* quotes the block and shows the
+// page it goes on with the place outlined — the outline the receiving side's consent draws (`markBlock`),
+// from the placement the server's one door gives both (`p2p.PlacementFor`). *Sign* then signs exactly what
+// was quoted: the same rendered block and the same pinned time, on the document and in the view the
+// preview was drawn for. *Not now* puts the button back and signs nothing. The permanence statement is
+// beside the button throughout. The recital on the block is the one this convener wrote at setup; the
+// server takes it from the record, not from here.
 //
 // **Both requests name the document open at the press, and the reload names the view it was pressed
 // in** (ADR-001): the server signs the ADDRESSED document, and the signed result comes back as that
@@ -18277,34 +18281,83 @@ function ceremonySignTurn(c, refresh) {
   const say = document.createElement('span');
   say.className = 'cercallstate';
   say.textContent = PERMANENCE_SIGNATURE;
+  // What signing does to a conformance label, said before the press like every signing surface (/pending 520).
+  const label = document.createElement('p');
+  label.className = 'stampwarn signlabelnote';
+  label.textContent = signingLabelWords((view.docMeta && view.docMeta.conformanceLabel) || '');
+  label.hidden = !label.textContent;
+  const preview = document.createElement('div');
+  preview.className = 'cerblockpreview';
+  preview.hidden = true;
+  const back = document.createElement('button');
+  back.className = 'cersignback';
+  back.type = 'button';
+  back.textContent = 'Not now';
+  back.hidden = true;
+  // shown is what the preview on screen was drawn from; null until Sign now has quoted a block.
+  let shown = null;
+  const putBack = (words) => {
+    shown = null;
+    preview.replaceChildren();
+    preview.hidden = true;
+    back.hidden = true;
+    btn.textContent = 'Sign now';
+    btn.disabled = false;
+    say.textContent = words;
+  };
+  back.addEventListener('click', () => putBack(PERMANENCE_SIGNATURE));
   btn.addEventListener('click', async () => {
     const owner = view;
     const opDoc = owner.docMeta;
     if (!opDoc || !opDoc.id) { say.textContent = 'Open the ceremony’s document first.'; return; }
+    if (!shown) {
+      // First press: quote the block and show where it goes. Nothing is signed.
+      btn.disabled = true;
+      say.textContent = 'Preparing your signature block…';
+      try {
+        const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
+        if (!qr.ok) { say.textContent = await errText(qr, `Nib could not prepare your signature (${qr.status}).`); btn.disabled = false; return; }
+        const q = await qr.json();
+        if (!q.mine || !q.contributes || !Array.isArray(q.lines) || !q.lines.length) {
+          // The turn moved, or there is no block to draw: never sign without one. Read it again.
+          say.textContent = 'It is not your turn to sign any more. Nothing was signed.';
+          if (refresh) await refresh();
+          return;
+        }
+        const appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
+        preview.hidden = false; // before it is drawn: the drawing is sized to the room it has
+        const drawn = await previewOwnBlock(preview, owner, q.block);
+        shown = { owner, docId: opDoc.id, when: q.when, appearance };
+        back.hidden = false;
+        btn.textContent = 'Sign';
+        btn.disabled = false;
+        say.textContent = (drawn ? 'This is where your signature block will be placed. ' : '') + PERMANENCE_SIGNATURE;
+      } catch (e) {
+        putBack('Nib could not prepare your signature block. Nothing was signed.');
+      }
+      return;
+    }
+    // Second press: sign what was shown, on the document and in the view it was shown for (ADR-001).
+    const { appearance, when } = shown;
+    if (shown.owner !== owner || shown.docId !== opDoc.id) {
+      putBack('The document on screen is not the one this block was shown for. Nothing was signed.');
+      return;
+    }
     // The signed document is loaded back into this view, so anything placed on its pages and not
     // yet part of it would be discarded: asked first, before anything is signed.
     if (!confirmOverlayLoss(owner)) return;
     btn.disabled = true;
-    say.textContent = 'Preparing your signature block…';
+    back.hidden = true;
     try {
-      const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
-      if (!qr.ok) { say.textContent = await errText(qr, `Nib could not prepare your signature (${qr.status}).`); btn.disabled = false; return; }
-      const q = await qr.json();
-      if (!q.mine || !q.contributes || !Array.isArray(q.lines) || !q.lines.length) {
-        // The turn moved, or there is no block to draw: never sign without one. Read it again.
-        say.textContent = 'It is not your turn to sign any more. Nothing was signed.';
-        if (refresh) await refresh();
-        return;
-      }
-      const appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
       say.textContent = 'Signing…';
       const res = await apiFetch('/api/ceremony/sign-turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
+        body: JSON.stringify({ ceremony: c.id, appearance, when }),
         docId: opDoc.id,
       });
-      if (!res.ok) { say.textContent = await errText(res, `Nib could not sign (${res.status}). Nothing was signed.`); btn.disabled = false; return; }
+      if (!res.ok) { putBack(await errText(res, `Nib could not sign (${res.status}). Nothing was signed.`)); return; }
+      preview.hidden = true;
       say.textContent = 'You have signed.';
       // The signed bytes are the document's now; the view that was pressed in shows them.
       const meta = await res.json();
@@ -18313,14 +18366,51 @@ function ceremonySignTurn(c, refresh) {
       // And the rail moves on: the next party to call, or the finished ceremony.
       if (refresh) await refresh();
     } catch (e) {
-      say.textContent = 'Nib could not sign. Check the document — if your signature is not on it, press Sign now again.';
-      btn.disabled = false;
+      putBack('Nib could not sign. Check the document — if your signature is not on it, press Sign now again.');
     }
   });
   const wrap = document.createDocumentFragment();
+  wrap.appendChild(preview);
   wrap.appendChild(btn);
+  wrap.appendChild(back);
   wrap.appendChild(say);
+  wrap.appendChild(label);
   return wrap;
+}
+
+// previewOwnBlock draws the page a party's own signature block goes on, with the place outlined, into host —
+// the convener's half of the one block preview (ADR-147). The outline is `markBlock`, the receiving consent's
+// own (`loadPendingPreview`), and the place is the server's (`block`: page and rectangle in PDF points, from
+// the door the stamp uses). The page comes from the view's own open document: the bytes about to be signed.
+//
+// Best-effort, as the receiving side's is: the signing does not depend on it, so a page that will not draw
+// says so and names the page, and the answer is false so the caller does not claim a picture it did not show.
+async function previewOwnBlock(host, owner, block) {
+  host.replaceChildren();
+  if (!block || !Array.isArray(block.rect) || !block.page) {
+    emptyNote(host, 'Nib could not work out where your signature block goes, so there is nothing to show.');
+    return false;
+  }
+  try {
+    const page = await owner.pdfDocument.getPage(block.page);
+    const base = page.getViewport({ scale: 1 });
+    const room = Math.max(160, Math.min(380, host.clientWidth || 380));
+    const vp = page.getViewport({ scale: Math.min(1.2, room / base.width) });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width);
+    canvas.height = Math.ceil(vp.height);
+    const wrap = document.createElement('div');
+    wrap.className = 'srvpage';
+    wrap.append(canvas);
+    host.append(wrap);
+    markBlock(wrap, vp, block.rect, vp.width / base.width);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    return true;
+  } catch {
+    host.replaceChildren();
+    emptyNote(host, `Nib could not draw the page. Your signature block goes on page ${block.page}.`);
+    return false;
+  }
 }
 
 // watchHop shows how long the call has been running against the ceiling it will give up at.

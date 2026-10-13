@@ -87,6 +87,12 @@ type ceremonyHopQuote struct {
 	Lines []string   `json:"lines,omitempty"`
 	Rect  [4]float64 `json:"rect,omitempty"`
 	When  string     `json:"when,omitempty"`
+	// Block is WHERE the block will be placed, at the convener's own turn only (ADR-147, `/pending 869`): the
+	// page and rectangle the receiving side's consent already shows (`sessionConfirmer.blockFor`), from the
+	// same door on the same inputs as the stamp — `p2p.PlacementFor` over the document, the roster and this
+	// machine's fingerprint, which is `buildCoSigned`'s own call. Best-effort, as there: absent when Nib could
+	// not work it out, and the signing does not depend on it.
+	Block *pendingBlock `json:"block,omitempty"`
 }
 
 // hopTarget resolves everything a hop needs from a ceremony id, or writes its own refusal.
@@ -259,13 +265,16 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 				httpError(w, http.StatusInternalServerError, "could not read this machine's fingerprint")
 				return
 			}
-			att, aok := ownTurnAttestation(w, vaultFrom(r),
-				l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent), hex.EncodeToString(myFP),
+			roster := l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent)
+			att, aok := ownTurnAttestation(w, vaultFrom(r), roster, hex.EncodeToString(myFP),
 				time.Now().UTC().Format(time.RFC3339))
 			if !aok {
 				return
 			}
 			out.Lines, out.Rect, out.When = att.AppearanceLines(), p2p.NominalBlockRect(), att.When.UTC().Format(time.RFC3339)
+			if place, perr := p2p.PlacementFor(pdf, roster, hex.EncodeToString(myFP)); perr == nil {
+				out.Block = &pendingBlock{Page: place.Page, Rect: place.Rect}
+			}
 		}
 		writeJSON(w, out)
 		return
