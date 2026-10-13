@@ -1,8 +1,6 @@
-diff --git a/internal/server/server.go b/internal/server/server.go
-index 96f68c1..2f3f33c 100644
 --- a/internal/server/server.go
 +++ b/internal/server/server.go
-@@ -1047,9 +1047,7 @@ func (s *Server) installCeremonyResult(ceremonyID, name string, data []byte) (*d
+@@ -1709,9 +1709,7 @@
  			if d.ceremony != ceremonyID {
  				continue
  			}
@@ -10,6 +8,6 @@ index 96f68c1..2f3f33c 100644
 -				return nil, err
 -			}
 +
- 			d.data = data
- 			d.sig = sig
+ 			d.install(data, sig)
  			s.activeID = d.id
+ 			return d, nil
