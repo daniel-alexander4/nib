@@ -105,6 +105,21 @@ func ownTurnAsTheWindowSeesIt(t *testing.T, f *hopFixture, pdf []byte, peer, int
 		t.Errorf("the quote at the convener's own turn carries lines %q and when %q, want the block "+
 			"to draw: the convener by their roster label, as %q, with a pinned time", q.Lines, q.When, want)
 	}
+	// And WHERE it will be placed (ADR-147, `/pending 869`): the page and rectangle the window outlines before
+	// the convener signs — the stamp's own door on the stamp's own inputs, so the place shown is the place signed.
+	rec, xerr := ceremony.Extract(pdf)
+	conv, cok := rec.Convener()
+	if xerr != nil || !cok {
+		t.Fatalf("setup: the document's ceremony record: %v (convener %v)", xerr, cok)
+	}
+	place, perr := p2p.PlacementFor(pdf, l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent), conv.Fingerprint)
+	if perr != nil {
+		t.Fatalf("setup: the stamp's placement: %v", perr)
+	}
+	if q.Block == nil || q.Block.Page != place.Page || q.Block.Rect != place.Rect {
+		t.Errorf("the quote says the block goes at %+v, and the stamp puts it on page %d at %v — the convener "+
+			"is shown a place that is not where they sign", q.Block, place.Page, place.Rect)
+	}
 	code, body = postForCode(t, f.c, f.csrf, f.base+"/api/ceremony/hop", ceremonyHopRequest{Ceremony: f.id})
 	if code != http.StatusConflict || !strings.Contains(body, "nobody to call") {
 		t.Errorf("a hop at the convener's own turn answered %d %s, want 409 naming that there is "+
