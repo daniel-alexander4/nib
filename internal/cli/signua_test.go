@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nib/internal/pdfops"
@@ -37,8 +38,14 @@ func TestSignDropsTheClaimBeforeTheSignature(t *testing.T) {
 	}
 	t.Setenv("NIB_P12_PASSWORD", "secret")
 	out := filepath.Join(dir, "signed.pdf")
-	if code := cmdSign([]string{in, "-o", out, "--cert", p12}); code != 0 {
+	var code int
+	stderr := captureStderr(t, func() { code = cmdSign([]string{in, "-o", out, "--cert", p12}) })
+	if code != 0 {
 		t.Fatalf("sign exit = %d, want 0", code)
+	}
+	// ADR-147, `/pending 520`: said before it signs, and never a refusal.
+	if !strings.Contains(stderr, pdfops.LabelRemovedBySigning) {
+		t.Errorf("a labelled document was signed and its label removed with nothing said (stderr %q)", stderr)
 	}
 	signed := readPDF(t, out)
 	if st := sign.Verify(signed); st.State != sign.Valid {

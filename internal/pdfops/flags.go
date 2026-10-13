@@ -86,23 +86,50 @@ func FlagsAndXFA(pdf []byte) (flags []byte, xfa string, err error) {
 	// once stood in front of the wrapper parsed each file twice (measured +30-85% here on 100 KB-6 MB producer
 	// files), where the door checks for reference loops on the read it already makes (`/pending 675`, `/pending 764`).
 	// Every reader-taking `api` function is restated so now (ADR-082, `pdfread/apiread.go`).
+	f, err := ReadAnswerFacts(pdf)
+	return f.Flags, f.XFA, err
+}
+
+// AnswerFacts is what the server reads off a document for every answer it gives about it (`docResponse`).
+type AnswerFacts struct {
+	// Flags is FlagsJSON's answer: the embedded signing placeholders, or nil.
+	Flags []byte
+	// XFA is `pdfread.XFAOf`: "", "static" or "dynamic" (ADR-145).
+	XFA string
+	// Labelled says the catalog's metadata carries a PDF/UA or PDF/A identification — exactly what the next
+	// change would drop (`dropUAIdentification`, ADR-032/083), asked through that same door so the two cannot
+	// disagree about what a label is (ADR-147).
+	Labelled bool
+	// Tagged says the document claims tagging (`taggingClaimOf`: `/MarkInfo /Marked true`, or a tree).
+	Tagged bool
+}
+
+// ReadAnswerFacts reads all of AnswerFacts from ONE read: each is a reading of a read the server is already
+// making for every document it answers for — never a parse of its own (ADR-145, ADR-147). The label costs the
+// decode of the catalog's one metadata stream (bounded, `decodePacket`) and a byte search of it, with an XML
+// parse only for a packet that names a schema; the tagging claim is two catalog keys.
+func ReadAnswerFacts(pdf []byte) (AnswerFacts, error) {
+	var f AnswerFacts
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.LISTPROPERTIES
 	ctx, err := pdfread.ReadOptimized(pdf, conf)
 	if err != nil {
-		return nil, "", err
+		return f, err
 	}
-	xfa = pdfread.XFAOf(ctx)
-	props := ctx.Properties
-	enc, ok := props[flagsKey]
-	if !ok || enc == "" {
-		return nil, xfa, nil
+	f.XFA = pdfread.XFAOf(ctx)
+	if enc, ok := ctx.Properties[flagsKey]; ok && enc != "" {
+		if raw, derr := base64.StdEncoding.DecodeString(enc); derr == nil { // unreadable => treat as no flags
+			f.Flags = raw
+		}
 	}
-	raw, err := base64.StdEncoding.DecodeString(enc)
-	if err != nil {
-		return nil, xfa, nil // unreadable => treat as no flags
+	if cat, cerr := ctx.XRefTable.Catalog(); cerr == nil {
+		marked, tree := taggingClaimOf(ctx, cat)
+		f.Tagged = marked || tree
 	}
-	return raw, xfa, nil
+	// LAST, because the asking edits the context it asks: it is the drop itself, on a read that is then
+	// discarded (`dropUAIdentificationBytes` probes the same way). An error is "could not tell", and says no.
+	f.Labelled, _ = dropUAIdentification(ctx)
+	return f, nil
 }
 
 // SetFlags embeds the given flag-set JSON as the NibFlags property and returns

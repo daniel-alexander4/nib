@@ -156,3 +156,65 @@ func TestFinalizingDropsTheClaimBeforeTheSignature(t *testing.T) {
 		t.Errorf("the finalized document still claims PDF/UA (err %v)", err)
 	}
 }
+
+// TestADocumentSaysWhatSigningDoesToItsLabel — ADR-147, `/pending 520`: the one fact every signing surface in
+// the window words. An unsigned labelled document says signing REMOVES the label (and Finalize then does);
+// a signed one says it is KEPT; a document with no label says nothing.
+func TestADocumentSaysWhatSigningDoesToItsLabel(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	dir := t.TempDir()
+	open := func(name string, data []byte) docResponse {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return openByPath(t, ts.URL, c, csrf, path)
+	}
+	plain, err := testpdf.Text("no label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err = pdfops.SetTitle(plain, "No label"); err != nil {
+		t.Fatal(err)
+	}
+	if dr := open("plain.pdf", plain); dr.ConformanceLabel != "" {
+		t.Errorf("a document with no label says %q about one", dr.ConformanceLabel)
+	}
+	labelled := labelledDoc(t, "labelled, unsigned")
+	if dr := open("labelled.pdf", labelled); dr.ConformanceLabel != labelRemoved {
+		t.Errorf("an unsigned labelled document says %q — want %q: every signing path drops the label first",
+			dr.ConformanceLabel, labelRemoved)
+	}
+	// Asked twice: the second answer is the cached one, and must be the same fact.
+	if dr := getDoc(t, ts, c); dr.ConformanceLabel != labelRemoved {
+		t.Errorf("the cached answer says %q — want %q", dr.ConformanceLabel, labelRemoved)
+	}
+
+	// A signed document that carries a label: signed first, labelled after. The rewrite breaks the signature
+	// and leaves its blob, which is the predicate every signing door reads (`sign.HasSignatureBlob`).
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(plain)
+	mw.WriteField("params", `{"reason":"Finalized in Nib"}`)
+	mw.Close()
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
+	signed, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("finalize status %d: %s", resp.StatusCode, signed)
+	}
+	signedLabelled, err := testpdf.WithUAIdentification(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sign.HasSignatureBlob(signedLabelled) {
+		t.Fatal("setup: the labelled copy of a signed document carries no signature blob")
+	}
+	if dr := open("signed.pdf", signedLabelled); dr.ConformanceLabel != labelKept {
+		t.Errorf("a signed labelled document says %q — want %q: signing again keeps a label Nib has not checked",
+			dr.ConformanceLabel, labelKept)
+	}
+}

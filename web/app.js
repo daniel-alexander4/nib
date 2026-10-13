@@ -11578,9 +11578,28 @@ els.cropGo.onclick = async () => {
   const frac = [view.cropRect.fx, view.cropRect.fy, view.cropRect.fw, view.cropRect.fh];
   const allPages = els.cropAllPages.checked;
   exitCrop();
+  const owner = view;
   const ok = await pageOp('crop', { rect: JSON.stringify(frac), pages: allPages ? '' : String(page) });
-  if (ok) toast(allPages ? 'All pages cropped to the box' : `Page ${page} cropped to the box`);
+  if (!ok) return;
+  const done = allPages ? 'All pages cropped to the box' : `Page ${page} cropped to the box`;
+  // A crop hides and does not remove, and a tagged document's tags still describe the whole page (ADR-047), so
+  // what was cropped away is still read aloud. Said once, here, where the crop happened, and for long enough to
+  // read — never in #tagNotice, which says the opposite thing (tags LOST). `/pending 577`, ADR-147.
+  if (owner.docMeta && owner.docMeta.tagged) toast(`${done}. ${cropTaggedNote()}`, 12000);
+  else toast(done);
 };
+// reflectCropTagged puts the same sentence on the crop's confirm step, for a tagged document only.
+function reflectCropTagged(m) {
+  const note = document.getElementById('cropTaggedNote');
+  if (!note) return;
+  note.textContent = m && m.tagged ? cropTaggedNote() : '';
+  note.hidden = !note.textContent;
+}
+// A function and not a `const`: a document's answer is reflected while this file is still loading.
+function cropTaggedNote() {
+  return 'This document is tagged for screen readers, and a crop only hides: what is cropped away is still '
+    + 'in the file and will still be read aloud. To remove it, use Redact.';
+}
 
 // --- cover-and-replace text editing ------------------------------------------
 // Drag a box over baked-in text; Nib reads the text + its size/colour/font under
@@ -13944,6 +13963,8 @@ function reflectUndoControls(enabled) {
   reflectTagNotice(m);
   reflectLostNotice(m);
   reflectXfaNotice(m);
+  reflectSigningLabel(m);
+  reflectCropTagged(m);
 }
 
 // ── The accessibility-structure notice (ADR-031, law 2's `dropped-with-notice`) ──
@@ -14067,6 +14088,37 @@ function xfaNoticeWords(state) {
         + 'form will now show these pages instead. Undo, or the original file, still has it.';
     default:
       return '';
+  }
+}
+
+// ── What signing does to a conformance label (ADR-147, /pending 520) ─────────
+//
+// A document may carry a PDF/UA or PDF/A label. No signing path checks it: an unsigned document loses the label
+// before the signature (ADR-032), and a signed one keeps it. The server says which (`conformanceLabel` on its
+// answer) and EVERY signing surface says it before the user signs, from this one function and one painter —
+// an element of class `signlabelnote`, in the markup (Finalize, Co-sign, Simple Sign) or made by the rail's
+// Sign now. Never a refusal, and never dismissed: it is part of the step, not a banner.
+//
+// The sentences are `pdfops.LabelRemovedBySigning` / `LabelKeptBySigning` word for word (`nib sign` prints
+// those); test/jsdom/tagnotice.test.mjs holds the two copies equal.
+function signingLabelWords(state) {
+  switch (state) {
+    case 'removed':
+      return 'This document carries a PDF/UA or PDF/A conformance label. Signing removes the label, because '
+        + 'Nib has not checked that the signed document conforms.';
+    case 'kept':
+      return 'This document carries a PDF/UA or PDF/A conformance label and is already signed. Signing it '
+        + 'again keeps the label, which Nib has not checked.';
+    default:
+      return '';
+  }
+}
+
+function reflectSigningLabel(m) {
+  const words = signingLabelWords((m && m.conformanceLabel) || '');
+  for (const el of document.querySelectorAll('.signlabelnote')) {
+    el.textContent = words;
+    el.hidden = !words;
   }
 }
 
@@ -16708,7 +16760,7 @@ window.addEventListener('keydown', (e) => {
 
 // --- toast -------------------------------------------------------------------
 let toastEl;
-function toast(msg) {
+function toast(msg, ms = 2500) {
   // Behind the open-Nib-again screen nothing a toast says is actionable, and a failing poll's
   // "Nib stopped answering" would contradict the screen (R7-10).
   if (launchOverlayUp()) return;
@@ -16734,7 +16786,7 @@ function toast(msg) {
   // none was cancelled, so a message shown 2 s after another was hidden by the FIRST one's timer half
   // a second in — the second sentence was on screen too briefly to read.
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2500);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
 }
 let toastTimer = 0;
 

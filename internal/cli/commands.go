@@ -1198,6 +1198,10 @@ func cmdSign(args []string) int {
 	// A document pdfcpu cannot read is signed as it was read, per ADR-032 ("passed through too, logged").
 	// This dropped the error silently (`/pending 504`), so a claim the signature then sealed permanently
 	// left no trace. Warned, not refused: the ADR decides a metadata step never costs the signature.
+	// Said BEFORE the signature, and never a refusal (ADR-147, `/pending 520`): what signing does to a label.
+	if note := pdfops.SigningLabelNote(pdf, sign.HasSignatureBlob(pdf)); note != "" {
+		errf("note: %s: %s", inputName(in), note)
+	}
 	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); errors.Is(derr, pdfread.ErrDynamicXFA) {
 		errf("%s: %v", inputName(in), derr) // ADR-145: the one error from this door that is a refusal
 		return 1

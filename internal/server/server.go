@@ -164,6 +164,9 @@ type document struct {
 	// xfa is docResponse.XFA for the bytes `flags` was computed from — read by the same parse, cached by the
 	// same rule (ADR-145).
 	xfa string
+	// label and tagged are docResponse.ConformanceLabel and docResponse.Tagged for those same bytes (ADR-147).
+	label  string
+	tagged bool
 
 	// historyEvicted records that this document's history was dropped to keep the
 	// global budget, rather than never having existed. Without it the two are
@@ -749,6 +752,15 @@ type docResponse struct {
 	// are a placeholder, and Nib refuses to change the document), or "removed" (it arrived with one and a change
 	// took it out). Sticky for the reason TaggingDropped is; omitted for a document that never had one.
 	XFA string `json:"xfa,omitempty"`
+	// ConformanceLabel says what SIGNING this document does to a PDF/UA or PDF/A label it carries (ADR-147,
+	// `/pending 520`): "removed" — it is unsigned, and every signing path drops the label before the signature
+	// (ADR-032); "kept" — it is already signed, so the label stays under the next signature, and Nib has not
+	// checked it. Omitted for a document with no label. It is a fact about the bytes the document holds, read
+	// by the parse `Flags` comes from, and every signing surface in the window words it from this one field.
+	ConformanceLabel string `json:"conformanceLabel,omitempty"`
+	// Tagged says the document claims tagging (`/MarkInfo /Marked true`, or a structure tree) — what the
+	// window needs to say, after a crop, that the hidden part is still read aloud (`/pending 577`).
+	Tagged bool `json:"tagged,omitempty"`
 	// LostAnnots and LostFields are what operations on this document have destroyed and could not
 	// carry — comments, links and form fields (/pending 574). `omitempty`, so the overwhelmingly
 	// common case of a document that lost nothing puts nothing on the wire.
@@ -1888,7 +1900,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// mutating doc.data in place would silently reintroduce the race.
 	data := doc.data
 	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
-	xfaWas := doc.xfa
+	xfaWas, labelWas, taggedWas := doc.xfa, doc.label, doc.tagged
 	// Snapshotted here with everything else and compared AFTER the unlock, for the
 	// reason the paragraph above gives about FlagsJSON: diskChanged stats the file and
 	// may read it, and a syscall under the server mutex serializes every route behind
@@ -1916,24 +1928,45 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// /api/flags). A parse failure just means "no flags" — never blocks the open.
 	if fresh {
 		resp.Flags = cached
-		resp.XFA = xfaWas
+		resp.XFA, resp.ConformanceLabel, resp.Tagged = xfaWas, labelWas, taggedWas
 		return resp
 	}
-	flags, xfa, err := pdfops.FlagsAndXFA(data)
-	if err == nil && json.Valid(flags) {
-		resp.Flags = flags
+	facts, err := pdfops.ReadAnswerFacts(data)
+	if err == nil && json.Valid(facts.Flags) {
+		resp.Flags = facts.Flags
 	}
-	resp.XFA = xfaAfter(xfaWas, xfa, err)
+	resp.XFA = xfaAfter(xfaWas, facts.XFA, err)
+	resp.ConformanceLabel, resp.Tagged = conformanceLabelOf(facts.Labelled, data), facts.Tagged
 	// Store it back, but only if this document still holds the bytes it was computed
 	// from: another request may have replaced them while the parse ran, and caching a
 	// result against bytes the document no longer has is worse than not caching.
 	s.mu.Lock()
 	if s.isRegisteredLocked(doc) && sameBytes(doc.data, data) {
 		doc.flags, doc.flagsFor, doc.xfa = resp.Flags, data, resp.XFA
+		doc.label, doc.tagged = resp.ConformanceLabel, resp.Tagged
 	}
 	s.mu.Unlock()
 	return resp
 }
+
+// conformanceLabelOf is docResponse.ConformanceLabel: what signing does to the label these bytes carry. The
+// signedness is `sign.HasSignatureBlob`, the predicate every signing door hands `DropUAIdentificationUnlessSigned`
+// — asked only of a labelled document, so the common document pays nothing for it.
+func conformanceLabelOf(labelled bool, data []byte) string {
+	switch {
+	case !labelled:
+		return ""
+	case sign.HasSignatureBlob(data):
+		return labelKept
+	}
+	return labelRemoved
+}
+
+// The two values of docResponse.ConformanceLabel.
+const (
+	labelRemoved = "removed"
+	labelKept    = "kept"
+)
 
 // xfaAfter is docResponse.XFA for a document whose bytes now read as now, having last been reported as was
 // (ADR-145). A document that had a static form and has none now had it REMOVED by a change, and goes on saying
