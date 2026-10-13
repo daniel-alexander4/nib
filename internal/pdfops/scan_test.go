@@ -430,6 +430,7 @@ func TestRiskyActionsCoverTheTypesThatCanRunOrHide(t *testing.T) {
 	want := []string{
 		"JavaScript", "Launch", "SubmitForm", "ImportData", "GoToR", "GoToE", "URI",
 		"Rendition", "Movie", "Sound", "SetOCGState", "GoTo3DView", "Hide",
+		"RichMediaExecute", // `/pending 865`: it names a RichMedia annotation both tiers remove
 	}
 	for _, name := range want {
 		if _, ok := riskyActions[name]; !ok {

@@ -589,8 +589,9 @@ ways, strongest fidelity-preserving first:
   untouched. (pdfcpu re-stamps a generic producer and the current date on write,
   so the file names Nib, not you.) It re-scans its result and refuses if any
   identifying metadata would remain.
-- **Remove files & media** — deletes only embedded files and media annotations
-  (file attachments, sound, movie, screen, rich media, 3D), leaving all other
+- **Remove files & media** — deletes only embedded files, media annotations
+  (file attachments, sound, movie, screen, rich media, 3D) and the actions that
+  play them (a link or bookmark that starts a clip), leaving all other
   interactivity untouched. It too re-scans its result and refuses if a file or
   media annotation would remain.
 - **Flatten to images** — the guaranteed-inert floor: turns every page into an

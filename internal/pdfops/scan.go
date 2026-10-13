@@ -31,6 +31,9 @@ type Finding struct {
 	Severity string `json:"severity"`       // "high" | "medium" | "low"
 	Detail   string `json:"detail"`         // human-readable, honest about what it is
 	Page     int    `json:"page,omitempty"` // 1-based; 0 = document-level
+	// plays marks an action of a mediaActions type: the one kind of action RemoveFilesAndMedia removes, and so
+	// the one its verification must tell from the actions that tier keeps (`/pending 865`).
+	plays bool
 }
 
 // ScanReport is the result of Scan: everything hidden or active that was found.
@@ -61,6 +64,19 @@ var riskyActions = map[string]string{
 	"SetOCGState": "medium",
 	"GoTo3DView":  "medium",
 	"Hide":        "medium",
+	// Adobe Extension Level 3 §9.6.2: a command sent to a RichMedia annotation, named by /TA. Unlisted, it
+	// scanned clean and survived both tiers with the annotation each had taken off its page (`/pending 865`).
+	"RichMediaExecute": "medium",
+}
+
+// mediaActions are the riskyActions types whose whole purpose is to play, or to drive, what the media removal
+// takes out (`/pending 865`): each names a media annotation, a rendition or a sound stream by reference —
+// `/Rendition` `/AN` and `/R`, `/Movie` `/Annotation`, `/Sound` `/Sound`, `/GoTo3DView` and `/RichMediaExecute`
+// `/TA` — so while one stands, what RemoveFilesAndMedia unlinked from its page is still written out, reached
+// through the action. Every name here is a riskyActions name too (`TestEveryMediaActionIsARiskyAction`), which
+// is what makes StripActive at least as strong.
+var mediaActions = map[string]bool{
+	"Rendition": true, "Movie": true, "Sound": true, "GoTo3DView": true, "RichMediaExecute": true,
 }
 
 // eachAction walks an action and everything its /Next chains to, calling fn on each.
@@ -165,6 +181,14 @@ func Scan(pdf []byte) (ScanReport, error) {
 	add := func(kind, sev, detail string, page int) {
 		rep.Findings = append(rep.Findings, Finding{Kind: kind, Severity: sev, Detail: detail, Page: page})
 	}
+	// addAction reports one action if its type is risky — the ONE place an "action" finding is made, so every
+	// holder marks a media-playing one alike.
+	addAction := func(act types.Dict, from string, page int) {
+		s := nameVal(act, "S")
+		if sev, ok := riskyActions[s]; ok {
+			rep.Findings = append(rep.Findings, Finding{Kind: "action", Severity: sev, Detail: actionDetail(s) + from, Page: page, plays: mediaActions[s]})
+		}
+	}
 
 	// Document-level auto-run hooks.
 	//
@@ -222,11 +246,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 				add("additionalActions", "medium",
 					"Form field additional actions (keystroke, format, validate or calculate script)", 0)
 			}
-			eachAction(xt, derefDict(xt, f["A"]), 0, &actions, func(act types.Dict) {
-				if sev, ok := riskyActions[nameVal(act, "S")]; ok {
-					add("action", sev, actionDetail(nameVal(act, "S")), 0)
-				}
-			})
+			eachAction(xt, derefDict(xt, f["A"]), 0, &actions, func(act types.Dict) { addAction(act, "", 0) })
 		})
 		// /CO is the calculation ORDER — an array of the fields whose /AA /C scripts run
 		// and in what sequence. Its presence is the tell that calculate scripts exist even
@@ -302,11 +322,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := annot.Find("AA"); ok {
 			add("additionalActions", "medium", "Annotation additional actions", nr)
 		}
-		eachAction(xt, derefDict(xt, annot["A"]), 0, &actions, func(act types.Dict) {
-			if sev, ok := riskyActions[nameVal(act, "S")]; ok {
-				add("action", sev, actionDetail(nameVal(act, "S")), nr)
-			}
-		})
+		eachAction(xt, derefDict(xt, annot["A"]), 0, &actions, func(act types.Dict) { addAction(act, "", nr) })
 	}); err != nil {
 		return ScanReport{}, err
 	}
@@ -314,11 +330,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 	// scan that never opened the outline called a bookmark that runs JavaScript clean. Document-level — a
 	// bookmark is on no page.
 	eachOutlineItem(xt, root, func(item types.Dict) {
-		eachAction(xt, derefDict(xt, item["A"]), 0, &actions, func(act types.Dict) {
-			if sev, ok := riskyActions[nameVal(act, "S")]; ok {
-				add("action", sev, actionDetail(nameVal(act, "S"))+" (from a bookmark)", 0)
-			}
-		})
+		eachAction(xt, derefDict(xt, item["A"]), 0, &actions, func(act types.Dict) { addAction(act, " (from a bookmark)", 0) })
 	})
 	if actions < 0 {
 		return ScanReport{}, errActionWalkTooLarge
@@ -375,6 +387,73 @@ func riskyChain(xt *model.XRefTable, act types.Dict, budget *int) bool {
 		}
 	})
 	return risky
+}
+
+// mediaChain is riskyChain for the gentle tier: whether act, or anything its /Next chains to, is a mediaActions
+// type.
+func mediaChain(xt *model.XRefTable, act types.Dict, budget *int) bool {
+	plays := false
+	eachAction(xt, act, 0, budget, func(a types.Dict) {
+		if mediaActions[nameVal(a, "S")] {
+			plays = true
+		}
+	})
+	return plays
+}
+
+// dropMediaActions is RemoveFilesAndMedia's other half (`/pending 865`): every action that plays or drives media
+// leaves the document, wherever an action can be held — an annotation's, a form field's or a bookmark's /A, the
+// catalog's /OpenAction, and each entry of an /AA on the catalog, a page, an annotation or a field.
+//
+// **Without it the removal did not remove.** "An object nothing names is not written" is how an unlinked
+// annotation leaves the file, and a /Rendition action names its Screen annotation in /AN and its clip in /R — so
+// a link that plays a clip kept the annotation, the rendition and the embedded stream written out, under a
+// report of "files and media removed".
+//
+// A chain that reaches a media action goes WHOLE, by StripActive's rule and for its reason: keeping the head and
+// rewriting /Next would mean re-parenting actions this function cannot validate. That is the one place this
+// tier takes something that is not media — the other actions of such a chain. An /AA loses only the entries
+// whose chains play; the rest of it, scripts included, stays, because this tier leaves active code.
+func dropMediaActions(xt *model.XRefTable, root types.Dict) error {
+	actions := pageWalkBudget(xt)
+	plays := func(o types.Object) bool {
+		act := derefDict(xt, o)
+		return act != nil && mediaChain(xt, act, &actions)
+	}
+	held := func(holder types.Dict) {
+		if plays(holder["A"]) {
+			dropKey(xt, holder, "A")
+		}
+		aa := derefDict(xt, holder["AA"])
+		for event, act := range aa {
+			if plays(act) {
+				delete(aa, event)
+			}
+		}
+		if aa != nil && len(aa) == 0 {
+			dropKey(xt, holder, "AA")
+		}
+	}
+	if raw, ok := root.Find("OpenAction"); ok {
+		if _, act := openActionForm(xt, raw); act != nil && mediaChain(xt, act, &actions) {
+			dropKey(xt, root, "OpenAction")
+		}
+	}
+	held(root)
+	if err := eachPage(xt, root, func(page types.Dict, _ int) { held(page) }); err != nil {
+		return err
+	}
+	if err := eachPageAnnot(xt, root, func(annot types.Dict, _ int) { held(annot) }); err != nil {
+		return err
+	}
+	if af := derefDict(xt, root["AcroForm"]); af != nil {
+		eachFormField(xt, af, func(_ types.Object, f types.Dict) { held(f) })
+	}
+	eachOutlineItem(xt, root, func(item types.Dict) { held(item) })
+	if actions < 0 {
+		return errActionWalkTooLarge
+	}
+	return nil
 }
 
 // eachFormField calls fn for every dict in the AcroForm field tree, parents included.
@@ -547,8 +626,9 @@ func StripActive(pdf []byte) ([]byte, error) {
 	return out, nil
 }
 
-// RemoveFilesAndMedia removes embedded files and the media annotations named in
-// mediaAnnots (file attachments, sound, movie, screen, rich media, 3D), leaving
+// RemoveFilesAndMedia removes embedded files, the media annotations named in
+// mediaAnnots (file attachments, sound, movie, screen, rich media, 3D) and the actions
+// that play or drive media (mediaActions, through dropMediaActions), leaving
 // everything else — including interactivity and any active code — untouched. It
 // cannot corrupt page content, so it is the gentle middle option between
 // StripActive (removes all active content) and the guaranteed flatten.
@@ -564,7 +644,10 @@ func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		return removeMedia(ctx, root)
+		if err := removeMedia(ctx, root); err != nil {
+			return err
+		}
+		return dropMediaActions(ctx.XRefTable, root)
 	})
 	if err != nil {
 		return nil, err
@@ -578,7 +661,7 @@ func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 // filesOrMedia is RemoveFilesAndMedia's remit as Scan reports it: the embedded-files tree, and every kind in
 // mediaAnnots — read from that table, so a subtype added there is verified here without a second list.
 func filesOrMedia(f Finding) bool {
-	if f.Kind == "attachment" {
+	if f.Kind == "attachment" || f.plays {
 		return true
 	}
 	for _, m := range mediaAnnots {
@@ -1396,6 +1479,8 @@ func actionDetail(s string) string {
 		return "Changes which optional-content layers are visible"
 	case "GoTo3DView":
 		return "Switches a 3D annotation's view"
+	case "RichMediaExecute":
+		return "Sends a command to a rich media annotation"
 	case "Hide":
 		return "Hides or shows annotations"
 	default:
