@@ -879,3 +879,8 @@ home today.
   — a merge kept only the first document's `/OCProperties`, so a later document's hidden layer was drawn
   (and a redaction of page 1 revealed one on page 2); `pdfread.UnionOptionalContent` joins each later
   document's groups to the host's in the state their own `/D` gave them, from both merge loops.
+- [ADR-132](132-print-in-a-cff-or-type-1-font-is-boxed-by-its-charstrings-own-points.md) — **print in a CFF or
+  Type 1 font is boxed by its charstrings' own points**
+  — extends ADR-098: `fontinkcs.go` runs Type 2 and Type 1 charstrings for each glyph's vertical extent, a second
+  reading beside the checker's; a font is vouched for whole or gives no ink. A box reaching the line above
+  399 → 132 of 6,490 words, ink outside a box 0.
