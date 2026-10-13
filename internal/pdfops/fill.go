@@ -53,13 +53,18 @@ func fillForm(pdf, data []byte) ([]byte, error) {
 	conf.Cmd = model.FILLFORMFIELDS
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
 		ctx.RemoveSignature()
+		repeated := repeatedFieldValues(ctx.XRefTable)
+		// A push button is set aside for pdfcpu's walk and put back before anything is written (formfields.go).
+		putBack := pushButtonsAside(ctx.XRefTable)
 		ok, pages, err := form.FillForm(ctx, form.FillDetails(&f, nil), f.Pages, form.JSON)
+		putBack()
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return api.ErrNoFormFieldsAffected
 		}
+		dropStaleWidgetValues(ctx.XRefTable, repeated)
 		_, _, err = create.UpdatePageTree(ctx, pages, nil)
 		return err
 	})
@@ -142,12 +147,12 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 
 	// The blank form's typed skeleton (fields with their real options) is the
 	// template each record fills, so combobox/radio option-membership checks pass.
-	skeleton, err := pdfread.ExportForm(pdf, "nib")
+	skeleton, err := pdfread.ExportForm(pdf, "nib", setPushButtonsAside)
 	if err != nil {
-		return nil, err
+		return nil, noFormFields(err)
 	}
 	if skeleton == nil || len(skeleton.Forms) == 0 {
-		return nil, fmt.Errorf("the PDF has no form fields to fill")
+		return nil, ErrNoFormFields
 	}
 	skelJSON, err := json.Marshal(skeleton)
 	if err != nil {
@@ -309,4 +314,58 @@ func splitMulti(s string) []string {
 		}
 	}
 	return out
+}
+
+// A field shown in several places is one field with several widgets, and its value is the FIELD's. Some
+// producers also write a copy of the value on each widget. pdfcpu's fill sets the field's value and redraws
+// every widget, and leaves those copies as they were — and a reader that takes the nearest `/V` (pdf.js does)
+// then reads the old value from each widget: measured on real forms, 7 repeated fields whose fill reported
+// success and whose value, read in the window, had not changed (`/pending 888`). So where a fill changed a
+// repeated field's value, the widgets' own copies go: the field's value is the one there is.
+
+// repeatedFieldValues records, before a fill, the value of every field that has widget kids, by the field's
+// object number.
+func repeatedFieldValues(xt *model.XRefTable) map[int]string {
+	fields, err := formFields(xt)
+	if err != nil {
+		return nil
+	}
+	out := map[int]string{}
+	for _, f := range fields {
+		ir, ok := f.ref.(types.IndirectRef)
+		if !ok || len(derefArray(xt, f.dict["Kids"])) == 0 {
+			continue
+		}
+		out[ir.ObjectNumber.Value()] = fmt.Sprint(resolved(xt, f.dict["V"]))
+	}
+	return out
+}
+
+// dropStaleWidgetValues removes a widget kid's own `/V` under each field whose value the fill changed. A field
+// the fill left alone keeps its widgets as the file wrote them: what a reader shows for it does not move.
+func dropStaleWidgetValues(xt *model.XRefTable, before map[int]string) {
+	if len(before) == 0 {
+		return
+	}
+	fields, err := formFields(xt)
+	if err != nil {
+		return
+	}
+	for _, f := range fields {
+		ir, ok := f.ref.(types.IndirectRef)
+		if !ok {
+			continue
+		}
+		was, repeated := before[ir.ObjectNumber.Value()]
+		if !repeated || was == fmt.Sprint(resolved(xt, f.dict["V"])) {
+			continue
+		}
+		for _, k := range derefArray(xt, f.dict["Kids"]) {
+			if kd := derefDict(xt, k); kd != nil {
+				if _, named := kd.Find("T"); !named {
+					delete(kd, "V")
+				}
+			}
+		}
+	}
 }

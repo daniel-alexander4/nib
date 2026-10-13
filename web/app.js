@@ -129,6 +129,7 @@ const els = {
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'), ocrQuality: $('ocrQuality'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
+  scanFieldsBtn: $('scanFieldsBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   uaBtn: $('uaBtn'), uaModal: $('uaModal'), uaBody: $('uaBody'), uaSummary: $('uaSummary'), uaClose: $('uaClose'),
   tagsBtn: $('tagsBtn'), tagsModal: $('tagsModal'), tagsList: $('tagsList'), tagsSummary: $('tagsSummary'),
@@ -7287,6 +7288,20 @@ async function runSanitize(method, stepDown) {
 els.scanStripBtn.onclick = () => runSanitize('strip', 'Remove files & media, or Flatten');
 els.scanMetaBtn.onclick = () => runSanitize('metadata', 'Flatten');
 els.scanSafeBtn.onclick = () => runSanitize('safe', 'Flatten');
+// Form entries on no page (/pending 888): fields the form still lists and no page shows. Asked first, because
+// a form may keep such a field on purpose — a total its own calculations use — and Nib cannot tell which
+// these are. Never on a signed document: the server refuses too, and saying so here saves the round trip.
+els.scanFieldsBtn.onclick = () => {
+  if (isSigned()) {
+    toast('This document is signed, and taking form entries out of it would break the signature. Nothing was changed.');
+    return;
+  }
+  if (!confirm('Remove the form entries that are on none of this document’s pages?\n\n'
+    + 'They are usually left over from pages that were cut out of a larger form, with whatever was typed on '
+    + 'them. Some forms keep one on purpose, for a total or a calculation another PDF reader works out — if '
+    + 'this is such a form, that calculation may stop working there. The form on the pages you can see is not changed.')) return;
+  runSanitize('fields', 'Flatten');
+};
 
 // --- remove password protection ----------------------------------------------
 // Two entry points, one /api/decrypt: the Secure-tab button (an open document —

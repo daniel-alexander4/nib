@@ -107,12 +107,12 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 	if len(values) == 0 {
 		return nil, fmt.Errorf("the XFDF has no field values")
 	}
-	skeleton, err := pdfread.ExportForm(pdf, "nib")
+	skeleton, err := pdfread.ExportForm(pdf, "nib", setPushButtonsAside)
 	if err != nil {
-		return nil, err
+		return nil, noFormFields(err)
 	}
 	if skeleton == nil || len(skeleton.Forms) == 0 {
-		return nil, fmt.Errorf("the PDF has no form fields to fill")
+		return nil, ErrNoFormFields
 	}
 	skelJSON, err := json.Marshal(skeleton)
 	if err != nil {

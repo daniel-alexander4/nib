@@ -104,8 +104,11 @@ async function open(file) {
   if (r.status !== 200) return { refused: (r.body && (r.body.cause || r.body.error)) || `HTTP ${r.status}` };
   return { id: r.body.id, xfa: r.body.xfa || '', signed: !!(r.body.signature && r.body.signature.state && r.body.signature.state !== 'unsigned') };
 }
+// exported is pdfcpu's export of the open document, flattened; `none` where Nib says the document has no form
+// fields to export (a 422 with that cause — a signature only, or nothing on a page); null where the export failed.
 const exported = async (id) => {
   const r = await api('/api/form-data?doc=' + encodeURIComponent(id), { headers: { 'X-Nib-Doc': id } });
+  if (r.status === 422 && r.body && r.body.cause === 'no-form-fields') return { none: true, fields: {}, other: {} };
   return r.status === 200 && r.body ? byName(r.body) : null;
 };
 
@@ -139,6 +142,7 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
     row.xfa = o.xfa; row.signed = o.signed;
     if (!names.length && !(before && Object.keys(before.fields).length)) { row.skip = 'no fields'; skip(row.skip); continue; }
     if (!before) { row.skip = 'pdfcpu could not export the form'; skip(row.skip); continue; }
+    if (before.none) { row.skip = 'no form fields to export (a signature only, or none on a page)'; skip(row.skip); continue; }
     tally.files++;
     row.pdfcpuOther = before.other;
     row.onlyInPdfjs = names.filter((k) => ['text', 'checkbox'].includes(win.fields[k].type) && !before.fields[k]).length;
@@ -218,7 +222,10 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
             }
           }
         } catch (e) {
-          row.p2w.error = 'nib fill refused: ' + String((e.stderr || e.message || '')).replace(/\/\S+/g, '<path>').slice(0, 100);
+          // pdfcpu's own words only: the rest of the line is the file's name, which is not this report's to print.
+          const said = String(e.stderr || e.message || '');
+          const at = said.lastIndexOf('pdfcpu:');
+          row.p2w.error = 'nib fill refused: ' + (at >= 0 ? said.slice(at).replace(/["'(].*$/s, '').trim().slice(0, 80) : 'no reason pdfcpu gave');
         }
         fs.rmSync(jp, { force: true }); fs.rmSync(op, { force: true });
       }

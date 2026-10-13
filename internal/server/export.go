@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -387,7 +388,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	case "csv":
 		data, err := pdfops.ExportFormCSV(s.docBytes(doc))
 		if err != nil {
-			httpError(w, http.StatusInternalServerError, "could not export form")
+			formExportFailed(w, err)
 			return
 		}
 		sendDownload(w, "form-data.csv", "text/csv", data)
@@ -395,7 +396,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	case "xfdf":
 		data, err := pdfops.ExportFormXFDF(s.docBytes(doc))
 		if err != nil {
-			httpError(w, http.StatusInternalServerError, "could not export form")
+			formExportFailed(w, err)
 			return
 		}
 		sendDownload(w, "form-data.xfdf", "application/vnd.adobe.xfdf", data)
@@ -403,7 +404,7 @@ func (s *Server) handleFormData(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := pdfops.ExportFormJSON(s.docBytes(doc))
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not export form")
+		formExportFailed(w, err)
 		return
 	}
 	sendDownload(w, "form-data.json", "application/json", data)
@@ -428,4 +429,15 @@ func (s *Server) handleExtractImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendDownload(w, "images.zip", "application/zip", data)
+}
+
+// formExportFailed answers a form export that produced nothing. A document with no form fields is a fact about
+// the document and says so (422 `no-form-fields`, through httpError's recognition of the sentence — ADR-072);
+// anything else is the export failing, as before.
+func formExportFailed(w http.ResponseWriter, err error) {
+	if errors.Is(err, pdfops.ErrNoFormFields) {
+		httpError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	httpError(w, http.StatusInternalServerError, "could not export form")
 }

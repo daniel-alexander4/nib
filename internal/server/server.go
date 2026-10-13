@@ -2279,6 +2279,11 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "name-tree"})
 		return
 	}
+	// The fourth: a form export or fill asked of a document with no form fields on its pages (`/pending 888`).
+	if strings.Contains(msg, pdfops.NoFormFieldsRefusal) {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "no-form-fields"})
+		return
+	}
 	// A vault write the vault refused in words of its own (ADR-154): 409 and its cause from every
 	// route that stores something, whichever handler voiced it. See vaulterror.go.
 	if _, ok := vaultRefusal(msg); ok {

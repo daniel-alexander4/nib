@@ -184,6 +184,10 @@ var tagFates = map[string]tagFate{
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
 	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
 	"ClearFlags":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},
+	// ADR-166: it cuts fields out of the FORM's tree and touches nothing of the structure tree. The census
+	// fixture has no field off its pages, so this row measures the write carrying the tags and not a removal;
+	// a structure element that points at a removed field's widget still holds that widget (declared in the ADR).
+	"RemoveOffPageFields": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveOffPageFields(b) }},
 	// `/pending 486`: it writes only the catalog's XMP packet. Driven on the fixture titled and declared in a
 	// language, the two conditions the census fixture lacks, so the row measures a write and not a refusal.
 	"LabelUA": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
