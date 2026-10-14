@@ -763,6 +763,11 @@ func (c *ceremonyID) borrowEndpoint(end *p2p.SharedEndpoint, rz *rendezvous.Serv
 // document…" for exactly that step; nil tells nobody and is for a test driving the gate directly
 // (`TestEveryArrivalCheckTellsTheSession` holds the production callers to it).
 func (c *ceremonyID) checkArrival(pdf []byte, now time.Time, telling *session) error {
+	// **The whole gate is "checking the document", not the hash alone** (/pending 359). The record
+	// check on the next line is a wait of its own — 1.7–12 s on the 3.6–20 MB documents measured
+	// below — and it runs on EVERY arrival, signed or not, where the hash runs on hop 1 only. So
+	// the words go up here and the deferred call takes them down on every way out.
+	defer telling.checkingDocument()()
 	rec, err := ceremony.CheckRecord(pdf, now)
 	if err != nil {
 		return fmt.Errorf("this document's ceremony record could not be checked: %w", err)
@@ -868,15 +873,12 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time, telling *session) e
 	// documents made the way the tier-4 harness makes its large one. `CheckRecord`, above, is
 	// 0.1 s, 1.7–2.2 s, 2.5–3.9 s and 5.8–12 s on the same four.
 	//
-	// **So the wait says what it is.** `telling.checkingDocument()` brackets the hash and nothing
-	// else, and the deferred call clears it on every way out of it.
+	// **So the wait says what it is**: `telling.checkingDocument()`, at the top of this function,
+	// covers this hash and the record check before it.
 	if !sign.HasSignatureBlob(pdf) {
 		// Under the rule the record names (ADR-080): `CheckRecord` above has already refused a rule
 		// this build cannot compute, so `herr` here is the document's, never a version skew.
-		got, herr := func() (string, error) {
-			defer telling.checkingDocument()()
-			return ceremony.DocumentHashFor(pdf, rec)
-		}()
+		got, herr := ceremony.DocumentHashFor(pdf, rec)
 		switch {
 		case herr != nil:
 			// Named, because `DocumentHash` fails on an unreadable page and that reaches a user at
