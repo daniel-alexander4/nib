@@ -60,3 +60,7 @@ replace github.com/digitorus/pdf => ./third_party/digitorus-pdf
 // /pending 735, ADR-142: verification reads a signature's byte ranges into one buffer (verify/signature.go and
 // verify/verify.go only); see third_party/digitorus-pdfsign/NOTICE.nib.
 replace github.com/digitorus/pdfsign => ./third_party/digitorus-pdfsign
+
+// /pending 892, ADR-173: a crypt filter's /Length is required only in PDF 2.0, as upstream fixed it in v0.16.2
+// (pkg/pdfcpu/crypto.go, one line); see third_party/pdfcpu/NOTICE.nib.
+replace github.com/pdfcpu/pdfcpu => ./third_party/pdfcpu

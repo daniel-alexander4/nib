@@ -37,7 +37,7 @@ func moduleFiles(t *testing.T) []moduleFile {
 				return filepath.SkipDir
 			}
 			switch d.Name() {
-			case "node_modules", "vendor", "testdata", "pdfread":
+			case "node_modules", "vendor", "testdata", "pdfread", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

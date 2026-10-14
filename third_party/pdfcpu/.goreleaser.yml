@@ -1,0 +1,64 @@
+version: 2
+
+builds:
+  - main: ./cmd/pdfcpu
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - '-s -w -X github.com/pdfcpu/pdfcpu/cmd/pdfcpu.version={{.Version}} -X github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model.VersionStr={{.Version}} -X github.com/pdfcpu/pdfcpu/cmd/pdfcpu.commit={{.ShortCommit}} -X github.com/pdfcpu/pdfcpu/cmd/pdfcpu.date={{.Date}}'
+    goos:
+      - linux
+      - darwin
+      - windows
+      - js
+    goarch:
+      - amd64
+      - arm64
+      - arm
+      - wasm
+      - "386"
+    goarm:
+      - 7
+    ignore:
+      - goos: windows
+        goarch: arm
+        goarm: 7
+      - goos: windows
+        goarch: arm64
+      
+dist: ./dist
+
+archives:
+  - formats:
+      - tar.xz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{- .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os | title }}_
+      {{- if eq .Arch "linux" }}Linux
+      {{- else if eq .Arch "windows" }}Windows
+      {{- else if eq .Arch "386" }}i386
+      {{- else if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+    wrap_in_directory: true
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  sort: desc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+release:
+  draft: true  # Optional: Set to true if you want to create drafts and not publish immediately
+  replace_existing_draft: true
+  replace_existing_artifacts: true 
+  prerelease: false  # Optional: Set to true if it's a prerelease

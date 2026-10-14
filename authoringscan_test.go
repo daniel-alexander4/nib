@@ -61,7 +61,7 @@ func scanAuthoringSites(t *testing.T) (sites []authoringSite, declaredIn map[str
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".claude", "node_modules", "web", "test", "docs":
+			case ".git", ".claude", "node_modules", "web", "test", "docs", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

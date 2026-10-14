@@ -336,7 +336,7 @@ func TestOnlyConveneHashesUnderTheCurrentRule(t *testing.T) {
 			return werr
 		}
 		if d.IsDir() {
-			if p != root && strings.HasPrefix(d.Name(), ".") || d.Name() == "testdata" || d.Name() == "node_modules" {
+			if p != root && strings.HasPrefix(d.Name(), ".") || d.Name() == "testdata" || d.Name() == "node_modules" || d.Name() == "third_party" {
 				return filepath.SkipDir
 			}
 			return nil
