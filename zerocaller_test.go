@@ -98,6 +98,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"NameTreeDoc": "test-support — testpdf's hand-written catalog name tree nested past pdfcpu's validator, or looped, " +
 			"for the tests of the name-tree door (ADR-164).",
 		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
+		"WebCaptured": "test-support — testpdf's Web Capture record, whole or in parts, one leaf of it refused by pdfcpu's " +
+			"validator, for the tests of its removal (ADR-171).",
 		"ValidatorLosses": "test-support — `pdfread`'s count of the `/Font` entries pdfcpu's validator changed, the stimulus " +
 			"of `pdfops`' ADR-129 tests: without it a fixture the validator stopped changing would pass them all.",
 		"GrowsLinearly": "test-support — `internal/scaling`, the one door for a cost-shape test that only a clock can see " +
