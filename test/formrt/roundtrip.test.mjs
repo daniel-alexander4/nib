@@ -112,7 +112,10 @@ function byName(exported) {
 // drawnIn renders, with pdf.js, every page on which `checks` names a widget — once from the document `before` and
 // once from `after`, both from their appearance streams — and answers, per field, whether any of its widgets'
 // rectangles changed. A pixel has changed when a channel moved by more than 48; a widget, when at least 6 pixels
-// or 0.3% of it did (a check mark covers far more; one glyph of a typed value at this scale, about that).
+// or 0.3% of it did — but never more than 24, about one glyph's ink at this scale. Without that cap the floor grew
+// with the box and called 13 values in big multiline boxes undrawn that had moved 239-397 pixels, as many as any
+// typed value; with a flat 24 instead, 96 small check marks read as undrawn (/pending 895). A document compared
+// with itself moves none.
 const drawnIn = (before, after, checks) => page.evaluate(async ({ before, after, checks }) => {
   const lib = await import('/vendor/pdfjs/pdf.min.mjs');
   const load = async (id) => {
@@ -150,7 +153,7 @@ const drawnIn = (before, after, checks) => page.evaluate(async ({ before, after,
             const o = (j * x.w + i) * 4;
             if (Math.abs(x.px[o] - y.px[o]) > 48 || Math.abs(x.px[o + 1] - y.px[o + 1]) > 48 || Math.abs(x.px[o + 2] - y.px[o + 2]) > 48) moved++;
           }
-          if (moved >= Math.max(6, 0.003 * (rr - l) * (bb - t))) out[c.name] = true;
+          if (moved >= Math.min(24, Math.max(6, 0.003 * (rr - l) * (bb - t)))) out[c.name] = true;
         }
       }
     }
@@ -215,13 +218,18 @@ const judge = (r, kind, ok, how) => {
   if (ok) { k.ok++; r.ok++; return; }
   k.wrong++; r.wrong++; k.how[how] = (k.how[how] || 0) + 1;
 };
-// checksFor names the widget rectangles of the fields written, from the ORIGINAL's field objects.
+// checksFor names the widget rectangles of the fields written, from the ORIGINAL's field objects. A widget under
+// 4 pt tall is not one: no reader can draw a legible value in it (two real forms carry 2 pt slivers with an
+// automatic font size), so a field with only such widgets is counted as too small, never as drawn or not.
+const MIN_DRAWABLE_PT = 4;
 const checksFor = (win, names) => names.map((name) => ({
-  name, rects: win.fields[name].widgets.filter((w) => w.rect && Number.isInteger(w.page) && !w.hidden).map((w) => ({ page: w.page, rect: w.rect })),
+  name, rects: win.fields[name].widgets.filter((w) => w.rect && Number.isInteger(w.page) && !w.hidden && Math.abs(w.rect[3] - w.rect[1]) >= MIN_DRAWABLE_PT).map((w) => ({ page: w.page, rect: w.rect })),
 }));
-const tallyDrawn = (r, kinds, drawn) => {
+const tallyDrawn = (r, kinds, drawn, checks) => {
+  const drawable = new Set(checks.filter((c) => c.rects.length).map((c) => c.name));
   for (const [name, kind] of Object.entries(kinds)) {
     const k = kindRow(r, kind);
+    if (!drawable.has(name)) { k.tooSmall = (k.tooSmall || 0) + 1; r.tooSmall = (r.tooSmall || 0) + 1; continue; }
     if (drawn[name]) { k.drawn++; r.drawn++; } else { k.notDrawn++; r.notDrawn++; }
   }
 };
@@ -308,7 +316,10 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
               // pdfcpu names a group whose kids carry `/Opt` by the option the state name indexes.
               judge(row.w2p, kind, g.value === s.expect || (/^\d+$/.test(s.expect) && g.options[Number(s.expect)] === g.value), g.value === '' ? 'no option' : 'another option');
             } else if (kind === 'combo' || kind === 'list') {
-              const v = kind === 'list' ? g.value[0] : g.value;
+              // pdfcpu trims a single list box's /V on export (`extractListBox`), so a blank option written as
+              // one space reads back as "" — the same blank, by pdfcpu's own normalization.
+              const v = kind === 'list' ? String(g.value[0] ?? '').trim() : g.value;
+              if (kind === 'list') s.expect = String(s.expect).trim();
               judge(row.w2p, kind, v === s.expect && (kind !== 'list' || g.value.length === 1), v === s.display ? 'its display text' : 'another value');
             } else {
               judge(row.w2p, kind, sameValue(g.value, s.expect), kind + (win.fields[k].multiline ? ' (multiline)' : ''));
@@ -317,8 +328,9 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
           // And what was NOT touched is still there: a save that drops a neighbour's value is the worse loss.
           row.w2p.lost = Object.entries(before.fields).filter(([k, b]) => !(k in set) && got.fields[k] && !sameValue(got.fields[k].value, b.value)).length
             + Object.keys(before.fields).filter((k) => !got.fields[k]).length;
-          const d = await drawnIn(o.id, o2.id, checksFor(win, Object.keys(set)));
-          if (d.error) row.w2p.drawError = d.error; else tallyDrawn(row.w2p, kindOf, d.drawn);
+          const checks = checksFor(win, Object.keys(set));
+          const d = await drawnIn(o.id, o2.id, checks);
+          if (d.error) row.w2p.drawError = d.error; else tallyDrawn(row.w2p, kindOf, d.drawn, checks);
         }
         fs.rmSync(p, { force: true });
       }
@@ -387,9 +399,10 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
             }
             if (win.fields && Object.keys(data).some((k) => win.fields[k])) {
               const drawable = Object.keys(data).filter((k) => win.fields[k]);
-              const d = await drawnIn(o3.id, o4.id, checksFor(win, drawable));
+              const checks = checksFor(win, drawable);
+              const d = await drawnIn(o3.id, o4.id, checks);
               if (d.error) row.p2w.drawError = d.error;
-              else tallyDrawn(row.p2w, Object.fromEntries(drawable.map((k) => [k, kindTo[k]])), d.drawn);
+              else tallyDrawn(row.p2w, Object.fromEntries(drawable.map((k) => [k, kindTo[k]])), d.drawn, checks);
             }
           }
         } catch (e) {
@@ -404,6 +417,7 @@ test(`form round-trip over ${files.length} local documents`, { timeout: 4 * 3600
     for (const dir of ['w2p', 'p2w']) {
       const r = row[dir], t = tally[dir];
       t.fields += r.asked; t.ok += r.ok; t.missing += r.missing; t.wrong += r.wrong; t.drawn += r.drawn; t.notDrawn += r.notDrawn;
+      t.tooSmall = (t.tooSmall || 0) + (r.tooSmall || 0);
       for (const [kind, k] of Object.entries(r.byKind)) {
         const tk = kindRow(t, kind);
         for (const key of ['asked', 'ok', 'missing', 'wrong', 'drawn', 'notDrawn']) tk[key] += k[key];
