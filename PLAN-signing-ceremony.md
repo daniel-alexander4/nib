@@ -3418,6 +3418,13 @@ that case had always arrived as a decline. Replaced by one question the enumerat
 for: **did this connection put anything in front of the user?** Its default for an unanticipated
 error is the pre-slice behaviour, so only the never-reached-anyone case is loosened.
 
+**Reversed for one case, 2026-10-13 (v1.214.25, /pending 766).** "Did this connection put anything
+in front of the user" no longer decides it: a channel lost AFTER the safety words were shown used
+to end the TCP arm, and now keeps it, as the QUIC arm always did. The rule is one table read by
+both arms (`armOutcomes`, `internal/server/armspend.go`) — a decision by a party who got through
+ends the arm, a failure of the channel keeps it — and Dan confirmed keeping the TCP arm on
+2026-10-13. Everything else this slice decided stands.
+
 #### P05.S02 — The listener under concurrent connections *(D22, caveat 7; prerequisite for S03)* *(done 2026-08-21, v1.117.22)*
 Tasks (grilled 2026-08-21):
 - T01 — a completed handshake parked on `ready` releases its semaphore slot when its connection dies.
