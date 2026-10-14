@@ -1318,7 +1318,10 @@ your vault. (Defaults to dark.)
   loopback-origin check. The only other ways to the token are the log line a
   windowless (`NIB_NO_BROWSER`) run prints for whoever started it, and a second
   launch of Nib by the same user — so another program running as you can still
-  reach Nib, but another user on the same machine cannot. Two deliberate exceptions, both of which you start and neither of which
+  reach Nib, but another user on the same machine cannot. That cuts both ways:
+  Nib's window opens for the user that runs Nib. On Linux, a Nib started as
+  another user (with `sudo`, for example) and opened from your own browser is
+  refused — run Nib as yourself. Two deliberate exceptions, both of which you start and neither of which
   runs in the background. First, a **live co-signing session you arm yourself**:
   while armed, Nib opens a single routable listener that accepts only the one peer
   whose key you pinned, and tears it down after one exchange (see *Co-sign with a
