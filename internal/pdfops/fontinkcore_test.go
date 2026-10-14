@@ -63,6 +63,8 @@ func TestPrintInAnUnembeddedStandardFontIsBoxedToTheTopOfAdobesBoxForIt(t *testi
 		{"a standard font by its own name", "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>", nil, "Courier"},
 		{"a standard font with no /Encoding", "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>", nil, "Times-Bold"},
 		{"the Reference's alternative name", "<< /Type /Font /Subtype /TrueType /BaseFont /Arial,Bold /Encoding /WinAnsiEncoding" + widths95 + " >>", nil, "Helvetica-Bold"},
+		{"the family name with its spaces, as Word writes it", "<< /Type /Font /Subtype /TrueType /BaseFont /Times#20New#20Roman /Encoding /WinAnsiEncoding" + widths95 + " >>", nil, "Times-Roman"},
+		{"the same, bold italic", "<< /Type /Font /Subtype /TrueType /BaseFont /Times#20New#20Roman,BoldItalic /Encoding /WinAnsiEncoding" + widths95 + " >>", nil, "Times-BoldItalic"},
 		{"a PostScript name, with a descriptor and no program",
 			"<< /Type /Font /Subtype /TrueType /BaseFont /ArialMT /Encoding /WinAnsiEncoding /FontDescriptor 6 0 R" + widths95 + " >>",
 			map[int]string{6: "<< /Type /FontDescriptor /FontName /ArialMT /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 >>"},
@@ -96,7 +98,10 @@ func TestOnlyAnExactStandardFontDrawingItsASCIIGlyphsIsBoxedToAdobesBox(t *testi
 		extra            map[int]string
 	}{
 		{"a subset tag", "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Courier " + winAnsi + widths95 + " >>", "(Sample)", nil},
-		{"a name that is close", "<< /Type /Font /Subtype /TrueType /BaseFont /Times#20New#20Roman " + winAnsi + widths95 + " >>", "(Sample)", nil},
+		{"a name that is close", "<< /Type /Font /Subtype /TrueType /BaseFont /Times-New-Roman " + winAnsi + widths95 + " >>", "(Sample)", nil},
+		{"a family name with spaces that is not listed", "<< /Type /Font /Subtype /TrueType /BaseFont /Courier#20New " + winAnsi + widths95 + " >>", "(Sample)", nil},
+		{"a pi font: Symbol", "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /ToUnicode 8 0 R" + widths95 + " >>", "(abc)", map[int]string{8: streamObj(asciiToUnicode)}},
+		{"a pi font: ZapfDingbats", "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats /ToUnicode 8 0 R" + widths95 + " >>", "(abc)", map[int]string{8: streamObj(asciiToUnicode)}},
 		{"another case", "<< /Type /Font /Subtype /Type1 /BaseFont /courier " + winAnsi + widths95 + " >>", "(Sample)", nil},
 		{"a font with a program, even one that cannot be read",
 			"<< /Type /Font /Subtype /Type1 /BaseFont /Courier " + winAnsi + " /FontDescriptor 6 0 R >>", "(Sample)",
@@ -118,8 +123,8 @@ func TestOnlyAnExactStandardFontDrawingItsASCIIGlyphsIsBoxedToAdobesBox(t *testi
 // TestEveryStandardFontAliasNamesAFontPdfcpuHasABoxFor — the table's own integrity: a name mapped to a font with no
 // box would silently give nothing, and one mapped to a box above the reach would claim a bound that binds nothing.
 func TestEveryStandardFontAliasNamesAFontPdfcpuHasABoxFor(t *testing.T) {
-	if len(coreFontAlias) != 36 {
-		t.Errorf("the alias table has %d names, want 36: twelve fonts by three names each", len(coreFontAlias))
+	if len(coreFontAlias) != 40 {
+		t.Errorf("the alias table has %d names, want 40: twelve fonts by three names each, and Times New Roman's four with spaces", len(coreFontAlias))
 	}
 	cores := map[string]int{}
 	for name, core := range coreFontAlias {
