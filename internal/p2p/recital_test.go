@@ -52,7 +52,8 @@ func signedReason(t *testing.T, c Confirmer, roster Roster) string {
 		roster = withParties(roster, a, b)
 	}
 	aFP, _ := hex.DecodeString(a.fp)
-	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")
+	// The inbound signature names the proceeding, as every ceremony signature does (/pending 691 R7-4).
+	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, roster.Commitment)
 	signed, err := coSignExchange(b.cert, b.key, aFP, "A", inbound, c, nil, roster)
 	if err != nil {
 		t.Fatalf("the hop was refused: %v", err)
@@ -139,7 +140,7 @@ func TestACeremonySignatureWithNoRecitalIsRefusedRatherThanDefaulted(t *testing.
 	roster.Intent = "" // an invitation that predates the field
 
 	aFP, _ := hex.DecodeString(a.fp)
-	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")
+	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, roster.Commitment)
 	_, err := coSignExchange(b.cert, b.key, aFP, "A", inbound,
 		intentConfirmer{intent: "whatever I typed"}, nil, roster)
 	if err == nil {

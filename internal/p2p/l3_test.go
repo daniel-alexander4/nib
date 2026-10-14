@@ -212,6 +212,22 @@ func TestTheGateRefusesEachThingByName(t *testing.T) {
 	mine := r
 	mine.Commitment = strings.Repeat("cd", 32)
 	record(t, "substituted proceeding", AdmitContribution(substituted, mine, c.fp), ErrProceedingMismatch)
+
+	// 6. A prefix that names NO proceeding, where this one has a commitment (/pending 691 R7-4):
+	//    the same signers in the same order, cross-bound, and no roster token on either.
+	uncommitted := l3Chain(t, l3Prepared(t), []l3Party{a, b}, []l3Party{a, a}, "")
+	// Stimulus: the same document is admitted by a roster with no commitment, so the refusal is
+	// about the missing commitment and nothing else on the fixture.
+	if err := AdmitContribution(uncommitted, r, c.fp); err != nil {
+		t.Fatalf("setup: the uncommitted prefix is refused with no commitment to hold it to: %v", err)
+	}
+	record(t, "uncommitted prefix", AdmitContribution(uncommitted, mine, c.fp), ErrProceedingMismatch)
+	// One uncommitted signature is enough, wherever it sits: A commits and B does not.
+	half := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{a}, mine.Commitment)
+	half = l3Chain(t, half, []l3Party{b}, []l3Party{a}, "")
+	if err := AdmitContribution(half, mine, c.fp); !errors.Is(err, ErrProceedingMismatch) {
+		t.Errorf("a prefix whose second signature names no proceeding: got %v, want %v", err, ErrProceedingMismatch)
+	}
 }
 
 // TestAnInvalidPrefixSignatureIsRefused — the "each one valid" half of L3, which an identity
@@ -318,7 +334,9 @@ func TestACeremonySignatureNamesItsCeremony(t *testing.T) {
 	roster.Intent = "We agree to co-sign the lease"
 
 	aFP, _ := hex.DecodeString(a.fp)
-	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, "")
+	// The first signature names the proceeding too: one that names none is refused at the gate
+	// (/pending 691 R7-4), and the subject here is what the SECOND signer's door writes.
+	inbound := l3Chain(t, l3Prepared(t), []l3Party{a}, []l3Party{b}, roster.Commitment)
 	signed, err := coSignExchange(b.cert, b.key, aFP, "A", inbound, &recordingConfirmer{}, nil, roster)
 	if err != nil {
 		t.Fatalf("the ceremony hop was refused: %v", err)
@@ -771,5 +789,41 @@ func TestBothContributionDoorsAgreeOnWhatASignatureAccepts(t *testing.T) {
 		t.Errorf("PredecessorOf's production callers are %v, want exactly %s — a second site deciding "+
 			"what a signature accepts is two doors onto one rule, and the next edit to one of them "+
 			"is invisible to the other", callers, want)
+	}
+}
+
+// TestANewerTagIsTheOnlyExcuseForNoCommitment — /pending 691 R7-4's one exemption, and its edge.
+//
+// A signature whose tag is newer than this build's has its fields unparsed, so its commitment is
+// uninterpreted rather than absent and the gate does not call it missing. A signature with the tag
+// this build reads, or with no tag at all, has nothing to be excused by.
+func TestANewerTagIsTheOnlyExcuseForNoCommitment(t *testing.T) {
+	fp := strings.Repeat("1f", 32)
+	r := Roster{
+		Entries:    []RosterEntry{{Fingerprint: fp, Signs: true}, {Fingerprint: strings.Repeat("2e", 32), Signs: true}},
+		Commitment: strings.Repeat("cd", 32),
+	}
+	for _, c := range []struct {
+		name, reason string
+		admitted     bool
+	}{
+		{"a newer tag", "[NibCoSign:2] a format this build does not know", true},
+		{"this build's tag", "[NibCoSign:1] Accepts nobody. ok", false},
+		{"no tag", "I approve this document", false},
+	} {
+		st := sign.Status{State: sign.Valid, Signers: []sign.SignerInfo{
+			{Name: "P", Fingerprint: fp, Valid: true, Reason: c.reason},
+		}}
+		pr, err := progressFrom(st, r)
+		if c.admitted {
+			if err != nil || pr.Done != 1 {
+				t.Errorf("%s: got Done %d, %v — a signature this build could not read was "+
+					"called uncommitted", c.name, pr.Done, err)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrProceedingMismatch) {
+			t.Errorf("%s: got %v, want %v", c.name, err, ErrProceedingMismatch)
+		}
 	}
 }

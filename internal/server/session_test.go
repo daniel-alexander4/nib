@@ -1543,6 +1543,8 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 	errc := make(chan error, 1)
 	accepted := make(chan struct{}, 1)
 	initiatorVerifier := &recordingVerifier{}
+	// Stamped here and not in the goroutine: the helper fails the test, which only this one may.
+	aliceAtt := inCeremony(t, bobInv, p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree"})
 	go func() {
 		hc, e := aln.Accept(context.Background()) // Bob's handshaked dial lands here — proof Bob dialed
 		if e != nil {
@@ -1561,7 +1563,8 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 			errc <- e
 			return
 		}
-		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+		att := aliceAtt
+		att.When = time.Now()
 		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
@@ -1724,7 +1727,7 @@ func redeliveryAfterReconnect(t *testing.T, transport string) {
 	// Alice signs ONCE — the same document for both Initiates, so Bob's cache (keyed on the inbound)
 	// hits on the reconnect.
 	place, _ := p2p.NextPlacement(prepared)
-	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+	att := inCeremony(t, bobInv, p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()})
 	aSigned, err := p2p.Contribute(prepared, aCert, aKey, att, place)
 	if err != nil {
 		t.Fatal(err)
@@ -1890,7 +1893,7 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	// A REAL ceremony — see convenedTwoParty.
 	prepared, bobInv := convenedTwoParty(t, aCert, aKey, aFP, bFP)
 	place, _ := p2p.NextPlacement(prepared)
-	att := p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()}
+	att := inCeremony(t, bobInv, p2p.Attestation{Signer: "Alice", AcceptedPeer: bFP, AcceptedPeerLabel: "Bob", Intent: "I agree", When: time.Now()})
 	aSigned, _ := p2p.Contribute(prepared, aCert, aKey, att, place)
 
 	var armed sessionStatus
@@ -1960,6 +1963,23 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("the ceremony did not complete after an early channel loss — the loop did not re-race")
 	}
+}
+
+// inCeremony stamps a hand-built attestation with the commitment of the ceremony an invitation
+// names, as `StampCommitment` does at both production doors. A convener's signature that names no
+// proceeding is refused at the next signer's gate (/pending 691 R7-4), so a fixture that signs one
+// by hand names it too.
+func inCeremony(t *testing.T, invitation string, att p2p.Attestation) p2p.Attestation {
+	t.Helper()
+	inv, err := ceremony.ParseInvitation(invitation)
+	if err != nil {
+		t.Fatalf("setup: the invitation does not parse: %v", err)
+	}
+	if inv.RosterHash == "" {
+		t.Fatal("setup: the invitation carries no commitment, so the signature would name no proceeding")
+	}
+	att.RosterHash, att.RosterVersion = inv.RosterHash, ceremony.FormatVersion
+	return att
 }
 
 // convenedTwoParty builds a REAL two-party ceremony: a convened document carrying a signed
