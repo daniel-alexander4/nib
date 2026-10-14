@@ -29,6 +29,17 @@ Nib_out="$(node --test "${NIB_FILECOUNT[@]}" test/jsdom/ 2>&1)"
 Nib_code=$?
 echo "$Nib_out"
 
+# Re-print the failing test names at the END, as tier 3 does (build/uirepro.sh), and for its reason:
+# node --test puts each failure inline, far above the summary, so a run read through `tail` or a
+# grep for the totals shows "# fail 1" and not which test. One jsdom failure of 832 was lost that
+# way on 2026-10-12 and could not be named afterwards (/pending 475, 886). Nothing on a green run.
+if [ "$Nib_code" -ne 0 ]; then
+  echo
+  echo "── failed ──────────────────────────────────────────────────────────"
+  printf '%s\n' "$Nib_out" | grep -E "^not ok " || echo "(no 'not ok' lines — the runner itself failed; read the log above)"
+  echo "────────────────────────────────────────────────────────────────────"
+fi
+
 # A runner that discovers NO tests also exits 0, and would look exactly like a
 # passing suite forever — the harness reporting health about a population it never
 # had. So the count is checked, not just the exit code — PER FILE since /pending 822,
