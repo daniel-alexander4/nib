@@ -107,6 +107,10 @@ type AnswerFacts struct {
 	// larger than it needs to be. Read off the read this function already makes — the pass was asked for by
 	// that read and skipped by the same rule every write-path read follows (/pending 766 part 7).
 	Unoptimized bool
+	// UnreadLists names the catalog name trees the read could not hold whole (`pdfread.UnreadNameTrees`, ADR-164):
+	// every write of the document is refused until each is removed, and the window says so at the open
+	// (/pending 889 part 2).
+	UnreadLists []string
 }
 
 // ReadAnswerFacts reads all of AnswerFacts from ONE read: each is a reading of a read the server is already
@@ -123,6 +127,7 @@ func ReadAnswerFacts(pdf []byte) (AnswerFacts, error) {
 	}
 	f.XFA = pdfread.XFAOf(ctx)
 	f.Unoptimized = pdfread.OptimizeSkipped(ctx)
+	f.UnreadLists = pdfread.UnreadNameTrees(ctx.XRefTable)
 	if enc, ok := ctx.Properties[flagsKey]; ok && enc != "" {
 		if raw, derr := base64.StdEncoding.DecodeString(enc); derr == nil { // unreadable => treat as no flags
 			f.Flags = raw

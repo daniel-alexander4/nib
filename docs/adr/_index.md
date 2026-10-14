@@ -965,3 +965,5 @@ home today.
   — the window is the user's browser's, so the page closes itself: every window is told on its stream (`event: quit`) before the process exits, says so, and calls `window.close()`; the close prompt stands down once quitting.
 - [ADR-170](170-the-signature-reader-decrypts-aes-and-leaves-a-signatures-contents-as-stored.md) — **the signature reader decrypts AES, and leaves a signature's `/Contents` as stored**
   — extends ADR-066/068: AES-128 and AES-256 in `third_party/digitorus-pdf`, the hash still over the stored bytes, a signature dictionary's `/Contents` never decrypted; every signing path refuses an encrypted document, which it had refused only by accident.
+- [ADR-171](171-a-web-capture-record-nib-could-not-read-is-said-at-the-open-and-removed-when-asked.md) — **a Web Capture record Nib could not read is said at the open, and removed when asked**
+  — amends ADR-164: the refusal names what was lost, the document's answer says so before the first change, and a Web Capture record (`/URLS`, `/IDS`, `/SpiderInfo`, page `/ID`/`/PZ`) goes through a third named `ForgetNameTree` site; sanitize answers the refusal as 422.

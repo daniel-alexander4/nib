@@ -23,6 +23,9 @@ let lostAnnots = 0;
 let lostFields = 0;
 let xfa = '';
 let unoptimized = false;
+let unreadLists = [];
+let unreadWhat = '';
+let refuseEdits = false;
 
 const meta = () => ({
   id: 'test-epoch:1', name: 'noted.pdf', path: DOC, canSave: true,
@@ -31,12 +34,22 @@ const meta = () => ({
   lostFields: lostFields || undefined,
   xfa: xfa || undefined,
   unoptimized: unoptimized || undefined,
+  unreadLists: unreadLists.length ? unreadLists : undefined,
+  unreadWhat: unreadWhat || undefined,
 });
+
+// The server's refusal of a change over a Web Capture record (`httpError`, /pending 889 part 2).
+const refusal = () => new Response(JSON.stringify({
+  error: 'this document holds ' + unreadWhat + ', which Nib could not read in full and cannot carry through a change — so nothing was changed',
+  cause: 'name-tree', removable: 'webcapture',
+}), { status: 422, headers: { 'Content-Type': 'application/json' } });
 
 const h = await boot({
   routes: {
     '/api/open': () => ({ ...meta(), canUndo: false }),
-    '/api/pages': () => meta(),
+    '/api/pages': () => (refuseEdits ? refusal() : meta()),
+    // The removal answers a sanitizeResponse: the document, ok, and what is left.
+    '/api/sanitize': () => { unreadLists = []; unreadWhat = ''; refuseEdits = false; return { ...meta(), ok: true, residual: { findings: [] } }; },
   },
 });
 const { document: doc, settle } = h;
@@ -190,3 +203,56 @@ test('a document Nib cannot compact says so once, at the first answer that says 
   await anEdit();
   assert.doesNotMatch(toastText(), /compact/, 'the same document was told a second time, on its next answer');
 });
+
+// ── A list Nib could not read whole (ADR-164, /pending 889 part 2) ────────────
+// The Go tests prove the server SAYS which lists (`unreadLists`, `unreadWhat`), refuses a change naming the record
+// (`removable`), and removes it on `method=webcapture`. Only this tier sees whether the user is told at the open,
+// whether the removal is offered only where it can be made, and whether a refusal brings back a dismissed offer.
+const listShown = () => { const n = doc.getElementById('listNotice'); return !!n && !n.hidden; };
+const listText = () => doc.getElementById('listNoticeText').textContent;
+const removeShown = () => !doc.getElementById('listNoticeRemove').hidden;
+const WEB = 'a record of the web pages it was captured from';
+
+test('a document with every list read says nothing about one', async () => {
+  lostAnnots = 0; lostFields = 0; xfa = ''; unoptimized = false; unreadLists = []; unreadWhat = '';
+  await openDocument();
+  assert.equal(listShown(), false, 'the unread-list notice is up on a document Nib read whole');
+});
+
+test('a list Nib cannot carry is announced at the open, with no removal Nib cannot make', async () => {
+  unreadLists = ['EmbeddedFiles']; unreadWhat = 'its attachments';
+  await openDocument();
+  assert.equal(listShown(), true, 'a document every change of which will be refused opened with no notice');
+  assert.match(listText(), /holds its attachments, which Nib could not read in full/, `the notice says ${JSON.stringify(listText())}`);
+  assert.match(listText(), /will not change this document\.$/, `the notice says ${JSON.stringify(listText())}`);
+  assert.equal(removeShown(), false, 'Remove it is offered for attachments — it removes only a web capture record');
+});
+
+test('a web capture record is announced with its removal, and the removal clears it', async () => {
+  unreadLists = ['URLS']; unreadWhat = WEB; refuseEdits = true;
+  await openDocument();
+  assert.equal(listShown(), true, 'a web capture record Nib could not read opened with no notice');
+  assert.match(listText(), new RegExp('holds ' + WEB), `the notice says ${JSON.stringify(listText())}`);
+  assert.match(listText(), /until it is removed\.$/, `the notice does not say the way out: ${JSON.stringify(listText())}`);
+  assert.equal(removeShown(), true, 'the notice does not offer the removal');
+  const n = doc.getElementById('listNotice');
+  assert.equal(n.getAttribute('role'), 'status', 'the notice carries no role');
+  assert.equal(n.closest('dialog'), null, 'the notice is in a dialog — it is a page-level banner');
+
+  // A refused change, after a dismissal, brings the offer back: the dismissal was of the warning.
+  doc.getElementById('listNoticeDismiss').click();
+  await settle();
+  assert.equal(listShown(), false, 'Dismiss did not take the notice down');
+  await anEdit();
+  assert.equal(listShown(), true, 'a change refused over the record left its removal dismissed');
+
+  const before = h.calls.length;
+  doc.getElementById('listNoticeRemove').click();
+  await settle();
+  const posted = h.calls.slice(before).find((c) => c.url.includes('/api/sanitize'));
+  assert.ok(posted, 'Remove it posted nothing');
+  assert.match(posted.url, /method=webcapture/, `Remove it posted ${posted.url}`);
+  assert.equal(posted.method, 'POST', 'the removal was not a POST');
+  assert.equal(listShown(), false, 'the notice is still up after the record was removed');
+});
+

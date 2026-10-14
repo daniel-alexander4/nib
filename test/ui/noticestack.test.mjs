@@ -1,7 +1,8 @@
 // The bottom-right corner's notices in a real window (/pending 876).
 //
-// Four notices share that corner — the fit report, the lost accessibility structure, the content a page
-// operation could not carry, and the XFA form — and any of them can be up together. Each is a sentence
+// Five notices share that corner — the fit report, the lost accessibility structure, the content a page
+// operation could not carry, the XFA form, and a list Nib could not read whole (/pending 889 part 2) — and any of
+// them can be up together. Each is a sentence
 // that wraps, so each is as tall as its words at the width it has. They were placed by a fixed `bottom`
 // apiece, 52 px apart, and measured in a real window stood 162, 162 and 107 px tall: on top of each
 // other, with two of the three Dismiss buttons under a neighbour. jsdom cannot see any of this — it
@@ -22,7 +23,10 @@ const h = await launch({
     '**/api/pages': async (route) => {
       const res = await route.fetch();
       const answer = await res.json();
-      Object.assign(answer, { taggingDropped: true, lostAnnots: 3, lostFields: 2, xfa: 'removed' });
+      Object.assign(answer, {
+        taggingDropped: true, lostAnnots: 3, lostFields: 2, xfa: 'removed',
+        unreadLists: ['URLS'], unreadWhat: 'a record of the web pages it was captured from',
+      });
       await route.fulfill({ response: res, json: answer });
     },
   },
@@ -31,7 +35,7 @@ const page = h.page;
 
 after(async () => { await shutdown(h); });
 
-const NOTICES = ['tagNotice', 'lostNotice', 'xfaNotice'];
+const NOTICES = ['tagNotice', 'lostNotice', 'xfaNotice', 'listNotice'];
 
 const boxes = () => page.evaluate((ids) => {
   const wrap = document.getElementById('viewerWrap').getBoundingClientRect();
@@ -63,7 +67,7 @@ async function settled(width) {
   }));
 }
 
-test('three notices up together are each readable, apart, inside the view, and can each be dismissed', async () => {
+test('four notices up together are each readable, apart, inside the view, and can each be dismissed', async () => {
   await h.openDocument(DOC, 2);
   await page.$eval('#rotateRightBtn', (el) => el.click());
   await page.waitForFunction((ids) => ids.every((id) => !document.getElementById(id).hidden), NOTICES);
@@ -77,13 +81,13 @@ test('three notices up together are each readable, apart, inside the view, and c
       const r = el.getBoundingClientRect();
       return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, scrolls: el.scrollHeight > el.clientHeight + 1 };
     });
-    // The stack itself never leaves the view; where the three are taller than the view it scrolls.
+    // The stack itself never leaves the view; where the four are taller than the view it scrolls.
     assert.ok(stack.left >= wrap.left - 0.5 && stack.right <= wrap.right + 0.5 && stack.top >= wrap.top - 0.5 && stack.bottom <= wrap.bottom + 0.5,
       `${at}: the stack runs outside the view: ${JSON.stringify(stack)} in ${JSON.stringify(wrap)}`);
-    if (width === 1366) assert.ok(!stack.scrolls, `${at}: three notices do not fit a ${height}px window without scrolling`);
+    if (width === 1366) assert.ok(!stack.scrolls, `${at}: four notices do not fit a ${height}px window without scrolling`);
     for (const id of NOTICES) {
-      // Stimulus: all three are up, or "no two overlap" is true of fewer than it claims.
-      assert.ok(notices[id], `${at}: #${id} is not showing, so this size measured fewer than three notices`);
+      // Stimulus: all four are up, or "no two overlap" is true of fewer than it claims.
+      assert.ok(notices[id], `${at}: #${id} is not showing, so this size measured fewer than four notices`);
       // Brought into the stack's own view first: at phone width that is a scroll, at desktop width nothing.
       await page.$eval('#' + id, (el) => el.scrollIntoView({ block: 'nearest' }));
       const n = (await boxes()).notices[id];
@@ -100,7 +104,8 @@ test('three notices up together are each readable, apart, inside the view, and c
       }
     }
     // Nearest the corner first, in the order the markup gives them.
-    assert.ok(notices.tagNotice.top > notices.lostNotice.top && notices.lostNotice.top > notices.xfaNotice.top,
+    assert.ok(notices.tagNotice.top > notices.lostNotice.top && notices.lostNotice.top > notices.xfaNotice.top
+      && notices.xfaNotice.top > notices.listNotice.top,
       `${at}: the notices are not stacked in their order`);
   }
 });

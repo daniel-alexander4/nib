@@ -170,6 +170,8 @@ type document struct {
 	tagged bool
 	// unoptimized is docResponse.Unoptimized for those same bytes (/pending 766 part 7).
 	unoptimized bool
+	// unreadLists is docResponse.UnreadLists for the same bytes, cached with it.
+	unreadLists []string
 
 	// historyEvicted records that this document's history was dropped to keep the
 	// global budget, rather than never having existed. Without it the two are
@@ -768,6 +770,12 @@ type docResponse struct {
 	// are a placeholder, and Nib refuses to change the document), or "removed" (it arrived with one and a change
 	// took it out). Sticky for the reason TaggingDropped is; omitted for a document that never had one.
 	XFA string `json:"xfa,omitempty"`
+	// UnreadLists names the lists this document holds that Nib could not read whole — catalog name trees, by
+	// their PDF names (`pdfops.AnswerFacts.UnreadLists`, ADR-164). Every change is refused while one is there; the
+	// window says so at the open and offers to remove a Web Capture record (/pending 889 part 2).
+	UnreadLists []string `json:"unreadLists,omitempty"`
+	// UnreadWhat says what those lists hold, in the refusal's own words (`pdfread.NameTreeWords`).
+	UnreadWhat string `json:"unreadWhat,omitempty"`
 	// ConformanceLabel says what SIGNING this document does to a PDF/UA or PDF/A label it carries (ADR-147,
 	// `/pending 520`): "removed" — it is unsigned, and every signing path drops the label before the signature
 	// (ADR-032); "kept" — it is already signed, so the label stays under the next signature, and Nib has not
@@ -1923,7 +1931,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	data := doc.data
 	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
 	xfaWas, labelWas, taggedWas := doc.xfa, doc.label, doc.tagged
-	unoptimizedWas := doc.unoptimized
+	unoptimizedWas, unreadWas := doc.unoptimized, doc.unreadLists
 	// Snapshotted here with everything else and compared AFTER the unlock, for the
 	// reason the paragraph above gives about FlagsJSON: diskChanged stats the file and
 	// may read it, and a syscall under the server mutex serializes every route behind
@@ -1953,7 +1961,8 @@ func (s *Server) docResponse(doc *document) docResponse {
 	if fresh {
 		resp.Flags = cached
 		resp.XFA, resp.ConformanceLabel, resp.Tagged = xfaWas, labelWas, taggedWas
-		resp.Unoptimized = unoptimizedWas
+		resp.Unoptimized, resp.UnreadLists = unoptimizedWas, unreadWas
+		resp.UnreadWhat = pdfread.NameTreeWords(unreadWas)
 		return resp
 	}
 	facts, err := pdfops.ReadAnswerFacts(data)
@@ -1962,7 +1971,8 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	resp.XFA = xfaAfter(xfaWas, facts.XFA, err)
 	resp.ConformanceLabel, resp.Tagged = conformanceLabelOf(facts.Labelled, data), facts.Tagged
-	resp.Unoptimized = facts.Unoptimized
+	resp.Unoptimized, resp.UnreadLists = facts.Unoptimized, facts.UnreadLists
+	resp.UnreadWhat = pdfread.NameTreeWords(facts.UnreadLists)
 	// Store it back, but only if this document still holds the bytes it was computed
 	// from: another request may have replaced them while the parse ran, and caching a
 	// result against bytes the document no longer has is worse than not caching.
@@ -1970,7 +1980,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	if s.isRegisteredLocked(doc) && sameBytes(doc.data, data) {
 		doc.flags, doc.flagsFor, doc.xfa = resp.Flags, data, resp.XFA
 		doc.label, doc.tagged = resp.ConformanceLabel, resp.Tagged
-		doc.unoptimized = resp.Unoptimized
+		doc.unoptimized, doc.unreadLists = resp.Unoptimized, resp.UnreadLists
 	}
 	s.mu.Unlock()
 	return resp
@@ -2276,9 +2286,14 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "dynamic-xfa"})
 		return
 	}
-	// The third (ADR-164): a list of attachments, destinations or scripts Nib could not read whole.
+	// The third (ADR-164): a list Nib could not read whole, named in the sentence. A Web Capture record can be
+	// removed and the change made after it (/pending 889 part 2): `removable` says so, and the window offers it.
 	if strings.Contains(msg, pdfread.NameTreeRefusal) {
-		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "name-tree"})
+		body := map[string]string{"error": msg, "cause": "name-tree"}
+		if strings.Contains(msg, pdfread.WebCaptureWords) {
+			body["removable"] = "webcapture"
+		}
+		writeJSONStatus(w, http.StatusUnprocessableEntity, body)
 		return
 	}
 	// The fourth: a form export or fill asked of a document with no form fields on its pages (`/pending 888`).

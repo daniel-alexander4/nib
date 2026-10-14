@@ -130,6 +130,7 @@ const els = {
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFieldsBtn: $('scanFieldsBtn'),
+  scanWebCaptureBtn: $('scanWebCaptureBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   uaBtn: $('uaBtn'), uaModal: $('uaModal'), uaBody: $('uaBody'), uaSummary: $('uaSummary'), uaClose: $('uaClose'),
   tagsBtn: $('tagsBtn'), tagsModal: $('tagsModal'), tagsList: $('tagsList'), tagsSummary: $('tagsSummary'),
@@ -543,7 +544,13 @@ async function fetchCeremonyCopy(docId) {
 // back when the body isn't JSON (proxy error, truncated) — so failure paths can
 // always toast something instead of rejecting inside the error handler itself.
 async function errText(res, fallback) {
-  try { return (await res.json()).error || fallback; } catch { return fallback; }
+  try {
+    const body = await res.json();
+    // A change refused over a Web Capture record (/pending 889 part 2): the record can go, so its notice — the
+    // one place the removal is offered at the document — comes back even if it was dismissed.
+    if (body.cause === 'name-tree' && body.removable === 'webcapture') offerListRemoval();
+    return body.error || fallback;
+  } catch { return fallback; }
 }
 
 function selectedKeyMode() {
@@ -7303,6 +7310,10 @@ els.scanFieldsBtn.onclick = () => {
     + 'this is such a form, that calculation may stop working there. The form on the pages you can see is not changed.')) return;
   runSanitize('fields', 'Flatten');
 };
+// A Web Capture record (/pending 889 part 2): where the document was converted from, shown by no reader. Its
+// own button because no other removal takes it, and the one that unblocks a document whose record Nib could not
+// read whole — every other change of such a document is refused (ADR-164).
+els.scanWebCaptureBtn.onclick = () => runSanitize('webcapture', 'Flatten');
 
 // --- remove password protection ----------------------------------------------
 // Two entry points, one /api/decrypt: the Secure-tab button (an open document —
@@ -14126,6 +14137,7 @@ function reflectUndoControls(enabled) {
   reflectTagNotice(m);
   reflectLostNotice(m);
   reflectXfaNotice(m);
+  reflectListNotice(m);
   reflectSigningLabel(m);
   reflectCropTagged(m);
 }
@@ -14319,6 +14331,58 @@ if (els.xfaNoticeDismiss) {
     box.hidden = true;
   };
 }
+
+// ── A list Nib could not read whole (ADR-164, /pending 889 part 2) ──────────
+//
+// The server says which lists (`unreadLists`, by their PDF names) and what they hold (`unreadWhat`, the refusal's
+// own words). Every change of such a document is refused, so the user is told at the open rather than at the first
+// refusal; a Web Capture record (`URLS`, `IDS`) can be removed, and the notice carries that removal. Dismissed per
+// document and per sentence, as its neighbours are.
+function listNoticeWords(m) {
+  const what = (m && m.unreadWhat) || '';
+  if (!what) return '';
+  return 'This document holds ' + what + ', which Nib could not read in full and cannot carry through a change, '
+    + 'so Nib will not change this document' + (webCaptureUnread(m) ? ' until it is removed.' : '.');
+}
+
+function webCaptureUnread(m) {
+  const lists = (m && m.unreadLists) || [];
+  return lists.includes('URLS') || lists.includes('IDS');
+}
+
+function listNoticeKey(m) {
+  return ((view.docMeta && view.docMeta.id) || '\u0000no-id') + ':' + listNoticeWords(m);
+}
+
+function reflectListNotice(m) {
+  const box = document.getElementById('listNotice');
+  if (!box) return;
+  const words = listNoticeWords(m);
+  if (!words || view.listNoticeDismissed === listNoticeKey(m)) {
+    box.hidden = true;
+    return;
+  }
+  document.getElementById('listNoticeText').textContent = words;
+  document.getElementById('listNoticeRemove').hidden = !webCaptureUnread(m);
+  box.hidden = false;
+}
+
+// offerListRemoval brings the notice back after a refusal it explains: a dismissal was of the warning, not of the
+// way out of the refusal that has just happened.
+function offerListRemoval() {
+  view.listNoticeDismissed = null;
+  reflectListNotice(view.docMeta);
+}
+
+els.listNoticeDismiss = $('listNoticeDismiss');
+if (els.listNoticeDismiss) {
+  els.listNoticeDismiss.onclick = () => {
+    view.listNoticeDismissed = listNoticeKey(view.docMeta);
+    document.getElementById('listNotice').hidden = true;
+  };
+}
+els.listNoticeRemove = $('listNoticeRemove');
+if (els.listNoticeRemove) els.listNoticeRemove.onclick = () => runSanitize('webcapture', 'Flatten');
 
 els.lostNoticeDismiss = $('lostNoticeDismiss');
 if (els.lostNoticeDismiss) {

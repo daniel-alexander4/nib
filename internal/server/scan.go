@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
+	"nib/internal/pdfread"
 	"nib/internal/sign"
 )
 
@@ -67,6 +68,10 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.RemoveFilesAndMedia(before)
 	case "metadata":
 		result, err = pdfops.StripMetadata(before)
+	case "webcapture":
+		// A record of the web pages the document was captured from (/pending 889 part 2). Asked for, with a
+		// signature's loss confirmed in the window, as strip and safe are.
+		result, err = pdfops.RemoveWebCapture(before)
 	case "fields":
 		// Form entries on no page (`/pending 888`). Not on a signed document: the other removals are asked for
 		// with the signature's loss confirmed, and this one is housekeeping nobody should lose a signature to.
@@ -77,6 +82,12 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.RemoveOffPageFields(before)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown method")
+		return
+	}
+	// A list Nib could not read whole refuses every rewrite (ADR-164) — not a method failing, so not a reason to
+	// recommend the next one down: the refusal itself, naming the list, through the one error door (/pending 889).
+	if errors.Is(err, pdfread.ErrNameTreeLost) {
+		httpError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	// A removal failure, or a result that won't validate, is reported as
