@@ -160,6 +160,83 @@ func turnAboutTheCorner(ctx *model.Context, turned []turnedPage) error {
 	return nil
 }
 
+// holdContentWhileStamping is off only in the test that compares the hold with pdfcpu's own stamp — the definition
+// of what a stamp writes (`TestStampingWithTheContentHeldWritesWhatPdfcpusOwnStampWrites`).
+var holdContentWhileStamping = true
+
+// contentHeldUnfiltered runs a pdfcpu stamp of several watermarks a page with the stream pdfcpu patches held
+// unfiltered, and puts that stream's own filters back once, afterwards (/pending 881).
+//
+// pdfcpu stamps a page one watermark at a time (`stamp.go` `AddWatermarksSliceMap` → `addPageWatermark`), and for
+// each one rewrites the page's first content stream WHOLE through its filters (`patchFirstContentStreamForWatermark`
+// ends in `sd.Encode()`). The stream grows by a hundred bytes or so a watermark, so an OCR layer's words deflated
+// the page's content once a word: measured at 3,000 words on one page, 76% of the stamp (15.4 s of 20.3 s), and 52%
+// at 600. With no filter to apply, pdfcpu's `Encode` is an assignment; the content pdfcpu builds is the same bytes
+// in the same order, and they go through the same `Encode` with the same filters — once.
+//
+// Only what pdfcpu itself would patch is held, and only where this can read it: the first content stream
+// (`firstContentStream`) of a page given two watermarks or more, behind filters that decode. A stream that does not
+// decode is left exactly as it is, so pdfcpu meets it and refuses the stamp as it always did, and so is a stream
+// with no filter, which was never deflated. The filters put back are the stream's OWN, in their order, with their
+// parameters: nothing is added, upgraded or dropped — so a stream behind a filter pdfcpu cannot write (JPX, JBIG2:
+// its decode hands those bytes back as they are) is refused here, by the same `Encode` that refused it per watermark.
+// It holds no more memory than the stamp did: pdfcpu kept the decoded content on the stream from its first patch on
+// (measured, peak heap at 3,000 words on one page: 60 MB either way).
+func contentHeldUnfiltered(ctx *model.Context, wms map[int][]*model.Watermark, stamp func() error) error {
+	if !holdContentWhileStamping {
+		return stamp()
+	}
+	type hold struct {
+		entry   *model.XRefTableEntry
+		filters []types.PDFFilter
+	}
+	var held []hold
+	pages := pdfread.Pages(ctx)
+	for nr, page := range wms {
+		if len(page) < 2 || nr < 1 || nr > len(pages) || pages[nr-1].Err != nil || pages[nr-1].Dict == nil {
+			continue
+		}
+		ref, sd, err := firstContentStream(ctx, pages[nr-1].Dict)
+		// A stream two pages share is held once: the second page finds it with no filters, as it finds one that
+		// never had any.
+		if err != nil || sd == nil || sd.FilterPipeline == nil {
+			continue
+		}
+		entry, ok := ctx.FindTableEntryForIndRef(&ref)
+		if !ok || entry == nil {
+			continue
+		}
+		// decode:exempt — the document's own content stream, and no inflation of this function's: pdfcpu's stamp
+		// inflates this same stream whole at its first patch, and finds it already done.
+		if err := sd.Decode(); err != nil {
+			continue
+		}
+		if sd.Content == nil {
+			// pdfcpu reads a nil Content as "not decoded yet", and with no filter would take the raw bytes for it.
+			sd.Content = []byte{}
+		}
+		held = append(held, hold{entry, sd.FilterPipeline})
+		sd.FilterPipeline = nil
+		entry.Object = *sd
+	}
+	err := stamp()
+	for _, h := range held {
+		sd, ok := h.entry.Object.(types.StreamDict)
+		if !ok {
+			if err == nil {
+				err = fmt.Errorf("pdfops: a page's content stream was replaced while it was being stamped")
+			}
+			continue
+		}
+		sd.FilterPipeline = h.filters
+		if eerr := sd.Encode(); eerr != nil && err == nil {
+			err = eerr
+		}
+		h.entry.Object = sd
+	}
+	return err
+}
+
 // firstContentStream is the stream pdfcpu prefixes: the page's `/Contents` when it is one stream, its first
 // element when it is an array (`stamp.go` `updatePageContentsForWM`).
 func firstContentStream(ctx *model.Context, page types.Dict) (types.IndirectRef, *types.StreamDict, error) {

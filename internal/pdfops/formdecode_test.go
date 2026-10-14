@@ -133,7 +133,10 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	// **And the last four** (`/pending 795`): the packet's two decodes (uaid, labelua) go through `decodePacket` and the
 	// run reader's `/ToUnicode` through the door. attachments.go's two are exempt and say why at each site — an
 	// embedded file's whole bytes are the answer, and the digest is of the decoded bytes.
-	uncapped := map[string]int{"attachments.go": 2, "stamprotation.go": 1}
+	//
+	// **stamprotation's second** (`/pending 881`, `contentHeldUnfiltered`) is the same stream a statement EARLIER than
+	// pdfcpu's stamp inflates it, and in place of that inflation — exempt at its site for the same reason.
+	uncapped := map[string]int{"attachments.go": 2, "stamprotation.go": 2}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

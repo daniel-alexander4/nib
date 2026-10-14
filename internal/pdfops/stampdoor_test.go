@@ -17,13 +17,17 @@ import (
 // back about its box's corner. A `pdfcpu.AddWatermarks*` call must sit inside a function literal handed to
 // stampInPlace, or to stampTextWatermarks, which hands its own to stampInPlace; and no code may stamp through
 // pdfcpu's `api` package, whose read-stamp-write the door cannot reach inside.
+//
+// **And a stamp of several watermarks a page runs with the page's content held** (`contentHeldUnfiltered`,
+// /pending 881): `pdfcpu.AddWatermarksSliceMap` is the one call that can put more than one on a page, and outside
+// that hold it deflates the page once a watermark. Each such call sits in a function literal handed to the hold.
 func TestEveryPdfcpuStampGoesThroughStampInPlace(t *testing.T) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamps, routed := 0, 0
+	stamps, routed, heldStamps := 0, 0, 0
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -34,7 +38,7 @@ func TestEveryPdfcpuStampGoesThroughStampInPlace(t *testing.T) {
 			t.Fatal(perr)
 		}
 		// The spans of every function literal handed to a door.
-		var inside [][2]token.Pos
+		var inside, held [][2]token.Pos
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -48,6 +52,13 @@ func TestEveryPdfcpuStampGoesThroughStampInPlace(t *testing.T) {
 				}
 				if id.Name == "stampInPlace" {
 					routed++
+				}
+			}
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "contentHeldUnfiltered" {
+				for _, a := range call.Args {
+					if lit, ok := a.(*ast.FuncLit); ok {
+						held = append(held, [2]token.Pos{lit.Pos(), lit.End()})
+					}
 				}
 			}
 			return true
@@ -65,6 +76,17 @@ func TestEveryPdfcpuStampGoesThroughStampInPlace(t *testing.T) {
 				return true
 			}
 			stamps++
+			if sel.Sel.Name == "AddWatermarksSliceMap" {
+				in := false
+				for _, span := range held {
+					in = in || call.Pos() >= span[0] && call.End() <= span[1]
+				}
+				if in {
+					heldStamps++
+				} else {
+					t.Errorf("%s stamps several watermarks a page outside contentHeldUnfiltered", fset.Position(call.Pos()))
+				}
+			}
 			for _, span := range inside {
 				if call.Pos() >= span[0] && call.End() <= span[1] {
 					return true
@@ -101,7 +123,8 @@ func TestEveryPdfcpuStampGoesThroughStampInPlace(t *testing.T) {
 		})
 	}
 	// The stimulus: the census saw the stamps it exists for.
-	if stamps < 4 || routed < 2 {
-		t.Fatalf("census saw %d pdfcpu stamps and %d stampInPlace calls; it is not reading the package", stamps, routed)
+	if stamps < 4 || routed < 2 || heldStamps < 3 {
+		t.Fatalf("census saw %d pdfcpu stamps, %d stampInPlace calls and %d stamps with the content held; it is not reading the package",
+			stamps, routed, heldStamps)
 	}
 }

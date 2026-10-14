@@ -2214,7 +2214,7 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 			wms[page] = append(wms[page], wm)
 			fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
 		}
-		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
 	})
 	if err != nil {
 		return nil, nil, err
@@ -2301,7 +2301,9 @@ func addWatermarksWith(pdf []byte, wms map[int][]*model.Watermark, around func(c
 			}
 		}
 		return around(ctx, func() error {
-			return stampInPlace(ctx, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+			return stampInPlace(ctx, func() error {
+				return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+			})
 		})
 	})
 }
@@ -2495,7 +2497,7 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 			}
 			wms[i] = append(wms[i], wm)
 		}
-		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
 	})
 }
 
