@@ -208,6 +208,9 @@ func runSign(pdfBytes []byte, data sign.SignData, refuse func(*dpdf.Reader) erro
 	if err != nil {
 		return nil, err
 	}
+	if rdr.Trailer().Key("Encrypt").Kind() != dpdf.Null {
+		return nil, ErrEncryptedDocument
+	}
 	if refuse != nil {
 		if err := refuse(rdr); err != nil {
 			return nil, err
@@ -534,6 +537,14 @@ func refuseCertified(r *dpdf.Reader) error {
 	}
 	return nil
 }
+
+// ErrEncryptedDocument refuses to sign an encrypted document (/pending 889, ADR-170), in `runSign`, the one door
+// every signing path passes. The library writes its signature, the field and the catalog it re-emits UNENCRYPTED into
+// a document whose every string a reader decrypts, and a cross-reference stream with no /Encrypt at all — a file no
+// reader checks. It was refused before only by accident: the signature reader could not read AES, and an RC4 file it
+// read was signed into exactly that.
+var ErrEncryptedDocument = errors.New("this document is encrypted, and Nib cannot sign an encrypted document — the " +
+	"signature would be written into it unencrypted and no reader could check it — so nothing was signed")
 
 // ErrAlreadySigned refuses to certify a document that already carries a signature (/pending 810).
 var ErrAlreadySigned = errors.New("this document is already signed, and a certification (Finalize) can only be " +

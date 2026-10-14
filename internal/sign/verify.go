@@ -159,10 +159,11 @@ const (
 	// reader for one document (`maxLibrarySignatures`, /pending 735, ADR-141), so it was refused before
 	// any of them was hashed and none was checked.
 	UncheckedTooManySignatures UncheckedCause = "too-many-signatures"
-	// UncheckedEncrypted: the file is encrypted in a way the signature reader does not decrypt (AES), so
-	// it read nothing of the document and the signature it carries was never checked (/pending 889). Three
-	// real documents — a forms engine's output, encrypted to forbid changes, opening with no password —
-	// read `Invalid` with no cause, and every reader said "modified since signing".
+	// UncheckedEncrypted: the file is encrypted in a way the signature reader does not decrypt, so it read
+	// nothing of the document and the signature it carries was never checked (/pending 889). Three real
+	// documents — a forms engine's output, AES-encrypted to forbid changes, opening with no password — read
+	// `Invalid` with no cause, and every reader said "modified since signing". The reader decrypts RC4 and, since
+	// ADR-170, AES-128 and AES-256; what is left is any other crypt filter (a V 4 RC4 one, a custom handler).
 	UncheckedEncrypted UncheckedCause = "encrypted"
 )
 
@@ -587,10 +588,9 @@ func uncheckedOf(st Status, data []byte, unseen bool) UncheckedCause {
 // said only `Invalid` would read as "modified since signing" of a document nobody checked (/pending
 // 760). Any other sweep error — a panic on corruption — is left unnamed, as it was.
 //
-// And a sweep that failed on an ENCRYPTED file is named (/pending 889): the signature reader decrypts RC4 and
-// nothing newer, so it reads nothing of an AES document ("AES not implemented" at 128 bits, "256-bit encryption
-// key" at 256) and the same unnamed `Invalid` followed. Asked of the file pdfcpu read — encrypted, or not — and
-// never of the reader's sentence, which differs by key length.
+// And a sweep that failed on an ENCRYPTED file is named (/pending 889): the signature reader reads nothing of a
+// document whose encryption it does not decrypt, and the same unnamed `Invalid` followed. Asked of the file pdfcpu
+// read — encrypted, or not — and never of the reader's sentence, which differs by filter.
 func sweepUnchecked(err error, encrypted bool) UncheckedCause {
 	if errors.Is(err, errLookupCostCeiling) {
 		return UncheckedLookupCost

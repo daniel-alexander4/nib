@@ -963,3 +963,5 @@ home today.
   — extends ADR-115, ADR-129, ADR-164: an `/Annots` entry with no `/Subtype` and a `/P` that is not a page made pdfcpu's validator refuse five of 203 real documents to every operation; both are kept from the validator and put back as parsed (`pdfread/annotaside.go`).
 - [ADR-169](169-quit-closes-every-window-and-a-window-that-cannot-close-says-nib-has-quit.md) — **Quit closes every window, and a window that cannot close says Nib has quit**
   — the window is the user's browser's, so the page closes itself: every window is told on its stream (`event: quit`) before the process exits, says so, and calls `window.close()`; the close prompt stands down once quitting.
+- [ADR-170](170-the-signature-reader-decrypts-aes-and-leaves-a-signatures-contents-as-stored.md) — **the signature reader decrypts AES, and leaves a signature's `/Contents` as stored**
+  — extends ADR-066/068: AES-128 and AES-256 in `third_party/digitorus-pdf`, the hash still over the stored bytes, a signature dictionary's `/Contents` never decrypted; every signing path refuses an encrypted document, which it had refused only by accident.

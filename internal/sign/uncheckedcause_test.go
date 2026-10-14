@@ -11,8 +11,8 @@ import (
 
 // `/pending 889`: three real signed documents — a forms engine's output, AES-encrypted to forbid changes and
 // opening with no password — read `Invalid` with no signer, nothing refused and NO cause, and `nib verify` and
-// the window both said "modified since signing" of signatures nobody had checked. The signature reader does not
-// decrypt AES: it reads nothing of such a file.
+// the window both said "modified since signing" of signatures nobody had checked. The signature reader now
+// decrypts AES (ADR-170, `aesverify_test.go`); what it still cannot read keeps the cause.
 
 // encryptedForOwner is pdf encrypted with AES under an owner password only, so it opens with none.
 func encryptedForOwner(t *testing.T, pdf []byte, bits int) []byte {
@@ -31,23 +31,28 @@ func TestAnEncryptedSignedDocumentIsNotCalledModified(t *testing.T) {
 	if st := Verify(signed); st.State != Valid {
 		t.Fatalf("setup: the fixture reads %q before it is encrypted, want valid", st.State)
 	}
-	// Both key lengths: the signature reader refuses each in different words.
-	for _, bits := range []int{128, 256} {
-		enc := encryptedForOwner(t, signed, bits)
-		// Stimulus: the sweep does fail on it. Were the reader to learn AES, this test would be about nothing.
-		if _, err := sweepRevisions(enc); err == nil {
-			t.Fatalf("setup (%d bits): the sweep read an AES-encrypted file, so no verdict below is the one this test is about", bits)
-		}
-		st := Verify(enc)
-		if st.State != Invalid {
-			t.Errorf("%d bits: state = %q, want invalid: nothing was checked, and unchecked is never valid", bits, st.State)
-		}
-		if st.Unchecked != UncheckedEncrypted {
-			t.Errorf("%d bits: unchecked = %q, want %q — with no cause every reader says \"modified since signing\" of a signature nobody checked", bits, st.Unchecked, UncheckedEncrypted)
-		}
-		if !st.AddedAfter || st.AddedAfterCause != AddedAfterCouldNotCheck {
-			t.Errorf("%d bits: added after = %v (%q), want true (could-not-check): nothing measured the coverage either", bits, st.AddedAfter, st.AddedAfterCause)
-		}
+	// The reader decrypts AES since ADR-170; what it still refuses is a V 4 RC4 crypt filter, which is what pdfcpu
+	// writes for 128-bit RC4.
+	conf := model.NewRC4Configuration("", "owner", 128)
+	conf.Cmd = model.ENCRYPT
+	var out bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(signed), &out, conf); err != nil {
+		t.Fatalf("setup: could not encrypt the fixture: %v", err)
+	}
+	enc := out.Bytes()
+	// Stimulus: the sweep does fail on it. Were the reader to learn this filter, this test would be about nothing.
+	if _, err := sweepRevisions(enc); err == nil {
+		t.Fatal("setup: the sweep read the encrypted file, so no verdict below is the one this test is about")
+	}
+	st := Verify(enc)
+	if st.State != Invalid {
+		t.Errorf("state = %q, want invalid: nothing was checked, and unchecked is never valid", st.State)
+	}
+	if st.Unchecked != UncheckedEncrypted {
+		t.Errorf("unchecked = %q, want %q — with no cause every reader says \"modified since signing\" of a signature nobody checked", st.Unchecked, UncheckedEncrypted)
+	}
+	if !st.AddedAfter || st.AddedAfterCause != AddedAfterCouldNotCheck {
+		t.Errorf("added after = %v (%q), want true (could-not-check): nothing measured the coverage either", st.AddedAfter, st.AddedAfterCause)
 	}
 }
 

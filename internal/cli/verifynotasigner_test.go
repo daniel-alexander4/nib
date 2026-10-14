@@ -123,7 +123,7 @@ func TestDescribeStatusComposesTheFacts(t *testing.T) {
 		{"invalid, more signatures than Nib checks (/pending 735)", sign.Status{State: sign.Invalid, AddedAfter: true, AddedAfterCause: sign.AddedAfterCouldNotCheck, Refused: ref, Unchecked: sign.UncheckedTooManySignatures},
 			"INVALID — a signature is present that Nib could not check: this document carries more than 64 signatures, which is more than Nib will check, so it checked none of them", 0},
 		{"invalid, an encrypted file whose signature nothing read (/pending 889)", sign.Status{State: sign.Invalid, AddedAfter: true, AddedAfterCause: sign.AddedAfterCouldNotCheck, Unchecked: sign.UncheckedEncrypted},
-			"INVALID — a signature is present that Nib could not check: this file is encrypted in a way Nib's signature reader cannot read (AES), so its signature was not checked — that is not a finding that it was changed", 0},
+			"INVALID — a signature is present that Nib could not check: this file is encrypted in a way Nib's signature reader cannot read, so its signature was not checked — that is not a finding that it was changed", 0},
 	} {
 		got := describeStatus(tc.st)
 		if got != tc.want {
