@@ -26,5 +26,5 @@ What the worker's span changes (docs/adr/172-a-ticked-box-of-a-pair-is-the-answe
 /pending 893): in a button widget's setValue, when the parent field's /V has already been put for this save
 and is Off, the widget being saved replaces it. Upstream keeps the first widget's /V, and saves an unticked
 check box's Off too, so in a check box field whose two widgets carry different on-states (an Acrobat Yes/No
-pair) ticking the box saved second stored no answer. Present in 6.1.200 and 6.4.299. test/ui/checkpair.test.mjs
-is red on the worker as published.
+pair) ticking the box saved second stored no answer. Present in 6.1.200, 6.4.299 and the online demo's 6.5.142;
+reported upstream as mozilla/pdf.js#22183. test/ui/checkpair.test.mjs is red on the worker as published.
