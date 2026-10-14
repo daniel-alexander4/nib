@@ -64,6 +64,9 @@ func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
 		repeated := repeatedFieldValues(ctx.XRefTable)
 		// A push button is set aside for pdfcpu's walk and put back before anything is written (formfields.go).
 		putBack := pushButtonsAside(ctx.XRefTable)
+		// pdfcpu draws a filled widget from its /Rect as written, so one given top corner first is drawn
+		// into a box of negative height, which no reader shows (/pending 894).
+		normalizeWidgetRects(ctx.XRefTable)
 		ok, pages, err := form.FillForm(ctx, form.FillDetails(&f, nil), f.Pages, form.JSON)
 		putBack()
 		if err != nil {
@@ -407,6 +410,50 @@ func dropStaleWidgetValues(xt *model.XRefTable, before map[int]string) {
 					delete(kd, "V")
 				}
 			}
+		}
+	}
+}
+
+// normalizeWidgetRects rewrites, on every page, a widget's /Rect given with a corner other than the lower-left
+// first as [llx lly urx ury] — the same rectangle (ISO 32000-1 7.9.5: a reader normalizes it). pdfcpu's fill
+// builds a widget's appearance from the four numbers as they stand: on 2 of 82 real forms a field given top
+// first was filled with a /BBox of negative height, a clip below it and a font size of -13, and nothing was
+// drawn (`build/formrt.sh`, /pending 894). Only an inverted /Rect is touched.
+func normalizeWidgetRects(xRefTable *model.XRefTable) {
+	for pg := 1; pg <= xRefTable.PageCount; pg++ {
+		pd, _, _, err := xRefTable.PageDict(pg, false)
+		if err != nil || pd == nil {
+			continue
+		}
+		annots, err := xRefTable.DereferenceArray(pd["Annots"])
+		if err != nil {
+			continue
+		}
+		for _, a := range annots {
+			d, err := xRefTable.DereferenceDict(a)
+			if err != nil || d == nil || d.NameEntry("Subtype") == nil || *d.NameEntry("Subtype") != "Widget" {
+				continue
+			}
+			r, err := xRefTable.DereferenceArray(d["Rect"])
+			if err != nil || len(r) != 4 {
+				continue
+			}
+			var c [4]float64
+			ok := true
+			for i, o := range r {
+				switch v := resolved(xRefTable, o).(type) {
+				case types.Integer:
+					c[i] = float64(v.Value())
+				case types.Float:
+					c[i] = v.Value()
+				default:
+					ok = false
+				}
+			}
+			if !ok || (c[0] <= c[2] && c[1] <= c[3]) {
+				continue
+			}
+			d["Rect"] = types.NewNumberArray(min(c[0], c[2]), min(c[1], c[3]), max(c[0], c[2]), max(c[1], c[3]))
 		}
 	}
 }
