@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -162,8 +163,9 @@ func (s *Server) armSpentBy(anchor consentAnchor, cer *ceremonyID, err error) bo
 		s.sess.noteArmEnded(anchor, "arm-ended-unanswered",
 			"Nobody answered here in time, so this computer stopped waiting.",
 			fmt.Sprintf("The other side connected and a question was on this screen for %s with no "+
-				"answer. Nothing was signed and nothing was saved. To carry on, start waiting again "+
-				"and ask them to send it again.", consentWait(sessionConsentTimeout).Round(time.Second)))
+				"answer.%s Nothing was signed and nothing was saved. To carry on, start waiting again "+
+				"and ask them to send it again.", consentWait(sessionConsentTimeout).Round(time.Second),
+				whichSigning(cer)))
 	case spendTamperCheck:
 		s.sess.noteArmEnded(anchor, "arm-ended-tamper-check",
 			"The connection failed a tamper check, so this computer stopped waiting.",
@@ -178,6 +180,24 @@ func (s *Server) armSpentBy(anchor consentAnchor, cer *ceremonyID, err error) bo
 		log.Printf("arm ended on an outcome the spend rule has no row for (%T): %v", err, err)
 	}
 	return true
+}
+
+// whichSigning names the ceremony an ended arm was waiting for, as a sentence to sit inside a
+// notice, or "" for an arm with no ceremony (/pending 884). A machine resumes an arm for every
+// ceremony it has accepted, so "this computer stopped waiting" does not say for which; the
+// recital is the one name every party has for it. Cut at 80 characters: the notice is one line.
+func whichSigning(cer *ceremonyID) string {
+	if cer == nil {
+		return ""
+	}
+	name := []rune(strings.TrimSpace(cer.inv.Intent))
+	if len(name) == 0 {
+		return ""
+	}
+	if len(name) > 80 {
+		name = append(name[:80:80], '…')
+	}
+	return " It was for the signing \u201c" + string(name) + "\u201d."
 }
 
 // noteArmEnded records why an arm stopped waiting — or, for the delivery arm, what it survived
