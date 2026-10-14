@@ -63,6 +63,13 @@ func TestTheLibraryPatchIsReadGoAndLexGoOnlyAsItsNoticeSays(t *testing.T) {
 	if !bytes.Contains(lexed, []byte(`b.errorf("unexpected keyword %q parsing array", tok)`)) {
 		t.Errorf("%s/%s's readArray does not refuse an object's end — the copy has been reverted to upstream", dir, lex)
 	}
+	// ADR-170: AES is decrypted, and a signature's /Contents is not.
+	if !bytes.Contains(patched, []byte("func hashV5(")) || !bytes.Contains(patched, []byte("func signatureContents(")) {
+		t.Errorf("%s/%s does not decrypt AES-256 or does not know a signature's /Contents — ADR-170's change has been reverted", dir, file)
+	}
+	if !bytes.Contains(lexed, []byte("!signatureContents(x)")) {
+		t.Errorf("%s/%s's readDict decrypts a signature's /Contents — ADR-170's exemption has been reverted", dir, lex)
+	}
 
 	differ, missing, added := upstreamDiff(t, mod, ver, dir)
 	// sorted, so lex.go precedes read.go

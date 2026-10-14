@@ -5622,7 +5622,7 @@ const UNCHECKED_WORDS = {
   'unreadable': 'Nib cannot read this file as a PDF',
   'lookup-cost': 'this file\'s object streams would take Nib\'s signature reader too long to read, so Nib refused to read them',
   'too-many-signatures': 'this document carries more than 64 signatures, which is more than Nib will check, so it checked none of them',
-  encrypted: 'this file is encrypted in a way Nib\'s signature reader cannot read (AES), so its signature was not checked — that is not a finding that it was changed',
+  encrypted: 'this file is encrypted in a way Nib\'s signature reader cannot read, so its signature was not checked — that is not a finding that it was changed',
 };
 
 // refusedLine is one refused record in the details panel. Its filter is the document's own

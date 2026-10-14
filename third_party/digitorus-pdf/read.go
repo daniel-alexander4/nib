@@ -67,6 +67,8 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rc4"
+	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
 	"io"
@@ -85,7 +87,7 @@ type Reader struct {
 	trailer         dict
 	trailerptr      objptr
 	key             []byte
-	useAES          bool
+	alg             cryptAlg
 	XrefInformation ReaderXrefInformation
 	PDFVersion      string
 
@@ -989,8 +991,12 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 			}
 		} else {
 			b := newBuffer(io.NewSectionReader(r.f, xref.offset, r.end-xref.offset), xref.offset)
-			b.key = r.key
-			b.useAES = r.useAES
+			// nib (NOTICE.nib divergence 10): the /Encrypt dictionary's own strings are never encrypted
+			// (§7.6.2); upstream decrypted them whenever the dictionary was resolved after the key was set.
+			if ep, _ := r.trailer["Encrypt"].(objptr); ptr != ep {
+				b.key = r.key
+				b.alg = r.alg
+			}
 
 			obj = b.readObject()
 			def, ok := obj.(objdef)
@@ -1039,7 +1045,7 @@ func (v Value) Reader() io.ReadCloser {
 	var rd io.Reader
 	rd = io.NewSectionReader(v.r.f, x.offset, v.Key("Length").Int64())
 	if v.r.key != nil {
-		rd = decryptStream(v.r.key, v.r.useAES, x.ptr, rd)
+		rd = decryptStream(v.r.key, v.r.alg, x.ptr, rd)
 	}
 	filter := v.Key("Filter")
 	param := v.Key("DecodeParms")
@@ -1120,11 +1126,26 @@ var passwordPad = []byte{
 	0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
 }
 
+// cryptAlg is the cipher a document's strings and streams are encrypted with (nib, NOTICE.nib divergence 10).
+// Upstream carried a bool, "AES", meaning AESV2 — and decrypted no AES string at all.
+type cryptAlg uint8
+
+const (
+	cryptRC4   cryptAlg = iota // V 1, 2: RC4, an object key derived per object (§7.6.2 algorithm 1)
+	cryptAESV2                 // V 4, CFM AESV2: AES-128-CBC, an object key derived per object with "sAlT"
+	cryptAESV3                 // V 5, CFM AESV3: AES-256-CBC under the file key itself (ISO 32000-2 §7.6.3.2)
+)
+
 func (r *Reader) initEncrypt(password string) error {
 	// See PDF 32000-1:2008, §7.6.
 	encrypt, _ := r.resolve(objptr{}, r.trailer["Encrypt"]).data.(dict)
 	if encrypt["Filter"] != name("Standard") {
 		return fmt.Errorf("unsupported PDF: encryption filter %v", objfmt(encrypt["Filter"]))
+	}
+	V, _ := encrypt["V"].(int64)
+	if V == 5 {
+		// nib (NOTICE.nib divergence 10): AES-256, ISO 32000-2 §7.6.4.3.3-4. Upstream refused it.
+		return r.initEncryptV5(encrypt, password)
 	}
 	n, _ := encrypt["Length"].(int64)
 	if n == 0 {
@@ -1133,7 +1154,6 @@ func (r *Reader) initEncrypt(password string) error {
 	if n%8 != 0 || n > 128 || n < 40 {
 		return fmt.Errorf("malformed PDF: %d-bit encryption key", n)
 	}
-	V, _ := encrypt["V"].(int64)
 	if V != 1 && V != 2 && (V != 4 || !okayV4(encrypt)) {
 		return fmt.Errorf("unsupported PDF: encryption version V=%d; %v", V, objfmt(encrypt))
 	}
@@ -1221,14 +1241,27 @@ func (r *Reader) initEncrypt(password string) error {
 	}
 
 	r.key = key
-	r.useAES = V == 4
+	r.alg = cryptRC4
+	if V == 4 {
+		r.alg = cryptAESV2
+	}
 
 	return nil
 }
 
 var ErrInvalidPassword = fmt.Errorf("encrypted PDF: invalid password")
 
+// okayV4 accepts a V 4 encryption dictionary whose one crypt filter, for strings and streams alike, is AESV2.
+// nib (NOTICE.nib divergence 10): the filter's /Length is written in bytes by some producers (16 — the three real
+// documents of /pending 889) and in bits by others (128 — pdfcpu); upstream accepted 16 only, so it refused every
+// document pdfcpu encrypts.
 func okayV4(encrypt dict) bool {
+	return okayCryptFilter(encrypt, "AESV2", 16)
+}
+
+// okayCryptFilter is okayV4's test for any one AES method: the stream and string filters are one filter, opened
+// with the document, whose method is cfm and whose /Length, if any, says keyBytes in bytes or in bits.
+func okayCryptFilter(encrypt dict, cfm name, keyBytes int64) bool {
 	cf, ok := encrypt["CF"].(dict)
 	if !ok {
 		return false
@@ -1245,52 +1278,189 @@ func okayV4(encrypt dict) bool {
 		return false
 	}
 	cfparam, ok := cf[stmf].(dict)
+	if !ok {
+		return false
+	}
 	if cfparam["AuthEvent"] != nil && cfparam["AuthEvent"] != name("DocOpen") {
 		return false
 	}
-	if cfparam["Length"] != nil && cfparam["Length"] != int64(16) {
+	if l := cfparam["Length"]; l != nil && l != keyBytes && l != keyBytes*8 {
 		return false
 	}
-	if cfparam["CFM"] != name("AESV2") {
-		return false
-	}
-	return true
+	return cfparam["CFM"] == cfm
 }
 
-func cryptKey(key []byte, useAES bool, ptr objptr) []byte {
+// initEncryptV5 derives the file key of an AES-256 document (ISO 32000-2 §7.6.4.3.3 algorithm 2.A): password
+// is tried as the user's, then as the owner's, against the 48-byte /U and /O, and the key is unwrapped from
+// /UE or /OE. Revision 6 hashes with algorithm 2.B; revision 5 (Adobe's extension level 3, deprecated) with a
+// single SHA-256. /Perms is not checked: it vouches for /P, which no signature reading consults.
+func (r *Reader) initEncryptV5(encrypt dict, password string) error {
+	R, _ := encrypt["R"].(int64)
+	if R != 5 && R != 6 {
+		return fmt.Errorf("unsupported PDF: encryption revision R=%d", R)
+	}
+	if !okayCryptFilter(encrypt, "AESV3", 32) {
+		return fmt.Errorf("unsupported PDF: encryption version V=5; %v", objfmt(encrypt))
+	}
+	O, _ := encrypt["O"].(string)
+	U, _ := encrypt["U"].(string)
+	OE, _ := encrypt["OE"].(string)
+	UE, _ := encrypt["UE"].(string)
+	if len(O) < 48 || len(U) < 48 || len(OE) != 32 || len(UE) != 32 {
+		return fmt.Errorf("malformed PDF: missing O=, U=, OE= or UE= encryption parameters")
+	}
+	o, u := []byte(O[:48]), []byte(U[:48])
+	// §7.6.4.3.3 step (a): the password, as UTF-8 (SASLprep is not applied: nib asks for none but the empty
+	// one), truncated to 127 bytes.
+	pw := []byte(password)
+	if len(pw) > 127 {
+		pw = pw[:127]
+	}
+	hash := func(salt, udata []byte) []byte { return hashV5(R, pw, salt, udata) }
+	var wrapped, ikey []byte
+	switch {
+	case bytes.Equal(hash(u[32:40], nil), u[:32]):
+		wrapped, ikey = []byte(UE), hash(u[40:48], nil)
+	case bytes.Equal(hash(o[32:40], u), o[:32]):
+		wrapped, ikey = []byte(OE), hash(o[40:48], u)
+	default:
+		return ErrInvalidPassword
+	}
+	cb, err := aes.NewCipher(ikey)
+	if err != nil {
+		return fmt.Errorf("malformed PDF: %v", err)
+	}
+	key := make([]byte, 32)
+	cipher.NewCBCDecrypter(cb, make([]byte, aes.BlockSize)).CryptBlocks(key, wrapped)
+	r.key = key
+	r.alg = cryptAESV3
+	return nil
+}
+
+// hashV5 is ISO 32000-2 §7.6.4.3.4 algorithm 2.B at revision 6, and the plain SHA-256 of revision 5.
+func hashV5(R int64, pw, salt, udata []byte) []byte {
+	h := sha256.New()
+	h.Write(pw)
+	h.Write(salt)
+	h.Write(udata)
+	k := h.Sum(nil)
+	if R == 5 {
+		return k
+	}
+	var e []byte
+	for i := 0; i < 64 || int(e[len(e)-1]) > i-32; i++ {
+		one := make([]byte, 0, len(pw)+len(k)+len(udata))
+		one = append(append(append(one, pw...), k...), udata...)
+		k1 := bytes.Repeat(one, 64)
+		cb, _ := aes.NewCipher(k[:16])
+		e = make([]byte, len(k1))
+		cipher.NewCBCEncrypter(cb, k[16:32]).CryptBlocks(e, k1)
+		// The first 16 bytes of e as a big-endian number, modulo 3: 256 ≡ 1 (mod 3), so their byte sum.
+		sum := 0
+		for _, b := range e[:16] {
+			sum += int(b)
+		}
+		switch sum % 3 {
+		case 0:
+			s := sha256.Sum256(e)
+			k = s[:]
+		case 1:
+			s := sha512.Sum384(e)
+			k = s[:]
+		default:
+			s := sha512.Sum512(e)
+			k = s[:]
+		}
+	}
+	return k[:32]
+}
+
+// cryptKey is the key one object's strings and streams are encrypted under (§7.6.2 algorithm 1). nib
+// (NOTICE.nib divergence 10): the key is the first n+5 bytes of the hash, at most 16 — upstream returned all 16
+// whatever the file key's length, so every 40-bit RC4 document decrypted to noise — and AESV3 uses the file key
+// itself.
+func cryptKey(key []byte, alg cryptAlg, ptr objptr) []byte {
+	if alg == cryptAESV3 {
+		return key
+	}
 	h := md5.New()
 	h.Write(key)
 	h.Write([]byte{byte(ptr.id), byte(ptr.id >> 8), byte(ptr.id >> 16), byte(ptr.gen), byte(ptr.gen >> 8)})
-	if useAES {
+	if alg == cryptAESV2 {
 		h.Write([]byte("sAlT"))
 	}
-	return h.Sum(nil)
+	k := h.Sum(nil)
+	if n := len(key) + 5; n < len(k) {
+		k = k[:n]
+	}
+	return k
 }
 
-func decryptString(key []byte, useAES bool, ptr objptr, x string) string {
-	key = cryptKey(key, useAES, ptr)
-	if useAES {
-		panic("AES not implemented")
-	} else {
+// ErrMalformedAESString is the reader's panic over an AES-encrypted string that is not an initialisation vector
+// followed by whole, correctly padded blocks (nib, NOTICE.nib divergence 10).
+var ErrMalformedAESString = errors.New("malformed PDF: an AES-encrypted string is not whole blocks with valid padding")
+
+func decryptString(key []byte, alg cryptAlg, ptr objptr, x string) string {
+	key = cryptKey(key, alg, ptr)
+	if alg == cryptRC4 {
 		c, _ := rc4.NewCipher(key)
 		data := []byte(x)
 		c.XORKeyStream(data, data)
-		x = string(data)
+		return string(data)
 	}
-	return x
+	// nib (NOTICE.nib divergence 10): upstream panicked "AES not implemented" here. The string is a 16-byte
+	// initialisation vector, then CBC blocks whose last is PKCS#5-padded (§7.6.3.1). An empty string stays empty,
+	// and so does a vector with no block after it: a real forms engine writes an empty signature /Name so
+	// (/pending 889's disclosure_full.pdf), where §7.6.3.1 asks for one block of padding.
+	if len(x) == 0 || len(x) == aes.BlockSize {
+		return ""
+	}
+	if len(x) < 2*aes.BlockSize || len(x)%aes.BlockSize != 0 {
+		panic(ErrMalformedAESString)
+	}
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		panic(fmt.Errorf("AES: %w", err))
+	}
+	data := []byte(x[aes.BlockSize:])
+	cipher.NewCBCDecrypter(cb, []byte(x[:aes.BlockSize])).CryptBlocks(data, data)
+	plain, ok := unpad(data)
+	if !ok {
+		panic(ErrMalformedAESString)
+	}
+	return string(plain)
 }
 
-func decryptStream(key []byte, useAES bool, ptr objptr, rd io.Reader) io.Reader {
-	key = cryptKey(key, useAES, ptr)
-	if useAES {
+// unpad removes PKCS#5 padding from decrypted CBC blocks.
+func unpad(b []byte) ([]byte, bool) {
+	if len(b) == 0 {
+		return nil, false
+	}
+	n := int(b[len(b)-1])
+	if n < 1 || n > aes.BlockSize || n > len(b) {
+		return nil, false
+	}
+	for _, c := range b[len(b)-n:] {
+		if int(c) != n {
+			return nil, false
+		}
+	}
+	return b[:len(b)-n], true
+}
+
+func decryptStream(key []byte, alg cryptAlg, ptr objptr, rd io.Reader) io.Reader {
+	key = cryptKey(key, alg, ptr)
+	if alg != cryptRC4 {
 		cb, err := aes.NewCipher(key)
 		if err != nil {
 			panic("AES: " + err.Error())
 		}
 		iv := make([]byte, 16)
-		io.ReadFull(rd, iv)
+		if _, err := io.ReadFull(rd, iv); err != nil {
+			return &errorReadCloser{fmt.Errorf("malformed PDF: an AES-encrypted stream holds no initialisation vector: %w", err)}
+		}
 		cbc := cipher.NewCBCDecrypter(cb, iv)
-		rd = &cbcReader{cbc: cbc, rd: rd, buf: make([]byte, 16)}
+		rd = &cbcReader{cbc: cbc, rd: rd}
 	} else {
 		c, _ := rc4.NewCipher(key)
 		rd = &cipher.StreamReader{S: c, R: rd}
@@ -1298,25 +1468,69 @@ func decryptStream(key []byte, useAES bool, ptr objptr, rd io.Reader) io.Reader 
 	return rd
 }
 
+// cbcReader decrypts a CBC stream block by block. nib (NOTICE.nib divergence 10): it holds one block back, so
+// the last block's padding is removed (§7.6.3.1) — upstream handed the padding on as stream data — and a stream
+// that is not whole blocks is an error, not a silently short read.
 type cbcReader struct {
 	cbc  cipher.BlockMode
 	rd   io.Reader
-	buf  []byte
+	next []byte // the block read ahead, decrypted, not yet handed on
 	pend []byte
+	done bool
 }
 
 func (r *cbcReader) Read(b []byte) (n int, err error) {
-	if len(r.pend) == 0 {
-		_, err = io.ReadFull(r.rd, r.buf)
+	for len(r.pend) == 0 {
+		if r.done {
+			return 0, io.EOF
+		}
+		if r.next == nil {
+			if r.next, err = r.block(); err != nil {
+				return 0, err
+			}
+			if r.next == nil {
+				return 0, io.ErrUnexpectedEOF // no block at all after the initialisation vector
+			}
+		}
+		after, err := r.block()
 		if err != nil {
 			return 0, err
 		}
-		r.cbc.CryptBlocks(r.buf, r.buf)
-		r.pend = r.buf
+		if after == nil {
+			last, ok := unpad(r.next)
+			if !ok {
+				return 0, ErrMalformedAESString
+			}
+			r.pend, r.next, r.done = last, nil, true
+			continue
+		}
+		r.pend, r.next = r.next, after
 	}
 	n = copy(b, r.pend)
 	r.pend = r.pend[n:]
 	return n, nil
+}
+
+// block reads and decrypts the next block, answering nil at a clean end.
+func (r *cbcReader) block() ([]byte, error) {
+	buf := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(r.rd, buf); err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("malformed PDF: an AES-encrypted stream is not whole blocks: %w", err)
+	}
+	r.cbc.CryptBlocks(buf, buf)
+	return buf, nil
+}
+
+// signatureContents reports whether d is a dictionary whose /Contents is a signature's, which ISO 32000-2 §7.6.2
+// leaves unencrypted (nib, NOTICE.nib divergence 10): a /Type of /Sig or /DocTimeStamp as pdfcpu tests it, or a
+// /ByteRange as nib's own revision sweep finds a signature (internal/sign `signatureShaped`) — the union, so
+// neither reading can see a signature this reader decrypted into noise.
+func signatureContents(d dict) bool {
+	t := d["Type"]
+	return t == name("Sig") || t == name("DocTimeStamp") || d["ByteRange"] != nil
 }
 
 // nib (/pending 758, ADR-066): an object stream's decoding and header, kept between lookups.

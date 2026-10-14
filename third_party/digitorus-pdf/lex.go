@@ -45,7 +45,7 @@ type buffer struct {
 	allowStream bool
 	eof         bool
 	key         []byte
-	useAES      bool
+	alg         cryptAlg
 	objptr      objptr
 }
 
@@ -442,7 +442,7 @@ func (b *buffer) readObject() object {
 	}
 
 	if str, ok := tok.(string); ok && b.key != nil && b.objptr.id != 0 {
-		tok = decryptString(b.key, b.useAES, b.objptr, str)
+		tok = decryptString(b.key, b.alg, b.objptr, str)
 	}
 
 	if !b.allowObjptr {
@@ -497,6 +497,7 @@ func (b *buffer) readArray() object {
 
 func (b *buffer) readDict() object {
 	x := make(dict)
+	rawContents := false
 	for {
 		tok := b.readToken()
 		if tok == nil || tok == keyword(">>") {
@@ -507,7 +508,22 @@ func (b *buffer) readDict() object {
 			b.errorf("unexpected non-name key %T(%v) parsing dictionary", tok, tok)
 			continue
 		}
+		// nib (NOTICE.nib divergence 10): a signature's /Contents is stored unencrypted (ISO 32000-2 §7.6.2), and
+		// whether this dictionary is a signature's is known only once it is read whole — so a /Contents string
+		// is kept as stored here and decrypted below only if the dictionary is not a signature's. Upstream
+		// decrypted it with every other string.
+		if n == "Contents" && b.key != nil && b.objptr.id != 0 {
+			tok := b.readToken()
+			if s, ok := tok.(string); ok {
+				x[n], rawContents = s, true
+				continue
+			}
+			b.unreadToken(tok)
+		}
 		x[n] = b.readObject()
+	}
+	if rawContents && !signatureContents(x) {
+		x["Contents"] = decryptString(b.key, b.alg, b.objptr, x["Contents"].(string))
 	}
 
 	if !b.allowStream {

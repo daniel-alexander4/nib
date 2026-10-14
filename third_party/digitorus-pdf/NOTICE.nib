@@ -7,9 +7,10 @@ directory (`replace github.com/digitorus/pdf => ./third_party/digitorus-pdf`); t
 pins v0.1.2. The upstream licence is LICENSE, unchanged (BSD-style, The Go Authors).
 
 Why: /pending 758, ADR-066 (which supersedes ADR-041's refusal of this option in part); lex.go:
-/pending 761, ADR-068 (which widens ADR-066's read.go-only scope to this one lex.go change).
+/pending 761, ADR-068 (which widens ADR-066's read.go-only scope to this one lex.go change); encryption:
+/pending 889, ADR-170 (divergence 10, in both files).
 
-What changed in read.go (and, for divergence 4, lex.go)
+What changed in read.go (and, for divergences 4 and 10, lex.go)
 -------------------------------------------------------
 
 `(*Reader).resolve` found an object-stream member by decoding the stream FROM ITS START and lexing
@@ -64,7 +65,7 @@ honest read is told of the end a few times (its last token's delimiter, one look
 below cannot compare this class — the original never returns — so it is held by internal/sign's
 TestAMemberLeftOpenAtTheStreamsEndIsRefusedNotRead instead.
 
-4. (/pending 761, the only change in lex.go) `(*buffer).readArray` refuses an `endobj` or `endstream`
+4. (/pending 761, lex.go's first change; the second is divergence 10) `(*buffer).readArray` refuses an `endobj` or `endstream`
 token, panicking "unexpected keyword %q parsing array" through the lexer's own errorf. Upstream's
 readObject unreads `endobj` and answers null (so `5 0 obj endobj` is a null object, which is
 unchanged), and readArray, seeing a token that is neither `]` nor nil, handed it back to readObject
@@ -107,6 +108,18 @@ object stream's /Length out of object streams, so an honest lookup is one or two
 returns to a stream the lookup has already searched, where upstream searched the ring for ever. internal/sign's
 lookup-cost screen refuses such a cycle too, but only once a Reader exists, and NewReader resolves the trailer's
 /Encrypt first: an /Encrypt naming a member of a self-extending stream spun HasSignatureBlob indefinitely.
+
+10. (/pending 889, ADR-170) Encryption. The patched reader decrypts AES-128 (V 4, AESV2) and AES-256 (V 5, AESV3,
+revisions 5 and 6), where upstream panicked "AES not implemented" at the first AES string and refused V 5:
+`initEncryptV5` and `hashV5` (ISO 32000-2 §7.6.4.3.3-4; the password is not SASLprep'd, /Perms is not checked),
+AES string decryption with padding removed, a stream's last-block padding removed (upstream handed it on as data).
+It leaves stored as written: a signature dictionary's /Contents (lex.go `readDict`, `signatureContents` — /Type /Sig
+or /DocTimeStamp, or a /ByteRange) and the /Encrypt dictionary's strings (§7.6.2). It
+accepts a crypt filter /Length in bits as well as bytes, and truncates the per-object key to n+5 bytes (upstream used
+all 16, so 40-bit RC4 decrypted to noise). A 16-byte AES string — a vector and no block — reads as empty. Still
+decrypted, declared: /Metadata under /EncryptMetadata false, a cross-reference stream read through Value.Reader,
+/Identity and /Crypt stream filters; revision 4's
+/EncryptMetadata false key step is not taken. internal/sign's aesverify_test.go holds it.
 
 internal/sign's TestAnObjectStreamReachedThroughItselfIsRefusedNotRecursed and
 TestAnExtendsCycleReachedBeforeTheScreenIsRefusedNotSpun hold 8 and 9; the fuzz test below never generates either

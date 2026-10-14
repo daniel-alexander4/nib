@@ -14,15 +14,21 @@ var (
 	reStartxref = regexp.MustCompile(`startxref\s+(\d+)`)
 	reSize      = regexp.MustCompile(`/Size\s+(\d+)`)
 	reRoot      = regexp.MustCompile(`/Root\s+(\d+)\s+0\s+R`)
+	reEncrypt   = regexp.MustCompile(`/Encrypt\s*(\d+\s+\d+\s+R)`)
+	reID        = regexp.MustCompile(`/ID\s*(\[\s*<[0-9A-Fa-f]*>\s*<[0-9A-Fa-f]*>\s*\])`)
 )
 
 // AppendRevision writes objs (object number → body) as one incremental update of prev, with an uncompressed xref
 // stream — a later revision built by hand, for tests of what a returned document can carry (PLAN-returned-document
 // P02.S03). prev's last `startxref`, `/Size` and `/Root` are read from its bytes, so prev must end in a revision this
-// function or a signer like pdfsign wrote — and in an XREF STREAM: the update's `/Prev` names prev's xref, and the
-// digitorus reader follows `/Prev` only from stream to stream, so over a classic table the result reads as unreadable
-// (the P02 phase-close review). It is `sign`'s `synthRevision` without the object-stream half; `sign`
+// function or a signer like pdfsign wrote. The update's cross-reference section takes prev's form — a stream after a
+// stream, a classic table after a table — because the digitorus reader follows `/Prev` only between sections of one
+// form, and a stream over a table read as unreadable (the P02 phase-close review). It is `sign`'s `synthRevision` without the object-stream half; `sign`
 // cannot be imported here (testpdf feeds its tests), so the server's tests build their fixtures with this.
+//
+// An encrypted prev's `/Encrypt` and `/ID` are carried into the update's trailer, as an update must carry them
+// (ISO 32000-1 §7.5.6): without them the update reads as an unencrypted document (/pending 889). The caller
+// encrypts the strings and streams of objs itself.
 func AppendRevision(prev []byte, objs map[int]string) ([]byte, error) {
 	last := func(re *regexp.Regexp) (int, error) {
 		all := re.FindAllSubmatch(prev, -1)
@@ -63,6 +69,32 @@ func AppendRevision(prev []byte, objs map[int]string) ([]byte, error) {
 		offsets[n] = b.Len()
 		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", n, objs[n])
 	}
+	var carried string
+	if m := reEncrypt.FindAllSubmatch(prev, -1); len(m) > 0 {
+		carried += "/Encrypt " + string(m[len(m)-1][1])
+	}
+	if m := reID.FindAllSubmatch(prev, -1); len(m) > 0 {
+		carried += "/ID" + string(m[len(m)-1][1])
+	}
+	// A classic table is followed by a classic table: the digitorus reader follows /Prev only between sections
+	// of one form.
+	if prevX < len(prev) && bytes.HasPrefix(prev[prevX:], []byte("xref")) {
+		x := b.Len()
+		b.WriteString("xref\n")
+		for i := 0; i < len(nums); {
+			j := i
+			for j+1 < len(nums) && nums[j+1] == nums[j]+1 {
+				j++
+			}
+			fmt.Fprintf(&b, "%d %d\n", nums[i], j-i+1)
+			for _, n := range nums[i : j+1] {
+				fmt.Fprintf(&b, "%010d 00000 n \n", offsets[n])
+			}
+			i = j + 1
+		}
+		fmt.Fprintf(&b, "trailer\n<</Size %d/Root %d 0 R/Prev %d%s>>\nstartxref\n%d\n%%%%EOF\n", next, root, prevX, carried, x)
+		return b.Bytes(), nil
+	}
 	xnum := next
 	offsets[xnum] = b.Len()
 	nums = append(nums, xnum)
@@ -80,8 +112,8 @@ func AppendRevision(prev []byte, objs map[int]string) ([]byte, error) {
 		}
 		i = j + 1
 	}
-	fmt.Fprintf(&b, "%d 0 obj\n<</Type/XRef/Size %d/W[1 4 2]/Index[%s]/Root %d 0 R/Prev %d/Length %d>>\nstream\n",
-		xnum, xnum+1, strings.TrimSpace(index.String()), root, prevX, data.Len())
+	fmt.Fprintf(&b, "%d 0 obj\n<</Type/XRef/Size %d/W[1 4 2]/Index[%s]/Root %d 0 R/Prev %d%s/Length %d>>\nstream\n",
+		xnum, xnum+1, strings.TrimSpace(index.String()), root, prevX, carried, data.Len())
 	b.Write(data.Bytes())
 	fmt.Fprintf(&b, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", offsets[xnum])
 	return b.Bytes(), nil

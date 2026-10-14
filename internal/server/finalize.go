@@ -130,9 +130,9 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		signed, err = sign.Sign(pdfBytes, cert, key, opts)
 	}
 	// A document already signed is refused by the signer (/pending 810): a certification can only be the first
-	// signature. 400 and the sentence, as the watermark refusal above — never 422, which the modal reads as the
+	// signature; so is an encrypted one (/pending 889, ADR-170). 400 and the sentence, as the watermark refusal above — never 422, which the modal reads as the
 	// passphrase (ADR-073), and never 409, which apiFetch reads as "not that document" (ADR-004).
-	if errors.Is(err, sign.ErrAlreadySigned) {
+	if errors.Is(err, sign.ErrAlreadySigned) || errors.Is(err, sign.ErrEncryptedDocument) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
