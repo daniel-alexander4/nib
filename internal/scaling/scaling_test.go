@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,8 +62,14 @@ func TestTheVerdictIsTheLeastInterleavedRatio(t *testing.T) {
 	if f := verdict(1000, 4000, 8, bracketed); f == "" {
 		t.Error("a quadratic passed because a spike inflated one of the small readings around each large one")
 	}
-	if f := verdict(1000, 4000, 8, quadratic); f == "" {
+	f := verdict(1000, 4000, 8, quadratic)
+	if f == "" {
 		t.Error("a quadratic cost passed")
+	}
+	// A breach says every round's ratio and how busy the machine was (/pending 890): the two facts that tell a
+	// regression from a loaded machine, and that the one breach nobody could explain did not carry.
+	if got := strings.Count(f, "×16.00"); got < rounds || !strings.Contains(f, "rounds: ") || !strings.Contains(f, "load average ") {
+		t.Errorf("a breach's message does not carry each of its %d rounds and the machine's load: %s", rounds, f)
 	}
 	calls := 0
 	spiky := func(n int) time.Duration { // every round but the last has the large size measured under a ×5 spike

@@ -293,6 +293,27 @@ func readCost(t *testing.T) func(n int) time.Duration {
 // list ~64 times the time and cost the index ~8; the bound is 20. Measured one size after the other it ranged
 // ×5.7-×12.6 at load ~15, so the sizes are interleaved through `scaling` (/pending 799).
 func TestAWideCodespaceIsReadInLinearTime(t *testing.T) {
+	// COUNTED first, where it can be (/pending 890): the index's own work — trie nodes visited, intervals rebuilt —
+	// is a number no load moves. It does not see a loop added OUTSIDE the index, which is what the clock below is
+	// still for; but that clock read ×23.19 against ×20 once, in a full suite at a load average near 9, and ×9-13
+	// alone, and this is the half of the question that reading could not have moved.
+	work := func(n int) int {
+		cs := ParseCodespace(bigCMap(n))
+		if cs.Overspent || cs.ranges() != n {
+			t.Fatalf("an %d-range CMap kept %d of its disjoint ranges (overspent %v)", n, cs.ranges(), cs.Overspent)
+		}
+		return cs.work
+	}
+	small, large := work(4096), work(32768)
+	if small == 0 {
+		t.Fatal("the index counted no work for 4,096 ranges, so the ratio below compares nothing")
+	}
+	t.Logf("index work: 4096 → 32768 ranges cost %d → %d, ×%.2f", small, large, float64(large)/float64(small))
+	// ×11.2 as built (the index is n log n in its ranges); a scan of every earlier range per range is ×64.
+	if ratio := float64(large) / float64(small); ratio > 20 {
+		t.Fatalf("×8 the ranges cost the index ×%.2f the work (%d → %d) — it has gone superlinear", ratio, small, large)
+	}
+
 	cost := readCost(t)
 	scaling.GrowsLinearly(t, "codespace read", 4096, 32768, 20, cost)
 

@@ -24,7 +24,10 @@
 package scaling
 
 import (
+	"fmt"
+	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,12 +54,12 @@ func TimeOnce(f func()) time.Duration {
 func GrowsLinearly(t testing.TB, what string, small, large int, bound float64, cost func(n int) time.Duration) {
 	t.Helper()
 	k := sizeRatio(t, what, small, large, bound)
-	best, n, s, l := leastRatio(t, what, bound, func() time.Duration { return cost(small) }, func() time.Duration { return cost(large) })
+	best, n, s, l, every := leastRatio(t, what, bound, func() time.Duration { return cost(small) }, func() time.Duration { return cost(large) })
 	t.Logf("%s: %d → %d (×%.0f) cost %v → %v, ×%.2f (the least of %d interleaved round(s); bound ×%.1f)",
 		what, small, large, k, s, l, best, n, bound)
 	if best > bound {
 		t.Fatalf("%s: ×%.0f the size cost ×%.2f the time in EVERY one of %d interleaved rounds (best %v → %v) — "+
-			"it has gone superlinear", what, k, best, n, s, l)
+			"it has gone superlinear (%s)", what, k, best, n, s, l, breachContext(every))
 	}
 }
 
@@ -97,12 +100,12 @@ func AllocsGrowLinearly(t testing.TB, what string, small, large int, bound float
 // "linear" means a ratio near one rather than near the size ratio (udpmux's table fill).
 func WithinFactor(t testing.TB, what string, bound float64, base, cost func() time.Duration) {
 	t.Helper()
-	best, n, b, c := leastRatio(t, what, bound, base, cost)
+	best, n, b, c, every := leastRatio(t, what, bound, base, cost)
 	t.Logf("%s: %v against a base of %v, ×%.2f (the least of %d interleaved round(s); bound ×%.1f)",
 		what, c, b, best, n, bound)
 	if best > bound {
-		t.Fatalf("%s: took ×%.2f its base in EVERY one of %d interleaved rounds (best %v against %v; bound ×%.1f)",
-			what, best, n, c, b, bound)
+		t.Fatalf("%s: took ×%.2f its base in EVERY one of %d interleaved rounds (best %v against %v; bound ×%.1f; %s)",
+			what, best, n, c, b, bound, breachContext(every))
 	}
 }
 
@@ -119,7 +122,7 @@ func WithinFactor(t testing.TB, what string, bound float64, base, cost func() ti
 //
 // It stops at the first round within bound: the verdict is "some round was within bound", so the rounds after
 // that one cannot change it, and a healthy run pays one round where a regression pays all of them.
-func leastRatio(t testing.TB, what string, bound float64, a, b func() time.Duration) (best float64, n int, ra, rb time.Duration) {
+func leastRatio(t testing.TB, what string, bound float64, a, b func() time.Duration) (best float64, n int, ra, rb time.Duration, every []float64) {
 	t.Helper()
 	measureA := func() time.Duration {
 		d := a()
@@ -134,7 +137,9 @@ func leastRatio(t testing.TB, what string, bound float64, a, b func() time.Durat
 		db := b()
 		after := measureA()
 		da := min(before, after)
-		if ratio := float64(db) / float64(da); n == 1 || ratio < best {
+		ratio := float64(db) / float64(da)
+		every = append(every, ratio)
+		if n == 1 || ratio < best {
 			best, ra, rb = ratio, da, db
 		}
 		if best <= bound {
@@ -142,7 +147,25 @@ func leastRatio(t testing.TB, what string, bound float64, a, b func() time.Durat
 		}
 		before = after
 	}
-	return best, n, ra, rb
+	return best, n, ra, rb, every
+}
+
+// breachContext is what a breach says beside its verdict: every round's ratio, and how busy the machine was
+// (/pending 890). A regression reads the same in every round on any machine; a breach on a loaded machine whose
+// rounds differ widely is the machine. One codespace read measured ×23.19 against ×20 in a full suite at a load
+// average near 9 and ×9-13 alone, and its message carried neither fact, so the cause could not be read from it.
+func breachContext(every []float64) string {
+	rounds := make([]string, len(every))
+	for i, r := range every {
+		rounds[i] = fmt.Sprintf("×%.2f", r)
+	}
+	load := "unknown"
+	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		if f := strings.Fields(string(b)); len(f) > 0 {
+			load = f[0]
+		}
+	}
+	return fmt.Sprintf("rounds: %s; load average %s on %d CPUs", strings.Join(rounds, " "), load, runtime.NumCPU())
 }
 
 // sizeRatio is large/small, refusing a bound that cannot separate linear (×k) from quadratic (×k²).
