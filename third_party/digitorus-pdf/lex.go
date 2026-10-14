@@ -523,7 +523,7 @@ func (b *buffer) readDict() object {
 		x[n] = b.readObject()
 	}
 	if rawContents && !signatureContents(x) {
-		x["Contents"] = decryptString(b.key, b.alg, b.objptr, x["Contents"].(string))
+		x["Contents"] = decryptString(b.key, b.alg, b.objptr, x["Contents"].(string)) //pagecontent:key any-dictionary's-string,-decrypted-once-it-is-known-not-a-signature's
 	}
 
 	if !b.allowStream {
