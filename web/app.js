@@ -14341,8 +14341,8 @@ if (els.xfaNoticeDismiss) {
 function listNoticeWords(m) {
   const what = (m && m.unreadWhat) || '';
   if (!what) return '';
-  return 'This document holds ' + what + ', which Nib could not read in full and cannot carry through a change, '
-    + 'so Nib will not change this document' + (webCaptureUnread(m) ? ' until it is removed.' : '.');
+  return 'Nib cannot change this document: it holds ' + what + ', which Nib could not read in full.'
+    + (webCaptureUnread(m) ? ' Remove it to make changes.' : '');
 }
 
 function webCaptureUnread(m) {

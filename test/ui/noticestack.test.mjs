@@ -84,7 +84,11 @@ test('four notices up together are each readable, apart, inside the view, and ca
     // The stack itself never leaves the view; where the four are taller than the view it scrolls.
     assert.ok(stack.left >= wrap.left - 0.5 && stack.right <= wrap.right + 0.5 && stack.top >= wrap.top - 0.5 && stack.bottom <= wrap.bottom + 0.5,
       `${at}: the stack runs outside the view: ${JSON.stringify(stack)} in ${JSON.stringify(wrap)}`);
-    if (width === 1366) assert.ok(!stack.scrolls, `${at}: four notices do not fit a ${height}px window without scrolling`);
+    if (width === 1366) {
+      const tall = Object.fromEntries(NOTICES.map((id) => [id, notices[id] && Math.round(notices[id].bottom - notices[id].top)]));
+      assert.ok(!stack.scrolls, `${at}: four notices do not fit a ${height}px window without scrolling — heights ${JSON.stringify(tall)}, `
+        + `stack ${Math.round(stack.bottom - stack.top)}px in a view of ${Math.round(wrap.bottom - wrap.top)}px`);
+    }
     for (const id of NOTICES) {
       // Stimulus: all four are up, or "no two overlap" is true of fewer than it claims.
       assert.ok(notices[id], `${at}: #${id} is not showing, so this size measured fewer than four notices`);
