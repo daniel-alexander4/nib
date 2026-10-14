@@ -386,11 +386,25 @@ func cmdPages(args []string) int {
 		errf("give exactly one of --keep or --remove")
 		return 1
 	}
-	fn := func(b []byte) ([]byte, error) { return pdfops.Collect(b, splitSel(keep)) }
+	// `nib pages` is the app's delete and reorder, not its extract (`/pending 870`): the output is the document
+	// with pages gone or moved — its title, its `/ID`, its metadata packet and its embedded files stay — whether it
+	// is written over the input (`-w`) or beside it (`-o`), as every other transform here writes the document it
+	// read. `nib split` is what makes new documents out of one.
+	fn := func(b []byte) ([]byte, error) { return sameDocument(pdfops.ReorderPages(b, splitSel(keep))) }
 	if remove != "" {
-		fn = func(b []byte) ([]byte, error) { return pdfops.RemovePages(b, splitSel(remove)) }
+		fn = func(b []byte) ([]byte, error) { return sameDocument(pdfops.DeletePages(b, splitSel(remove))) }
 	}
 	return runTransform(fs, out, inPlace, fn)
+}
+
+// sameDocument answers for a page operation whose output is the document itself. A file that could not be carried
+// across is a REFUSAL here, where the server logs it and goes on: the app keeps the document it had in its undo
+// history, and a command line writing in place keeps nothing — the ceremony record is an embedded file.
+func sameDocument(out []byte, dropped int, err error) ([]byte, error) {
+	if err == nil && dropped > 0 {
+		return nil, fmt.Errorf("%d attached file(s) could not be kept, so nothing was written", dropped)
+	}
+	return out, err
 }
 
 func cmdSplit(args []string) int {
