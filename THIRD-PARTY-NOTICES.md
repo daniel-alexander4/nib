@@ -3185,13 +3185,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## Mozilla pdf.js 6.0.227
+## Mozilla pdf.js 6.1.200
 
 Vendored under `web/vendor/pdfjs/`. Copyright the Mozilla Foundation and
 contributors, licensed under the Apache License, Version 2.0. The full
 license text is reproduced in the `golang.org/x`/pdfcpu sections above and
 at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 <https://github.com/mozilla/pdf.js>.
+
+Modified by Nib: `pdf_viewer.mjs` differs from the published file in two marked
+lines; `web/vendor/pdfjs/NOTICE.md` says what they change and why.
 
 ---
 

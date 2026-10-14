@@ -7,7 +7,8 @@
 // ── Why the polyfills ────────────────────────────────────────────────────────
 // The vendored build (`web/vendor/pdfjs/pdf.min.mjs`) targets current browsers, and this machine's
 // Node is 20. Measured, in order: `DOMMatrix` is not defined at import; then `Promise.withResolvers`,
-// `Promise.try`, and `Uint8Array.prototype.toHex` are missing at `getDocument`. Each is filled with
+// `Promise.try`, and `Uint8Array.prototype.toHex` are missing at `getDocument`; since 6.1.200
+// `Map.prototype.getOrInsertComputed` too, when a page's text is read. Each is filled with
 // the smallest thing text extraction needs — the DOMMatrix stand-in does no arithmetic, because
 // `getTextContent` returns raw text-space transforms and never renders. Anything that DID render
 // through these stubs would be wrong, which is why nothing here renders.
@@ -43,6 +44,18 @@ Uint8Array.fromHex ??= function fromHex(s) {
 Uint8Array.prototype.toBase64 ??= function toBase64() { return Buffer.from(this).toString('base64'); };
 Uint8Array.fromBase64 ??= function fromBase64(s) { return new Uint8Array(Buffer.from(s, 'base64')); };
 Math.sumPrecise ??= function sumPrecise(xs) { let s = 0; for (const x of xs) s += x; return s; };
+// pdf.js 6.1.200 reaches `getOrInsertComputed` on the text path (6.0.227 used it only where this script
+// never went). The browsers Nib runs in have it; Node 20 has not.
+for (const M of [Map, WeakMap]) {
+  M.prototype.getOrInsertComputed ??= function getOrInsertComputed(key, make) {
+    if (!this.has(key)) this.set(key, make(key));
+    return this.get(key);
+  };
+  M.prototype.getOrInsert ??= function getOrInsert(key, value) {
+    if (!this.has(key)) this.set(key, value);
+    return this.get(key);
+  };
+}
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const vendor = path.join(repo, 'web', 'vendor', 'pdfjs');

@@ -76,6 +76,42 @@ export function makePDF({ pages = 3, label = 'page', form = false, widePage = 0 
   return Buffer.from(out, 'latin1');
 }
 
+// makeLinkPDF builds pages that each carry TWO links, because pdf.js makes them two ways: a real
+// `/Link` annotation the file declares, and a web address that is only TEXT, which the viewer
+// finds in the text layer and turns into a link afterwards (its "autolinker"). The second is added
+// by a separate step after the page has drawn, so it is the one a race in that step loses
+// (/pending 887). Page N's addresses end in `real<N>` and `auto<N>`. The filler lines give a page
+// enough to draw that something can happen while it is still drawing.
+export function makeLinkPDF({ pages = 3 } = {}) {
+  const objs = [];
+  const add = (s) => objs.push(s);
+  const kids = [];
+  for (let i = 0; i < pages; i++) kids.push(`${3 + i * 3} 0 R`);
+  const fontObj = 3 + pages * 3;
+  add('<< /Type /Catalog /Pages 2 0 R >>');
+  add(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${pages} >>`);
+  for (let i = 0; i < pages; i++) {
+    const p = 3 + i * 3;
+    add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${p + 1} 0 R /Resources << /Font << /F1 ${fontObj} 0 R >> >> /Annots [${p + 2} 0 R] >>`);
+    let content = `BT /F1 14 Tf 72 700 Td (see https://example.com/auto${i + 1} for more) Tj ET`;
+    for (let k = 0; k < 600; k++) content += ` BT /F1 6 Tf ${72 + (k % 6) * 80} ${650 - Math.floor(k / 6) * 5} Td (filler ${k}) Tj ET`;
+    add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    add(`<< /Type /Annot /Subtype /Link /Rect [72 720 300 750] /Border [0 0 0] /F 4 /A << /S /URI /URI (https://example.com/real${i + 1}) >> >>`);
+  }
+  add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  let out = '%PDF-1.7\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
 // writeFixture puts a generated PDF inside the run's throwaway work dir, so it is
 // cleaned up with everything else and never lands in the repo.
 export function writeFixture(name, opts) {
