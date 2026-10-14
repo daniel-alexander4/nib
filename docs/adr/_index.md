@@ -967,3 +967,5 @@ home today.
   — extends ADR-066/068: AES-128 and AES-256 in `third_party/digitorus-pdf`, the hash still over the stored bytes, a signature dictionary's `/Contents` never decrypted; every signing path refuses an encrypted document, which it had refused only by accident.
 - [ADR-171](171-a-web-capture-record-nib-could-not-read-is-said-at-the-open-and-removed-when-asked.md) — **a Web Capture record Nib could not read is said at the open, and removed when asked**
   — amends ADR-164: the refusal names what was lost, the document's answer says so before the first change, and a Web Capture record (`/URLS`, `/IDS`, `/SpiderInfo`, page `/ID`/`/PZ`) goes through a third named `ForgetNameTree` site; sanitize answers the refusal as 422.
+- [ADR-172](172-a-ticked-box-of-a-pair-is-the-answer-the-window-saves.md) — **a ticked box of a Yes/No pair is the answer the window saves**
+  — extends ADR-167: pdf.js let the box the user did not tick write a check-box field's `/V Off` when it was saved first, so "No" in an Acrobat Yes/No pair was stored as no answer (20 of 180 in five real documents); the worker carries one marked span in `setValue`, pinned by hash.

@@ -3194,7 +3194,8 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 <https://github.com/mozilla/pdf.js>.
 
 Modified by Nib: `pdf_viewer.mjs` differs from the published file in two marked
-lines; `web/vendor/pdfjs/NOTICE.md` says what they change and why.
+lines and `pdf.worker.min.mjs` in one marked span; `web/vendor/pdfjs/NOTICE.md`
+says what they change and why.
 
 ---
 
