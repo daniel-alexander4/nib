@@ -1548,6 +1548,7 @@ var uncheckedWords = map[sign.UncheckedCause]string{
 	sign.UncheckedUnreadable:        "Nib cannot read this file as a PDF",
 	sign.UncheckedLookupCost:        "this file's object streams would take Nib's signature reader too long to read, so Nib refused to read them",
 	sign.UncheckedTooManySignatures: "this document carries more than 64 signatures, which is more than Nib will check, so it checked none of them",
+	sign.UncheckedEncrypted:         "this file is encrypted in a way Nib's signature reader cannot read (AES), so its signature was not checked — that is not a finding that it was changed",
 }
 
 // refusedLines is one line per signature-shaped dictionary Nib refused, whatever the verdict. The
