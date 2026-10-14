@@ -448,7 +448,10 @@ func TestAFailedSaveRestoresASlotsWrappedBytes(t *testing.T) {
 	}
 
 	done := withFailingWrite(t)
-	v.mu.Lock()
+	end, berr := v.beginWrite()
+	if berr != nil {
+		t.Fatal(berr)
+	}
 	// An in-place rewrap: the bytes change, the slot header does not. A snapshot that copies
 	// only the Slot structs shares this array and hands the mutation's own bytes back as the
 	// "restored" ones.
@@ -458,7 +461,7 @@ func TestAFailedSaveRestoresASlotsWrappedBytes(t *testing.T) {
 		}
 	})
 	after := append([]byte(nil), v.ssh[0].Wrapped...)
-	v.mu.Unlock()
+	end()
 
 	if writes := done(); writes != 1 {
 		t.Fatalf("setup: the failing write ran %d time(s), want 1 — a rollback assertion over a "+

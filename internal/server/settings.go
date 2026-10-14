@@ -293,7 +293,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			f(s)
 		}
 	}); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not save settings")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not save settings")
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})

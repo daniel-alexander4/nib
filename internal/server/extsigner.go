@@ -70,7 +70,7 @@ func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Reque
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw})
 	if err := v.SetExternalSigner(p12, certPEM); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not save certificate")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not save certificate")
 		return
 	}
 	s.handleExternalSignerGet(w, r)
@@ -80,7 +80,7 @@ func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleExternalSignerRemove(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
 	if err := v.ClearExternalSigner(); err != nil {
-		httpError(w, http.StatusInternalServerError, "could not remove certificate")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not remove certificate")
 		return
 	}
 	writeJSON(w, externalSignerInfo{Present: false})

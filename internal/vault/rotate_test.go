@@ -327,8 +327,8 @@ func TestAFailedRemovalLeavesTheOldFileAndTheOldKey(t *testing.T) {
 				t.Error("the vault file changed although the removal failed — the old file must " +
 					"stay until the new one has been written, read back and renamed")
 			}
-			if entries, _ := os.ReadDir(dir); len(entries) != 1 {
-				t.Errorf("a failed removal left %d entries in the vault's directory, want the vault alone", len(entries))
+			if left := besidesTheLock(t, dir); len(left) != 1 {
+				t.Errorf("a failed removal left %v in the vault's directory, want the vault alone", left)
 			}
 			if !slices.Equal(v.Keys(), keysBefore) {
 				t.Errorf("after a failed removal the keys in memory are %v, want the original %v", v.Keys(), keysBefore)
@@ -363,13 +363,16 @@ func TestTheDoorPutsBackAKeyChangedInPlace(t *testing.T) {
 	v := newVault(t)
 	want := append([]byte(nil), v.key...)
 	done := withFailingWrite(t)
-	v.mu.Lock()
+	end, berr := v.beginWrite()
+	if berr != nil {
+		t.Fatal(berr)
+	}
 	err := v.mutateLocked(func() {
 		v.key[0] ^= 0xff
 		v.gen = 7
 		v.unproven = true
 	})
-	v.mu.Unlock()
+	end()
 	if writes := done(); writes != 1 {
 		t.Fatalf("setup: the failing write ran %d time(s), want 1", writes)
 	}
@@ -435,8 +438,8 @@ func TestAStaleProcessCannotWriteItsOldKeyOverTheRotatedFile(t *testing.T) {
 	if got := len(stale.Keys()); got != 3 {
 		t.Errorf("the stale process holds %d key(s) after its refused changes, want its original 3", got)
 	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
-		t.Errorf("refused writes left %d entries in the vault's directory, want the vault alone", len(entries))
+	if left := besidesTheLock(t, dir); len(left) != 1 {
+		t.Errorf("refused writes left %v in the vault's directory, want the vault alone", left)
 	}
 
 	// The other direction is NOT refused, on purpose. A writer the guard could not stop — a build
@@ -552,7 +555,7 @@ func TestAFreshlySealedVaultIsProvenBeforeItReplacesAnything(t *testing.T) {
 	if !v.unproven {
 		t.Fatal("a vault sealed a moment ago is not marked unproven, so its first write is not read back")
 	}
-	if err := v.persist(); err != nil {
+	if err := v.persist(nil); err != nil {
 		t.Fatal(err)
 	}
 	if v.unproven {

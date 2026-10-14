@@ -75,6 +75,11 @@ var (
 	// beforeReplacing.
 	ErrKeyChanged = errors.New("another running Nib removed an authorized key from this vault, so " +
 		"the change was not stored; close and reopen Nib")
+	// ErrChangedElsewhere: the vault file on disk is not one this value can read — another running
+	// Nib replaced it with a different vault (an imported backup), or it is damaged — so nothing
+	// was written over it. See refresh.
+	ErrChangedElsewhere = errors.New("another running Nib replaced this vault with one this " +
+		"window has not opened, so the change was not stored; close and reopen Nib")
 	// ErrReadOnlyImage: refused to modify a built-in (binary-shipped) image.
 	ErrReadOnlyImage = errors.New("built-in image is read-only")
 )
@@ -445,6 +450,13 @@ type Vault struct {
 	// then on save() refuses with ErrReplaced, so a holder of this value cannot write it back over
 	// the import. Guarded by mu.
 	replaced bool
+	// seen is the nonce of the vault file this value last read or wrote. Every save draws a fresh
+	// one, so a file whose nonce is not this is a file another process has written since, and the
+	// next write reads it before changing anything (refresh, ADR-154). Guarded by mu.
+	seen []byte
+	// lock is the cross-process lock on the vault file, held from beginWrite (or persist) to the
+	// end of that one write and nil otherwise. save() refuses without it. Guarded by mu.
+	lock *fileLock
 }
 
 // Path returns the vault file location within dir.
@@ -604,7 +616,7 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 	// behind, and from then on every launch reported "key-missing" and enrol answered 409, with no
 	// way out but deleting a file the user has never heard of. WriteDurable fails before its
 	// rename or at it, so on an error the file at Path is still this call's placeholder.
-	if err := v.persist(); err != nil {
+	if err := v.persist(nil); err != nil {
 		_ = os.Remove(Path(dir))
 		return nil, err
 	}
@@ -640,6 +652,18 @@ func OpenSSHWithPassphrase(dir string, passphrase []byte) (*Vault, error) {
 // vault. That is the documented "lose every authorized key and the vault is
 // unrecoverable" property, not a bug, and this function reports ErrKeyMissing for it.
 func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
+	// The file is read, repaired and written back, so the cross-process lock is held from the read
+	// (ADR-154): taken at the write alone, another process's change between the two would be
+	// written over. Where there is no vault file there is nothing to lock, and the read says so.
+	if _, serr := os.Stat(Path(dir)); serr != nil {
+		_, err := readEnvelope(dir)
+		return nil, err
+	}
+	lk, err := lockVaultFile(Path(dir))
+	if err != nil {
+		return nil, err
+	}
+	defer lk.release()
 	env, err := readEnvelope(dir)
 	if err != nil {
 		return nil, err
@@ -675,7 +699,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, derr)
 		}
 		env.SSH[i].KeyPath = keyPath // the repair
-		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen}
+		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen, seen: env.Nonce}
 		// Saved immediately: an unlock that did not persist the new path leaves the user
 		// in key-missing on the next launch, having been told it was fixed.
 		//
@@ -685,7 +709,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		// did owe is the scrub its two siblings above perform — `zero(key)` on every discard —
 		// and it was the one discard in this loop that dropped the unwrapped content key on the
 		// heap instead.
-		if serr := v.persist(); serr != nil {
+		if serr := v.persist(lk); serr != nil {
 			zero(key)
 			return nil, serr
 		}
@@ -730,7 +754,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 			zero(key) // discard path: the unwrapped content key won't be retained — scrub it too
 			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, err)
 		}
-		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen}, nil
+		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures(), gen: env.Gen, onDisk: env.Gen, seen: env.Nonce}, nil
 	}
 	return nil, noSlotOpened(slotErr, undecryptable)
 }
@@ -738,6 +762,18 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 // Migrate converts an old password vault to an SSH-sealed one: it decrypts with
 // the old password and re-keys to the given SSH key.
 func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
+	// Read, re-keyed and written back under the cross-process lock, as OpenSSHAt is (ADR-154): two
+	// processes migrating at once each sealed a different content key, and the one whose rename
+	// came first held a key that opened nothing. The second now reads a vault already migrated.
+	if _, serr := os.Stat(Path(dir)); serr != nil {
+		_, err := readEnvelope(dir)
+		return nil, err
+	}
+	lk, err := lockVaultFile(Path(dir))
+	if err != nil {
+		return nil, err
+	}
+	defer lk.release()
 	env, err := readEnvelope(dir)
 	if err != nil {
 		return nil, err
@@ -780,7 +816,7 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 	// vault and migrating again with the same password is the way out. What the discard DOES owe
 	// is the scrub OpenSSHAt's loop owes on its own discard path — this Vault holds a freshly
 	// generated content key that no longer seals anything.
-	if serr := v.persist(); serr != nil {
+	if serr := v.persist(lk); serr != nil {
 		zero(v.key)
 		return nil, serr
 	}
@@ -912,8 +948,11 @@ func (v *Vault) Keys() []KeyInfo {
 // lives on the machine that holds it. The key material (type+blob, ignoring any
 // comment) must not already be enrolled.
 func (v *Vault) AddKey(pubLine, keyPath string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	pubLine = strings.TrimSpace(pubLine)
 	id := keyID(pubLine)
 	if id == "" {
@@ -968,8 +1007,11 @@ func (v *Vault) AddKey(pubLine, keyPath string) error {
 // ones. What cannot be proven here: that the other slots unwrap, because their private keys are on
 // other machines.
 func (v *Vault) RemoveKey(pubLine string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	id := keyID(pubLine)
 	idx := -1
 	for i, s := range v.ssh {
@@ -1232,8 +1274,11 @@ func (v *Vault) Image(id string) (Image, bool) {
 
 // AddImage stores a new image and persists the vault.
 func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return Image{}, err
+	}
+	defer end()
 	// **The caller's slice is COPIED IN, not retained** (/pending 567). `addPinned` already does this
 	// for a fingerprint — `append([]byte(nil), fingerprint...)` — and it is the write-side half of
 	// the same rule the accessors keep on the read side: a vault that holds a slice its caller still
@@ -1244,7 +1289,7 @@ func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
 	// The zero Image on failure, not the one that was rolled back: it used to return `img,
 	// v.save()`, so a caller that looked at the value before the error held an id the vault does
 	// not have — memory ahead of disk at the API boundary rather than inside it.
-	err := v.mutateLocked(func() {
+	err = v.mutateLocked(func() {
 		v.contents.Images = append(v.contents.Images, img)
 	})
 	if err != nil {
@@ -1256,8 +1301,11 @@ func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
 // DeleteImage removes the image with the given id and persists the vault. A
 // built-in (binary-shipped) image can't be deleted.
 func (v *Vault) DeleteImage(id string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	for _, img := range v.builtinImages {
 		if img.ID == id {
 			return ErrReadOnlyImage
@@ -1314,8 +1362,11 @@ func (v *Vault) Identity() (certPEM, keyPEM []byte, ok bool) {
 // it receives the winner's, which is the property that matters — every caller leaves holding the
 // identity the vault actually has.
 func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, err error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer end()
 	if id := v.contents.Identity; id != nil {
 		// Somebody else won. Hand back theirs, not the caller's.
 		return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), nil
@@ -1350,8 +1401,11 @@ func (v *Vault) ExternalSigner() (*ExternalSigner, bool) {
 // SetExternalSigner stores the imported PKCS#12 bundle (as imported) and its
 // captured public certificate, and persists the vault.
 func (v *Vault) SetExternalSigner(p12, certPEM []byte) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	// Copied in, `AddImage`'s rule (/pending 567, 807 R8): the vault must not hold a slice its caller
 	// still has, and this one is a private key bundle.
 	return v.mutateLocked(func() {
@@ -1364,8 +1418,11 @@ func (v *Vault) SetExternalSigner(p12, certPEM []byte) error {
 
 // ClearExternalSigner removes the imported signing identity and persists.
 func (v *Vault) ClearExternalSigner() error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	return v.mutateLocked(func() {
 		v.contents.ExternalSigner = nil
 	})
@@ -1410,8 +1467,11 @@ func (v *Vault) AddCeremonyPeer(fingerprint []byte, label, ceremony string) erro
 }
 
 func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	// The search is its own loop, above the door: finding the seat is a READ, and the write that
 	// follows has to be the only thing inside the snapshot.
 	idx := -1
@@ -1478,8 +1538,11 @@ func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
 // needs is counted here and then kept. `TestTwoCeremoniesCanShareAPin` asserts exactly that and
 // calls it "pins touched", so the behaviour is the tested one and this sentence was the wrong half.
 func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer end()
 	if ceremony == "" {
 		// An empty ceremony id would match every user pin and delete the lot. Refusing is
 		// the only safe reading: there is no ceremony called "".
@@ -1541,8 +1604,11 @@ func dropScope(scopes []string, id string) []string {
 
 // RemovePinnedPeer unpins the peer with the given fingerprint (no-op if absent).
 func (v *Vault) RemovePinnedPeer(fingerprint []byte) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	var kept []PinnedPeer
 	for _, p := range v.contents.PinnedPeers {
 		if !bytes.Equal(p.Fingerprint, fingerprint) {
@@ -1566,8 +1632,11 @@ func (v *Vault) Profile() map[string]string {
 // SetProfile replaces the autofill profile and persists the vault. The map is
 // copied so a caller that keeps mutating its own copy can't race the vault.
 func (v *Vault) SetProfile(p map[string]string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	cp := make(map[string]string, len(p))
 	for k, val := range p {
 		cp[k] = val
@@ -1628,8 +1697,11 @@ func (v *Vault) Settings() Settings {
 // rather than the `before := v.contents.Settings` copy that used to sit here, because a struct
 // copy shares backing arrays with what it is meant to restore.
 func (v *Vault) UpdateSettings(mutate func(*Settings)) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	s := v.contents.Settings
 	if s.Appearance == "" {
 		s.Appearance = "dark" // the same default `Settings` fills in, so a mutate sees one shape
@@ -1649,8 +1721,11 @@ func (v *Vault) Recent() []string {
 
 // AddRecent records path as the most recent file (deduped, capped) and persists.
 func (v *Vault) AddRecent(path string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	out := make([]string, 0, maxRecent)
 	out = append(out, path)
 	for _, p := range v.contents.Recent {
@@ -1676,8 +1751,11 @@ func (v *Vault) LastOpen() []string {
 // nothing: the window stream records on every last-window-gone, a reload included, and a reload
 // changes no answer.
 func (v *Vault) SetLastOpen(paths []string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	if slices.Equal(v.contents.LastOpen, paths) {
 		return nil
 	}
@@ -1713,10 +1791,126 @@ func newID() string {
 //
 // So the compiler holds the line the scan cannot, and
 // TestNoExportedDoorPersistsTheVaultWithoutMutating keeps a new exported one from appearing.
-func (v *Vault) persist() error {
+//
+// held is the cross-process lock where the caller took it itself, because it read the file before
+// building v and the read and the write must be one step (OpenSSHAt, Migrate — ADR-154). Nil takes
+// it here, for Create, whose file is a placeholder nobody else can have read.
+func (v *Vault) persist(held *fileLock) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if held == nil {
+		lk, err := lockVaultFile(v.path)
+		if err != nil {
+			return err
+		}
+		defer lk.release()
+		held = lk
+	}
+	v.lock = held
+	defer func() { v.lock = nil }()
 	return v.save()
+}
+
+// beginWrite opens one write of the vault: it takes v.mu, then the cross-process lock, then brings
+// this value up to date with the file (refresh). end releases both. Every mutator starts here and
+// judges nothing before it (TestEveryVaultMutatorBeginsAWrite), because what it judges — is this
+// key already authorized, is there anything to prune — must be asked of the vault as it IS, not as
+// this process last saw it (ADR-154).
+//
+// What it costs, on every vault write: one open of the lock file and two lock calls, beside the
+// read of the file's first bytes that save() already made. Measured against the durable write it
+// precedes in ADR-154.
+//
+// A vault retired by an import takes neither the lock nor the read: its save refuses with
+// ErrReplaced, and the file is no longer its to read.
+func (v *Vault) beginWrite() (end func(), err error) {
+	v.mu.Lock()
+	if v.replaced {
+		return v.mu.Unlock, nil
+	}
+	lk, err := lockVaultFile(v.path)
+	if err != nil {
+		v.mu.Unlock()
+		return nil, err
+	}
+	if err := v.refresh(); err != nil {
+		lk.release()
+		v.mu.Unlock()
+		return nil, err
+	}
+	v.lock = lk
+	return func() {
+		v.lock = nil
+		lk.release()
+		v.mu.Unlock()
+	}, nil
+}
+
+// refresh makes this value's contents and slots the file's, where another process has written the
+// file since this value last read or wrote it. Called under v.mu AND the cross-process lock, so
+// what it reads is what the write that follows replaces.
+//
+// # Why (ADR-154, /pending 873)
+//
+// save() writes the WHOLE vault from memory. Two processes on one config directory each hold a
+// copy, and each one's save wrote the file back without what the other had stored since: measured
+// with two values on one file, a pinned peer AND a newly authorized key's slot were gone from the
+// file after the other process recorded one recent file, with no error anywhere. A lock around the
+// write alone orders two such writes and loses the same update. So the write is read-change-write
+// under the lock, and this is the read.
+//
+// # The four answers
+//
+//   - The file's generation is ABOVE this value's: another process replaced the content key
+//     (ADR-144). This value cannot read it — ErrKeyChanged, as save() answered before.
+//   - BELOW: a writer that predates the counter wrote its old state over a rotated file. Memory
+//     is kept and the save that follows restores the removal (ADR-144 decision 5).
+//   - The same, under the nonce this value last saw: nothing has been written since. This is every
+//     write of a Nib running alone, and it costs the head read and nothing more.
+//   - The same, under another nonce: read whole and opened with this value's key. If it opens,
+//     memory becomes the file. If it does not, it is a different vault (another process imported
+//     a backup) or a damaged one, and writing this value over it would destroy whichever it is —
+//     ErrChangedElsewhere.
+//
+// A file that is absent, empty or not a JSON object has nothing to read, as beforeReplacing says of
+// it. A key that has opened nothing on disk (unproven) belongs to a vault being created or
+// migrated; no mutator runs on one.
+//
+// What it does not do: the READ accessors are not refreshed. A process shows the vault as of its
+// own last write until its next one; a second process's pinned peer appears here after this
+// process next stores anything. Refreshing them costs a file open on every Settings() and Keys()
+// call on the request path, and is not done until that is asked for.
+func (v *Vault) refresh() error {
+	if v.unproven {
+		return nil
+	}
+	gen, nonce, ok := headOf(v.path)
+	switch {
+	case !ok, gen < v.onDisk:
+		return nil
+	case gen > v.onDisk:
+		return ErrKeyChanged
+	case nonce != nil && bytes.Equal(nonce, v.seen):
+		return nil
+	}
+	env, err := readEnvelope(filepath.Dir(v.path))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
+	}
+	if env.Gen != v.onDisk {
+		return ErrChangedElsewhere
+	}
+	plain, err := decrypt(v.key, env.Nonce, env.Cipher)
+	if err != nil {
+		return ErrChangedElsewhere
+	}
+	c, err := decodeContents(plain)
+	zero(plain)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
+	}
+	v.contents, v.ssh, v.seen = c, env.SSH, env.Nonce
+	return nil
 }
 
 // envelopeVersion is what this build writes, and the highest it will open.
@@ -1764,6 +1958,12 @@ func (v *Vault) save() error {
 	if v.replaced {
 		return ErrReplaced
 	}
+	// The check below and the rename are one step between processes only under the cross-process
+	// lock, and what is written is the file as it is plus one change only after refresh (ADR-154).
+	// Refused here so a new road to save() cannot skip either.
+	if v.lock == nil {
+		return errors.New("vault: a save was asked for without the vault's file lock held")
+	}
 	// Stamp the payload version on every write, so a file this build saves is readable back
 	// as this build's. Set here rather than at each mutator for the reason save() is the one
 	// door they all pass through.
@@ -1794,6 +1994,7 @@ func (v *Vault) save() error {
 	}
 	v.onDisk = v.gen
 	v.unproven = false
+	v.seen = nonce
 	return nil
 }
 
@@ -1802,19 +2003,21 @@ func (v *Vault) save() error {
 //
 // # A file under a newer key is not replaced (ADR-144)
 //
-// No lock is held on the vault file, and a second Nib process opened before a key was removed still
-// holds the OLD content key and the OLD slots — the removed one among them. Its next save, of
-// anything at all, would write that state back over the rotated file and undo the removal without
-// a word. So the file's generation is read here and a higher one than this value last saw refuses
-// the write with ErrKeyChanged. Higher only: a LOWER one means a stale writer got there first (a
-// build that predates the counter, or the window below), and writing this value's state over it is
-// what restores the removal.
+// A second Nib process opened before a key was removed still holds the OLD content key and the OLD
+// slots — the removed one among them. Its next save, of anything at all, would write that state
+// back over the rotated file and undo the removal without a word. So the file's generation is read
+// here and a higher one than this value last saw refuses the write with ErrKeyChanged. Higher only:
+// a LOWER one means a writer that predates the counter got there first, and writing this value's
+// state over it is what restores the removal.
 //
 // What it costs is one open and a read of the file's first bytes per save (generationOf).
-// What it does not buy: this check and the rename are two steps. A stale process that passes its
-// check, then loses the race to a rotation's rename, then renames, overwrites the rotated file. The
-// rotating process's next save restores it; nothing tells the user in between. Closing that needs a
-// lock held across processes.
+//
+// **This check and the rename are one step between processes** (ADR-154): save() runs only with
+// the cross-process lock held, taken before the file was read (beginWrite), so no other process
+// that takes the lock renames between the two. refresh has usually answered the same question a
+// moment earlier, under the same lock; it is asked again here because persist's callers do not
+// refresh, and because this is the last thing before the rename. A build that predates the lock
+// takes none and is not stopped by it.
 //
 // A file that is absent, empty (Create's placeholder) or unreadable has no generation to defend.
 //
@@ -1874,33 +2077,48 @@ const generationHead = 128
 // generation 0 and is not defended; TestAStaleProcessCannotWriteItsOldKeyOverTheRotatedFile goes
 // red if `envelope` is ever reordered so that this build's own files are among them.
 func generationOf(path string) (gen uint64, ok bool) {
+	gen, _, ok = headOf(path)
+	return gen, ok
+}
+
+// headOf is generationOf's read, and also hands back the nonce — the key Marshal writes next, and
+// inside the same 128 bytes (`{"version":2,"gen":` twenty digits `,"nonce":"` sixteen characters).
+// The nonce is what says WHICH write of a generation the file is (refresh). It is nil where the
+// head did not hold one; ok and gen are what generationOf has always answered.
+func headOf(path string) (gen uint64, nonce []byte, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, false
+		return 0, nil, false
 	}
 	defer f.Close()
 	dec := json.NewDecoder(io.LimitReader(f, generationHead))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return 0, false
+		return 0, nil, false
 	}
+	sawGen := false
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			return 0, false
+			return gen, nil, sawGen
 		}
 		switch tok {
 		case "version":
 			var version int
 			if dec.Decode(&version) != nil {
-				return 0, false
+				return 0, nil, false
 			}
 		case "gen":
-			if dec.Decode(&gen) != nil {
-				return 0, false
+			if sawGen || dec.Decode(&gen) != nil {
+				return 0, nil, false
 			}
-			return gen, true
+			sawGen = true
+		case "nonce":
+			if dec.Decode(&nonce) != nil {
+				nonce = nil
+			}
+			return gen, nonce, true
 		default:
-			return 0, true
+			return gen, nil, true
 		}
 	}
 }
@@ -2124,11 +2342,21 @@ var ErrReplaced = errors.New("this vault was replaced by an imported backup, so 
 // window left the vault present and garbage while the original, the only copy of the identity, was
 // already gone (/pending 287). That twin is gone; this keeps the fsync on the file and its parent.
 func Replace(path string, held *Vault, raw []byte) error {
+	// Under the cross-process lock like every other rename over the vault (ADR-154), so an import
+	// cannot land between another process's read of the file and its write. That process's next
+	// write then reads the import and either opens it or refuses (refresh). v.mu first, as always.
+	if held != nil {
+		held.mu.Lock()
+		defer held.mu.Unlock()
+	}
+	lk, err := lockVaultFile(path)
+	if err != nil {
+		return err
+	}
+	defer lk.release()
 	if held == nil {
 		return writeFileAtomic(path, raw, nil)
 	}
-	held.mu.Lock()
-	defer held.mu.Unlock()
 	if err := writeFileAtomic(path, raw, nil); err != nil {
 		return err
 	}
@@ -2203,8 +2431,11 @@ func (v *Vault) AddCeremonySecret(ceremony string, fingerprint, secret []byte) e
 	if len(fingerprint) == 0 || len(secret) == 0 {
 		return errors.New("a ceremony secret needs a party and a secret")
 	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	idx := -1
 	for i := range v.contents.CeremonySecrets {
 		if v.contents.CeremonySecrets[i].Ceremony == ceremony &&
@@ -2255,8 +2486,11 @@ func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
 	if invitation == "" {
 		return errors.New("a stored invitation needs an invitation")
 	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	for i := range v.contents.CeremonyInvitations {
 		if v.contents.CeremonyInvitations[i].Ceremony == ceremony {
 			return v.mutateLocked(func() {
@@ -2277,8 +2511,11 @@ func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
 // row that every reader has to special-case, and `omitempty` would drop it from the file anyway —
 // so the two spellings would disagree about what a saved-empty draft is.
 func (v *Vault) SetCeremonyDraft(draft string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	return v.mutateLocked(func() { v.contents.CeremonyDraft = draft })
 }
 
@@ -2296,8 +2533,11 @@ func (v *Vault) CeremonyDraft() (string, bool) {
 // and it is idempotent: clearing a draft that is not there is not an error, because the caller's
 // question is "is it gone" and not "did I remove it".
 func (v *Vault) ClearCeremonyDraft() error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer end()
 	if v.contents.CeremonyDraft == "" {
 		return nil
 	}
@@ -2328,8 +2568,11 @@ func (v *Vault) CeremonyInvitationFor(ceremony string) (string, bool) {
 // production caller is the rollback — so this makes an invitee symmetric with a convener rather than
 // better than one. The close-out that prunes both is P08.S06's.
 func (v *Vault) PruneCeremonyInvitations(ceremony string) (int, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer end()
 	if ceremony == "" {
 		return 0, errors.New("prune needs a ceremony id")
 	}
@@ -2361,8 +2604,11 @@ func (v *Vault) PruneCeremonyInvitations(ceremony string) (int, error) {
 // callers, so the ceremony's residue already had two owners that were never wired. A third
 // write with no delete would be the same shape again, and this one is key material.
 func (v *Vault) PruneCeremonySecrets(ceremony string) (int, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	end, err := v.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer end()
 	if ceremony == "" {
 		return 0, errors.New("prune needs a ceremony id")
 	}

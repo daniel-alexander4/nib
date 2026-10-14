@@ -8867,7 +8867,7 @@ els.sigSave.onclick = () => {
     form.append('name', 'Signature');
     const res = await apiFetch('/api/images', { method: 'POST', body: form });
     els.sigModal.hidden = true;
-    if (res.ok) { loadImages(); toast('Signature saved'); } else toast('could not save signature');
+    if (res.ok) { loadImages(); toast('Signature saved'); } else toast(await errText(res, 'could not save signature'));
   }, 'image/png');
 };
 
@@ -10665,7 +10665,7 @@ els.profileSave.onclick = async () => {
   });
   els.profileModal.hidden = true;
   if (res.ok) profileCache = null; // a text flag re-reads the fresh values
-  toast(res.ok ? 'Profile saved' : 'could not save profile');
+  toast(res.ok ? 'Profile saved' : await errText(res, 'could not save profile'));
   // The Autofill press this editor was opened for, if it was: the fill runs now, on the document that press was
   // about and only while it is still the one in front (ADR-001, ADR-106).
   const waiting = autofillAfterSave;
@@ -12833,7 +12833,7 @@ async function saveSettings(body) {
     const res = await apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    if (!res.ok) toast('Could not save settings');
+    if (!res.ok) toast(await errText(res, 'Could not save settings'));
   } catch { toast('Could not save settings'); }
 }
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });

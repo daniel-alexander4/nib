@@ -49,12 +49,13 @@ func (s *Server) handleImageGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImageDelete(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	if err := v.DeleteImage(r.PathValue("id")); err != nil {
-		if errors.Is(err, vault.ErrReadOnlyImage) {
-			httpError(w, http.StatusForbidden, "built-in image can't be deleted")
-			return
-		}
-		httpError(w, http.StatusInternalServerError, "could not delete image")
+	switch err := v.DeleteImage(r.PathValue("id")); {
+	case err == nil:
+	case errors.Is(err, vault.ErrReadOnlyImage):
+		httpError(w, http.StatusForbidden, "built-in image can't be deleted")
+		return
+	default:
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not delete image")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -117,7 +118,7 @@ func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	img, err := v.AddImage(name, mime, data)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not store image")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not store image")
 		return
 	}
 	writeJSON(w, imageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME})
