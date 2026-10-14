@@ -319,7 +319,7 @@ func TestBrokenWordsOverTheCorpus(t *testing.T) {
 					l3, _ := readPageGlyphLayout(c3, pageAt(c3, nil, p))
 					var got []string
 					for i, n := 0, 0; i < len(para.lines) && n < editLetters(e.edit); i++ {
-						ln, ok := lineAtBaseline(l3, paragraphBox(para), para.lines[i].y, para.lines[0].size)
+						ln, ok := lineAtBaseline(l3, paragraphBox(para), para.lines[i].y, para.lines[0].size, para.lines[i].x0)
 						if !ok {
 							break
 						}

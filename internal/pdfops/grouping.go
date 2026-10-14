@@ -524,6 +524,9 @@ func verticalRuns(runs []textRun) int {
 // pages of the same document read that way as the producer wrote them). Left to right, a run can only be asked
 // whether it continues a line that began before it. Where "shares a baseline" does divide a page's runs into
 // classes, these are the lines that sort gave.
+//
+// **And a run does not continue a line across a gutter** (`guttersOf`, /pending 871): the lines are made once by the
+// rules above, and where they show a gutter that some line was joined across, they are made again with it.
 func lineSegments(runs []textRun) []textLine {
 	var rs []textRun
 	reach := 0.0
@@ -536,6 +539,136 @@ func lineSegments(runs []textRun) []textLine {
 	// Runs at one x stay in the order the page draws them: Acrobat draws "Note:" and the sentence after it from one
 	// x, and only that order says which is first.
 	sort.SliceStable(rs, func(i, j int) bool { return rs[i].x < rs[j].x })
+	lines := joinRuns(rs, reach, nil)
+	if g := guttersOf(lines); g != nil && g.joinedAcross() {
+		lines = joinRuns(rs, reach, g)
+	}
+	out := make([]textLine, len(lines))
+	for i, l := range lines {
+		out[i] = *l
+		out[i].text = strings.TrimSpace(out[i].text)
+	}
+	return out
+}
+
+// A gutter is read from the lines the page already parts (/pending 871).
+const (
+	// gutterGapEm is the least gap, in ems of the larger run, that a gutter is: wider than a space between words or
+	// after a sentence, and narrower than joinGapEm, past which nothing joins anyway.
+	gutterGapEm = 0.6
+	// gutterEdgeTol is how near, in points, two lines begin and still begin at one edge.
+	gutterEdgeTol = 0.5
+	// gutterLines is how many lines must begin at an edge with other text to their left for it to be a gutter's.
+	gutterLines = 3
+	// gutterBesideEm is how near, in ems, text to a line's left stands to its baseline and is still beside it; two
+	// columns need not share baselines.
+	gutterBesideEm = 0.5
+	// gutterClearEm is how far above and below a line, in ems, nothing may be drawn across the edge: the lines next
+	// to it, at up to double spacing.
+	gutterClearEm = 2.5
+	// gutterWords is the fewest words a line holds before a gutter parts it from what follows: one word ahead of a
+	// gap is a bullet, a number or a label, and reads with what it marks.
+	gutterWords = 2
+)
+
+// pageGutters is where a page's gutters end — the left edges of its columns and of its tables' cells, as the lines
+// made without them show (`guttersOf`).
+type pageGutters struct {
+	edges []float64   // where a line begins with other text to its left, sorted
+	lines []*textLine // the lines they were read from, top to bottom
+}
+
+// guttersOf reads a page's gutters from its lines as joined without them: every x where a line begins that has other
+// text to its left. Two columns set more than joinGapEm apart, or a table's cells, give one such line for every line
+// of the right-hand column, and nothing else does: a paragraph's own lines, an indent and a hanging line begin with
+// nothing beside them. It is nil when the page has fewer such lines than one gutter needs.
+func guttersOf(lines []*textLine) *pageGutters {
+	g := &pageGutters{lines: lines}
+	size := 0.0
+	for _, l := range lines {
+		size = math.Max(size, l.size)
+	}
+	near := gutterBesideEm * size // the furthest apart two baselines are that any pair of lines is beside at
+	for i, l := range lines {
+		beside := false
+		for d := -1; d <= 1 && !beside; d += 2 {
+			for j := i + d; j >= 0 && j < len(lines) && math.Abs(lines[j].y-l.y) <= near; j += d {
+				m := lines[j]
+				if m.x1 <= l.x0+gutterEdgeTol && math.Abs(m.y-l.y) <= gutterBesideEm*math.Max(m.size, l.size) {
+					beside = true
+					break
+				}
+			}
+		}
+		if beside {
+			g.edges = append(g.edges, l.x0)
+		}
+	}
+	if len(g.edges) < gutterLines {
+		return nil
+	}
+	sort.Float64s(g.edges)
+	return g
+}
+
+// at says whether x is a gutter's edge: gutterLines or more lines begin there with text to their left.
+func (g *pageGutters) at(x float64) bool {
+	return sort.SearchFloat64s(g.edges, x+gutterEdgeTol)-sort.SearchFloat64s(g.edges, x-gutterEdgeTol) >= gutterLines
+}
+
+// joinedAcross says whether some line was joined at a gutter's edge — whether making the lines again can change one.
+func (g *pageGutters) joinedAcross() bool {
+	for _, l := range g.lines {
+		for i := 1; i < len(l.runs); i++ {
+			if g.at(l.runs[i].x) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// parts says whether a gutter stands between line l and run r, which would otherwise continue it.
+//
+// The page's own lines are the evidence, and all of it is asked for: r begins more than gutterGapEm past l, where
+// gutterLines or more lines begin with text to their left — so the page already parts lines there, and l is the line
+// whose text ran long enough to end within joinGapEm of the next column; nothing within gutterClearEm above or below
+// is drawn across that edge — a paragraph the full width of a page that happens to set a word at a column's edge has
+// its own lines across it; and l is more than a word.
+//
+// Measured over the real-producer corpus before it was adopted (36 documents): 185 joins parted, every one read —
+// two columns joined where the right-hand one opens with a heading set larger than the body (the gap is measured in
+// ems of the larger run; Antenna House's irs-p15, 101 of them, and a page so joined was read as ONE column of 88
+// paragraphs where it has 28 in two), and table cells whose text ran long (two cells of irs-fw9 p4 read as "be
+// reported and direct sales over 1 through 5."). Lines in paragraphs that re-break in place 10,434 → 11,448; pages
+// read as one column 290 → 265; pages reporting text side by side 153 → 138. Refused by the same measurement: a drawn
+// rule between the cells (reflow's and tagging's readers keep no shapes, ADR-088, and 1,156 of its 1,255 cuts are one
+// document's table rows); an edge counted without text beside its lines (it parts "Table A-1." from its title in a
+// list whose titles hang); and no clear band (it parts "Property Rights:" from the text set after it).
+//
+// **Declared limits**: a single word ahead of a gutter stays joined (gutterWords); so does a join on a page that
+// parts fewer than gutterLines lines at that edge; and a contents list that sets some page numbers past joinGapEm and
+// some within it now parts them all.
+func (g *pageGutters) parts(l *textLine, r textRun) bool {
+	em := math.Max(l.size, r.size)
+	if r.x-l.x1 <= gutterGapEm*em || !g.at(r.x) || len(strings.Fields(l.text)) < gutterWords {
+		return false
+	}
+	clear := gutterClearEm * em
+	from := sort.Search(len(g.lines), func(i int) bool { return g.lines[i].y <= r.y+clear })
+	for i := from; i < len(g.lines) && g.lines[i].y >= r.y-clear; i++ {
+		for _, q := range g.lines[i].runs {
+			if q.x < r.x-gutterEdgeTol && q.x+q.width > r.x+gutterEdgeTol {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// joinRuns is lineSegments' one pass: rs left to right, each run joined to the line it continues, the lines kept top
+// to bottom. g is the page's gutters, or nil on the pass that finds them.
+func joinRuns(rs []textRun, reach float64, g *pageGutters) []*textLine {
 	// lines is kept top to bottom, so the lines a run could share a baseline with are found by height and not by
 	// asking every line on the page (a page of per-glyph runs has thousands of both).
 	var lines []*textLine
@@ -546,7 +679,8 @@ func lineSegments(runs []textRun) []textLine {
 		for i := from; i < len(lines) && lines[i].y >= r.y-reach; i++ {
 			l := lines[i]
 			em := math.Max(l.size, r.size)
-			if (math.Abs(l.y-r.y) > 0.3*em && !raisedOn(r, l) && !opensRaised(l, r)) || r.x-l.x1 > joinGapEm*em || ruleBeside(r, l) {
+			if (math.Abs(l.y-r.y) > 0.3*em && !raisedOn(r, l) && !opensRaised(l, r)) || r.x-l.x1 > joinGapEm*em || ruleBeside(r, l) ||
+				(g != nil && g.parts(l, r)) {
 				continue
 			}
 			if d, b := math.Abs(l.y-r.y), best; b == nil || d < math.Abs(b.y-r.y) || (d == math.Abs(b.y-r.y) && l.x1 > b.x1) {
@@ -580,12 +714,7 @@ func lineSegments(runs []textRun) []textLine {
 		best.x1 = math.Max(best.x1, r.x+r.width)
 		best.size = em
 	}
-	out := make([]textLine, len(lines))
-	for i, l := range lines {
-		out[i] = *l
-		out[i].text = strings.TrimSpace(out[i].text)
-	}
-	return out
+	return lines
 }
 
 // A raised figure — a footnote mark, an exponent — is set smaller than its line and above its baseline: no more than

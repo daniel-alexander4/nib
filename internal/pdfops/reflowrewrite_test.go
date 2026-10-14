@@ -312,7 +312,7 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						got := textParagraph{column: para.column}
 						// Letters, not words: a hyphenated break can read back rejoined (P08.S07).
 						for i, n := 0, 0; n < editLetters(edit); i++ {
-							ln, ok := lineAtBaseline(l3, paragraphBox(para), baseline(i), para.lines[0].size)
+							ln, ok := lineAtBaseline(l3, paragraphBox(para), baseline(i), para.lines[0].size, para.lines[min(i, len(para.lines)-1)].x0)
 							if !ok {
 								break
 							}
@@ -599,15 +599,35 @@ func TestTheReviewsFindingsHold(t *testing.T) {
 // lineAtBaseline is the line of l whose baseline is y, within a third of an em of size, and which starts inside box's
 // horizontal extent — or false. By position, not by column index: a rewrite can renumber a page's columns. A line that
 // starts to the left of the box is it too when its middle lies inside it: a centred line re-set longer moves its start
-// out (P08.S04).
-func lineAtBaseline(l pageLayout, box [4]float64, y, size float64) (textLine, bool) {
+// out (P08.S04). A line that STARTS inside the box is taken before one that only reaches into it: a run-in heading set
+// apart on a paragraph's first baseline ("Furnish Forms 1099 and W-2." 14pt left of the sentence it opens,
+// `antennahouse/irs-p15.pdf` p11) is a line of its own that starts left of the paragraph's box with its middle inside
+// it, and it was read as the paragraph's first line once the page's columns were read as two (/pending 871). from, when
+// given, is where the paragraph's own line began: of the lines that start inside the box, the one that starts nearest
+// it — the last word of a heading ("sation.") can stand inside the box too, left of the sentence that follows it.
+func lineAtBaseline(l pageLayout, box [4]float64, y, size float64, from ...float64) (textLine, bool) {
+	var inside, reaches textLine
+	in, found := false, false
 	for _, q := range l.paragraphs {
 		for _, ln := range q.lines {
-			mid := (ln.x0 + ln.x1) / 2
-			if math.Abs(ln.y-y) <= 0.3*size && (ln.x0 >= box[0]-0.5*size || mid >= box[0]) && ln.x0 < box[2] {
-				return ln, true
+			if math.Abs(ln.y-y) > 0.3*size || ln.x0 >= box[2] {
+				continue
+			}
+			switch {
+			case ln.x0 >= box[0]-0.5*size:
+				if len(from) == 0 {
+					return ln, true
+				}
+				if !in || math.Abs(ln.x0-from[0]) < math.Abs(inside.x0-from[0]) {
+					inside, in = ln, true
+				}
+			case !found && (ln.x0+ln.x1)/2 >= box[0]:
+				reaches, found = ln, true
 			}
 		}
 	}
-	return textLine{}, false
+	if in {
+		return inside, true
+	}
+	return reaches, found
 }

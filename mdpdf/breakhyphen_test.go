@@ -61,3 +61,56 @@ func TestTheBreakerTakesABreakPointOnlyWhereTheWholeWordDoesNot(t *testing.T) {
 		}
 	}
 }
+
+// TestTheBreakerKeepsALineItIsToldToKeep — KeepLine (`pdfops`' reflow, /pending 797): an item starts a new line though
+// it would fit (LineApart), joins a line though it would not (LineTogether), and is placed by what fits otherwise. It
+// is asked with the number of the line being filled, and never of an empty line.
+func TestTheBreakerKeepsALineItIsToldToKeep(t *testing.T) {
+	items := []hyItem{{name: "a", w: 4}, {name: "b", w: 4}, {name: "c", w: 4}, {name: "d", w: 4}}
+	lines := func(maxW float64, keep func(line int, cur []hyItem, item hyItem) LineKeep) [][]string {
+		var out [][]string
+		for _, l := range BreakGreedy(items, maxW, BreakOps[hyItem]{
+			Width: func(i hyItem) float64 { return i.w }, Space: func(hyItem) float64 { return 1 }, KeepLine: keep,
+		}) {
+			var names []string
+			for _, i := range l {
+				names = append(names, i.name)
+			}
+			out = append(out, names)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name string
+		maxW float64
+		keep func(line int, cur []hyItem, item hyItem) LineKeep
+		want [][]string
+	}{
+		{"nothing kept", 9, func(int, []hyItem, hyItem) LineKeep { return LineFree }, [][]string{{"a", "b"}, {"c", "d"}}},
+		{"apart, though it fits", 9, func(_ int, _ []hyItem, i hyItem) LineKeep {
+			if i.name == "b" {
+				return LineApart
+			}
+			return LineFree
+		}, [][]string{{"a"}, {"b", "c"}, {"d"}}},
+		{"together, though it does not fit", 9, func(_ int, _ []hyItem, i hyItem) LineKeep {
+			if i.name == "c" {
+				return LineTogether
+			}
+			return LineFree
+		}, [][]string{{"a", "b", "c"}, {"d"}}},
+		{"by the number of the line", 9, func(line int, cur []hyItem, _ hyItem) LineKeep {
+			if len(cur) == 0 {
+				t.Error("asked of an empty line")
+			}
+			if line == 1 {
+				return LineApart
+			}
+			return LineFree
+		}, [][]string{{"a", "b"}, {"c"}, {"d"}}},
+	} {
+		if got := lines(c.maxW, c.keep); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
