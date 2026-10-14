@@ -37,12 +37,12 @@ func TestTheNetworkTestAnswersWithAVerdictAndItsCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The verdict is one of the four the door defines, and it is NAMED. An empty string would
+	// The verdict is one of the five the door defines, and it is NAMED. An empty string would
 	// leave a client branching on nothing.
 	switch got.Verdict {
-	case "working", "nobody-else", "not-heard-back", "nothing-sent":
+	case "working", "nobody-else", "other-version", "not-heard-back", "nothing-sent":
 	default:
-		t.Errorf("verdict = %q, which is none of the four `discovery.Verdict` defines. A client "+
+		t.Errorf("verdict = %q, which is none of the five `discovery.Verdict` defines. A client "+
 			"branches on this string, so an unknown value is a surface with no branch", got.Verdict)
 	}
 	if got.Summary == "" {
@@ -63,12 +63,39 @@ func TestTheNetworkTestAnswersWithAVerdictAndItsCounters(t *testing.T) {
 	// The counters are published so the answer can be CHECKED rather than trusted, and they must
 	// agree with the verdict — a summary that says one thing while its own evidence says another
 	// is worse than no summary.
-	st := discovery.Stats{Sent: got.Sent, Own: got.Own, Peers: got.Peers}
+	st := discovery.Stats{Sent: got.Sent, Own: got.Own, Peers: got.Peers, OtherVersion: got.OtherVersion}
 	if st.Verdict().Name() != got.Verdict {
 		t.Errorf("the route reports verdict %q and counters (sent=%d own=%d peers=%d) that "+
 			"classify as %q. The published counters are what let a user quote the evidence, so "+
 			"they must be the evidence the verdict was drawn from",
 			got.Verdict, got.Sent, got.Own, got.Peers, st.Verdict().Name())
+	}
+}
+
+// TestTheNetworkTestPublishesEveryCounterItsVerdictRead — /pending 877. The route test above runs
+// on whatever this machine's link holds, which is never a Nib of another version, so it cannot see
+// a counter the answer leaves out. Here every state is given to the answer's one filler: the
+// verdict is the door's, and the PUBLISHED counters alone classify as that same verdict.
+func TestTheNetworkTestPublishesEveryCounterItsVerdictRead(t *testing.T) {
+	for _, st := range []discovery.Stats{
+		{},
+		{Sent: 6},
+		{Sent: 6, Own: 6},
+		{Sent: 6, Own: 6, Peers: 1},
+		{Sent: 6, Own: 6, OtherVersion: 2},
+		{Sent: 6, Own: 6, Peers: 1, OtherVersion: 2},
+	} {
+		var got networkTestResponse
+		got.read(st)
+		if got.Verdict != st.Verdict().Name() || got.Summary != st.Verdict().Summary() {
+			t.Errorf("%+v: the answer says %q / %q, and the door says %q", st, got.Verdict, got.Summary, st.Verdict().Name())
+		}
+		published := discovery.Stats{Sent: got.Sent, Own: got.Own, Peers: got.Peers, OtherVersion: got.OtherVersion}
+		if published.Verdict().Name() != got.Verdict {
+			t.Errorf("%+v: the answer's verdict is %q and the counters it publishes (sent=%d own=%d peers=%d "+
+				"otherVersion=%d) classify as %q — a user quoting them would be quoting evidence for another answer",
+				st, got.Verdict, got.Sent, got.Own, got.Peers, got.OtherVersion, published.Verdict().Name())
+		}
 	}
 }
 
@@ -113,6 +140,15 @@ func TestTheVerdictSeparatesTheThreeWaysOfFindingNothing(t *testing.T) {
 		{"sent, and not one came back", discovery.Stats{Sent: 6}, discovery.VerdictNotHeardBack},
 		{"heard ourselves, nobody else", discovery.Stats{Sent: 6, Own: 6}, discovery.VerdictNobodyElse},
 		{"a peer answered", discovery.Stats{Sent: 6, Own: 6, Peers: 1}, discovery.VerdictWorking},
+		// /pending 877: a Nib of another announcement version is on the link and nothing readable
+		// is. "Nobody else has armed, or they are on a different network" is false of it twice.
+		{"heard ourselves, and only a Nib of another version", discovery.Stats{Sent: 6, Own: 6, OtherVersion: 2}, discovery.VerdictOtherVersion},
+		// A readable peer wins: discovery is working, whatever else is on the link.
+		{"a peer answered, and another version is here too", discovery.Stats{Sent: 6, Own: 6, Peers: 1, OtherVersion: 2}, discovery.VerdictWorking},
+		// And the two local failures still come first: another version heard says nothing about
+		// whether THIS machine's announcements leave it or come back.
+		{"another version heard, nothing sent", discovery.Stats{OtherVersion: 2}, discovery.VerdictNothingSent},
+		{"another version heard, own copy never returned", discovery.Stats{Sent: 6, OtherVersion: 2}, discovery.VerdictNotHeardBack},
 		// The ordering case: nothing was sent AND nothing came back. Only one of those is the
 		// user's actual problem.
 		{"neither sent nor heard", discovery.Stats{Own: 0, Peers: 0}, discovery.VerdictNothingSent},
@@ -135,14 +171,14 @@ func TestTheVerdictSeparatesTheThreeWaysOfFindingNothing(t *testing.T) {
 	seen := map[string]string{}
 	for _, v := range []discovery.Verdict{
 		discovery.VerdictWorking, discovery.VerdictNothingSent,
-		discovery.VerdictNotHeardBack, discovery.VerdictNobodyElse,
+		discovery.VerdictNotHeardBack, discovery.VerdictNobodyElse, discovery.VerdictOtherVersion,
 	} {
 		if prev, dup := seen[v.Summary()]; dup {
 			t.Errorf("%q and %q share a sentence, so a user cannot tell them apart", prev, v.Name())
 		}
 		seen[v.Summary()] = v.Name()
 	}
-	if len(seen) != 4 {
-		t.Errorf("four verdicts produced %d distinct sentences", len(seen))
+	if len(seen) != 5 {
+		t.Errorf("five verdicts produced %d distinct sentences", len(seen))
 	}
 }

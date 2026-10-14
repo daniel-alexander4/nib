@@ -1662,7 +1662,7 @@ async function runNetworkTest() {
     }
     const d = await res.json();
     // The server's own sentence, never a word rebuilt from the verdict tag here — the rule that
-    // decides which of the four states obtains has ONE door and the wording travels with it.
+    // decides which of the states obtains has ONE door and the wording travels with it.
     let text = d.note ? `${d.summary} ${d.note}` : (d.summary || 'Nib could not say.');
     // **The window and the counters, because a verdict without them cannot be checked.** "Nobody
     // is there" and "nobody answered in three seconds" are different facts and the window is what
@@ -1673,6 +1673,8 @@ async function runNetworkTest() {
       text += ` Listened for ${secs} second${secs === 1 ? '' : 's'}`;
       if (typeof d.sent === 'number') {
         text += ` — sent ${d.sent}, heard itself ${d.own || 0}, heard others ${d.peers || 0}`;
+        // Said only when it happened: a Nib of another version, which this one cannot read.
+        if (d.otherVersion > 0) text += `, heard a Nib of another version ${d.otherVersion} time${d.otherVersion === 1 ? '' : 's'}`;
         if (typeof d.interfaces === 'number') text += `, on ${d.interfaces} network connection${d.interfaces === 1 ? '' : 's'}`;
       }
       text += '.';
