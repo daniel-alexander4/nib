@@ -307,7 +307,9 @@ fi
 # late step, and whether a rotation and a resize landing inside that step lose it is timing in a real renderer.
 # 56 since ADR-169 (quit.test.mjs): the power button pressed in a window opened the way Nib opens one — its own nib,
 # because Quit ends the process, and its own Chrome, because the harness's page is one Chrome will not let close.
-expect_files=56
+# 57 since /pending 889 part 4 (untypedannot.test.mjs): an annotation with no /Subtype drawn from its appearance —
+# only a real renderer draws it, and a pdf.js bump that stopped would change no real document's look.
+expect_files=57
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

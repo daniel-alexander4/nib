@@ -59,6 +59,12 @@ field and put back.** Both walks do it: the pages' `/Annots`, and the form's tre
 - **Declared:** pdf.js does not draw an annotation with no `/Subtype`, so the window does not show those stamps.
   What they are in the source documents (initials, a logo) was not looked at; whether other viewers draw them
   was not measured.
+  **CORRECTED 2026-10-13 (/pending 889 part 4): the line above is wrong.** Measured on the four documents' 49 such
+  annotations: pdf.js 6.1.200 draws every one, on screen and in print — it builds a plain `Annotation` for a
+  missing subtype (with a warning) and its page operator list draws the appearance — and Chrome's own viewer
+  (PDFium) draws them too; poppler does not. They are initials (24×24, 30×30), signatures (96.75×35.25) and dates,
+  each repeating a mark a form field already draws at the same `/Rect`. `test/ui/untypedannot.test.mjs` holds
+  that the window draws one alone. The decision above is unchanged.
 - **Declared:** an annotation dictionary reached only through some other road (a structure element's `/Obj`, a
   pop-up's `/Parent`) is not walked. No such document was found.
 - Other operations may still meet such an entry and answer their own error for it; none was seen to in the three
