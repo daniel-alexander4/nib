@@ -40,6 +40,7 @@ var inspectionSites = map[string]func(pdf []byte) any{
 	"Attachments":     func(pdf []byte) any { l, err := Attachments(pdf); return []any{l, failed(err)} },
 	"StructureSource": func(pdf []byte) any { s, ok := StructureSource(pdf); return []any{s, ok} },
 	"carryIsComplete": func(pdf []byte) any { return carryIsComplete(pdf) },
+	"splitSource":     func(pdf []byte) any { n, tagged, err := splitSource(pdf); return []any{n, tagged, failed(err)} },
 	"ReadAttachment": func(pdf []byte) any {
 		l, _ := Attachments(pdf)
 		var out []any
