@@ -907,8 +907,10 @@ assert_spoken_check() { # label words_a words_b code want body
 # parties are blocked waiting for it, so it has to run beside the request rather
 # than inside it.
 watch_verify() { # url csrf outfile
-  # **240 x 0.25 s = 60 s, raised from 30 (P08.S03).** The content anchor added a measured 8.7 s
-  # per side on a 4.4 MB document, and `interrupted_hop` uses one deliberately — so the words
+  # **240 x 0.25 s = 60 s, raised from 30 (P08.S03).** The content anchor costs seconds per side
+  # and grows with the document — measured 2026-10-12 under load: 0.4 s at 0.8 MB, 4.7-7.3 s at
+  # 3.6 MB, 6.7-10 s at 6.8 MB, 29-35 s at 20 MB — and `interrupted_hop` uses a document of
+  # several MB deliberately — so the words
   # arrived after the old budget had expired and the run failed with a spoken-check timeout that
   # was really a cost. A budget that is a function of document size is the wrong shape; a ceiling
   # far above any honest hop is the right one, and a timeout here still fails loudly.
@@ -1782,7 +1784,8 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   # a tight loop because the window is a transfer, not a timer.
   # **BOUNDED, because an unbounded wait here hangs the whole run.** The first cut looped
   # `while [ ! -s "$mirror" ]` with no ceiling, so when the hop failed before committing anything —
-  # measured: a spoken-check timeout, after the content anchor added 8.7 s to each side — the
+  # measured: a spoken-check timeout, after the content anchor added seconds to each side (4.7-10 s
+  # at 3.6-6.8 MB, measured 2026-10-12 under load) — the
   # killer span forever and `wait` never returned. A harness that can hang is worse than one that
   # fails: the assertions below say exactly what did not happen, and they cannot run until this
   # returns. 120 s at 2 ms, which is far past any honest commit on this fixture.

@@ -272,7 +272,7 @@ between them and a silent failure on a platform no tier can reach.
 | `onLink` defaults open when no link was joined | `TestOffLinkSourcesAreRejected` | a socket that joined nothing would accept everything — the failure direction must be closed |
 | Dedupe by fingerprint alone | `TestTwoHostsClaimingOneNameBothBecomeCandidates` | the impostor's address survives and the real peer's is discarded, so no caller could reach it |
 | `dialAny` tries only the first candidate | `TestDialAnyTriesEveryCandidate` | "tried 1 address(es)" — returning every candidate is useless if only one is dialled |
-| `Encode`'s datagram-cap check removed | `TestEncodeRefusesWhatParseWouldReject` | "Encode produced 261 bytes and Parse says 261 bytes exceeds the 256-byte cap — the encoder and the parser disagree about what is legal" |
+| `check`'s no-salt refusal removed (the rule `Encode` and `Parse` share; the format is one fixed length since ADR-151, so the old datagram-cap check and its "261 bytes" message are gone) | `TestEncodeRefusesWhatParseWouldReject` | "Encode produced an announcement with no salt and Parse says <nil> — an announcer that skipped pairing.NewTag would send the same tag for the life of its identity" |
 | `internal/discovery` imports the vault | `TestResolutionLivesOutsideTheDiscoveryPackage`, rewritten over the AST | the guard now checks the invariant instead of a string in a neighbouring file |
 
 

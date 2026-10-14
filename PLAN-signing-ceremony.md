@@ -509,6 +509,8 @@ nobody to ask, and the record has nowhere to go. Adopted in two halves:
   (moved 2026-08-20, S03's slice grill)**, being a change to the invitation's payload
   rather than to bootstrap — which is exactly why it is its own slice and not a rider on
   the record's.
+  **(Pointer, 2026-10-12: superseded in practice by ADR-152 — invitation-carried seeds are
+  refused on both halves. The text above is left as decided.)**
 
 *Unchanged:* hostname bootstrap stays refused, and `GlobalBootstrapAddrs`,
 `NewDefaultServerConfig` and every resolver stay forbidden on the bootstrap path. The
