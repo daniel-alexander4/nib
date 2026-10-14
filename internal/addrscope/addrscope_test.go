@@ -170,7 +170,7 @@ func TestBothDialHooksCallTheSharedPredicate(t *testing.T) {
 	var dialers, delegating int
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") ||
-			strings.HasSuffix(p, "_test.go") || strings.Contains(p, "node_modules") {
+			strings.HasSuffix(p, "_test.go") || strings.Contains(p, "node_modules") || strings.Contains(p, "third_party") {
 			return nil
 		}
 		src, err := os.ReadFile(p)

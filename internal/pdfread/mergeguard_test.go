@@ -33,7 +33,7 @@ func TestEveryMergeLoopUnionsOptionalContent(t *testing.T) {
 				return filepath.SkipDir
 			}
 			switch d.Name() {
-			case "node_modules", "vendor", "testdata":
+			case "node_modules", "vendor", "testdata", "third_party":
 				return filepath.SkipDir
 			}
 			return nil
@@ -121,7 +121,7 @@ func TestEveryMergeLoopRefusesASourceItCannotCarryWhole(t *testing.T) {
 				return filepath.SkipDir
 			}
 			switch d.Name() {
-			case "node_modules", "vendor", "testdata":
+			case "node_modules", "vendor", "testdata", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

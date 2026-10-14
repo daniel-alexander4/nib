@@ -86,7 +86,7 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 			// from `declared`, so the rename branch below reports another session's file as an
 			// undeclared door. (The sibling census guard in goroutines_test.go has the opposite
 			// failure: its floors are lower bounds, so a doubled tree passes.)
-			case ".git", ".claude", "node_modules", "web", "docs", "test":
+			case ".git", ".claude", "node_modules", "web", "docs", "test", "third_party":
 				return fs.SkipDir
 			}
 			return nil

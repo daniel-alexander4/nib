@@ -361,7 +361,7 @@ func TestWidthMeasurementHasOneDoor(t *testing.T) {
 		}
 		if info.IsDir() {
 			switch info.Name() {
-			case ".git", ".claude", "node_modules", "dist", "vendor":
+			case ".git", ".claude", "node_modules", "dist", "vendor", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

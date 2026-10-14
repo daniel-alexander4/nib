@@ -159,7 +159,7 @@ func f(ctx any) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "testdata", ".claude", "vendor":
+			case ".git", "node_modules", "testdata", ".claude", "vendor", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

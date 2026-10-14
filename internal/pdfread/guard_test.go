@@ -55,7 +55,7 @@ func TestEveryValidatingReadRoutesThroughTheDoor(t *testing.T) {
 				return filepath.SkipDir // .git, and .claude/worktrees: other checkouts, not this module
 			}
 			switch d.Name() {
-			case "node_modules", "vendor", "testdata", "pdfread":
+			case "node_modules", "vendor", "testdata", "pdfread", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

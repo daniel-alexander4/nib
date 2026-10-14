@@ -56,7 +56,7 @@ func TestEveryMissingToolRefusalGoesThroughOneDoor(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".claude", "node_modules", "web", "test", "docs":
+			case ".git", ".claude", "node_modules", "web", "test", "docs", "third_party":
 				return filepath.SkipDir
 			}
 			return nil

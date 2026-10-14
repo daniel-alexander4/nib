@@ -69,7 +69,7 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 			// rule in CLAUDE.md), each a full copy of the tree. It is gitignored, so it is not
 			// source — and walking it DOUBLES every census this guard takes. Because the floors
 			// below are lower bounds, that direction passes silently, which is the worse one.
-			case ".git", ".claude", "node_modules", "web", "docs", "test":
+			case ".git", ".claude", "node_modules", "web", "docs", "test", "third_party":
 				return fs.SkipDir
 			}
 			return nil

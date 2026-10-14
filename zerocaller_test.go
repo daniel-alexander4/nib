@@ -236,7 +236,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", ".claude", "node_modules", "web", "test", "docs",
+			case ".git", ".claude", "node_modules", "web", "test", "docs", "third_party",
 				"testdata": // the go tool never builds testdata (/pending 759 keeps an upstream copy there)
 				return filepath.SkipDir
 			}

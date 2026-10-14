@@ -2296,7 +2296,7 @@ SOFTWARE.
 
 ---
 
-## github.com/pdfcpu/pdfcpu v0.13.0
+## github.com/pdfcpu/pdfcpu v0.13.0 — modified by nib, see third_party/pdfcpu/NOTICE.nib
 
 ```
 
