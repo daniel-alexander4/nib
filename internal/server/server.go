@@ -2274,6 +2274,11 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "dynamic-xfa"})
 		return
 	}
+	// The third (ADR-164): a list of attachments, destinations or scripts Nib could not read whole.
+	if strings.Contains(msg, pdfread.NameTreeRefusal) {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "name-tree"})
+		return
+	}
 	// A vault write the vault refused in words of its own (ADR-154): 409 and its cause from every
 	// route that stores something, whichever handler voiced it. See vaulterror.go.
 	if _, ok := vaultRefusal(msg); ok {

@@ -95,6 +95,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"compare the signature block a party was shown with the one embedded (ADR-158, /pending 367).",
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
 			"fixtures (P02.S03); `sign` keeps its own `synthRevision` because testpdf feeds sign's tests.",
+		"NameTreeDoc": "test-support — testpdf's hand-written catalog name tree nested past pdfcpu's validator, or looped, " +
+			"for the tests of the name-tree door (ADR-164).",
 		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
 		"ValidatorLosses": "test-support — `pdfread`'s count of the `/Font` entries pdfcpu's validator changed, the stimulus " +
 			"of `pdfops`' ADR-129 tests: without it a fixture the validator stopped changing would pass them all.",

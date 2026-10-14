@@ -1021,7 +1021,14 @@ func treeEntries(xt *model.XRefTable) ([]embeddedEntry, error) {
 
 // nameTreeEntries is treeEntries for any catalog name tree: the `/Names /JavaScript` tree v5 hashes is
 // read by the same walk, so a malformed tree is read the same way on both axes.
+//
+// **A tree pdfcpu's validator dropped part or all of is an error, never an empty answer** (ADR-164, `/pending
+// 880`): "no attachments" and "no ceremony record" are statements about the document, and a tree this build could
+// not read whole supports neither.
 func nameTreeEntries(xt *model.XRefTable, tree string) ([]embeddedEntry, error) {
+	if pdfread.NameTreeUnread(xt, tree) {
+		return nil, fmt.Errorf("the document's /%s list: %w", tree, pdfread.ErrNameTreeUnread)
+	}
 	if xt.Names[tree] == nil && !xt.Valid {
 		if err := xt.LocateNameTree(tree, false); err != nil {
 			return nil, err

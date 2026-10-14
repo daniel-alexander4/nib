@@ -584,6 +584,11 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 	}
 	sxt := sctx.XRefTable
 	entries, err := treeEntries(sxt)
+	if errors.Is(err, pdfread.ErrNameTreeUnread) {
+		// Not "nothing to carry": the source holds files this build could not read, and the output would be the
+		// document without them (ADR-164).
+		return nil, 0, pdfread.ErrNameTreeLost
+	}
 	if err != nil || len(entries) == 0 {
 		return dst, 0, nil
 	}

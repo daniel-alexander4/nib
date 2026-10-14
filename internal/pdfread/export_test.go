@@ -24,3 +24,18 @@ func WalkedInOnePass(ctx *model.Context) bool {
 	_, ok := PagesWalked(ctx)
 	return ok
 }
+
+// The name-tree door (nametree.go, ADR-164).
+const MaxWrittenNameTreeDepth = maxWrittenNameTreeDepth
+
+var MaxNameTreeNames = &maxNameTreeNames
+
+// WalkNameTree is nib's own walk of the catalog name tree called kind in a context nothing has validated: how
+// many names it read, how deep the tree is, and whether it vouches for having read all of it once.
+func WalkNameTree(ctx *model.Context, kind string) (names, depth int, whole bool) {
+	root, _ := ctx.XRefTable.Catalog()
+	nd, _ := ctx.DereferenceDict(root["Names"])
+	td, _ := ctx.DereferenceDict(nd[kind])
+	pairs, depth, whole := walkNameTree(ctx, td)
+	return len(pairs), depth, whole
+}

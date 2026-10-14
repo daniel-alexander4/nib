@@ -138,6 +138,11 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		if err := pdfread.RefuseDynamicXFA(src); err != nil {
 			return nil, false, err
 		}
+		// Nor does the mark of a name tree nib could not read whole, and the merge carries a source's trees
+		// (`pdfread/nametree.go`, ADR-164).
+		if err := pdfread.RefuseNameTreeLoss(src); err != nil {
+			return nil, false, err
+		}
 		pdfread.PutBackValidatorLosses(src)
 		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, false, err
