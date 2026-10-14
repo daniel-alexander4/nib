@@ -53,7 +53,15 @@ import (
 
 // catalogNameTrees are the trees pdfcpu's validator reads under the catalog's `/Names`
 // (`validate/xReftable.go:292-293`). A key of that dictionary not on this list is dropped by the same rebuild
-// (`:300-305`) — a loss this file does not address.
+// (`:300-305`) — a loss this file does not address, and on purpose (`/pending 883`): the ten are every entry of
+// the name dictionary in ISO 32000-1 Table 31 and 32000-2 Table 32, so what is dropped is a key no standard
+// defines and no reader of nib's asks for.
+//
+// `/Dests` has three readers in `pdfops` that take `xt.Names["Dests"]` as it stands and do not ask
+// `NameTreeUnread` (`anchors.go`, `outlinecarry.go`, `pageselect.go`). Left so (`/pending 883`): each answers a
+// yes-or-no inside an operation that ends at `Write`, which refuses the context whole, so a lost tree read as
+// "none" never reaches a file. The one answer that is shown without a write is whether a paragraph has a
+// destination anchored to it (`grouping.go`).
 var catalogNameTrees = []string{"Dests", "AP", "JavaScript", "Pages", "Templates", "IDS", "URLS",
 	"EmbeddedFiles", "AlternatePresentations", "Renditions"}
 
@@ -202,16 +210,62 @@ func settleNameTrees(ctx *model.Context) map[string]nameTreeRead {
 		if !whole || depth <= limit {
 			continue
 		}
-		sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
-		flat := make(types.Array, 0, 2*len(pairs))
-		for _, p := range pairs {
-			flat = append(flat, p.k, p.v)
-		}
-		delete(td, "Kids")
-		delete(td, "Limits")
-		td["Names"] = flat
+		flattenNameTree(td, pairs)
 	}
 	return out
+}
+
+// flattenNameTree rewrites the tree under root as one leaf: every pair in key order in the root's own `/Names`,
+// each key and value the object the file wrote.
+func flattenNameTree(root types.Dict, pairs []nameTreePair) {
+	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+	flat := make(types.Array, 0, 2*len(pairs))
+	for _, p := range pairs {
+		flat = append(flat, p.k, p.v)
+	}
+	delete(root, "Kids")
+	delete(root, "Limits")
+	root["Names"] = flat
+}
+
+// settleIDTree does for the structure tree's `/IDTree` what settleNameTrees does for the catalog's trees
+// (`/pending 883`). It is a name tree, it is not under `/Names`, and pdfcpu's validator treats it worse than it
+// treats those: past the depth it follows it drops nothing and instead writes EMPTY strings into the `/Limits` of
+// every node it did reach (`validate/nameTree.go`, the relaxed kid loop carries on with an unset bound and
+// `validateNameTreeDictLimitsEntry` stores it in the document's own array), and the write carries them out. A
+// reader that finds an id by `/Limits` then finds none. So a tree read whole and nested deeper than the validator
+// follows is made flat here; `pdfops`' `setIDTreeEntry` adds to a root leaf as it does to any other.
+//
+// It stays flat in the output: `shapeNameTrees` rebuilds what `ctx.Names` holds, and the validator hands this tree
+// to nobody. Declared: a deep tree the walk could NOT read whole is left to the validator, damage and all.
+func settleIDTree(ctx *model.Context) {
+	if ctx == nil || ctx.XRefTable == nil {
+		return
+	}
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return
+	}
+	o, err := ctx.Dereference(root["StructTreeRoot"])
+	if err != nil {
+		return
+	}
+	st, ok := o.(types.Dict)
+	if !ok {
+		return
+	}
+	if o, err = ctx.Dereference(st["IDTree"]); err != nil {
+		return
+	}
+	td, ok := o.(types.Dict)
+	if !ok || len(td) == 0 {
+		return
+	}
+	pairs, depth, whole := walkNameTree(ctx, td)
+	if !whole || depth <= ctx.XRefTable.MaxRecursionDepth() {
+		return
+	}
+	flattenNameTree(td, pairs)
 }
 
 // unreadTrees holds, per cross-reference table, the catalog name trees pdfcpu's validator kept less of than nib's
