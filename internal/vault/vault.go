@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nib/internal/sshkey"
@@ -457,6 +458,13 @@ type Vault struct {
 	// lock is the cross-process lock on the vault file, held from beginWrite (or persist) to the
 	// end of that one write and nil otherwise. save() refuses without it. Guarded by mu.
 	lock *fileLock
+	// restores counts the times this value found an OLDER copy of the vault written over its file
+	// and wrote the current one back, and restoredAt is when it last did (Unix nanoseconds). Both
+	// are atomics so OlderCopyRestored costs no lock. In memory only: see restoreOverOlderCopy.
+	restores   atomic.Int64
+	restoredAt atomic.Int64
+	// onRestore, when set, is called after each such restore. Guarded by mu.
+	onRestore func()
 }
 
 // Path returns the vault file location within dir.
@@ -1833,17 +1841,98 @@ func (v *Vault) beginWrite() (end func(), err error) {
 		v.mu.Unlock()
 		return nil, err
 	}
-	if err := v.refresh(); err != nil {
+	olderCopy, err := v.refresh()
+	if err != nil {
 		lk.release()
 		v.mu.Unlock()
 		return nil, err
 	}
 	v.lock = lk
+	if olderCopy {
+		if err := v.restoreOverOlderCopy(); err != nil {
+			v.lock = nil
+			lk.release()
+			v.mu.Unlock()
+			return nil, err
+		}
+	}
 	return func() {
 		v.lock = nil
 		lk.release()
 		v.mu.Unlock()
 	}, nil
+}
+
+// restoreOverOlderCopy writes this value's vault back over an older copy of it that another writer
+// left in the file, and records that it did (ADR-159, /pending 873 part 2). Called by beginWrite
+// alone, under v.mu and the cross-process lock, when refresh has found the file's generation BELOW
+// the one this process last wrote.
+//
+// # Why here, and not left to the write in hand
+//
+// The write that follows used to be what restored the file, and nothing said it had. Two things
+// were wrong with that. Several mutators return before they save — a key already authorized,
+// nothing to prune — so the older copy, with the removed key's slot in it and under the old
+// content key, STAYED on disk until some later write happened to change something. And a restore
+// nobody is told about leaves the other writer running: it writes its old copy back at its own
+// next save, and the removed key is authorized again for as long as that lasts.
+//
+// So the restore is a write of its own, before the mutator judges anything, and it is counted.
+// Through the door with an empty change: what is written is memory exactly as it is.
+//
+// # What is recorded, and where
+//
+// A count and the time of the last one, in this value's memory (OlderCopyRestored). Not in the
+// vault: it is something this PROCESS saw, about another process that is running now; after a
+// restart there is nothing left to act on, and a field in the payload would be one more thing the
+// older writer's copy does not carry. Recorded only once the restore has landed — a restore that
+// fails is the mutator's error, on every route (ADR-154), and the next write finds the older copy
+// again.
+//
+// # What a lower generation can be
+//
+// The generation moves only when a key is removed (ADR-144), so this is reached only on a vault
+// that has had one removed. The file is then one of two things, which nothing in it tells apart:
+// a writer that predates the counter or the lock (a published build, still running) wrote its
+// copy back, or another process imported a backup made before the removal. Both are restored
+// (ADR-144 decision 5, ADR-154), and the sentence the window shows names both. An import by THIS
+// process never reaches here: Replace retires the value, and the vault opened from the imported
+// file starts at that file's generation.
+func (v *Vault) restoreOverOlderCopy() error {
+	if err := v.mutateLocked(func() {}); err != nil {
+		return err
+	}
+	v.restoredAt.Store(time.Now().UnixNano())
+	v.restores.Add(1)
+	if v.onRestore != nil {
+		v.onRestore()
+	}
+	return nil
+}
+
+// OlderCopyRestored reports how many times this value has found an older copy of the vault written
+// over its file and put the current one back, and when it last did. Zero and the zero time mean it
+// has not happened since this value was opened — which is all it can mean on a vault no key was
+// ever removed from, where the generation is 0 and nothing can be below it.
+//
+// Lock-free, so a status path may read it on every answer. Detection is at this process's next
+// vault WRITE and not before: an older copy sits on disk, unreported, for as long as this process
+// stores nothing.
+func (v *Vault) OlderCopyRestored() (n int, last time.Time) {
+	n = int(v.restores.Load())
+	if at := v.restoredAt.Load(); at != 0 {
+		last = time.Unix(0, at)
+	}
+	return n, last
+}
+
+// NotifyOlderCopyRestored has fn called after every such restore, so a holder can tell the user
+// while the other writer is still running. fn runs under this vault's lock: it must return at once
+// and must not call the vault.
+func (v *Vault) NotifyOlderCopyRestored(fn func()) {
+	v.mu.Lock()
+	v.onRestore = fn
+	v.mu.Unlock()
 }
 
 // refresh makes this value's contents and slots the file's, where another process has written the
@@ -1864,7 +1953,8 @@ func (v *Vault) beginWrite() (end func(), err error) {
 //   - The file's generation is ABOVE this value's: another process replaced the content key
 //     (ADR-144). This value cannot read it — ErrKeyChanged, as save() answered before.
 //   - BELOW: a writer that predates the counter wrote its old state over a rotated file. Memory
-//     is kept and the save that follows restores the removal (ADR-144 decision 5).
+//     is kept, olderCopy is true, and beginWrite writes memory back at once and records it
+//     (restoreOverOlderCopy, ADR-159; ADR-144 decision 5).
 //   - The same, under the nonce this value last saw: nothing has been written since. This is every
 //     write of a Nib running alone, and it costs the head read and nothing more.
 //   - The same, under another nonce: read whole and opened with this value's key. If it opens,
@@ -1880,37 +1970,39 @@ func (v *Vault) beginWrite() (end func(), err error) {
 // own last write until its next one; a second process's pinned peer appears here after this
 // process next stores anything. Refreshing them costs a file open on every Settings() and Keys()
 // call on the request path, and is not done until that is asked for.
-func (v *Vault) refresh() error {
+func (v *Vault) refresh() (olderCopy bool, err error) {
 	if v.unproven {
-		return nil
+		return false, nil
 	}
 	gen, nonce, ok := headOf(v.path)
 	switch {
-	case !ok, gen < v.onDisk:
-		return nil
+	case !ok:
+		return false, nil
+	case gen < v.onDisk:
+		return true, nil
 	case gen > v.onDisk:
-		return ErrKeyChanged
+		return false, ErrKeyChanged
 	case nonce != nil && bytes.Equal(nonce, v.seen):
-		return nil
+		return false, nil
 	}
 	env, err := readEnvelope(filepath.Dir(v.path))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
+		return false, fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
 	}
 	if env.Gen != v.onDisk {
-		return ErrChangedElsewhere
+		return false, ErrChangedElsewhere
 	}
 	plain, err := decrypt(v.key, env.Nonce, env.Cipher)
 	if err != nil {
-		return ErrChangedElsewhere
+		return false, ErrChangedElsewhere
 	}
 	c, err := decodeContents(plain)
 	zero(plain)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
+		return false, fmt.Errorf("%w: %w", ErrChangedElsewhere, err)
 	}
 	v.contents, v.ssh, v.seen = c, env.SSH, env.Nonce
-	return nil
+	return false, nil
 }
 
 // envelopeVersion is what this build writes, and the highest it will open.

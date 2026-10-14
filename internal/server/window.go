@@ -544,7 +544,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// What this connection last put on the wire, so each event is sent only when it moves. Per
 	// connection, never shared: a window that arrives mid-download must receive the current state
 	// on its first pass, which a server-wide "last sent" would skip.
-	var lastArmed, lastDownload string
+	var lastArmed, lastDownload, lastVault string
 	// A window hears the hand-offs that arrive while it is open, never the ones before it (ADR-086):
 	// `lastHandoff` is windowArrived's, taken as the window was counted.
 	for {
@@ -574,6 +574,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// whichever channel was obtained last.
 		dlChanged := s.dl.changes()
 		hoChanged := s.push.changes()
+		vaultChanged := s.vaultWake.changes()
 		// **What is armed, not merely whether.** "Names a live ceremony specifically, not
 		// generically" (P01.S06) cannot be met from a bool, and the name is the ceremony's own
 		// INTENT — the convener's words for what this proceeding is — never a fingerprint, which
@@ -621,12 +622,30 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 			lastHandoff = ev.seq
 			flusher.Flush()
 		}
+		// The open vault put itself back over an older copy (ADR-159). The state is the vault's and
+		// is sent on difference, so a window that connects afterwards hears the last one too — the
+		// other writer may still be running — and the page says each one once, by its time. What it
+		// costs each wake: s.mu for the pointer and two atomic loads.
+		if n := vaultRestoredNotice(s.unlockedVault()); n != nil {
+			vPayload, vErr := json.Marshal(n)
+			if vErr != nil {
+				return
+			}
+			if string(vPayload) != lastVault {
+				if _, err := w.Write(append(append([]byte("event: vault\ndata: "), vPayload...), '\n', '\n')); err != nil {
+					return
+				}
+				lastVault = string(vPayload)
+				flusher.Flush()
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-changed:
 		case <-dlChanged:
 		case <-hoChanged:
+		case <-vaultChanged:
 		}
 	}
 }
