@@ -798,6 +798,11 @@ previous/next, undo/redo — and, only while a drawing or placing tool is armed,
 with a button to put it down. On the right: the layouts above, the zoom controls, then save, print,
 reload and quit.
 
+**Quit** (the power button) ends Nib and closes its windows — every one, not only the one you pressed
+it in. If something would be lost it says what first: the ceremony by name, each unsaved document by
+name. A browser occasionally will not let a page close its own window (a tab you had used for something
+else before Nib); that window is left saying *Nib has quit* and can be closed by hand.
+
 The zoom controls are out, the current zoom as a percentage (click it for **Actual size**, 100%),
 in, **Fit width** and **Fit page**. Fit
 width and Fit page both measure the *whole* document and lock a single scale, so a file whose pages

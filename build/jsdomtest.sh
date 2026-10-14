@@ -119,7 +119,9 @@ fi
 # shape and the other tag files' trees are asserted on by position.
 # 109 since /pending 888 (scanfields.test.mjs): the fourth removal in the hidden-content dialog — its own boot,
 # because it answers the page's confirm and no other file does.
-Nib_expect_files=109
+# 111 since ADR-169 (quitbutton.test.mjs, quitevent.test.mjs): the power button and the stream's quit event each
+# leave the page saying Nib has quit and closed — each its own boot, because quitting is for the page's whole life.
+Nib_expect_files=111
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

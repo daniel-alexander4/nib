@@ -305,7 +305,9 @@ fi
 # rewrites the answer to a page operation on its way to the page and the other leaves a signed ceremony behind.
 # 55 since /pending 887 (autolink.test.mjs): a web address in a page's text is a link only after pdf.js's own
 # late step, and whether a rotation and a resize landing inside that step lose it is timing in a real renderer.
-expect_files=55
+# 56 since ADR-169 (quit.test.mjs): the power button pressed in a window opened the way Nib opens one — its own nib,
+# because Quit ends the process, and its own Chrome, because the harness's page is one Chrome will not let close.
+expect_files=56
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

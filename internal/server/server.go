@@ -252,6 +252,8 @@ type Server struct {
 	// vaultWake wakes the window streams when the open vault has put itself back over an older
 	// copy; see vaultrestored.go (ADR-159). Its own mutex, like dl.
 	vaultWake vaultRestoreWake
+	// quit tells the window streams that Quit was pressed, so each window can close itself (ADR-169).
+	quit quitTell
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
