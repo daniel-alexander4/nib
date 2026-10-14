@@ -223,8 +223,7 @@ test('a list Nib cannot carry is announced at the open, with no removal Nib cann
   unreadLists = ['EmbeddedFiles']; unreadWhat = 'its attachments';
   await openDocument();
   assert.equal(listShown(), true, 'a document every change of which will be refused opened with no notice');
-  assert.match(listText(), /holds its attachments, which Nib could not read in full/, `the notice says ${JSON.stringify(listText())}`);
-  assert.match(listText(), /will not change this document\.$/, `the notice says ${JSON.stringify(listText())}`);
+  assert.match(listText(), /^Nib cannot change this document: it holds its attachments, which Nib could not read in full\.$/, `the notice says ${JSON.stringify(listText())}`);
   assert.equal(removeShown(), false, 'Remove it is offered for attachments — it removes only a web capture record');
 });
 
@@ -233,7 +232,7 @@ test('a web capture record is announced with its removal, and the removal clears
   await openDocument();
   assert.equal(listShown(), true, 'a web capture record Nib could not read opened with no notice');
   assert.match(listText(), new RegExp('holds ' + WEB), `the notice says ${JSON.stringify(listText())}`);
-  assert.match(listText(), /until it is removed\.$/, `the notice does not say the way out: ${JSON.stringify(listText())}`);
+  assert.match(listText(), /Remove it to make changes\.$/, `the notice does not say the way out: ${JSON.stringify(listText())}`);
   assert.equal(removeShown(), true, 'the notice does not offer the removal');
   const n = doc.getElementById('listNotice');
   assert.equal(n.getAttribute('role'), 'status', 'the notice carries no role');
