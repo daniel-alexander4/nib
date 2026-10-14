@@ -13,7 +13,7 @@ for (const [dir, name] of [['w2p', 'filled in the window (pdf.js), read by pdfcp
   console.log(`${name}:`);
   console.log(`  ${t.fields} values written · ${t.ok} read back as written (${pct(t.ok, t.fields)}) · ${t.wrong} read back as something else · ${t.missing} not found by name`);
   console.log(`  documents with any value wrong or missing: ${docsWith(dir, (r) => r.wrong || r.missing)} · documents the step failed on outright: ${docsWith(dir, (r) => r.error)}`);
-  console.log(`  drawn: ${t.drawn} of ${t.drawn + t.notDrawn} values the page shows changed (${pct(t.drawn, t.drawn + t.notDrawn)})${t.drawErrors ? ` · documents pdf.js could not draw: ${t.drawErrors}` : ''}`);
+  console.log(`  drawn: ${t.drawn} of ${t.drawn + t.notDrawn} values the page shows changed (${pct(t.drawn, t.drawn + t.notDrawn)})${t.tooSmall ? ` · in a field too small to draw (under 4 pt): ${t.tooSmall}` : ''}${t.drawErrors ? ` · documents pdf.js could not draw: ${t.drawErrors}` : ''}`);
   for (const [kind, k] of Object.entries(t.byKind || {})) {
     const how = Object.entries(k.how).map(([h, n]) => `${h} ${n}`).join(', ');
     console.log(`    ${kind}: ${k.asked} written · ${k.ok} as written · ${k.wrong} something else${how ? ` (${how})` : ''} · ${k.missing} not found · drawn ${k.drawn} of ${k.drawn + k.notDrawn}`);
