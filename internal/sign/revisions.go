@@ -99,6 +99,11 @@ type Revision struct {
 	// underPerms is whether the catalog's `/Perms` names this dictionary — a usage-rights or DocMDP
 	// signature, which lives outside the form and may lawfully have no `/SigFlags` beside it.
 	underPerms bool
+	// name and reason are the dictionary's `/Name` and `/Reason` as `Verify` reports them
+	// (`Value.Text`): text the signer typed, never evidence (ADR-051). Held for one reader,
+	// `signedAsIntended`, which asks whether the signature nib just made says what it was asked to
+	// (ADR-163).
+	name, reason string
 
 	// conjunct is which of the eleven structure conjuncts refused the record (0 = none). The
 	// public vocabulary is Cause; `malformed-byterange` lumps nine conjuncts, so a fixture built
@@ -229,6 +234,8 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 			offset:      x.Offset(),
 			hasContents: len(v.Key("Contents").RawString()) > 0,
 			underPerms:  perms[ptr.GetID()],
+			name:        v.Key("Name").Text(),
+			reason:      v.Key("Reason").Text(),
 		}
 		rev.Timestamp = rev.Type == "DocTimeStamp" || rev.SubFilter == "ETSI.RFC3161"
 		var allInts bool
