@@ -159,6 +159,11 @@ const (
 	// reader for one document (`maxLibrarySignatures`, /pending 735, ADR-141), so it was refused before
 	// any of them was hashed and none was checked.
 	UncheckedTooManySignatures UncheckedCause = "too-many-signatures"
+	// UncheckedEncrypted: the file is encrypted in a way the signature reader does not decrypt (AES), so
+	// it read nothing of the document and the signature it carries was never checked (/pending 889). Three
+	// real documents — a forms engine's output, encrypted to forbid changes, opening with no password —
+	// read `Invalid` with no cause, and every reader said "modified since signing".
+	UncheckedEncrypted UncheckedCause = "encrypted"
 )
 
 // AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
@@ -302,7 +307,7 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// (`TestNoProducerSignatureIsRefused` asserts it per source).
 	revs, sweepErr := sweepRevisions(data)
 	if sweepErr != nil {
-		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: sweepUnchecked(sweepErr)}, nil, sweepErr
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: sweepUnchecked(sweepErr, ctx.XRefTable.Encrypt != nil)}, nil, sweepErr
 	}
 	return verifySwept(data, ctx, revs)
 }
@@ -564,7 +569,11 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 // A refused record or a timestamp is its own answer and is left alone: `Refused` and `Timestamps`
 // already name it, and the readers already say "no signature Nib could check" beside them.
 func uncheckedOf(st Status, data []byte, unseen bool) UncheckedCause {
-	if !unseen && (st.State != Invalid || len(st.Signers) > 0 || len(st.Refused) > 0 || len(st.Timestamps) > 0 || st.AddedAfter) {
+	// An `AddedAfter` whose own cause is `could-not-check` is not an answer to "why was no signer read" — it is the
+	// same absence said of the coverage (/pending 889). Three real documents read `Invalid`, no signer, nothing
+	// refused, `could-not-check`, and every reader said "modified since signing" of signatures nobody had checked.
+	said := st.AddedAfter && st.AddedAfterCause != AddedAfterCouldNotCheck
+	if !unseen && (st.State != Invalid || len(st.Signers) > 0 || len(st.Refused) > 0 || len(st.Timestamps) > 0 || said) {
 		return ""
 	}
 	if hybridReference(data) {
@@ -577,9 +586,17 @@ func uncheckedOf(st Status, data []byte, unseen bool) UncheckedCause {
 // lookup-cost ceiling refuses the document on purpose, before anything is read, and a verdict that
 // said only `Invalid` would read as "modified since signing" of a document nobody checked (/pending
 // 760). Any other sweep error — a panic on corruption — is left unnamed, as it was.
-func sweepUnchecked(err error) UncheckedCause {
+//
+// And a sweep that failed on an ENCRYPTED file is named (/pending 889): the signature reader decrypts RC4 and
+// nothing newer, so it reads nothing of an AES document ("AES not implemented" at 128 bits, "256-bit encryption
+// key" at 256) and the same unnamed `Invalid` followed. Asked of the file pdfcpu read — encrypted, or not — and
+// never of the reader's sentence, which differs by key length.
+func sweepUnchecked(err error, encrypted bool) UncheckedCause {
 	if errors.Is(err, errLookupCostCeiling) {
 		return UncheckedLookupCost
+	}
+	if encrypted {
+		return UncheckedEncrypted
 	}
 	return ""
 }
