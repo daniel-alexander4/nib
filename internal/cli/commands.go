@@ -378,7 +378,9 @@ func cmdPages(args []string) int {
 	inPlaceFlag(fs, &inPlace)
 	fs.StringVar(&keep, "keep", "", "keep (and reorder to) this selection, e.g. 1-3,5")
 	fs.StringVar(&remove, "remove", "", "delete this selection, e.g. 2,4")
-	fs.Usage = usageFunc(fs, "nib pages IN -o OUT (--keep SEL | --remove SEL)", "Keep/reorder pages, or delete them, by selection.")
+	fs.Usage = usageFunc(fs, "nib pages IN -o OUT (--keep SEL | --remove SEL)", "Keep/reorder pages, or delete them, by selection.\n"+
+		"The result is the same document: its title, ID, metadata and attached files stay, with -o and with -w.\n"+
+		"For an excerpt that carries none of them, use `nib split`.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}

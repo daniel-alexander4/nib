@@ -1574,7 +1574,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
 | `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
 | `nib rotate IN -o OUT --deg N` | Rotate pages by 90/180/270° (`--pages 1-3,5` to limit; or `-w FILE…`). |
-| `nib pages IN -o OUT --keep SEL` | Keep/reorder pages (`--keep 1-3,5`) or delete them (`--remove 2,4`). The result is the same document — its title and attached files stay; `nib split` is what makes new files out of one. |
+| `nib pages IN -o OUT --keep SEL` | Keep/reorder pages (`--keep 1-3,5`) or delete them (`--remove 2,4`). The result is the same document — its title, ID, metadata and attached files stay, whether it is written beside the input (`-o`) or over it (`-w`); for an excerpt that carries none of them, use `nib split`. |
 | `nib split IN --out-dir DIR …` | Burst into one file per chunk (`--every N`), range (`--ranges 1-3,4-8`), or `--bookmarks`. |
 | `nib encrypt IN -o OUT` | Add AES-256 password protection (`--password-file FILE` or `$NIB_PDF_PASSWORD`, required; an already-encrypted PDF is reported, not re-encrypted). |
 | `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
