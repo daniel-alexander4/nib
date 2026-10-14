@@ -568,6 +568,16 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// Holding the channel first closes it: a change after this line closes a channel this
 		// loop already has, and the select returns at once.
 		changed := s.sess.armedChanges()
+		// Quit was pressed (ADR-169): this window is told, so it can close itself, and the stream ends.
+		// Looked at before anything else is written, so a window that connects while Nib is quitting
+		// hears it too.
+		quitAsked := s.quit.asked()
+		select {
+		case <-quitAsked:
+			s.tellQuit(w, flusher)
+			return
+		default:
+		}
 		// **The download's wake is taken in the same breath as the armed one, and BEFORE either
 		// state is read** — `/pending 464`'s rule applied to a second broadcaster. Subscribing to
 		// one and then reading both would reopen exactly the window that bug lived in, for
@@ -642,11 +652,68 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-quitAsked:
+			s.tellQuit(w, flusher)
+			return
 		case <-changed:
 		case <-dlChanged:
 		case <-hoChanged:
 		case <-vaultChanged:
 		}
+	}
+}
+
+// quitTell is how Quit reaches every open window before the process goes (ADR-169).
+//
+// The window is the user's own browser's — Nib started it and does not own it (`internal/browser`), so
+// nothing on this side can close it. A page can close itself, and only if it is told: without this a
+// window learns of a quit as a dropped stream, which is also what a crash looks like, and says
+// "could not reach Nib".
+type quitTell struct {
+	mu    sync.Mutex
+	ch    chan struct{} // closed once Quit is pressed
+	heard chan struct{} // one send per window stream that has written the event
+}
+
+// asked is the channel a window stream waits on.
+func (q *quitTell) asked() <-chan struct{} {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.ch == nil {
+		q.ch = make(chan struct{})
+		q.heard = make(chan struct{}, 64)
+	}
+	return q.ch
+}
+
+// tell wakes every window stream, once.
+func (q *quitTell) tell() {
+	q.asked()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	select {
+	case <-q.ch:
+	default:
+		close(q.ch)
+	}
+}
+
+// quitEvent is the frame a window closes itself on.
+const quitEvent = "event: quit\ndata: {}\n\n"
+
+// quitTellWait is the longest Quit waits for the open windows to be told before the process exits. The write
+// is to a loopback socket a page is reading; the bound is for a window that has stopped reading, which must
+// not be able to hold a quit.
+const quitTellWait = 500 * time.Millisecond
+
+// tellQuit writes the event on one window's stream and says it did.
+func (s *Server) tellQuit(w http.ResponseWriter, flusher http.Flusher) {
+	if _, err := w.Write([]byte(quitEvent)); err == nil {
+		flusher.Flush()
+	}
+	select {
+	case s.quit.heard <- struct{}{}:
+	default:
 	}
 }
 
@@ -657,6 +724,8 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 // a Nib its user wants to quit. The session token is the page's from launch, independent of the
 // vault (ADR-054), so a locked window holds it too.
 //
+// **It tells every open window before it signals** (ADR-169), so each can close itself; see quitTell.
+//
 // **It decides nothing about what would be lost.** The confirmation is the client's, because the
 // client is where the user is and where the wording lives (D5); this end is the mechanism. A
 // server that second-guessed the answer would be a second place deciding, which is the shape the
@@ -665,6 +734,20 @@ func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {
 	// Recorded HERE and not left to the window stream's close: the exit closes that stream, and the
 	// teardown does not wait for a handler to finish a vault write (ADR-085).
 	s.recordLastOpen()
+	// Every open window is told first, and waited for — briefly (ADR-169). The exit closes their streams, and a
+	// frame written as the server goes down may never be read.
+	open := int(s.windows.n.Load())
+	s.quit.tell()
+	wait := time.NewTimer(quitTellWait)
+	defer wait.Stop()
+told:
+	for i := 0; i < open; i++ {
+		select {
+		case <-s.quit.heard:
+		case <-wait.C:
+			break told
+		}
+	}
 	s.RequestExit(exitCauseQuit)
 	w.WriteHeader(http.StatusNoContent)
 }

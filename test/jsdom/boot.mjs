@@ -134,7 +134,7 @@ export async function boot({ routes = {}, search = '', token = 'test-csrf' } = {
 
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
 
-    close() {}
+    close() { this.closed = true; }
   };
   dom.window.EventSource = globalThis.EventSource;
 
@@ -237,6 +237,8 @@ export async function boot({ routes = {}, search = '', token = 'test-csrf' } = {
     // The URLs the page opened its window stream at — ADR-054 puts the token in it, since an
     // EventSource cannot set a header.
     windowStreamURLs: () => windowStreams.map((es) => es.url),
+    // Whether the page closed its window stream itself — it does only when Nib is quitting (ADR-169).
+    windowStreamsClosed: () => windowStreams.length > 0 && windowStreams.every((es) => es.closed === true),
     calls,
     rejections,
     confirms,

@@ -1,11 +1,11 @@
 diff --git a/internal/server/window.go b/internal/server/window.go
 --- a/internal/server/window.go
 +++ b/internal/server/window.go
-@@ -565,7 +565,6 @@
+@@ -733,7 +733,6 @@
  func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {
  	// Recorded HERE and not left to the window stream's close: the exit closes that stream, and the
  	// teardown does not wait for a handler to finish a vault write (ADR-085).
 -	s.recordLastOpen()
- 	s.RequestExit(exitCauseQuit)
- 	w.WriteHeader(http.StatusNoContent)
- }
+ 	// Every open window is told first, and waited for — briefly (ADR-169). The exit closes their streams, and a
+ 	// frame written as the server goes down may never be read.
+ 	open := int(s.windows.n.Load())

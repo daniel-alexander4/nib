@@ -17003,14 +17003,22 @@ const LAUNCH_WORDS = {
   none: 'This window is not connected to Nib. Open Nib from your applications menu (or run nib) and it will open a window that is.',
   lost: 'This window lost its connection to Nib — Nib was restarted or closed. Open Nib from your applications menu (or run nib) to get a working window. Changes you had not saved in this window may be gone.',
   unreachable: 'Could not reach Nib — it may have stopped. Open Nib from your applications menu (or run nib) to start it again.',
+  quit: 'You quit Nib. You can close this window.',
 };
+// quitting is true from the moment this window is told Nib is quitting (ADR-169). Two things read it: the screen
+// above keeps saying so — the stream that drops next would otherwise replace it with "could not reach Nib" — and
+// the close prompt stands down, because the question it asks was answered in Quit's own dialog.
+let quitting = false;
 // showLaunchOverlay puts up the one screen a page without a working token can show, and makes
 // everything behind it unreachable (the P08 phase-close review, R7-3): every other top-level element
 // goes inert — no focus, no clicks — the overlay sits above every modal, and global shortcuts are
 // swallowed while it is up. `reason` picks the words: 'none' (never had a token), 'lost' (Nib
 // restarted or stopped under this page), 'unreachable' (nothing answered).
 function showLaunchOverlay(reason) {
+  if (quitting && reason !== 'quit') return;
   els.launchText.textContent = LAUNCH_WORDS[reason] || LAUNCH_WORDS.none;
+  const title = document.getElementById('launchTitle');
+  if (title && reason === 'quit') title.textContent = 'Nib has quit';
   if (!els.launchOverlay.hidden) return;
   for (const el of document.body.children) if (el !== els.launchOverlay) el.inert = true;
   // And anything added later — a modal built after the screen went up (#6).
@@ -17058,8 +17066,11 @@ let ceremonyArmedWhat = '';
 // ends every view — the exact defect that shipped once already for Close-All, where "the other
 // document's typed overlays, its overlay undo stack and its server history were discarded with NO
 // prompt at all". `editedViews` exists because of that and is the honest question here too.
+//
+// **And nothing once Nib is quitting** (ADR-169): Quit's own dialog named what would be lost and was answered, so
+// the window that closes itself next must not be met by the browser's unexplained one.
 function closeWouldLose() {
-  return ceremonyArmed || editedViews().length > 0;
+  return !quitting && (ceremonyArmed || editedViews().length > 0);
 }
 
 // **The browser will not show our words, and that is D5's whole shape.** Chrome, Firefox and Safari
@@ -17084,8 +17095,11 @@ window.addEventListener('beforeunload', (e) => {
 // dialog on every quit trains the user to dismiss it, and then it is worth nothing on the quit that
 // mattered.
 //
-// The route only signals; the teardown is `run()`'s, unchanged, which is D6. And the window is left
-// to the browser: a process that has gone takes its own window with it.
+// The route only signals; the teardown is `run()`'s, unchanged, which is D6.
+//
+// **And the window goes with it (ADR-169).** This said "a process that has gone takes its own window with it",
+// and it does not: the window is the user's browser's, which Nib started and does not own, so it stayed up saying
+// it could not reach Nib. A page can close itself, so every window is told and each one does (`leaveForQuit`).
 async function quitNib() {
   const lose = [];
   if (ceremonyArmed) {
@@ -17099,9 +17113,29 @@ async function quitNib() {
   if (lose.length && !confirm(`Quit Nib? ${lose.join(', and ')}. Quitting ends ${lose.length > 1 ? 'them' : 'it'}.`)) {
     return;
   }
-  try { await apiFetch('/api/quit', { method: 'POST', unpinned: true }); } catch { /* the process is going; a dropped response is the expected shape */ }
+  // This window hears of the quit on its stream like every other, usually before this answers. Leaving here as
+  // well covers the frame that is lost as the server goes down. A refusal is not a quit: nothing closes.
+  try {
+    const res = await apiFetch('/api/quit', { method: 'POST', unpinned: true });
+    if (res.ok) leaveForQuit();
+  } catch (e) {
+    if (e instanceof TypeError) leaveForQuit(); // nothing answered: the process has already gone
+  }
 }
 els.quitBtn.onclick = () => quitNib();
+
+// leaveForQuit is what a window does once Nib is quitting: it says so, and closes itself (ADR-169).
+//
+// The screen first, so a browser that will not let this page close itself is left showing the truth rather than
+// the error a dropped connection puts up. Measured: Chrome closes a page whose history is the one entry it was
+// opened on — every window Nib launches, app window or tab — and refuses one that had history before Nib loaded;
+// Firefox closed it too. Where it works, nobody sees the screen.
+function leaveForQuit() {
+  if (quitting) return;
+  quitting = true;
+  showLaunchOverlay('quit');
+  window.close();
+}
 
 // One connection, opened at launch and never closed by us. Nib counts the windows
 // holding it; P01.S04 will read that count to decide the process has no reason to
@@ -17119,7 +17153,7 @@ els.quitBtn.onclick = () => quitNib();
 //
 // EventSource for its reconnect FIRST, and since P01.S05 for one message too. A transient
 // drop reconnects on its own, which is what keeps a blip from reading as a closed window
-// inside the grace (P01.S04). It is deliberately never closed: nothing in the app may end
+// inside the grace (P01.S04). It is closed by this side only when Nib is quitting (ADR-169): nothing else may end
 // it, because ending it means telling nib this window is gone.
 //
 // **The one message is the machine's armed state**, pushed on connect and on change, and the
@@ -17145,6 +17179,12 @@ try {
   // The open vault put itself back over an older copy another Nib wrote (ADR-159).
   windowStream.addEventListener('vault', (e) => {
     try { reflectVaultRestored(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
+  });
+  // Quit was pressed, in this window or another (ADR-169). The stream is closed by this side so it does not
+  // reconnect to a process that is going.
+  windowStream.addEventListener('quit', () => {
+    windowStream.close();
+    leaveForQuit();
   });
   windowStream.addEventListener('armed', (e) => {
     try {
