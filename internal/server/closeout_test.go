@@ -493,7 +493,7 @@ func TestACompletedCeremonyIsClosedOutWhenItsDocumentArrives(t *testing.T) {
 			signer = p.Fingerprint
 		}
 	}
-	st := ceremony.Stored{ID: rec.ID, State: ceremony.LoadOK, Expires: time.Now().Add(48 * time.Hour)}
+	st := ceremony.Stored{ID: rec.ID, State: ceremony.LoadOK, Intent: rec.Intent, Expires: time.Now().Add(48 * time.Hour)}
 
 	// SETUP and negative arm in one: no delivered document, no end state, inside the grace.
 	if _, closed := closeOutReason(st, rec, signer, time.Now()); closed {

@@ -181,7 +181,17 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 			}
 			continue
 		}
-		rec, _, rerr := ceremony.ReadMirror(root, st.ID, now)
+		// **The document is opened only for a ceremony that might close out (/pending 360).** This
+		// loop read every stored ceremony's document through `ReadMirror` — a whole-file read, a
+		// checksum and, while the document is unsigned, a full content digest — to reach a decision
+		// that for a live ceremony is "no" from `record.json` alone. `mightCloseOut` is that half:
+		// it can only say "definitely not now", and `closeOutReason` opens with the same call, so a
+		// ceremony skipped here is one the strong door below would also have left exactly where it
+		// is. Everything that MIGHT close still goes through `ReadMirror` first.
+		if !mightCloseOut(st, now) {
+			continue
+		}
+		rec, _, rerr := readMirrorForCloseOut(root, st.ID, now)
 		if rerr != nil {
 			// Unreadable from the stronger door even though the listing classified it `LoadOK`.
 			// Left alone for `closeOutReason`'s reason: a directory is never moved on the
@@ -259,11 +269,16 @@ func attestedEndWithoutRecord(v *vault.Vault, root, id string) (string, bool) {
 // built those four classes for exactly this decision and they all mean "leave it". (A ceremony with
 // NO record is not this function's: `attestedEndWithoutRecord` answers for it, on a signed
 // termination alone.)
+//
+// **It opens with `mightCloseOut`, and that is what makes the sweep's skip safe (/pending 360).**
+// The sweep asks the same function before it opens a document; because nothing below that line can
+// answer yes when it answered no, "skipped unread" and "read and left alone" are one outcome by
+// construction rather than by two predicates happening to agree.
 func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time.Time) (string, bool) {
-	if st.State != ceremony.LoadOK {
+	if !mightCloseOut(st, now) {
 		return "", false
 	}
-	past := !st.Expires.IsZero() && now.After(st.Expires.Add(closeOutGrace))
+	past := pastTheGrace(st, now)
 	switch {
 	case st.Ended != "":
 		if roundIsFinished(rec, me, st.Ended) || past {
@@ -291,6 +306,44 @@ func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time
 	}
 	return "", false
 }
+
+// pastTheGrace is the abandoned test: the record's own deadline passed more than `closeOutGrace`
+// ago. One definition, read by `mightCloseOut` and by `closeOutReason`'s branches.
+func pastTheGrace(st ceremony.Stored, now time.Time) bool {
+	return !st.Expires.IsZero() && now.After(st.Expires.Add(closeOutGrace))
+}
+
+// mightCloseOut is the close-out's CHEAP half: whether this ceremony could be closed out at all,
+// answered from the listing's row — `record.json`, the termination beside it and one stat — with
+// the document unopened (/pending 360, decision B).
+//
+// **It can only answer "definitely not now"; it never closes anything.** `closeOutReason` has
+// exactly three ways to say yes: an attested end (`Stored.Ended`), the finished document having
+// arrived (`deliveredAt`), and a deadline past its grace. With none of the three it answers no for
+// every record there is, so a ceremony refused here is one the strong door would have read and
+// left where it stands. A yes decides nothing: the sweep still reads the mirror through
+// `ReadMirror` — which is where a damaged or truncated copy refuses — and still asks
+// `closeOutReason`, which is where an unfinished delivery round holds an ended ceremony open.
+//
+// **Every input is one the decision already rested on.** `Ended` and `Expires` were read from the
+// listing's row before this existed; the only field newly read from it is `Intent`, half of the
+// delivered document's name, and it comes out of the same verified `record.json` that `ReadMirror`
+// re-reads. A row and a record that disagree — the file replaced between the two reads — make the
+// close-out stricter, never looser: `closeOutReason` then needs both to say yes.
+//
+// **Not `LoadOK` is "no", for `closeOutReason`'s reason**: a record that did not read has no
+// trustworthy deadline. (No record at all is `attestedEndWithoutRecord`'s, before this is asked.)
+func mightCloseOut(st ceremony.Stored, now time.Time) bool {
+	if st.State != ceremony.LoadOK {
+		return false
+	}
+	return st.Ended != "" || pastTheGrace(st, now) || deliveredAt(st.Intent, st.ID)
+}
+
+// readMirrorForCloseOut is the sweep's read of a stored ceremony — a variable so a test can count
+// which ceremonies had their document opened, the one observable of a change whose whole point is
+// that nothing else differs.
+var readMirrorForCloseOut = ceremony.ReadMirror
 
 // roundIsFinished answers whether the delivery round is done with this ceremony, on THIS machine.
 //

@@ -621,8 +621,14 @@ type ceremoniesResponse struct {
 // half is intact and is the reason the listing carries no signature count and no "next action". But
 // `closeOutEnded`, three lines below, loops `ceremony.ReadMirror` over EVERY stored ceremony with no
 // `LoadOK` filter, no cap and no pagination, and discards the bytes it read. So the route pays a
-// full document read per ceremony and this comment said the opposite of the code beneath it. That
-// is `/pending 360`, still open; what is fixed here is the sentence, not the cost.
+// full document read per ceremony and this comment said the opposite of the code beneath it.
+//
+// **That was `/pending 360`, and it is closed: the sweep now opens a document only for a ceremony
+// that might close out** (`mightCloseOut` — an attested end, an arrived document, or a deadline past
+// its grace; everything that might close still goes through `ReadMirror`). Measured 2026-10-12 on
+// live ceremonies holding a 0.55 MB unsigned document each, three runs, on a machine at load
+// average 8–33 (so the "before" figures are upper ones): 5 ceremonies 3.7–6.6 s → 2–3 ms, 50
+// ceremonies 52–102 s → 48–86 ms, 200 ceremonies 170–381 s → 56–64 ms — the listing's own cost.
 //
 // The cost, MEASURED at P04.S02 (`internal/p2p/railcost_test.go`) rather than quoted — the
 // 10/69/195 ms figure this comment used to cite is P08.S01's, on text-only fixtures, for a
