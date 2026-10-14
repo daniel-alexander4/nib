@@ -210,3 +210,41 @@ func TestXFAAfterSaysRemovedOnlyOfAStaticFormThatIsGone(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveAsRefusesADynamicXFADocumentAndWritesNothing — `/pending 876`: Save As reaches the refusal through the
+// same door as Save (`DropUAIdentificationUnlessSigned`) from its own call site, which had no test — the Save
+// test above passes with this site's refusal deleted. The bytes are an EDIT of the open document, because
+// the open document's own bytes are written as they are (`holdsBytes`): an untouched copy is not a change.
+func TestSaveAsRefusesADynamicXFADocumentAndWritesNothing(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	_, doc := xfaFile(t, true)
+	edited := append(append([]byte(nil), doc...), []byte("\n% edited\n")...)
+	dir := t.TempDir()
+	post := func(data []byte, name string) (int, map[string]string) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("data", name)
+		fw.Write(data)
+		mw.WriteField("dir", dir)
+		mw.WriteField("name", name)
+		mw.Close()
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/write", mw.FormDataContentType(), &buf)
+		defer resp.Body.Close()
+		var got map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&got)
+		return resp.StatusCode, got
+	}
+	code, got := post(edited, "copy.pdf")
+	if code != http.StatusUnprocessableEntity || got["cause"] != "dynamic-xfa" || !strings.Contains(got["error"], pdfread.DynamicXFARefusal) {
+		t.Errorf("Save As of a dynamic XFA document: %d %v — want 422, cause dynamic-xfa, and the sentence", code, got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "copy.pdf")); err == nil {
+		t.Error("the refused Save As wrote the file")
+	}
+	// Control: the route writes a document it has no quarrel with, so the refusal above is about the form.
+	_, static := xfaFile(t, false)
+	if code, got := post(append(append([]byte(nil), static...), []byte("\n% edited\n")...), "static.pdf"); code != http.StatusOK {
+		t.Fatalf("control: Save As of a static XFA document: %d %v", code, got)
+	}
+}

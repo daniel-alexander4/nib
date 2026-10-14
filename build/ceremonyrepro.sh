@@ -923,6 +923,105 @@ sys.exit(0 if d.get('state')=='stopped' and isinstance(d.get('parties'),list) an
   fi
 fi
 
+# CLAUSE 24 — the convener signs its OWN turn through the local route, and the next party accepts
+# what that produced (ADR-135, /pending 876).
+#
+# **No tier that runs two processes had pressed Sign now.** Tier 4 signs a convener through the dial
+# and CLAUSE 22 above convenes with a convener who does not sign at all, so
+# `POST /api/ceremony/sign-turn` — "a hop with the dial taken out" — was driven only inside one
+# process, and nothing showed the party after it accepting a document whose first signature was made
+# that way. That party's gate is the one that matters: since /pending 691 it refuses a first
+# signature that names no ceremony, and this is the door that has to have named it.
+#
+# The quote first, as the window does: `mine` and the block's own time, which the second press
+# echoes so that what was shown is what is signed.
+signturn_clause() {
+  local code qcode scode hop pid wa wb i answerer
+  post B /api/session/disarm '{}' >/dev/null 2>&1 || true
+  go run build/genpdf.go "$SP/lease4.pdf" "a matter the convener signs first" >/dev/null 2>&1
+  code=$(post A /api/open "{\"path\":\"$SP/lease4.pdf\"}")
+  [ "$code" = 200 ] || { no "sign-turn setup" "open: $code"; return; }
+  local exp; exp=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+  code=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":true},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"signs\":true}],\"intent\":\"A matter the convener signs first\",\"expires\":\"$exp\",\"convenerSigns\":true}")
+  [ "$code" = 200 ] || { no "sign-turn convene" "$code $(head -c 200 "$SP/resp.json")"; return; }
+  local cid cdoc inv
+  cid=$(jq_ "d['ceremony']"); cdoc=$(jq_ "d['doc']['id']")
+  inv=$(python3 -c "
+import json;d=json.load(open('$SP/resp.json'))
+print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$B_FP'.lower()))")
+
+  qcode=$(curl -s -o "$SP/st.quote.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -H "X-Nib-Doc: $cdoc" "$A_BASE/api/ceremony/hop?ceremony=$cid")
+  local when; when=$(python3 -c "
+import json;d=json.load(open('$SP/st.quote.json'))
+print(d.get('when','') if d.get('mine') and d.get('contributes') and d.get('lines') and d.get('image') else '')" 2>/dev/null)
+  [ "$qcode" = 200 ] && [ -n "$when" ] || { no "sign-turn quote" "$qcode — not the convener's own turn with a block to show: $(head -c 300 "$SP/st.quote.json")"; return; }
+
+  scode=$(curl -s -o "$SP/st.signed.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -X POST "$A_BASE/api/ceremony/sign-turn" -H 'Content-Type: application/json' -H "X-Nib-Doc: $cdoc" \
+    -d "{\"ceremony\":\"$cid\",\"when\":\"$when\"}")
+  if [ "$scode" = 200 ] && python3 -c "
+import json,sys
+d=json.load(open('$SP/st.signed.json'))
+sig=d.get('signature') or {}
+names=[s.get('name','') for s in (sig.get('signers') or []) if s.get('valid')]
+sys.exit(0 if d.get('id')=='$cdoc' and sig.get('state')=='valid' and names==['Alice'] else 1)" 2>/dev/null; then
+    ok "the convener signed its OWN turn through /api/ceremony/sign-turn: one valid signature, on the document it named"
+  else
+    no "sign-turn" "$scode $(head -c 300 "$SP/st.signed.json")"; return
+  fi
+  # The turn has moved, and the route that just signed refuses a second go rather than signing twice.
+  scode=$(curl -s -o "$SP/st.again.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -X POST "$A_BASE/api/ceremony/sign-turn" -H 'Content-Type: application/json' -H "X-Nib-Doc: $cdoc" \
+    -d "{\"ceremony\":\"$cid\",\"when\":\"$when\"}")
+  if [ "$scode" != 200 ]; then
+    ok "a second sign-turn is refused ($scode): the turn is the next party's"
+  else
+    no "second sign-turn" "200 — the convener signed twice"; return
+  fi
+
+  # Now the next party, over a real connection: B's gate reads the signature sign-turn made.
+  code=$(post B /api/ceremony/accept "{\"invitation\":$(python3 -c "import json;print(json.dumps('$inv'))")}")
+  [ "$code" = 200 ] || { no "sign-turn: B accepts the invitation" "$code $(head -c 200 "$SP/resp.json")"; return; }
+  code=$(post B /api/session/arm "{\"fingerprint\":\"$A_FP\",\"bind\":\"127.0.0.1:0\",\"transport\":\"tcp\",\"mode\":\"cosign\",\"invitation\":$(python3 -c "import json;print(json.dumps('$inv'))")}")
+  [ "$code" = 200 ] || { no "sign-turn: B arms" "$code $(head -c 200 "$SP/resp.json")"; return; }
+  local baddr; baddr=$(jq_ "d['address']")
+  (
+    wa=""; wb=""
+    for i in $(seq 1 300); do
+      [ -z "$wa" ] && wa=$(get A /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+      [ -z "$wb" ] && wb=$(get B /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+      [ -n "$wa" ] && [ -n "$wb" ] && break
+      sleep 0.1
+    done
+    post A /api/session/verify '{"confirmed":true}' >/dev/null 2>&1 || true
+    post B /api/session/verify '{"confirmed":true}' >/dev/null 2>&1 || true
+    for i in $(seq 1 300); do
+      pid=$(get B /api/session/status | python3 -c "import json,sys;print((json.load(sys.stdin).get('pending') or {}).get('id',''))" 2>/dev/null)
+      [ -n "$pid" ] && break
+      sleep 0.1
+    done
+    post B /api/session/respond "{\"id\":\"$pid\",\"accept\":true}" >/dev/null 2>&1 || true
+  ) &
+  answerer=$!
+  hop=$(curl -s -o "$SP/st.hop.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -X POST "$A_BASE/api/ceremony/hop" -H 'Content-Type: application/json' -H "X-Nib-Doc: $cdoc" \
+    -d "{\"ceremony\":\"$cid\",\"address\":\"$baddr\"}")
+  wait "$answerer" 2>/dev/null || true
+  if [ "$hop" = 200 ] && python3 -c "
+import json,sys
+d=json.load(open('$SP/st.hop.json'))
+sig=d.get('signature') or {}
+names=[s.get('name','') for s in (sig.get('signers') or []) if s.get('valid')]
+sys.exit(0 if sig.get('state')=='valid' and names==['Alice','Bob'] else 1)" 2>/dev/null; then
+    ok "the next party ACCEPTED the document the convener signed that way: Alice then Bob, both valid, across two processes"
+  else
+    no "sign-turn: the hop after it" "$hop $(head -c 300 "$SP/st.hop.json")"
+  fi
+  post B /api/session/disarm '{}' >/dev/null 2>&1 || true
+}
+signturn_clause
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

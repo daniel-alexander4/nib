@@ -1337,6 +1337,12 @@
         <span>Ceremony setup is open — nothing has been convened yet.</span>
         <button id="cerBackToSetup" type="button">Back to setup</button>
       </div>
+      <!-- The bottom-right corner's notices, in ONE stack (/pending 876). Each is a sentence that wraps to
+           several lines, so a fixed slot per notice put them on top of each other: measured in a real window,
+           the three yellow ones stood 162, 162 and 107 px tall in slots 52 px apart, and two of the three
+           Dismiss buttons could not be reached. The stack lays them out by the height each one has. First
+           in the markup is nearest the corner. -->
+      <div id="noticeStack">
       <!-- The fit notice (P01.S03, /pending 460). It says what a bake did to edits that did
            not fit their boxes, and it persists, because a toast cannot serve the path that
            matters most: Save reloads the document after writing, `clearOverlays` destroys the
@@ -1385,6 +1391,7 @@
       <div id="xfaNotice" role="status" aria-live="polite" hidden>
         <span id="xfaNoticeText"></span>
         <button id="xfaNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>

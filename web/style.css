@@ -1790,7 +1790,11 @@ body.presenting .presentbar { display: flex; }
 .cernextline.certurn { color: var(--green); font-weight: 600; }
 
 /* Convene and accept (P06.S04). */
-.ceractions { display: flex; gap: 6px; padding: 6px 8px 0; }
+/* Wraps, and each button takes the row it is on: at the sidebar's own width the two do not fit side by
+   side, and the second ran out under the sidebar's edge with its last word cut off (/pending 876, seen in
+   a real window). */
+.ceractions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px 0; }
+.ceractions > button { flex: 1 1 auto; min-width: 0; }
 .cerform { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .cerform label { font-size: 11px; color: var(--subtext1); }
 .cerform input[type="text"], .cerform input[type="datetime-local"], .cerform textarea {
@@ -2362,10 +2366,20 @@ body.presenting .presentbar { display: flex; }
    z-index 11 matches #cerSetupBar: page overlays reach 10 and are pointer-interactive, so
    at a lower value a stamp near the bottom-right would cover the notice AND take the click.
    Below the modals, the auth overlay and the toast, all of which should cover it. */
-#fitNotice {
+/* The corner's notices are one stack (/pending 876): each takes the height its sentence needs and the
+   next sits above it, nearest the corner first. A fixed `bottom` per notice assumed one line each, and
+   each is three to six. Taller than the view, the stack scrolls instead of running off its top. It takes
+   no clicks itself, so the page between and beside the notices is still the page. */
+#noticeStack {
   position: absolute; bottom: 14px; right: 14px; z-index: 11;
+  display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 8px;
+  max-width: calc(100% - 28px); max-height: calc(100% - 28px); overflow-y: auto;
+  pointer-events: none;
+}
+#fitNotice {
+  flex: none; pointer-events: auto;
   display: flex; align-items: center; gap: 12px;
-  max-width: 42ch;
+  max-width: min(42ch, 100%);
   padding: 7px 10px 7px 14px; border-radius: 8px;
   background: var(--surface0); color: var(--text);
   border: 1px solid var(--peach);
@@ -2385,9 +2399,9 @@ body.presenting .presentbar { display: flex; }
    `--yellow` rather than `--peach`: nothing is wrong with the document, something was lost from it,
    and a warning colour shared with "your text does not fit" would flatten the two. */
 #tagNotice {
-  position: absolute; bottom: 68px; right: 14px; z-index: 11;
+  flex: none; pointer-events: auto;
   display: flex; align-items: center; gap: 12px;
-  max-width: 46ch;
+  max-width: min(46ch, 100%);
   padding: 7px 10px 7px 14px; border-radius: 8px;
   background: var(--surface0); color: var(--text);
   border: 1px solid var(--yellow);
@@ -2408,9 +2422,9 @@ body.presenting .presentbar { display: flex; }
    covering the other, and its glyph is a document rather than the accessibility mark, because what
    it reports is lost content and not a lost property of the file. */
 #lostNotice {
-  position: absolute; bottom: 120px; right: 14px; z-index: 11;
+  flex: none; pointer-events: auto;
   display: flex; align-items: center; gap: 12px;
-  max-width: 46ch;
+  max-width: min(46ch, 100%);
   padding: 7px 10px 7px 14px; border-radius: 8px;
   background: var(--surface0); color: var(--text);
   border: 1px solid var(--yellow);
@@ -2428,9 +2442,9 @@ body.presenting .presentbar { display: flex; }
 /* The XFA form notice (ADR-145). #tagNotice's box again, one step further up so all three can be on screen
    together, with no glyph: the sentence names the thing itself. */
 #xfaNotice {
-  position: absolute; bottom: 172px; right: 14px; z-index: 11;
+  flex: none; pointer-events: auto;
   display: flex; align-items: center; gap: 12px;
-  max-width: 46ch;
+  max-width: min(46ch, 100%);
   padding: 7px 10px 7px 14px; border-radius: 8px;
   background: var(--surface0); color: var(--text);
   border: 1px solid var(--yellow);

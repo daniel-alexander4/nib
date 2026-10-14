@@ -18462,6 +18462,13 @@ function ceremonySignTurn(c, refresh) {
         btn.textContent = 'Sign';
         btn.disabled = false;
         say.textContent = (drawn ? 'This is where your signature block will be placed. ' : '') + PERMANENCE_SIGNATURE;
+        // The preview opens ABOVE the button and pushes it down, in a rail that is usually already as tall
+        // as the window: seen in a real window, the outlined block, Sign and Not now were all below the
+        // fold after the first press, with nothing on screen saying anything had happened (/pending 876).
+        // The picture first, then the sentence under the buttons: where the whole step fits it is all in
+        // view, and where it does not the buttons and the sentence are.
+        if (preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest' });
+        if (say.scrollIntoView) say.scrollIntoView({ block: 'nearest' });
       } catch (e) {
         putBack('Nib could not prepare your signature block. Nothing was signed.');
       }
@@ -18532,7 +18539,10 @@ async function previewOwnBlock(host, owner, block, image) {
   try {
     const page = await owner.pdfDocument.getPage(block.page);
     const base = page.getViewport({ scale: 1 });
-    const room = Math.max(160, Math.min(380, host.clientWidth || 380));
+    // The room the host HAS, down to 120: the rail at the sidebar's own width gives 143, and a floor of 160
+    // drew the page wider than its box, which cut the right edge off (/pending 876, measured in a real
+    // window). 120 is the least at which the outline is still a rectangle and not a mark.
+    const room = Math.max(120, Math.min(380, host.clientWidth || 380));
     const vp = page.getViewport({ scale: Math.min(1.2, room / base.width) });
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(vp.width);
