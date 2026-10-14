@@ -135,3 +135,100 @@ func TestFormFieldsAreComparedByNameNotByCount(t *testing.T) {
 		t.Errorf("a result missing two of the document's four fields reports %d lost, want 2", f.lostFields)
 	}
 }
+
+// twoNotes is one page carrying two sticky notes with the given texts.
+func twoNotes(t *testing.T, first, second string) []byte {
+	t.Helper()
+	base, err := testpdf.Text("page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := pdfops.AddNotes(base, []pdfops.Note{{Page: 1, X: 100, Y: 700, Text: first}, {Page: 1, X: 200, Y: 600, Text: second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestAnAnnotationWrittenDoesNotMaskOneDropped — /pending 875 (1).
+//
+// Inside one document the door still compared TOTALS: an operation that dropped one annotation and wrote
+// another left two before and two after, and the notice said nothing about the comment that was destroyed.
+// Annotations are compared by what they are now, as form fields have been since /pending 582.
+func TestAnAnnotationWrittenDoesNotMaskOneDropped(t *testing.T) {
+	before := twoNotes(t, "kept", "dropped by the operation")
+	after := twoNotes(t, "kept", "written by the operation")
+	if b, a := pdfops.Inspect(before), pdfops.Inspect(after); b.Annotations != 2 || a.Annotations != 2 {
+		t.Fatalf("setup: %d annotation(s) before and %d after, want 2 and 2 — equal totals are the case", b.Annotations, a.Annotations)
+	}
+	if got := fateOf(before, after, 0, 0).lostAnnots; got != 1 {
+		t.Errorf("one annotation dropped and one written reported %d lost, want 1 — the totals hid it", got)
+	}
+	// CONTROLS: the same annotations are no loss, whatever order the result holds them in.
+	if got := fateOf(before, twoNotes(t, "dropped by the operation", "kept"), 0, 0).lostAnnots; got != 0 {
+		t.Errorf("the same two annotations in another order reported %d lost, want 0", got)
+	}
+	if got := fateOf(before, before, 0, 0).lostAnnots; got != 0 {
+		t.Errorf("an operation that changed nothing reported %d lost, want 0", got)
+	}
+}
+
+// TestAnnotationsThatCouldNotBeKeyedAreComparedByCount — a side with no keys (more annotations than
+// `pdfops` keys) is never read as "holds none of them": the door falls back to the totals.
+func TestAnnotationsThatCouldNotBeKeyedAreComparedByCount(t *testing.T) {
+	keyed := pdfops.DocumentFacts{Readable: true, Annotations: 3, AnnotationKeys: []string{"a", "b", "c"}}
+	unkeyed := pdfops.DocumentFacts{Readable: true, Annotations: 3}
+	if got := lostAnnotations(keyed, unkeyed, 0); got != 0 {
+		t.Errorf("3 annotations before and 3 unkeyed after reported %d lost, want 0", got)
+	}
+	one := pdfops.DocumentFacts{Readable: true, Annotations: 1, AnnotationKeys: []string{"a"}}
+	if got := lostAnnotations(unkeyed, one, 0); got != 2 {
+		t.Errorf("3 unkeyed before and 1 after reported %d lost, want 2", got)
+	}
+}
+
+// TestTwoFormsSharingAFieldNameLoseNothing — /pending 875 (2), measured.
+//
+// What pdfcpu does when the appended form shares a field name with the document's was unmeasured; the
+// by-name comparison is only right if the document's own names survive. They do: every incoming form is
+// filed under a new parent named by its ordinal, collision or none, so nothing merges and nothing of the
+// document's is renamed. This is that measurement, held: if pdfcpu starts merging same-named fields, the
+// names below change and the door's arithmetic has to be looked at again.
+func TestTwoFormsSharingAFieldNameLoseNothing(t *testing.T) {
+	form := func(names ...string) []byte {
+		base, err := testpdf.Text("page")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields []pdfops.FormField
+		for i, n := range names {
+			fields = append(fields, pdfops.FormField{Page: 1, Kind: "text", Name: n,
+				Rect: [4]float64{100, 100 + 30*float64(i), 200, 120 + 30*float64(i)}})
+		}
+		out, err := pdfops.AuthorForm(base, fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	doc, other := form("fullName", "agree"), form("fullName", "email")
+	out, err := pdfops.Append(doc, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := pdfops.Inspect(out).FieldNames
+	want := []string{"fullName", "agree", "2.fullName", "2.email"}
+	if len(got) != len(want) {
+		t.Fatalf("two forms sharing a field name appended to %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("two forms sharing a field name appended to %q, want %q", got, want)
+		}
+	}
+	annots, fields := broughtIn(other)
+	if f := fateOf(doc, out, annots, fields); f.lostFields != 0 || f.lostAnnots != 0 {
+		t.Errorf("appending a form that shares a field name reported %d field(s) and %d annotation(s) "+
+			"lost, want none: all four fields and all four widgets are in the result", f.lostFields, f.lostAnnots)
+	}
+}

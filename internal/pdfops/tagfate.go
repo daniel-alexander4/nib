@@ -1,6 +1,9 @@
 package pdfops
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -115,6 +118,10 @@ type tagState struct {
 	// deliberately, because /pending 573's whole finding was that the two can disagree.
 	annots     int
 	formFields int
+	// annotKeys is one key per annotation counted in `annots`, in page order (`annotKey`) — what the
+	// commit door compares by identity (`/pending 875`), as `fieldNames` is for fields. Nil when the
+	// document holds more than `maxAnnotKeys`; the door then compares totals.
+	annotKeys []string
 	// fieldNames is every TERMINAL form field by its fully qualified name (`terminalFieldNames`) — what the
 	// commit door compares by identity (`/pending 582`). `formFields` cannot say what was lost: a merge puts
 	// the incoming document's fields under ONE new parent, so two fields arriving add one to that length.
@@ -185,6 +192,7 @@ func inspectTags(pdf []byte) tagState {
 	s.pages = ctx.PageCount
 	live := map[int]bool{}       // object number of every page in the page tree
 	hasContent := map[int]bool{} // ... of every page carrying a non-empty content stream
+	overKeyed := false           // more annotations than maxAnnotKeys: no keys, the count alone
 	for _, pa := range pdfread.Pages(ctx) {
 		p, d, perr := pa.Nr, pa.Dict, pa.Err
 		if perr != nil || d == nil {
@@ -211,6 +219,14 @@ func inspectTags(pdf []byte) tagState {
 		}
 		if a, aerr := ctx.DereferenceArray(d["Annots"]); aerr == nil {
 			s.annots += len(a)
+			if !overKeyed {
+				for _, o := range a {
+					s.annotKeys = append(s.annotKeys, annotKey(ctx, o))
+				}
+				if overKeyed = len(s.annotKeys) > maxAnnotKeys; overKeyed {
+					s.annotKeys = nil
+				}
+			}
 		}
 	}
 	cat, cerr := ctx.XRefTable.Catalog()
@@ -309,6 +325,9 @@ type DocumentFacts struct {
 	// until `/pending 582`: it is not a count of fields (a merge files two incoming fields under one
 	// new parent), and nothing outside this package read it once the commit door compared names.
 	FieldNames []string
+	// AnnotationKeys is one key per annotation — what it is, not where it is (`annotKey`) — or nil
+	// when there are too many to key; then only `Annotations` says anything.
+	AnnotationKeys []string
 }
 
 // Inspect reports the facts a commit door compares across an operation. See DocumentFacts.
@@ -319,7 +338,56 @@ func Inspect(pdf []byte) DocumentFacts {
 		Tagged:      s.claims(),
 		Annotations: s.annots,
 		FieldNames:  s.fieldNames,
+
+		AnnotationKeys: s.annotKeys,
 	}
+}
+
+// maxAnnotKeys bounds the keys kept for one document: past it the commit door compares totals, as it
+// did for every document before `/pending 875`.
+const maxAnnotKeys = 100000
+
+// annotKey names an annotation by what survives a rewrite: its `/Subtype`, its `/NM`, a digest of its
+// `/Contents`, and its `/T` (a widget's partial field name, a note's author).
+//
+// **What is NOT in it, each by measurement (/pending 875).** The object number: pdfcpu renumbers on every
+// write. The page: a reorder moves an annotation and loses nothing. The `/Rect`: an n-up carries a sticky
+// note onto its sheet at a new place — keyed with the rectangle, the two notes it carried read as two lost
+// and two arrived, a loss notice for comments that are on the page.
+//
+// **It is not unique and need not be.** Two links with no text share a key; the door counts keys as a
+// multiset, so sharing costs precision and never a false report. What matters is that no operation changes
+// a key of an annotation it KEEPS — `TestNoOperationRenamesAnAnnotationItKeeps` drives every operation in
+// the census and fails on the first that does.
+//
+// **What it costs, measured**: 0.17 ms, 31 ms and 604 ms for 100, 10,000 and 100,000 annotations, on a parse
+// of 9.8 ms, 589 ms and 8.2 s that the commit door already makes — a twentieth of it, outside the server's
+// lock (`fateOf`).
+func annotKey(ctx *model.Context, o types.Object) string {
+	d, err := ctx.DereferenceDict(o)
+	if err != nil || d == nil {
+		return "?"
+	}
+	text := func(key string) string {
+		if d[key] == nil {
+			return ""
+		}
+		s, err := ctx.DereferenceStringOrHexLiteral(d[key], model.V10, nil)
+		if err != nil {
+			return "?"
+		}
+		return s
+	}
+	subtype := ""
+	if n, err := ctx.DereferenceName(d["Subtype"], model.V10, nil); err == nil {
+		subtype = n.Value()
+	}
+	contents := ""
+	if c := text("Contents"); c != "" {
+		sum := sha256.Sum256([]byte(c))
+		contents = hex.EncodeToString(sum[:8])
+	}
+	return subtype + "\x00" + text("NM") + "\x00" + contents + "\x00" + text("T")
 }
 
 // maxFieldNodes bounds the field walk: a form is a tree a stranger wrote, read on every commit.
@@ -330,6 +398,10 @@ const maxFieldNodes = 100000
 // none of its kids has a `/T` — its kids, if any, are its widgets. A node that only groups other fields is not
 // one. Each object is visited once, to a depth of 32 and `maxFieldNodes` in all, so a looped or enormous tree
 // costs a bounded walk and reports what it reached.
+//
+// **Measured (/pending 875)**: 82 µs, 23 ms and 100 ms for 100, 10,000 and 100,000 fields (131 ms for 200,000,
+// where the bound stops it at 100,000 names), beside the parse it follows — 6 ms, 459 ms and 6.9 s, which is
+// pdfcpu validating that many fields and is what a form of that size costs to open at all.
 func terminalFieldNames(ctx *model.Context, fields types.Array) []string {
 	var out []string
 	seen := map[int]bool{}
