@@ -124,8 +124,5 @@ test('dismissing the middle one closes the gap, and the page beside the stack st
     return hit ? hit.id || hit.className || hit.tagName : null;
   });
   assert.notEqual(beside, 'noticeStack', 'the empty part of the stack takes the pointer from the page under it');
-  // Resizing the window while pdf.js is still drawing a page makes pdf.js log that its link layer was asked
-  // for before the page was rendered (`injectLinkAnnotations`). It is the resize this file does, not the
-  // notices, and it is filed on its own (/pending 887); anything else here is this file's to explain.
-  assert.deepEqual(h.consoleErrors.filter((e) => !/injectLinkAnnotations/.test(e)), []);
+  assert.deepEqual(h.consoleErrors, []);
 });

@@ -303,7 +303,9 @@ fi
 # 54 since /pending 876 (noticestack.test.mjs, signnow.test.mjs): the corner's notices measured for overlap at two
 # window sizes, and Sign now pressed in a ceremony convened on the real server — each its own boot, because one
 # rewrites the answer to a page operation on its way to the page and the other leaves a signed ceremony behind.
-expect_files=54
+# 55 since /pending 887 (autolink.test.mjs): a web address in a page's text is a link only after pdf.js's own
+# late step, and whether a rotation and a resize landing inside that step lose it is timing in a real renderer.
+expect_files=55
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

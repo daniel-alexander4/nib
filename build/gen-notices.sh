@@ -157,6 +157,11 @@ if [ -f web/vendor/pdfjs/VERSION ]; then
   emit "license text is reproduced in the \`golang.org/x\`/pdfcpu sections above and"
   emit "at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:"
   emit "<https://github.com/mozilla/pdf.js>."
+  if [ -f web/vendor/pdfjs/NOTICE.md ]; then
+    emit ""
+    emit "Modified by Nib: \`pdf_viewer.mjs\` differs from the published file in two marked"
+    emit "lines; \`web/vendor/pdfjs/NOTICE.md\` says what they change and why."
+  fi
   emit ""
   emit "---"
   emit ""

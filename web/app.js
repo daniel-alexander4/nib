@@ -2863,7 +2863,7 @@ function newView() {
 
   // The DOM, built VISIBLE and only then hidden by the caller if this is not the
   // active view. That order is load-bearing: pdf.js's "container must be absolutely
-  // positioned" check is guarded by `container.offsetParent` (pdf_viewer.mjs:8000),
+  // positioned" check is guarded by `container.offsetParent` (pdf_viewer.mjs:8018),
   // which is null while the element is display:none — so constructing into a hidden
   // container SKIPS the check rather than satisfying it, and it never re-runs. A
   // mistake in .viewerContainer's CSS would then throw only for the first visible
@@ -2907,14 +2907,14 @@ function newView() {
   // Each of these four is per view because the vendored pdf.js forces it, not for
   // tidiness — verified at the line during P05.S03's deepdive:
   //   * PDFViewer's constructor registers 'thumbnailrendered' on the bus it is handed
-  //     (pdf_viewer.mjs:8065), so N viewers on one bus index _pages[] from each other's
+  //     (pdf_viewer.mjs:8083), so N viewers on one bus index _pages[] from each other's
   //     events and cleanup() the wrong document's page.
-  //   * The same constructor MUTATES the find controller — onIsPageVisible (:8012) is
+  //   * The same constructor MUTATES the find controller — onIsPageVisible (:8030) is
   //     one slot, last writer wins.
-  //   * PDFFindController registers find/findbarclose/pagesedited on the bus (:927), so
+  //   * PDFFindController registers find/findbarclose/pagesedited on the bus (:928), so
   //     one dispatch('find') makes every open document search at once and race to answer
   //     the single counter.
-  //   * PDFLinkService holds one pdfViewer field and setViewer is 1:1 (:1582), so
+  //   * PDFLinkService holds one pdfViewer field and setViewer is 1:1 (:1583), so
   //     outline clicks would drive the last-constructed viewer.
   // From here on the view owns three attached nodes, and the PDFViewer constructor below
   // can throw — its "container must be absolutely positioned" check is the reason the
@@ -2928,7 +2928,7 @@ function newView() {
   v.findController = new PDFFindController({ eventBus: v.eventBus, linkService: v.linkService });
   v.viewer = new PDFViewer({
     container: v.container,
-    viewer: pagesEl, // explicit, so the page stack needs no id (pdf_viewer.mjs:7995)
+    viewer: pagesEl, // explicit, so the page stack needs no id (pdf_viewer.mjs:8013)
     eventBus: v.eventBus,
     linkService: v.linkService,
     findController: v.findController,
@@ -2940,14 +2940,14 @@ function newView() {
 
   // One global that N viewers share, deliberately left alone: each PDFViewer's own
   // ResizeObserver writes --viewer-container-height onto document.documentElement
-  // (pdf_viewer.mjs:9590), so a hidden view's 0px clobbers the active view's value. Inert
+  // (pdf_viewer.mjs:9607), so a hidden view's 0px clobbers the active view's value. Inert
   // in Nib — the only consumers are .dummyPage, created solely in presentation/spread
-  // mode (:8779), and a pdf.js sidebar we do not render — and _resetView pins
-  // ScrollMode.VERTICAL (:8733). It goes live the day spread or presentation mode does.
+  // mode (:8796), and a pdf.js sidebar we do not render — and _resetView pins
+  // ScrollMode.VERTICAL (:8750). It goes live the day spread or presentation mode does.
 
   // Hidden AFTER construction, not before, and the order is the whole point: pdf.js's
   // "container must be absolutely positioned" check is guarded by `container.offsetParent`
-  // (pdf_viewer.mjs:8000), which is null while the element is display:none. Constructing
+  // (pdf_viewer.mjs:8018), which is null while the element is display:none. Constructing
   // into an already-hidden container SKIPS that check rather than satisfying it, and it
   // never re-runs — so a mistake in .viewerContainer's CSS would throw for the first
   // visible view and stay silent for every later one. Hiding here means every view's
