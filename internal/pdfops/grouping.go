@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"nib/internal/pdfread"
 
@@ -646,12 +647,13 @@ func (g *pageGutters) joinedAcross() bool {
 // document's table rows); an edge counted without text beside its lines (it parts "Table A-1." from its title in a
 // list whose titles hang); and no clear band (it parts "Property Rights:" from the text set after it).
 //
-// **Declared limits**: a single word ahead of a gutter stays joined (gutterWords); so does a join on a page that
-// parts fewer than gutterLines lines at that edge; and a contents list that sets some page numbers past joinGapEm and
-// some within it now parts them all.
+// **Declared limits**: a single word ahead of a gutter stays joined (gutterWords), and so does a join on a page that
+// parts fewer than gutterLines lines at that edge. A line that ends in a leader is not parted from what the leader
+// leads to (`endsInLeader`): of the 186 joins the rule parted over the corpus, the four that were a contents list's
+// page numbers are joined again and the other 182 are parted as they were.
 func (g *pageGutters) parts(l *textLine, r textRun) bool {
 	em := math.Max(l.size, r.size)
-	if r.x-l.x1 <= gutterGapEm*em || !g.at(r.x) || len(strings.Fields(l.text)) < gutterWords {
+	if r.x-l.x1 <= gutterGapEm*em || !g.at(r.x) || len(strings.Fields(l.text)) < gutterWords || endsInLeader(l.text) {
 		return false
 	}
 	clear := gutterClearEm * em
@@ -664,6 +666,31 @@ func (g *pageGutters) parts(l *textLine, r textRun) bool {
 		}
 	}
 	return true
+}
+
+// leaderDots is the fewest dots a line ends with that are a leader: one more than an ellipsis has.
+const leaderDots = 4
+
+// endsInLeader says whether a line so far ends in a leader — the row of dots a contents list draws from a title across
+// to its page number. The dots are the page's own statement that what stands past them belongs to the line, so no
+// gutter parts them from it (/pending 871: `antennahouse/irs-p15.pdf` p8 sets some of its page numbers past joinGapEm
+// and some within it, which made the numbers' left edge a gutter and parted the four within from their titles). Dots
+// set apart by spaces (". . . .") are a leader too.
+func endsInLeader(s string) bool {
+	n := 0
+	for i := len(s); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(s[:i])
+		i -= size
+		switch {
+		case r == '.' || r == '·':
+			n++
+		case r == '…':
+			n += 3
+		case !unicode.IsSpace(r):
+			return n >= leaderDots
+		}
+	}
+	return n >= leaderDots
 }
 
 // joinRuns is lineSegments' one pass: rs left to right, each run joined to the line it continues, the lines kept top
