@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -37,16 +38,80 @@ type cosignParams struct {
 	When        string `json:"when"` // RFC3339; minted by /quote, echoed back to /sign
 }
 
-// cosignQuote is what /quote returns: the canonical attestation lines and the
-// placement rectangle for the client to rasterize, plus the pinned signing time.
+// cosignQuote is what /quote returns: the canonical attestation lines, the block's
+// size, the picture of the block as it will be signed, and the pinned signing time.
 type cosignQuote struct {
 	Lines []string   `json:"lines"`
-	Rect  [4]float64 `json:"rect"` // llx, lly, urx, ury in PDF points (the client sizes the PNG to its aspect)
-	// No `page`: one was published and never read. Both callers rasterize from `lines` and
-	// `rect` and post the PNG back, and the server re-derives the placement when it signs —
-	// so the page number was an echo the client had no use for. Deleted with
+	Rect  [4]float64 `json:"rect"` // llx, lly, urx, ury in PDF points (the block's size; its position is decided at signing)
+	// Image is the block as Nib will draw it into the signature: a PNG, base64 (ADR-158). The window
+	// shows THIS and draws nothing of its own, and it posts nothing back — the signing route draws
+	// again from the same attestation, and the same lines are the same bytes
+	// (`TestTheQuotedPictureIsThePictureSigned`). Inline rather than a second route: one answer
+	// carries the lines and their picture, so there is no second request for them to drift across.
+	Image string `json:"image"`
+	// No `page`: one was published and never read. The server re-derives the placement when it
+	// signs, so the page number was an echo the client had no use for. Deleted with
 	// decryptResponse.ok (/pending 254).
 	When string `json:"when"`
+}
+
+// quoteFor is the ONE place a quote is built from an attestation (ADR-009): the lines, the size, the
+// time, and the picture drawn from those lines. It writes its own refusal when the block cannot be
+// drawn — every caller has already asked `BlockFits` and `BlockDrawable`, so that is a broken build.
+func quoteFor(w http.ResponseWriter, att p2p.Attestation) (cosignQuote, bool) {
+	png, err := att.BlockImage()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not draw the signature block: "+err.Error())
+		var none cosignQuote // not a literal: `TestEveryQuoteRouteSizesFromTheOneDoor` counts those
+		return none, false
+	}
+	return cosignQuote{
+		Lines: att.AppearanceLines(),
+		Rect:  p2p.NominalBlockRect(),
+		Image: base64.StdEncoding.EncodeToString(png),
+		When:  att.When.UTC().Format(time.RFC3339),
+	}, true
+}
+
+// clientPictureRefused is what a signing route answers a request that carries a picture of the block
+// (ADR-158). The server draws the block from the attestation it signs; a picture from the window was
+// embedded beside a `/Reason` nothing compared it with. Refused rather than ignored: a window still
+// sending one is a window still drawing one, and its user is looking at a block Nib will not sign.
+const clientPictureRefused = "Nib draws the signature block itself and does not accept a picture of " +
+	"one, so nothing was signed. Reload this window and try again."
+
+// refusedClientPicture answers 400 when sent, and reports whether it did. The five signing routes
+// call it before anything is signed, parked or dialled.
+func refusedClientPicture(w http.ResponseWriter, sent bool) bool {
+	if sent {
+		httpError(w, http.StatusBadRequest, clientPictureRefused)
+	}
+	return sent
+}
+
+// multipartCarries reports whether a parsed multipart request has a part of that name, file or value.
+func multipartCarries(r *http.Request, field string) bool {
+	if r.MultipartForm == nil {
+		return false
+	}
+	return len(r.MultipartForm.File[field]) > 0 || len(r.MultipartForm.Value[field]) > 0
+}
+
+// refusedUndrawable answers 400 when a character of att's block has no typeface to draw it, and
+// reports whether it did. Asked beside `BlockFits`, at every door that builds an attestation, so the
+// refusal is met at the quote — where the text can still be changed — and never at the signature.
+func refusedUndrawable(w http.ResponseWriter, att p2p.Attestation) bool {
+	err := p2p.BlockDrawable(att)
+	if err == nil {
+		return false
+	}
+	var u *p2p.UndrawableError
+	if errors.As(err, &u) {
+		httpError(w, http.StatusBadRequest, "nothing was signed: "+err.Error()+".")
+	} else {
+		httpError(w, http.StatusInternalServerError, err.Error())
+	}
+	return true
 }
 
 // maxWhenSkew bounds how far a client-supplied attestation time may sit from the
@@ -156,6 +221,16 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 	// recital, the signer's name and the pinned peer's label compete for one vertical budget. The
 	// manual path can ask the joint question because everything in its block is known here: the
 	// peer was resolved above and the signer is this build's own constant.
+	if refusedBlock(w, att) {
+		return p2p.Attestation{}, false
+	}
+	return att, true
+}
+
+// refusedBlock answers 400 for a block that cannot be signed as it stands — more lines than the frame
+// holds at a readable size, or a character no typeface can draw — and reports whether it did. The two
+// questions `p2p.Contribute` would otherwise answer by failing after consent.
+func refusedBlock(w http.ResponseWriter, att p2p.Attestation) bool {
 	if !p2p.BlockFits(att) {
 		lines, limit, worst, fits := p2p.BlockOverflow(att)
 		httpError(w, http.StatusBadRequest, fmt.Sprintf(
@@ -164,9 +239,37 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 				"alongside the rest. Nib refuses a block it would have to shrink past "+
 				"legibility rather than putting one nobody can read above your signature.",
 			lines, limit, worst, fits))
-		return p2p.Attestation{}, false
+		return true
 	}
-	return att, true
+	return refusedUndrawable(w, att)
+}
+
+// refusedAnswerBlock asks `refusedBlock` of the block an ACCEPTANCE will sign (ADR-158).
+//
+// The intent posted to `/api/session/respond` is the one `coSignExchange` signs, and nothing makes it
+// the one `/api/session/quote` measured — a caller need not have asked for a quote at all. While the
+// window drew the block that did not reach the exchange; now `p2p.Contribute` draws it and refuses
+// one it cannot, after consent and on the receive path, where the peer is left with a dropped
+// connection. So the answer is asked first, and a refusal is a sentence in this window with the
+// request still waiting.
+//
+// It builds the attestation as the exchange will — this identity, the pending peer and the label it
+// is pinned under, the arm's roster through `StampCommitment` — and does NOT go through
+// `cosignAttestation`: that door also requires the peer pinned by name, which is the quote's
+// question, and answering it here would refuse an acceptance the exchange itself admits.
+func (s *Server) refusedAnswerBlock(w http.ResponseWriter, v *vault.Vault, p *pendingReq, roster p2p.Roster, intent string) bool {
+	att := p2p.Attestation{Signer: "Nib User", AcceptedPeer: p.view.Fingerprint, Intent: intent, When: time.Now()}
+	if fp, err := parseFingerprint(p.view.Fingerprint); err == nil {
+		if label, ok := pinnedLabel(v, fp); ok {
+			att.AcceptedPeerLabel = label
+		}
+	}
+	if cert, _, ierr := identity(v); ierr == nil {
+		if myFP, ferr := sign.Fingerprint(cert); ferr == nil {
+			p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
+		}
+	}
+	return refusedBlock(w, att)
 }
 
 // pinnedLabel returns the label the given fingerprint is pinned under, and whether
@@ -351,11 +454,11 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	// binding to the open document would use the wrong page geometry, which is the reason
 	// `NominalBlockRect` records for existing at all. `/sign` computes the authoritative
 	// placement on the document that will actually carry it.
-	writeJSON(w, cosignQuote{
-		Lines: att.AppearanceLines(),
-		Rect:  p2p.NominalBlockRect(),
-		When:  att.When.UTC().Format(time.RFC3339),
-	})
+	q, ok := quoteFor(w, att)
+	if !ok {
+		return
+	}
+	writeJSON(w, q)
 }
 
 func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
@@ -365,6 +468,9 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	if refusedClientPicture(w, multipartCarries(r, "appearance")) {
+		return
+	}
 	pdfBytes, ok := formFileBytes(w, r, "pdf")
 	if !ok {
 		return
@@ -382,10 +488,6 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	appearance, ok := formFileBytes(w, r, "appearance")
-	if !ok {
-		return
-	}
 	cert, key, err := identity(v)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
@@ -393,7 +495,7 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 	}
 	// The manual co-sign route has no ceremony, so the zero Roster: there is no signing
 	// order for a two-party exchange to be out of.
-	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, p2p.Roster{})
+	signed, ok := s.buildCoSigned(w, pdfBytes, cert, key, att, p2p.Roster{})
 	if !ok {
 		return
 	}
@@ -407,7 +509,7 @@ func (s *Server) handleCosignSign(w http.ResponseWriter, r *http.Request) {
 // Track A download path (/api/cosign/sign) and the live dial path
 // (/api/session/initiate). Writes the HTTP error itself and returns ok=false.
 // roster is the ceremony's signing order, or the zero Roster outside a ceremony (P07.S03).
-func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att p2p.Attestation, appearance []byte, roster p2p.Roster) ([]byte, bool) {
+func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att p2p.Attestation, roster p2p.Roster) ([]byte, bool) {
 	// **L3 (D23), before a single byte is signed.** This is the INITIATING party's contribution
 	// entry point — the second of the two the rule has to hold at, and the one in this package.
 	//
@@ -518,7 +620,7 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		httpError(w, http.StatusInternalServerError, "could not place attestation: "+err.Error())
 		return nil, false
 	}
-	signed, err := p2p.Contribute(prepared, cert, key, att, appearance, place)
+	signed, err := p2p.Contribute(prepared, cert, key, att, place)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return nil, false

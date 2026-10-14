@@ -36,6 +36,12 @@ const (
 	// ({url})`, not `apiFetch` or a FormData — which this scan does not read (ADR-004's `/api/pdf`
 	// exception is the same shape). Its reason must quote the app.js call that sends it.
 	pdfjsFetch = "pdfjs-fetch"
+	// refusedWhenSent is a field a handler reads ONLY to refuse the request that carries it — the
+	// opposite of a field somebody forgot to send. ADR-158: the signing routes took a picture of the
+	// signature block from the window and now draw it themselves; a request still carrying one is
+	// answered 400 rather than ignored, and to answer it the handler has to look. Its reason must
+	// name the function that refuses, so the row cannot be used for a field that is merely unread.
+	refusedWhenSent = "refused-when-sent"
 )
 
 // productGapCap is what stops this class growing quietly, and it is the whole reason the rows carry
@@ -139,6 +145,17 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 		"/api/form/fill-csv nameCol": {productGap,
 			"internal/server/form.go says so at the line: `nameCol \"\" → FillFormCSV names each " +
 				"output row-NNN; a column picker can set it later`. No control offers one yet."},
+
+		// ── read only to be refused (ADR-158, /pending 367) ──────────────────────────────────
+		"/api/ceremony/hop appearance": {refusedWhenSent,
+			"`refusedClientPicture` answers 400 when the request carries a picture of the signature " +
+				"block: the server draws the block from the attestation it signs. web/app.js sends none."},
+		"/api/ceremony/sign-turn appearance": {refusedWhenSent,
+			"`refusedClientPicture` answers 400 when the request carries a picture of the signature " +
+				"block: the server draws the block from the attestation it signs. web/app.js sends none."},
+		"/api/session/respond appearance": {refusedWhenSent,
+			"`refusedClientPicture` answers 400 when the answer carries a picture of the signature " +
+				"block: the server draws the block from the attestation it signs. web/app.js sends none."},
 
 		// ── the JSON body carrier (/pending 477) ─────────────────────────────────────────────
 		"/api/handoff path": {cliOnly,
@@ -270,6 +287,13 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 			}
 		case productGap:
 			gaps++
+		case refusedWhenSent:
+			// The reason has to name the refusal, or the category is a way of excusing a field
+			// nobody sends without saying what the handler does with it.
+			if !strings.Contains(row.reason, "refusedClientPicture") {
+				t.Errorf("%s is categorised %q and its reason does not name the function that "+
+					"refuses the request", pair, refusedWhenSent)
+			}
 		case pdfjsFetch:
 			// The reason has to quote the pdf.js call that sends it, or the category is a way of
 			// saying "pdf.js probably sends it" with nothing behind it.
@@ -278,8 +302,8 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 					pair, pdfjsFetch)
 			}
 		default:
-			t.Errorf("%s carries category %q, which is not one of %q, %q, %q, %q, %q",
-				pair, row.category, harnessOnly, cliOnly, productGap, sharedHelper, pdfjsFetch)
+			t.Errorf("%s carries category %q, which is not one of %q, %q, %q, %q, %q, %q",
+				pair, row.category, harnessOnly, cliOnly, productGap, sharedHelper, pdfjsFetch, refusedWhenSent)
 		}
 		if len(strings.TrimSpace(row.reason)) < 40 {
 			unreasoned = append(unreasoned, pair)

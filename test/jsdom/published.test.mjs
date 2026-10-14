@@ -111,14 +111,12 @@ const PUBLISHED = [
   // somebody else's turn.
   { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
   // The convener's own door onto a hop (P01.S02b, `/pending 436`). Two shapes, one route pair:
-  // the GET answers whose turn it is plus the block to draw for it, the POST carries the ceremony
-  // id and — only when this machine signs at this hop — the block the client rasterised from it.
+  // the GET answers whose turn it is plus the block the server will draw for it (its lines and its
+  // picture, ADR-158), the POST carries the ceremony id and the quote's time.
   //
-  // **`contributes` is the field that earns the pair.** Nothing in the server can draw a signature
-  // block; `renderAttestation` in `web/app.js` is the only producer in the tree, so the client has
-  // to be told the lines before it can post a PNG back. `contributes` is how it learns whether it
-  // needs to draw one at all — false on the carry path, where the convener moves the baton and
-  // signs nothing.
+  // **`contributes` is the field that earns the pair.** It is how the client learns whether this
+  // machine signs at this hop at all — false on the carry path, where the convener moves the baton
+  // and signs nothing.
   { type: 'ceremonyHopQuote', readers: ['web/app.js'] },
   // The convener's stop (P01.S02c, `/pending 428`, D12). The request carries only the ceremony id —
   // who may stop it, what is attested and who is told are all decided server-side. The response

@@ -28,7 +28,7 @@ func signAsInitiator(t *testing.T, certPEM, keyPEM, peerFP []byte) []byte {
 		t.Fatal(err)
 	}
 	att := Attestation{Signer: "Alice", AcceptedPeer: hex.EncodeToString(peerFP), AcceptedPeerLabel: "Bob", Intent: "I agree to co-sign", When: time.Now()}
-	signed, err := Contribute(prepared, certPEM, keyPEM, att, nil, place)
+	signed, err := Contribute(prepared, certPEM, keyPEM, att, place)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,8 @@ type confirmer struct {
 	err error
 }
 
-func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
-	return c.accept, c.intent, nil, time.Time{}, c.err
+func (c confirmer) Confirm(SignerAttestation, []byte) (bool, string, time.Time, error) {
+	return c.accept, c.intent, time.Time{}, c.err
 }
 
 // TestConfirmCoSignedRequiresBothSignatures proves the initiator-side check accepts

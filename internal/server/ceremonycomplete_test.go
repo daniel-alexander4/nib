@@ -62,7 +62,7 @@ func finishedCeremony(t *testing.T, v *vault.Vault) (ceremony.Record, []byte, []
 	}
 	att := p2p.Attestation{Signer: "Alice Convener", Intent: out.Record.Intent, When: time.Now()}
 	p2p.StampCommitment(&att, roster, me)
-	signed, err := p2p.Contribute(out.Document, cert, key, att, nil, place)
+	signed, err := p2p.Contribute(out.Document, cert, key, att, place)
 	if err != nil {
 		t.Fatal(err)
 	}

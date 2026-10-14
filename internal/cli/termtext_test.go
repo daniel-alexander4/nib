@@ -71,10 +71,13 @@ func TestEveryDocumentStringReachesTheTerminalEscaped(t *testing.T) {
 		t.Errorf("nib attachments printed an attachment name's control bytes raw: %q", out)
 	}
 
-	saved := convenedNames[1]
-	convenedNames[1] = hostile
-	cer := convenedFixture(t, dir, 2, 1)
-	convenedNames[1] = saved
+	// On a party who does NOT sign: a signing party's label is drawn on their block, and convene
+	// refuses one a typeface cannot draw (ADR-158). Restored by defer — a fixture that fails must not
+	// leave the hostile label in the names every other test in this package convenes with.
+	saved := convenedNames[2]
+	convenedNames[2], convenedWitness = hostile, 2
+	defer func() { convenedNames[2], convenedWitness = saved, -1 }()
+	cer := convenedFixture(t, dir, 3, 1)
 	out, _ = captureStdout(t, func() int { return cmdVerify([]string{cer}) })
 	if !strings.Contains(out, "Evil") {
 		t.Fatalf("setup: nib verify did not print the hostile party label: %q", out)

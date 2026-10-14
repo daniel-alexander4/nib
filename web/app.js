@@ -1394,32 +1394,11 @@ async function openCosign() {
   els.cosignModal.hidden = false;
 }
 
-// renderAttestation rasterizes the server-provided lines into a white block sized
-// to the rect's aspect — the signing library stretches the image to fill the
-// rect, so the PNG must match its width:height. The lines come from the server
-// (Go AppearanceLines), never rebuilt here.
-//
-// **It CAN drift from /Reason inside a ceremony, and did (/pending 317, corrected 2026-08-30).**
-// The quote's lines come from `cosignAttestation`, which never calls `StampCommitment`, while the
-// signature is built by `coSignExchange`, which does. Measured at the route with an 8-signer
-// roster: the block draws 5 lines and the signature carries 6, and only the header matches.
-// Outside a ceremony the two do agree, because `StampCommitment` early-returns. Fixing it is a
-// P06 slice; this comment states what is true until then.
-async function renderAttestation(lines, rect) {
-  const w = rect[2] - rect[0], h = rect[3] - rect[1], scale = 3;
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(w * scale);
-  cv.height = Math.round(h * scale);
-  const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.strokeStyle = '#000'; ctx.lineWidth = scale; ctx.strokeRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
-  const pad = 4 * scale;
-  const lineH = (cv.height - 2 * pad) / lines.length;
-  ctx.font = Math.min(lineH * 0.7, 9 * scale) + 'px sans-serif';
-  lines.forEach((ln, i) => ctx.fillText(ln, pad, pad + i * lineH));
-  return await new Promise((r) => cv.toBlob(r, 'image/png'));
-}
+// The signature block is drawn by the SERVER (ADR-158). This file used to rasterise the quoted lines
+// on a canvas (`renderAttestation`) and post the picture back, and the server embedded whatever it was
+// sent beside a `/Reason` it built itself. A quote now carries the picture (`image`, the PNG that will
+// be signed) and the signing routes take none: they refuse a request that carries one. Nothing here
+// draws a block, and nothing here sends one.
 
 async function cosign() {
   // Export name captured at operation entry — see exportBase (D7).
@@ -1440,11 +1419,9 @@ async function cosign() {
   });
   if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
-  const png = await renderAttestation(q.lines, q.rect);
 
   const form = await bakedForm(owner);
   form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
-  form.append('appearance', png, 'attestation.png');
   const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!sr.ok) { toast(await errText(sr, 'could not co-sign')); return; }
   openSaveAs(await sr.blob(), exportName + '-cosigned.pdf', 'Save co-signed PDF');
@@ -1457,8 +1434,8 @@ els.cosignGo.onclick = cosign;
 // --- co-sign live (dial side) ------------------------------------------------
 // Send the open document to a pinned peer who is armed to receive, co-sign it in
 // real time, and adopt the doubly-signed result as the open document. The signing
-// path is shared with Track A co-sign (/api/cosign/quote on the open document, then
-// the rasterized appearance); only the transport differs.
+// path is shared with Track A co-sign (/api/cosign/quote on the open document, whose
+// pinned time is echoed); only the transport differs.
 async function openSessionInit() {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
   const res = await apiFetch('/api/peers');
@@ -1515,13 +1492,11 @@ async function sessionInit() {
   });
   if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
-  const png = await renderAttestation(q.lines, q.rect);
 
   els.sinGo.disabled = true; els.sinCancel.disabled = true; els.sinProgress.hidden = false;
   try {
     const form = await bakedForm(owner);
     form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
-    form.append('appearance', png, 'attestation.png');
     form.append('address', address);
     // The spoken check happens while this request is in flight — the server is blocked
     // waiting for it — so the poller runs beside the call, not before or after it.
@@ -2244,7 +2219,10 @@ function renderConsentSigners(signers, refused = []) {
 // `vp.height` is the page as rendered at this scale, so `scale` converts points to those pixels;
 // the container is `position: relative` and the box `position: absolute`, so the two cannot drift
 // apart when the preview scrolls.
-function markBlock(wrap, vp, rect, scale) {
+//
+// `image` is the block itself, when the caller holds a quote: the server's PNG, base64, shown in the
+// outline exactly as it will be embedded (ADR-158). Without one the outline says what goes there.
+function markBlock(wrap, vp, rect, scale, image) {
   const box = document.createElement('div');
   box.className = 'srvblock';
   const [llx, lly, urx, ury] = rect;
@@ -2252,9 +2230,17 @@ function markBlock(wrap, vp, rect, scale) {
   box.style.top = (vp.height - ury * scale) + 'px';
   box.style.width = ((urx - llx) * scale) + 'px';
   box.style.height = ((ury - lly) * scale) + 'px';
-  const tag = document.createElement('span');
-  tag.textContent = 'your signature goes here';
-  box.appendChild(tag);
+  if (image) {
+    const pic = document.createElement('img');
+    pic.className = 'srvblockpic';
+    pic.alt = 'Your signature block, as it will appear on the page';
+    pic.src = 'data:image/png;base64,' + image;
+    box.appendChild(pic);
+  } else {
+    const tag = document.createElement('span');
+    tag.textContent = 'your signature goes here';
+    box.appendChild(tag);
+  }
   wrap.appendChild(box);
 }
 
@@ -2323,7 +2309,7 @@ async function acceptRecv() {
   // the user pressed Accept on, whatever the poller draws while they are in flight (/pending 744).
   const id = recvPendingId;
   recvAnsweredId = '';
-  // A one-way transfer is just consent to keep the file — no signing, no appearance.
+  // A one-way transfer is just consent to keep the file — no signing, no block.
   if (recvMode === 'receive') {
     const res = await apiFetch('/api/session/respond', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2340,7 +2326,8 @@ async function acceptRecv() {
     return; // pollRecv sees the request settle (or the disarm) and reports where it landed
   }
   const intent = els.srvIntent.value;
-  // The responder's visible block is placed server-side; the quote gives only the canonical lines.
+  // The responder's visible block is drawn and placed server-side; the quote is asked so that a block
+  // Nib cannot draw or fit is refused HERE, in words, before the answer, and for the time it pins.
   //
   // **The drift is closed (P06.S06, /pending 317).** This comment used to say the rendered image
   // DOES drift from the signed /Reason inside a ceremony, and it did: the quote never applied
@@ -2349,7 +2336,6 @@ async function acceptRecv() {
   // party read and present in the signature underneath it. The quote stamps now, and it pins the
   // TIME, which is echoed below so the signature carries the moment the party was asked rather
   // than the moment the bytes were signed.
-  let appearance = '';
   const qr = await apiFetch('/api/session/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, intent }),
@@ -2362,13 +2348,12 @@ async function acceptRecv() {
     return;
   }
   const q = await qr.json();
-  appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
   const res = await apiFetch('/api/session/respond', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     // `when` is the quote's pinned time, echoed so the signature carries the block the party
     // actually consented to. The server bounds it by the same `maxWhenSkew` the initiating side
     // has always applied, and drops it out of range rather than refusing.
-    body: JSON.stringify({ id, accept: true, intent, appearance, when: q.when }),
+    body: JSON.stringify({ id, accept: true, intent, when: q.when }),
   });
   if (!res.ok) {
     els.srvAccept.disabled = false; els.srvDecline.disabled = false;
@@ -18334,7 +18319,7 @@ function ceremonyCallNext(c, who) {
     say.textContent = 'Working out whose turn it is…';
     try {
       // 1. The quote. The server names the party and, when THIS machine signs at this hop, the
-      //    lines of the block to draw.
+      //    block it will draw.
       const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
       // A refusal is read before the parse (/pending 609): one that is not JSON fell to the catch below, which
       // blames the other party for an answer this machine's own Nib gave.
@@ -18348,23 +18333,9 @@ function ceremonyCallNext(c, who) {
         say.textContent = 'It is your own turn to sign — there is nobody to call yet. Open the panel again to sign.';
         return;
       }
-      // 2. The block, rasterised HERE because nothing in the server can draw one: `renderAttestation`
-      //    is the only producer in the tree. Skipped entirely on the carry path, where this machine
-      //    contributes nothing — which is why the server makes the appearance required exactly when
-      //    it signs rather than on every request.
-      let appearance = '';
-      if (q.contributes) {
-        // **`renderAttestation` returns a BLOB, not a data URL**, and the first cut of this line
-        // assumed otherwise — `png.split(',')` on a Blob throws. Every other caller appends it to a
-        // FormData, where a Blob is exactly right; this route takes JSON, so it is base64'd here.
-        // Read rather than assumed, which is the only way to find it: the failure is at runtime, in
-        // a flow that needs a server at the other end.
-        //
-        // **`blobToBase64` already existed** (one screen up, added for the vault import) and a
-        // second copy of it here was written and then deleted — the duplicate is exactly what
-        // ADR-009 refuses, and `node --check` caught it as a redeclaration before anything shipped.
-        appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
-      }
+      // 2. No block is drawn here: when this machine signs at this hop the server draws it from the
+      //    attestation it signs (ADR-158), and the request below carries the quote's time and nothing
+      //    of the block.
       // 3. The dial. The spoken check appears mid-request on both machines, so the verify poller
       //    runs BESIDE the call — the server is blocked waiting for an answer and cannot deliver
       //    the words in the response it has not sent.
@@ -18375,7 +18346,7 @@ function ceremonyCallNext(c, who) {
         const res = await apiFetch('/api/ceremony/hop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
+          body: JSON.stringify({ ceremony: c.id, when: q.when }),
           docId: opDoc.id,
         });
         if (!res.ok) { say.textContent = await errText(res, `The call failed (${res.status}).`); btn.disabled = false; return; }
@@ -18457,16 +18428,18 @@ function ceremonySignTurn(c, refresh) {
         const qr = await apiFetch(`/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id });
         if (!qr.ok) { say.textContent = await errText(qr, `Nib could not prepare your signature (${qr.status}).`); btn.disabled = false; return; }
         const q = await qr.json();
-        if (!q.mine || !q.contributes || !Array.isArray(q.lines) || !q.lines.length) {
-          // The turn moved, or there is no block to draw: never sign without one. Read it again.
+        if (!q.mine || !q.contributes || !Array.isArray(q.lines) || !q.lines.length || !q.image) {
+          // The turn moved, or the server quoted no block: never sign without one. Read it again.
           say.textContent = 'It is not your turn to sign any more. Nothing was signed.';
           if (refresh) await refresh();
           return;
         }
-        const appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
         preview.hidden = false; // before it is drawn: the drawing is sized to the room it has
-        const drawn = await previewOwnBlock(preview, owner, q.block);
-        shown = { owner, docId: opDoc.id, when: q.when, appearance };
+        // The picture in the outline is the SERVER's (`q.image`): the PNG it will embed, not a drawing
+        // of this window's. The second press echoes the quote's time, and the same lines are the same
+        // picture (ADR-158).
+        const drawn = await previewOwnBlock(preview, owner, q.block, q.image);
+        shown = { owner, docId: opDoc.id, when: q.when };
         back.hidden = false;
         btn.textContent = 'Sign';
         btn.disabled = false;
@@ -18477,7 +18450,7 @@ function ceremonySignTurn(c, refresh) {
       return;
     }
     // Second press: sign what was shown, on the document and in the view it was shown for (ADR-001).
-    const { appearance, when } = shown;
+    const { when } = shown;
     if (shown.owner !== owner || shown.docId !== opDoc.id) {
       putBack('The document on screen is not the one this block was shown for. Nothing was signed.');
       return;
@@ -18497,7 +18470,7 @@ function ceremonySignTurn(c, refresh) {
         res = await apiFetch('/api/ceremony/sign-turn', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ceremony: c.id, appearance, when }),
+          body: JSON.stringify({ ceremony: c.id, when }),
           docId: opDoc.id,
         });
       } finally {
@@ -18525,14 +18498,14 @@ function ceremonySignTurn(c, refresh) {
   return wrap;
 }
 
-// previewOwnBlock draws the page a party's own signature block goes on, with the place outlined, into host —
+// previewOwnBlock draws the page a party's own signature block goes on, with the block in its place, into host —
 // the convener's half of the one block preview (ADR-147). The outline is `markBlock`, the receiving consent's
 // own (`loadPendingPreview`), and the place is the server's (`block`: page and rectangle in PDF points, from
 // the door the stamp uses). The page comes from the view's own open document: the bytes about to be signed.
 //
 // Best-effort, as the receiving side's is: the signing does not depend on it, so a page that will not draw
 // says so and names the page, and the answer is false so the caller does not claim a picture it did not show.
-async function previewOwnBlock(host, owner, block) {
+async function previewOwnBlock(host, owner, block, image) {
   host.replaceChildren();
   if (!block || !Array.isArray(block.rect) || !block.page) {
     emptyNote(host, 'Nib could not work out where your signature block goes, so there is nothing to show.');
@@ -18550,7 +18523,7 @@ async function previewOwnBlock(host, owner, block) {
     wrap.className = 'srvpage';
     wrap.append(canvas);
     host.append(wrap);
-    markBlock(wrap, vp, block.rect, vp.width / base.width);
+    markBlock(wrap, vp, block.rect, vp.width / base.width, image);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     return true;
   } catch {

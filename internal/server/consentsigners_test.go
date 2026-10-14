@@ -49,7 +49,7 @@ func threeSigned(t *testing.T) []byte {
 			t.Fatal(err)
 		}
 		att := p2p.Attestation{Signer: "Party Label " + string(rune('A'+i)), When: time.Now()}
-		doc, err = p2p.Contribute(doc, certPEM, keyPEM, att, nil, place)
+		doc, err = p2p.Contribute(doc, certPEM, keyPEM, att, place)
 		if err != nil {
 			t.Fatalf("party %d could not contribute: %v", i, err)
 		}

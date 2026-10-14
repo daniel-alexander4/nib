@@ -310,7 +310,7 @@ func TestADeclinedSpokenCheckSpendsTheArm(t *testing.T) {
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob",
 			Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return
@@ -469,7 +469,7 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 		}
 		att := p2p.Attestation{Signer: "Alice", AcceptedPeer: me.Fingerprint, AcceptedPeerLabel: "Bob",
 			Intent: "I agree", When: time.Now()}
-		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, nil, place)
+		aSigned, e := p2p.Contribute(prepared, aCert, aKey, att, place)
 		if e != nil {
 			errc <- e
 			return

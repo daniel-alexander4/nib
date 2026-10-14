@@ -178,3 +178,58 @@ func TestTheBlockBoundIsOneDoor(t *testing.T) {
 		}
 	}
 }
+
+// TestAConveneWhoseBlocksCannotBeDrawnIsRefusedWhereTheTextIsTyped — ADR-158, S-C rows C4 and C6.
+//
+// The server draws every party's block from the roster and the recital. A character none of the
+// shipped typefaces has, or a block that does not fit once it is wrapped in the face that draws it,
+// would otherwise surface at the first signature — in a ceremony already convened, that nobody could
+// then sign. So both are asked here, of each signing party's block, and the refusal says whose.
+func TestAConveneWhoseBlocksCannotBeDrawnIsRefusedWhereTheTextIsTyped(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+
+	// The control first: every script the shipped faces cover convenes.
+	ok := blockTextReq(t, cfp, afp, "محمد العربي", "取締役 / Director")
+	ok.Intent = "We agree — نوافق — 同意します"
+	if _, err := Convene(base, ok, cert, key, now); err != nil {
+		t.Fatalf("a roster and recital in Arabic and Japanese were refused: %v", err)
+	}
+
+	for _, row := range []struct {
+		name string
+		mut  func(r *ConveneRequest)
+		want error
+		says []string
+	}{
+		{"a label with a character no typeface has", func(r *ConveneRequest) { r.Roster[1].Label = "Ali\ue000ce" },
+			ErrUndrawable, []string{"U+E000", "the signer's name", "Ali"}},
+		{"a capacity with a character no typeface has", func(r *ConveneRequest) { r.Roster[1].Capacity = "Direct\ue000r" },
+			ErrUndrawable, []string{"U+E000", "the capacity"}},
+		{"a recital with a line break", func(r *ConveneRequest) { r.Intent = "We agree\nto co-sign" },
+			ErrUndrawable, []string{"line break", "the recital"}},
+		// 72 CJK characters: three lines by the Helvetica estimate the wrap used to measure with, and
+		// more than the frame holds in the face that draws them.
+		{"a recital too long in the face it is drawn in", func(r *ConveneRequest) {
+			r.Intent = strings.Repeat("私たちは株式譲渡契約に同意します。", 9)
+		}, ErrIntentTooLong, []string{"lines", "the recital"}},
+	} {
+		req := blockTextReq(t, cfp, afp, "Alice", "Director")
+		row.mut(&req)
+		_, err := Convene(base, req, cert, key, now)
+		if !errors.Is(err, row.want) {
+			t.Errorf("%s: convened or refused as %v, want %v", row.name, err, row.want)
+			continue
+		}
+		for _, s := range row.says {
+			if !strings.Contains(err.Error(), s) {
+				t.Errorf("%s: the refusal does not say %q: %q", row.name, s, err.Error())
+			}
+		}
+	}
+}

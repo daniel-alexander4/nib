@@ -132,6 +132,19 @@ func (s *Server) handlePeersPin(w http.ResponseWriter, r *http.Request) {
 			len([]rune(label)), p2p.MaxAcceptsLabelRunes(label, hex.EncodeToString(fp))))
 		return
 	}
+	// And every character of it can be drawn (ADR-158): the label is set on the block of every
+	// document signed with this peer, and the server draws that block. Refused here, where the label
+	// is typed, rather than at the first signature that needs it.
+	if err := p2p.TextDrawable(label); err != nil {
+		var u *p2p.UndrawableError
+		if errors.As(err, &u) {
+			u.Field = "that label"
+			httpError(w, http.StatusBadRequest, err.Error()+".")
+		} else {
+			httpError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
 	if err := v.AddPinnedPeer(fp, label); err != nil {
 		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not pin peer")
 		return

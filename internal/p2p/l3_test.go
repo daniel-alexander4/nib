@@ -74,7 +74,7 @@ func l3Chain(t *testing.T, doc []byte, order []l3Party, accepts []l3Party, roste
 			// rather than knowing which one is current.
 			att.RosterVersion = fixtureRosterVersion
 		}
-		doc, err = Contribute(doc, p.cert, p.key, att, nil, place)
+		doc, err = Contribute(doc, p.cert, p.key, att, place)
 		if err != nil {
 			t.Fatalf("signature %d: %v", i+1, err)
 		}
@@ -186,7 +186,7 @@ func TestTheGateRefusesEachThingByName(t *testing.T) {
 	}
 	dangling, err = Contribute(dangling, b.cert, b.key, Attestation{
 		Signer: "B", AcceptedPeer: stranger.fp, Intent: "ok", When: time.Now(),
-	}, nil, place)
+	}, place)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,10 +256,23 @@ func TestAnInvalidPrefixSignatureIsRefused(t *testing.T) {
 func corruptSignatureBlob(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	out := append([]byte(nil), pdf...)
-	ci := bytes.LastIndex(out, []byte("/Contents"))
-	if ci < 0 {
-		t.Fatal("the signed document has no /Contents")
+	// The SIGNATURE's /Contents: the one in the object that holds the last /ByteRange. The last
+	// "/Contents" in the file is no longer it — every contribution draws a visible block (ADR-158),
+	// and the page that carries the block is rewritten after the signature dictionary with a
+	// /Contents of its own.
+	br := bytes.LastIndex(out, []byte("/ByteRange"))
+	if br < 0 {
+		t.Fatal("the signed document has no /ByteRange")
 	}
+	obj := bytes.LastIndex(out[:br], []byte(" obj"))
+	if obj < 0 {
+		t.Fatal("no object opens before the last /ByteRange")
+	}
+	ci := bytes.Index(out[obj:], []byte("/Contents"))
+	if ci < 0 {
+		t.Fatal("the signature dictionary has no /Contents")
+	}
+	ci += obj
 	lt := bytes.IndexByte(out[ci:], '<')
 	if lt < 0 {
 		t.Fatal("no < opening the /Contents hex string")
@@ -549,8 +562,8 @@ type l3Confirmer struct {
 	intent string
 }
 
-func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
-	return c.accept, c.intent, nil, time.Time{}, nil
+func (c l3Confirmer) Confirm(SignerAttestation, []byte) (bool, string, time.Time, error) {
+	return c.accept, c.intent, time.Time{}, nil
 }
 
 // TestTheRelayCeilingAtFourParties — where the N-party relay stopped BEFORE P07.S05, measured, and
@@ -679,7 +692,7 @@ func TestASignatureAcceptsItsPREDECESSOR(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if doc, err = Contribute(doc, p.cert, p.key, att, nil, place); err != nil {
+		if doc, err = Contribute(doc, p.cert, p.key, att, place); err != nil {
 			t.Fatal(err)
 		}
 	}

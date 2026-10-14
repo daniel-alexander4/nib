@@ -1,6 +1,7 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1403,16 +1403,6 @@
+@@ -1419,16 +1419,6 @@
  	// stays correct if a path ever reaches `Confirm` without a spoken check first: a document the
  	// gate refused was shown to nobody, and nothing that shows nobody anything should spend an
  	// arm. The load-bearing half is the ordering against `setPending` above.
@@ -11,7 +12,7 @@
 -			// the user on this machine sees nothing and goes on waiting for a proceeding their
 -			// own build has just declared over.
 -			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
--			return false, "", nil, time.Time{}, err
+-			return false, "", time.Time{}, err
 -		}
 -	}
  	// Park the received document for review (served via /api/session/pending-pdf)

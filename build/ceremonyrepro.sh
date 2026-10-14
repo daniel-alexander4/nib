@@ -325,13 +325,10 @@ else no "open a plain document on B" "$code"; fi
 # Driven on the CONVENED document B would actually be handed.
 cp "$SP/convened1.pdf" "$SP/convened.pdf"
 if [ ! -s "$SP/convened.pdf" ]; then no "L3 setup" "could not fetch the convened document"; else
-  python3 -c "
-import base64,sys
-sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" > "$SP/appearance.png"
+  # No picture of the block is posted: the server draws it and refuses a request carrying one (ADR-158).
   code=$(curl -s -o "$SP/resp.json" -w '%{http_code}' -H "X-CSRF-Token: $B_CSRF" \
     -X POST "$B_BASE/api/session/initiate" -H "X-CSRF-Token: $B_CSRF" -H "Origin: $B_BASE" \
     -F "pdf=@$SP/convened.pdf" -F "params={\"fingerprint\":\"$A_FP\",\"intent\":\"I agree\"}" \
-    -F "appearance=@$SP/appearance.png" \
     -F "address=127.0.0.1:1" -F "transport=tcp" -F "invitation=$INV")
   if [ "$code" = 409 ] && grep -q "not this party.s turn" "$SP/resp.json"; then
     ok "L3 refuses a contribution out of roster order, by name, through the real route"
@@ -397,8 +394,7 @@ if [ -s "$SP/convened1.pdf" ]; then
   # which is to say WITHOUT the invitation the harness used to supply. It must still refuse.
   ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -H "X-CSRF-Token: $A_CSRF" \
     -X POST "$A_BASE/api/session/initiate" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
-    -F "pdf=@$SP/convened1.pdf" -F "params={\"fingerprint\":\"$B_FP\",\"intent\":\"I agree\"}" \
-    -F "appearance=@$SP/appearance.png")
+    -F "pdf=@$SP/convened1.pdf" -F "params={\"fingerprint\":\"$B_FP\",\"intent\":\"I agree\"}")
   if [ "$ocode" = "409" ] && grep -q "Use the ceremony to sign it" "$SP/oldroute.json"; then
     ok "the old route STILL refuses the same document with the product's own field set — the pair, not one 200"
   else

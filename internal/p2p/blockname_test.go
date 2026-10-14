@@ -273,7 +273,7 @@ func TestThePartyNameReachesTheSIGNATURE(t *testing.T) {
 			When:         time.Now(),
 		}
 		StampCommitment(&att, r, p.fp)
-		doc, err = Contribute(doc, []byte(p.cert), []byte(p.key), att, nil, place)
+		doc, err = Contribute(doc, []byte(p.cert), []byte(p.key), att, place)
 		if err != nil {
 			t.Fatalf("party %d could not contribute: %v", i, err)
 		}

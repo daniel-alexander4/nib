@@ -78,14 +78,14 @@ func TestTheManualCoSignRefusesADocumentInACeremony(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if _, ok := s.buildCoSigned(rec, plain, cert, key, p2p.Attestation{Signer: "Nib User", Intent: "I agree"}, nil, l3RosterFrom(nil, "", "")); !ok {
+	if _, ok := s.buildCoSigned(rec, plain, cert, key, p2p.Attestation{Signer: "Nib User", Intent: "I agree"}, l3RosterFrom(nil, "", "")); !ok {
 		t.Fatalf("setup: an ORDINARY document was refused by the manual co-sign door (%d %s) — the "+
 			"guard fires on everything and the refusal below says nothing", rec.Code, rec.Body.String())
 	}
 
 	// STIMULUS: the same door, the same empty roster, a document already in a proceeding.
 	rec2 := httptest.NewRecorder()
-	if _, ok := s.buildCoSigned(rec2, pdf, cert, key, p2p.Attestation{Signer: "Nib User", Intent: "I agree"}, nil, l3RosterFrom(nil, "", "")); ok {
+	if _, ok := s.buildCoSigned(rec2, pdf, cert, key, p2p.Attestation{Signer: "Nib User", Intent: "I agree"}, l3RosterFrom(nil, "", "")); ok {
 		t.Fatal("the manual co-sign path signed a document that carries a ceremony record. Every " +
 			"other party checks a signature against that proceeding's roster and refuses one made " +
 			"outside it — so this produces a signature the user has spent and nobody will accept.")

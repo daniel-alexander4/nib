@@ -1,3 +1,9 @@
+// **Since ADR-158 (/pending 367) the block this file reads is drawn by the SERVER** — `drawBlock`,
+// `internal/p2p/blockdraw.go` — and `renderAttestation`, named throughout the notes below, is gone
+// from `web/app.js`. The drive and every assertion stand as written: they read the page the Co-sign
+// button produces, not the function that drew the block. The same four properties are asserted on the
+// picture's own samples at tier 1 (`TestTheBlockPictureHasAFrameAndOneRowOfTextPerLine`).
+//
 // The block a user actually gets: `renderAttestation`'s own ink, on the page (/pending 305).
 //
 // ── The gap, and why it survived two tiers ──────────────────────────────────

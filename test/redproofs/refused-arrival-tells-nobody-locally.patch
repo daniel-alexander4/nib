@@ -1,10 +1,11 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -846,7 +846,6 @@
+@@ -1425,7 +1425,6 @@
  			// as a named wire code; this arm has no response to write into, so without this line
  			// the user on this machine sees nothing and goes on waiting for a proceeding their
  			// own build has just declared over.
 -			sc.s.sess.noteArrivalRefusal(sc.anchor.kind, err)
- 			return false, "", nil, time.Time{}, err
+ 			return false, "", time.Time{}, err
  		}
  	}

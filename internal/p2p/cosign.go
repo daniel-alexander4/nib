@@ -38,8 +38,8 @@ type Placement struct {
 
 // NextPlacement returns where the next signer's visible attestation block goes:
 // stacked upward from the bottom of the last (readme) page, above any block
-// already placed, so the two parties' blocks don't overlap. The caller renders
-// the appearance image to this rect's size before signing.
+// already placed, so the two parties' blocks don't overlap. `Contribute` draws the
+// block's picture to this rect's size.
 func NextPlacement(pdf []byte) (Placement, error) {
 	return nextPlacementFrom(pdf, sign.Verify(pdf))
 }
@@ -60,10 +60,14 @@ func nextPlacementFrom(pdf []byte, st sign.Status) (Placement, error) {
 // its appearance in the same increment as the signature, the second party's
 // contribution never disturbs the first party's signature.
 //
-// appearance is the rendered PNG/JPEG of the visible attestation block (sized to
-// p.Rect, see Attestation.AppearanceLines); if empty the signature is invisible
-// but still carries the machine-readable attestation in its signed /Reason.
-func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte, p Placement) ([]byte, error) {
+// The visible block is DRAWN HERE, from att, and from nothing else (ADR-158, /pending 367). This
+// function took the picture from its caller, who had it from the window, and embedded it beside a
+// /Reason built from att without comparing them; an empty one made the signature invisible. Neither
+// can be asked for now: there is no picture parameter, and every contribution carries its block.
+// A block that cannot be drawn — a character no shipped face has, more lines than the frame holds —
+// refuses the signature; the doors that build an attestation ask `BlockFits` and `BlockDrawable`
+// first, so that refusal is met at the quote, not here.
+func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, p Placement) ([]byte, error) {
 	// **A ceremony signature with no recital is refused here, which is what makes `defaultIntent`
 	// unreachable when a record is present (C15, P07.S07b).**
 	//
@@ -79,20 +83,22 @@ func Contribute(pdf, certPEM, keyPEM []byte, att Attestation, appearance []byte,
 	if att.RosterHash != "" && att.Intent == "" {
 		return nil, ErrNoCeremonyIntent
 	}
-	opts := sign.Options{
-		Name:   att.Signer,
-		Reason: att.reason(),
-		When:   att.When,
+	block, err := att.BlockImage()
+	if err != nil {
+		return nil, err
 	}
-	if len(appearance) > 0 {
-		opts.Appearance = &sign.Appearance{Image: appearance, Page: p.Page, Rect: p.Rect}
+	opts := sign.Options{
+		Name:       att.Signer,
+		Reason:     att.reason(),
+		When:       att.When,
+		Appearance: &sign.Appearance{Image: block, Page: p.Page, Rect: p.Rect},
 	}
 	return sign.SignApproval(pdf, certPEM, keyPEM, opts)
 }
 
-// NominalBlockRect is the attestation block's rect at index 0 — the size a client
-// rasterises its appearance image to, before the server computes the authoritative
-// placement on the document that will actually carry it.
+// NominalBlockRect is the attestation block's rect at index 0 — the size `drawBlock`
+// rasterises the block's picture to and a quote reports, before the server computes the
+// authoritative placement on the document that will actually carry it.
 //
 // It exists because the rule had TWO implementations. `internal/server/session.go`
 // returned a hand-copied `{40, 40, 320, 124}` with a comment saying it "mirrors

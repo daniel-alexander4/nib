@@ -95,6 +95,12 @@ var armOutcomes = []armOutcome{
 	sentinelRow("ErrCeremonyComplete", p2p.ErrCeremonyComplete, "signing-refused", false),
 	sentinelRow("ErrNoCeremonyIntent", p2p.ErrNoCeremonyIntent, "signing-refused", false),
 	sentinelRow("ErrReadmeOverflow", p2p.ErrReadmeOverflow, "signing-refused", false),
+	// The signature block could not be drawn for what is being signed (ADR-158): too many lines for
+	// its frame, a character no shipped face has, or the faces themselves failed to load. Nothing
+	// was signed, and asking again cannot change the answer.
+	sentinelRow("ErrBlockTooTall", p2p.ErrBlockTooTall, "signing-refused", false),
+	sentinelRow("ErrBlockFaces", p2p.ErrBlockFaces, "signing-refused", false),
+	{is: func(err error) bool { var u *p2p.UndrawableError; return errors.As(err, &u) }, class: "signing-refused"},
 	sentinelRow("ErrNotStored", p2p.ErrNotStored, "not-saved", false),
 	// The far side's verdicts on what this side sent. A receiving arm sends nothing to be judged,
 	// so these are the dialling side's; they have rows so that reaching one here is an end with a

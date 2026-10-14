@@ -10,6 +10,7 @@ require (
 	github.com/digitorus/pdfsign v0.0.0-20260407063256-85ede6424a74
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352
 	github.com/digitorus/timestamp v0.0.0-20231217203849-220c5c2851b7
+	github.com/go-text/typesetting v0.3.5
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/quic-go/quic-go v0.61.0
 	github.com/yuin/goldmark v1.8.2

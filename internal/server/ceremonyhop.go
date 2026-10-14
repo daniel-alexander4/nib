@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -60,8 +59,8 @@ type ceremonyHopRequest struct {
 	// Ceremony is the id. It is the ONLY thing the client chooses, and that is the point: the
 	// party, the invitation and the document are all resolved here.
 	Ceremony string `json:"ceremony"`
-	// Appearance is the rendered signature block, base64 PNG, from the quote below. Absent on the
-	// carry path, where this machine contributes nothing and there is no block to draw.
+	// Appearance is REFUSED when present (ADR-158): the server draws the block from the attestation
+	// it signs. Read only so that a window still sending a picture is told so.
 	Appearance string `json:"appearance,omitempty"`
 	// When echoes the quote's timestamp, so the block the user reviewed is the block signed. Same
 	// contract `/api/cosign/quote` -> `/api/session/initiate` already has, bounded by maxWhenSkew.
@@ -80,12 +79,14 @@ type ceremonyHopQuote struct {
 	// unless the roster names them elsewhere — has nobody to dial, and the rail must not offer a call.
 	Mine bool `json:"mine"`
 	// Contributes is whether THIS machine signs at this hop. False on the carry path, and it is
-	// what tells the client whether it needs to render an appearance at all.
+	// what tells the client whether there is a block to show at all.
 	Contributes bool `json:"contributes"`
-	// Lines and Rect size the block, in the SHAPE the two existing quote routes already return —
-	// `cosignQuote`'s own fields, so the client's `renderAttestation` needs no new branch.
+	// Lines, Rect, Image and When are the block, in the SHAPE the two existing quote routes already
+	// return — `cosignQuote`'s own fields, filled by its one builder (`quoteFor`). Image is the
+	// picture that will be signed (ADR-158); the window shows it and draws nothing.
 	Lines []string   `json:"lines,omitempty"`
 	Rect  [4]float64 `json:"rect,omitempty"`
+	Image string     `json:"image,omitempty"`
 	When  string     `json:"when,omitempty"`
 	// Block is WHERE the block will be placed, at the convener's own turn only (ADR-147, `/pending 869`): the
 	// page and rectangle the receiving side's consent already shows (`sessionConfirmer.blockFor`), from the
@@ -271,7 +272,11 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 			if !aok {
 				return
 			}
-			out.Lines, out.Rect, out.When = att.AppearanceLines(), p2p.NominalBlockRect(), att.When.UTC().Format(time.RFC3339)
+			q, qok := quoteFor(w, att)
+			if !qok {
+				return
+			}
+			out.Lines, out.Rect, out.Image, out.When = q.Lines, q.Rect, q.Image, q.When
 			if place, perr := p2p.PlacementFor(pdf, roster, hex.EncodeToString(myFP)); perr == nil {
 				out.Block = &pendingBlock{Page: place.Page, Rect: place.Rect}
 			}
@@ -324,19 +329,26 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 	if !aok {
 		return
 	}
-	out.Lines, out.Rect, out.When = att.AppearanceLines(), p2p.NominalBlockRect(), att.When.UTC().Format(time.RFC3339)
+	q, qok := quoteFor(w, att)
+	if !qok {
+		return
+	}
+	out.Lines, out.Rect, out.Image, out.When = q.Lines, q.Rect, q.Image, q.When
 	writeJSON(w, out)
 }
 
 // handleCeremonyHop dials the party whose turn it is and runs the hop.
 //
 // **This is the action the whole wizard was missing.** Everything about which party, which
-// invitation and which document is decided HERE; the client sends a ceremony id and, when this
-// machine signs, the block it drew from the quote above.
+// invitation and which document is decided HERE; the client sends a ceremony id and the quote's
+// time, and the block is drawn here from the attestation that is signed (ADR-158).
 func (s *Server) handleCeremonyHop(w http.ResponseWriter, r *http.Request) {
 	var req ceremonyHopRequest
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if refusedClientPicture(w, req.Appearance != "") {
 		return
 	}
 	rec, pdf, next, mine, ok := s.hopTarget(w, r, req.Ceremony)
@@ -421,16 +433,11 @@ func (s *Server) handleCeremonyHop(w http.ResponseWriter, r *http.Request) {
 	if !aok {
 		return
 	}
-	appearance, derr2 := decodeAppearance(req.Appearance)
-	if derr2 != nil {
-		httpError(w, http.StatusBadRequest, "the signature block could not be read: "+derr2.Error())
-		return
-	}
 	if err := checkCeremonyDeadline(pdf, time.Now()); err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
-	s.runHopDial(w, r, v, cer, cert, key, myFP, peerFP, pdf, appearance, att, req.Address, rosterLabel(next))
+	s.runHopDial(w, r, v, cer, cert, key, myFP, peerFP, pdf, att, req.Address, rosterLabel(next))
 }
 
 // holdHop takes the single in-flight slot for one (ceremony, party), or reports it taken.
@@ -458,20 +465,4 @@ func (s *Server) holdHop(id, party string) (func(), bool) {
 		delete(s.hops, k)
 		s.legMu.Unlock()
 	}, true
-}
-
-// decodeAppearance reads the client's rendered block, which is base64 PNG or absent.
-//
-// **Absent is legitimate and is the carry path**, where this machine contributes nothing and there
-// is no block to draw. `runHopDial` refuses an EMPTY appearance on the contributing path, so the
-// two cases stay distinguishable here rather than being collapsed into "maybe fine".
-func decodeAppearance(b64 string) ([]byte, error) {
-	if strings.TrimSpace(b64) == "" {
-		return nil, nil
-	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
-	if err != nil {
-		return nil, err
-	}
-	return raw, nil
 }

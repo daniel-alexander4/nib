@@ -77,7 +77,8 @@ const h = await boot({
 const { document: doc, window: win, settle } = h;
 
 // Canvas passthrough — see the header. A no-op 2d context and a toBlob that yields a
-// one-byte PNG, just enough for renderAttestation() to resolve and the POST to fire.
+// one-byte PNG. The window no longer draws the signature block (the server does, ADR-158), so
+// nothing on the dial path needs these; they stay for whatever else reaches for a canvas.
 const ctxStub = {
   fillRect() {}, strokeRect() {}, fillText() {},
   fillStyle: '', strokeStyle: '', lineWidth: 0, textBaseline: '', font: '',
