@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"nib/internal/pdfops"
+	"nib/internal/sign"
 )
 
 // handleScan reports the active and hidden content in the current document
@@ -32,6 +33,9 @@ type sanitizeResponse struct {
 	Ok       bool              `json:"ok"`
 	Residual pdfops.ScanReport `json:"residual"`
 }
+
+// offPageFieldsSigned is the refusal of the "fields" removal on a signed document.
+const offPageFieldsSigned = "This document is signed, and taking form entries out of it would break the signature. Nothing was changed."
 
 // handleSanitize removes active or hidden content from the current document by
 // the requested method: "strip" neutralizes all active content while keeping
@@ -63,6 +67,14 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.RemoveFilesAndMedia(before)
 	case "metadata":
 		result, err = pdfops.StripMetadata(before)
+	case "fields":
+		// Form entries on no page (`/pending 888`). Not on a signed document: the other removals are asked for
+		// with the signature's loss confirmed, and this one is housekeeping nobody should lose a signature to.
+		if sign.HasSignatureBlob(before) {
+			httpError(w, http.StatusUnprocessableEntity, offPageFieldsSigned)
+			return
+		}
+		result, err = pdfops.RemoveOffPageFields(before)
 	default:
 		httpError(w, http.StatusBadRequest, "unknown method")
 		return

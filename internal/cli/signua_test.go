@@ -97,3 +97,25 @@ func TestSignRefusesADynamicXFADocument(t *testing.T) {
 		t.Fatalf("control: sign of a static XFA document exit = %d", code)
 	}
 }
+
+// TestExportOfADocumentWithNoFormFieldsSaysSo — `/pending 888`: `nib export-xfdf` on a document whose only field
+// is a signature answers with the sentence and writes nothing, not with pdfcpu's "no form fields affected".
+func TestExportOfADocumentWithNoFormFieldsSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "sig.pdf")
+	mustWrite(t, in, testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /SigFlags 1 >> >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R] >>",
+		6: "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) /Rect [10 10 150 60] /P 3 0 R >>",
+	}))
+	out := filepath.Join(dir, "data.xfdf")
+	var code int
+	stderr := captureStderr(t, func() { code = cmdExportXFDF([]string{in, "-o", out}) })
+	if code == 0 || !strings.Contains(stderr, pdfops.NoFormFieldsRefusal) {
+		t.Errorf("export-xfdf of a signature-only document: exit %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("the refused export wrote a file")
+	}
+}

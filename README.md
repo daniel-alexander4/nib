@@ -575,9 +575,9 @@ your machine** — the second PDF never leaves your computer.
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
 risky link/widget actions (launch a program, submit a form, open a URL),
 embedded files, media annotations (sound, video, rich media and 3D — the last
-two can carry their own scripts), optional-content layers, XMP metadata, and the document's
-identifying properties (author, title, creator…). Then remove it four
-ways, strongest fidelity-preserving first:
+two can carry their own scripts), optional-content layers, XMP metadata, the document's
+identifying properties (author, title, creator…), and form fields that are on none of its
+pages. Then remove it five ways, strongest fidelity-preserving first:
 - **Strip active content** — neutralises every auto-run hook, script and risky
   action while keeping the page text and layout intact. It re-scans its own result
   and refuses — leaving the document untouched, and `nib sanitize` exiting non-zero
@@ -594,6 +594,12 @@ ways, strongest fidelity-preserving first:
   play them (a link or bookmark that starts a clip), leaving all other
   interactivity untouched. It too re-scans its result and refuses if a file or
   media annotation would remain.
+- **Remove form entries on no page** — a page cut out of a larger form by other
+  software usually keeps the other pages' fields, and whatever was typed in them,
+  where no page shows them. The scan counts them (it never prints a field's name
+  or value); this takes them out and leaves the form you can see exactly as it
+  was. Nib asks first, because a form may keep such a field on purpose for a
+  calculation another reader runs, and it is not offered on a signed document.
 - **Flatten to images** — the guaranteed-inert floor: turns every page into an
   image so nothing active can remain (selectable text is lost).
 

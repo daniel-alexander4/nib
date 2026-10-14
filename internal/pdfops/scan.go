@@ -248,6 +248,23 @@ func Scan(pdf []byte) (ScanReport, error) {
 			}
 			eachAction(xt, derefDict(xt, f["A"]), 0, &actions, func(act types.Dict) { addAction(act, "", 0) })
 		})
+		// Fields that are in the form and on no page (`formfields.go`, `/pending 888`). A file cut from a
+		// larger form by other software keeps the other pages' fields, and what was typed in them, where no
+		// page shows it. Counts only: a field's name and its value are the thing not to print.
+		if fields, ferr := formFields(xt); ferr == nil {
+			off, held := 0, 0
+			for _, f := range fields {
+				if !f.onPage {
+					off++
+					if f.value {
+						held++
+					}
+				}
+			}
+			if off > 0 {
+				add("offPageFields", offPageSeverity(held), offPageDetail(off, held), 0)
+			}
+		}
 		// /CO is the calculation ORDER — an array of the fields whose /AA /C scripts run
 		// and in what sequence. Its presence is the tell that calculate scripts exist even
 		// if a field dict is malformed enough that the walk above missed one.
@@ -1491,4 +1508,32 @@ func actionDetail(s string) string {
 	default:
 		return s + " action"
 	}
+}
+
+// offPageSeverity is medium where any field on no page holds a value — something a person typed that no page
+// shows — and low where none does: then only the fields' names are there.
+func offPageSeverity(held int) string {
+	if held > 0 {
+		return "medium"
+	}
+	return "low"
+}
+
+// offPageDetail words the finding. "On no page" and never "from removed pages": a form may keep a field with no
+// box on purpose, as a value its own calculations use, and nothing in the file says which this is.
+func offPageDetail(off, held int) string {
+	fields := "form fields that are"
+	if off == 1 {
+		fields = "form field that is"
+	}
+	s := fmt.Sprintf("%d %s on no page of this document", off, fields)
+	switch {
+	case held == 1:
+		s += " — 1 of them holds an entry nobody looking at the pages can see"
+	case held > 1:
+		s += fmt.Sprintf(" — %d of them hold entries nobody looking at the pages can see", held)
+	default:
+		s += " — none holds an entry"
+	}
+	return s
 }

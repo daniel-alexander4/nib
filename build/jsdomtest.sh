@@ -117,7 +117,9 @@ fi
 # 107 since ADR-126 and ADR-127 (tagpromote.test.mjs, tagrolemap.test.mjs): an inline tag's one button and where
 # the selection lands after it, and the role map's rows — each its own boot, because each needs a tree of its own
 # shape and the other tag files' trees are asserted on by position.
-Nib_expect_files=108
+# 109 since /pending 888 (scanfields.test.mjs): the fourth removal in the hidden-content dialog — its own boot,
+# because it answers the page's confirm and no other file does.
+Nib_expect_files=109
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

@@ -75,11 +75,17 @@ func Bookmarks(pdf []byte) (bms []pdfcpu.Bookmark, err error) {
 }
 
 // ExportForm is `api.ExportForm` (form.go:402).
-func ExportForm(pdf []byte, source string) (fg *form.FormGroup, err error) {
+//
+// prepare, where not nil, is given the context before pdfcpu walks its form — `pdfops` sets aside what that walk
+// misreads (a push button). The context is this call's own and is not written.
+func ExportForm(pdf []byte, source string, prepare func(*model.Context)) (fg *form.FormGroup, err error) {
 	defer fault.Catch(&err)
 	ctx, err := ReadOptimized(pdf, apiConf(nil, model.EXPORTFORMFIELDS))
 	if err != nil {
 		return nil, err
+	}
+	if prepare != nil {
+		prepare(ctx)
 	}
 	fg, ok, err := form.ExportForm(ctx.XRefTable, source)
 	if err != nil {
@@ -92,11 +98,15 @@ func ExportForm(pdf []byte, source string) (fg *form.FormGroup, err error) {
 }
 
 // ExportFormJSON is `api.ExportFormJSON` (form.go:431).
-func ExportFormJSON(pdf []byte, source string) (out []byte, err error) {
+// prepare is ExportForm's.
+func ExportFormJSON(pdf []byte, source string, prepare func(*model.Context)) (out []byte, err error) {
 	defer fault.Catch(&err)
 	ctx, err := ReadOptimized(pdf, apiConf(nil, model.EXPORTFORMFIELDS))
 	if err != nil {
 		return nil, err
+	}
+	if prepare != nil {
+		prepare(ctx)
 	}
 	var b bytes.Buffer
 	ok, err := form.ExportFormJSON(ctx.XRefTable, source, &b)
