@@ -602,7 +602,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// `TestTheUnattendedGatesHaveOneDoor` keeps that honest structurally: routing
 				// here goes through `serveOneSession`, which is `p2p.Receive`'s one call site
 				// and constructs the real Confirmer and Verifier.
-				_, final, answered, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
+				final, answered, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
 					cer, conn, cert, key, convenerLabel, sessionModeDelivery, myFP, role, true)
 				// Opened ONCE: the convener re-delivers the same hop after a lost channel, and this
 				// arm now stays up to receive the copy, so a second serve must not stack a tab.
@@ -616,6 +616,14 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// exactly what a delivery arm is for. Returning here disarmed it the moment the hop
 				// completed, so the round found nobody listening. The arm is spent by the DELIVERY
 				// leg below, as it always was; a hop served or failed leaves it standing.
+				//
+				// **Which is why this arm does not ask `armSpentBy`, by name (/pending 766,
+				// ADR-009's exemption at the site).** That rule answers "is an arm that was
+				// waiting for a SESSION spent by how one ended". This arm is waiting for a copy:
+				// whatever a person decided about the hop on the way — a decline, a gate nobody
+				// answered — the finished document or the end state is still owed to this
+				// machine, and ending here would leave nothing listening for it. The delivery leg
+				// below asks nobody anything, so it has no decision to end on either.
 				continue
 			}
 			_, derr := s.deliverOneLeg(conn.Channel, cer, nil, nil, false)

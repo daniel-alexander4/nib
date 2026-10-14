@@ -2110,6 +2110,25 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
       this route means the sequence below is grading a proceeding nobody ended." ;;
   esac
 
+  # **And the refusal ENDED party 4's arm (/pending 766).** A decline is a decision made by a
+  # party who got through, and the one spend rule both arm loops ask (`armSpentBy`) ends the arm
+  # on it: a listener left armed after "no" lets the peer dial again and ask the same person the
+  # same question. Read where the page reads it. Polled, because the convener's 409 arrives when
+  # ITS exchange returns and party 4's arm goroutine releases the slot strictly later — the same
+  # gap `ceremony()` polls across. `armed` falls through to the delivery slot, and the decliner
+  # holds none: it pruned this ceremony when it refused.
+  local darmed=""
+  for _ in $(seq 1 40); do
+    darmed="$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget armed)"
+    [ "$darmed" = "False" ] && break
+    sleep 0.25
+  done
+  [ "$darmed" = "False" ] \
+    || fail "decline: party 4 refused the document and is STILL ARMED over $transport (armed=$darmed) — the
+      arm was not spent by a decision its own user made, so the convener can dial again and the
+      same person is asked again"
+  echo "decline: the refusal ended party 4's arm ($transport)"
+
   # **The convener ATTESTED it.** Before P08.S05e nothing did: `SignTermination` and
   # `WriteTermination` had zero production callers, so a declined proceeding was a sentence shown to
   # one person and no record anywhere.

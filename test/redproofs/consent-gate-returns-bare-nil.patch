@@ -1,11 +1,11 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 2e55d1a..aa7fa20 100644
+index f94ffaac..288c34df 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -454,7 +454,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
- 	case d := <-ch:
- 		return d.accept, nil
- 	case <-time.After(sessionConsentTimeout):
+@@ -1836,7 +1836,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
+ 		}
+ 		return true, nil
+ 	case <-time.After(consentWait(sessionConsentTimeout)):
 -		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
 +		return false, nil
  	}

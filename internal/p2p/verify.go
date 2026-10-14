@@ -68,6 +68,18 @@ var (
 	errShortReveal      = errors.New("contribution is not 32 bytes")
 )
 
+// IsCommitmentFailure reports whether err is the commit-reveal exchange failing its own check: a
+// reveal that is not the value committed to, or a commitment or reveal of the wrong size.
+//
+// **It exists so a caller can END on it by name (/pending 766).** The three errors are unexported
+// because nothing outside this file may raise them, and until this predicate a receiving arm could
+// tell them from a dropped connection only by what they were NOT — `IsTransportLoss` is false — so
+// the one arm that judged by "did this connection reach the user" kept listening after the tamper
+// check failed, since the check runs before any word is shown.
+func IsCommitmentFailure(err error) bool {
+	return errors.Is(err, errCommitmentBroken) || errors.Is(err, errShortCommitment) || errors.Is(err, errShortReveal)
+}
+
 // verificationExchange runs commit-then-reveal over conn and returns the four-word string
 // both sides must compare.
 //

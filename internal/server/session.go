@@ -770,6 +770,12 @@ func (se *session) noteFailure(by armKind, what, summary, detail string) {
 // or corrected by NTP mid-arm — would end a live ceremony on the strength of the one reading that
 // is wrong. Telling the user costs nothing if the clock is wrong; disarming costs them the
 // ceremony. The notice names the deadline so they can see which it was.
+//
+// **That is about THIS function, and the arm ends all the same (/pending 766).** A refused arrival
+// is this machine's gate deciding about a peer who got through, and `armSpentBy` ends the arm on
+// it — as both arm loops already did, each by its own rule, while this notice went on telling the
+// user "You are still armed". The sentence now says what happens: the wait is over, the proceeding
+// is not, arm again.
 func (se *session) noteArrivalRefusal(by armKind, err error) {
 	if err == nil {
 		return
@@ -784,8 +790,9 @@ func (se *session) noteArrivalRefusal(by armKind, err error) {
 	}
 	se.noteFailure(by, "arrival-refused",
 		"A document arrived for this ceremony and was refused, so nothing was signed.",
-		"You are still armed and the proceeding is not over; what arrived is not the document "+
-			"this invitation describes. Reason: "+err.Error())
+		"This computer has stopped waiting, though the proceeding is not over: what arrived is "+
+			"not the document this invitation describes. Start waiting again to carry on. "+
+			"Reason: "+err.Error())
 }
 
 func (se *session) setReceived(by armKind, r *receivedInfo) {
@@ -1295,8 +1302,11 @@ func (se *session) status() sessionStatus {
 	return st
 }
 
-// reached records that a connection put something in front of the local user. It is what
-// decides whether that connection SPENT the arm — see serveOneSession.
+// reached records that a connection put something in front of the local user, and which request
+// they accepted on it. **The mark was the TCP arm's spend rule until /pending 766 and decides
+// nothing now** — `armSpentBy` judges the outcome by name. It is kept as the consent gates'
+// statement of fact, which their own tests read: a gate refused because its slot was taken showed
+// nobody anything, and must not say it did.
 type reached struct {
 	v atomic.Bool
 	// answered is the id of the request the user accepted on this connection, or "" — returned by
@@ -1479,7 +1489,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			sc.s.declineCeremony(sc.cer)
 		}
 		return d.accept, d.intent, d.appearance, d.when, nil
-	case <-time.After(sessionConsentTimeout):
+	case <-time.After(consentWait(sessionConsentTimeout)):
 		// **Not `(false, nil)`.** That is what a user who read the document and refused it
 		// returns, and collapsing the two here means the peer is told a person declined
 		// when nobody was at the machine. See p2p.ErrConsentTimedOut.
@@ -1700,7 +1710,7 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 			who, time.Since(started).Round(time.Millisecond), ok)
 		sv.noteVerification(true, ok)
 		return ok, nil
-	case <-time.After(sessionConsentTimeout):
+	case <-time.After(consentWait(sessionConsentTimeout)):
 		// **The elapsed time is logged even though it is the timeout by construction**, because the
 		// line's value is the START time it lets a reader compute: a watcher that gave up at 60 s
 		// against a gate that went up at 70 s produces exactly this, and the two are otherwise
@@ -1825,7 +1835,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 			return false, err // → ackNotStored, never ackDeclined: the user said yes
 		}
 		return true, nil
-	case <-time.After(sessionConsentTimeout):
+	case <-time.After(consentWait(sessionConsentTimeout)):
 		return false, p2p.ErrConsentTimedOut // see sessionConfirmer.Confirm
 	}
 }
@@ -2010,19 +2020,28 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		// The dial says what it is for before either side picks a gate set (ADR-028). A peer that
 		// predates the role frame declared none and reads as RoleCoSign, which is what every
 		// pre-role dial to an interactive arm meant.
-		role, rerr := p2p.ReadRole(conn.Channel)
-		if rerr != nil {
+		anchor := consentAnchor{ln: ln, kind: armInteractive}
+		role, xerr := p2p.ReadRole(conn.Channel)
+		if xerr != nil {
+			// An unreadable role is an outcome like any other and the one rule judges it: a peer
+			// this build cannot serve, or a channel that dropped before it said anything.
 			conn.Close()
-			return false // an unreadable role is a peer this build cannot serve; the arm is not spent
+		} else {
+			var final []byte
+			var answered string
+			final, answered, xerr = s.serveOneSession(anchor, cer, conn, cert, key, label, mode, myFP, role, false)
+			if final != nil && !opened {
+				s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
+				opened = true
+			}
+			s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
 		}
-		served, final, answered, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
-		if final != nil && !opened {
-			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
-			opened = true
-		}
-		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
-		if !served {
-			return false
+		// **Whether that spent the arm is asked of the ONE rule, never decided here (/pending 766).**
+		// This loop used to answer it from `served` — "did the connection put anything in front of
+		// the user" — and discard the error, which kept the arm listening after a failed commitment
+		// check, because that check runs before any word is shown.
+		if s.armSpentBy(anchor, cer, xerr) {
+			return true
 		}
 		// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
 		//
@@ -2039,15 +2058,13 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		// ceremony says nothing about what either does with it. Found by running that test's
 		// own body over TCP.
 		//
-		// **Gated on a ceremony that has SIGNED, and both halves matter.** Without a ceremony
-		// there is no `ReDeliverer` and no cache, so holding the arm open would buy nothing and
-		// cost an arm that outlives its session — P05.S01's whole point is that the arm is
-		// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
-		// decline or a consent timeout, which are decisions rather than losses.
-		if cer == nil || (!cer.hasSigned() && !cer.servedReDelivery()) {
-			return true // the arm is spent on a session, which is what it is for
-		}
-		if postSign.IsZero() {
+		// **Armed by the SIGNATURE, whatever this connection ended with** — as
+		// `runCeremonyReceive` arms its own. The writeback that is lost can be the first one, and
+		// that connection ends as a lost channel: the arm is kept, and without this it would be
+		// kept on the pre-signing bound, announcing, for the rest of the ceremony's life.
+		// `servedReDelivery` is the same fact across a restart (/pending 334). Without a ceremony
+		// there is no `ReDeliverer` and no cache, so there is no window to open.
+		if postSign.IsZero() && cer != nil && (cer.hasSigned() || cer.servedReDelivery()) {
 			// **Stop announcing, for the reason runCeremonyReceive's twin gives (/pending 300):**
 			// a re-delivery is a reconnect by a peer that already holds this address, so the
 			// window needs the listener and not the advertisement. Announcing through it
@@ -2063,9 +2080,8 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			// and a re-delivery window anybody who can reach the listener holds open for free
 			// is the same defect one phase later.
 			postSign = time.Now().Add(connectDeadline)
-			return false // the loop resumes the timer to postSign's remainder
 		}
-		return time.Now().After(postSign)
+		return false // the loop resumes the timer to the remainder of whichever deadline is live
 	}
 	for {
 		conn, err := ln.Accept()
@@ -2096,8 +2112,9 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 		// deadline is live; `TestEveryPathThroughTheAcceptLoopReArmsTheWindow` holds it.
 		deadline := armedUntil
 		if !postSign.IsZero() {
-			// Inside the re-delivery window an unserved connection is an ordinary failed
-			// reconnect; keep the window rather than falling back to the pre-signing bound.
+			// Inside the re-delivery window a connection that did not end the arm — a clean
+			// re-delivery, a failed reconnect — leaves the window where it was; never fall back
+			// to the pre-signing bound.
 			deadline = postSign
 		}
 		remaining := time.Until(deadline)
@@ -2108,16 +2125,20 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	}
 }
 
-// serveOneSession runs one accepted connection to its outcome and reports whether that
-// outcome SPENT the arm.
+// serveOneSession runs one accepted connection to its outcome and returns that outcome: the
+// co-signed document if there is one, the request the user accepted, and the error the exchange
+// ended with.
 //
-// True for a completed exchange and true for a DECLINE — a decline is a decision the user
-// made, not a connection that failed, and leaving the listener armed after one would let a
-// peer re-dial and ask the same person again. False for everything else: a dropped
-// channel, a protocol error, a consent that timed out. That is the whole judgment in this
-// function, and it is why the co-signing decline needed a sentinel of its own
-// (`p2p.ErrCoSignDeclined`) rather than the bare error it used to return — `errors.Is`
-// could not otherwise tell it from the protocol error declared one line away.
+// **It does not say whether the arm is spent, and it used to (/pending 766).** It returned
+// `served` — "this connection put something in front of the user" — and the TCP arm ended on that
+// alone, discarding the error, while the QUIC arm ignored it and judged the error. Two judgments of
+// one question that disagreed about a failed commitment check, a refused role, a busy slot and a
+// channel lost after the words were up. The judgment now lives in `armSpentBy`, which every arm
+// loop that can be spent by a session asks, and this function reports only what happened.
+//
+// `p2p.ErrCoSignDeclined` is a sentinel of its own for that door's sake: a decline is a decision the
+// user made, `errors.Is` has to be able to tell it from the protocol error declared one line away,
+// and leaving the listener armed after one would let a peer re-dial and ask the same person again.
 // cer is the ceremony this session belongs to, or nil outside one.
 //
 // **Explicit, rather than read off `anchor.cer` (P07.S02b).** The anchor carries a ceremony only
@@ -2130,39 +2151,22 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 // `consentAnchor.current` PREFERS `cer` when it is non-nil, so that path's stale-goroutine test
 // would silently switch from listener-identity to ceremony-identity — a change to what
 // `stale-consent-on-new-session` guards, smuggled in under another slice's name.
-func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte, role p2p.Role, roleAcknowledged bool) (served bool, coSigned []byte, answered string, err error) {
+func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte, role p2p.Role, roleAcknowledged bool) (coSigned []byte, answered string, err error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
 	// `conn.Close()` after the call would be skipped — the shape the pre-P05.S01 loop got
 	// right with a `defer` and the first draft of this split lost.
 	defer conn.Close()
-	// **What spends the arm is whether this connection REACHED THE USER**, not which
-	// error it ended with.
-	//
-	// The first draft enumerated outcomes — a decline spends it, anything else does not —
-	// and the enumeration was both wrong and the wrong shape. It missed
-	// `p2p.ErrVerificationDeclined`, which is the MAN-IN-THE-MIDDLE signal: the user
-	// looked at the four words and said they did not match. `internal/p2p/verify.go` says
-	// what that must never become — *"it must never be reported as a network error —
-	// 'could not connect' invites a retry, which is the worst possible advice when someone
-	// is sitting between you"* — and an enumeration that let it fall through to "no
-	// session" made the listener **perform that retry itself**, silently, as many times as
-	// the attacker liked, while the status still read `Armed: true`. Measured at two full
-	// rounds in 0.47 s.
-	//
-	// It also mis-stated the timeouts in the opposite direction: a consent nobody answers
-	// returns `accept=false` with a nil error (`sessionConfirmer.Confirm`), so it arrives
-	// here as a decline — the enumeration's comment claimed it did not.
-	//
-	// Engagement is the honest predicate and it needs no enumeration to stay correct. A
-	// connection abandoned by P05.S02's racer dies at the first frame, having shown the
-	// user nothing, and leaves the arm. A connection that put the spoken check or a
-	// consent request on screen has spent it, however it ended — declined, refused,
-	// unanswered, or dropped after the user had already said yes. The default for an
-	// error nobody anticipated is therefore "spent", which is HEAD's behaviour and the
-	// safe direction; only the narrow, positively-identified never-reached-anyone case
-	// is loosened, which is the whole of what this slice needs.
+	// `saw` is how the consent bridges say which request the user accepted on this connection
+	// (`answered`, below). **It no longer decides anything about the arm.** It used to: "did this
+	// connection reach the user" was the TCP arm's whole spend rule, written here after a first
+	// draft that enumerated declines and missed `p2p.ErrVerificationDeclined` — the
+	// man-in-the-middle signal, which the listener then retried on the attacker's behalf, two full
+	// rounds in 0.47 s. Engagement fixed that and left its own hole one step earlier: the commitment
+	// check fails BEFORE any word is on screen, so a connection that failed it had "reached nobody"
+	// and the arm listened on. `armSpentBy` names the outcomes instead, and ends on any it has no row
+	// for, which is the safe direction the engagement rule was reaching for.
 	var saw reached
 	// The accepted request's id, for the caller to settle after it opens the arrival (/pending 750).
 	defer func() { answered = saw.answeredID() }()
@@ -2190,7 +2194,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// as a bare EOF — the `/pending 315` class found at four sentinels — and a peer dialling the
 	// wrong arm would be told its network failed.
 	if !armServesRole(mode, role) {
-		return saw.v.Load(), nil, "", p2p.RefuseRole(ch)
+		return nil, "", p2p.RefuseRole(ch)
 	}
 	// **Acknowledged by whoever READ the role, and exactly once.** The delivery arm reads and
 	// acknowledges before it dispatches here — it has to, because it chooses between two gate
@@ -2199,7 +2203,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// than a re-read, because the frame is gone by then.
 	if !roleAcknowledged {
 		if err := p2p.AcceptRole(ch); err != nil {
-			return saw.v.Load(), nil, "", err
+			return nil, "", err
 		}
 	}
 	if role == p2p.RoleTransfer {
@@ -2209,9 +2213,9 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
 		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
 		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer, anchor: &anchor}); derr != nil {
-			return saw.v.Load(), nil, "", derr
+			return nil, "", derr
 		}
-		return true, nil, "", nil // a transfer saves itself; no co-signed document to open
+		return nil, "", nil // a transfer saves itself; no co-signed document to open
 	}
 	var rd p2p.ReDeliverer
 	if cer != nil {
@@ -2242,7 +2246,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		rerr = nil
 	}
 	if rerr != nil {
-		return saw.v.Load(), nil, "", rerr
+		return nil, "", rerr
 	}
 	// The co-signed document is RETURNED, not opened here: under P05.S10's re-delivery loop this
 	// function runs again on every reconnect, and opening on each would stack duplicate tabs of one
@@ -2258,7 +2262,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// the convener raced candidates to `connectDeadline` per party — which is what the tier-4 run
 	// measured, twice, before this call existed in the right place.
 	s.armDeliveryAfterHop(final)
-	return true, final, "", nil
+	return final, "", nil
 }
 
 // openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
@@ -3005,20 +3009,25 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			}
 		}
 		gotThrough = true
-		role, rerr := p2p.ReadRole(conn.Channel)
-		if rerr != nil {
+		anchor := consentAnchor{cer: cer, kind: armInteractive}
+		role, xerr := p2p.ReadRole(conn.Channel)
+		if xerr != nil {
+			// See runSession: an unreadable role is an outcome the one rule judges. **It used to
+			// `continue` from here, the one way round this loop that was not paced (/pending 766).**
 			conn.Close()
-			continue // see runSession: an unreadable role does not spend the arm
+		} else {
+			var final []byte
+			var answered string
+			final, answered, xerr = s.serveOneSession(anchor, cer, conn, cert, key, label, mode, myFP, role, false)
+			if final != nil && !opened {
+				s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
+				opened = true
+			}
+			s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
+			// Over TLS 1.3 the far side's refusal of a connection this arm DIALLED can arrive at the
+			// first read rather than at the dial (`p2p.RefusedByPeer`), which is here.
+			refused.NoteDial(xerr)
 		}
-		_, final, answered, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
-		if final != nil && !opened {
-			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
-			opened = true
-		}
-		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
-		// Over TLS 1.3 the far side's refusal of a connection this arm DIALLED can arrive at the
-		// first read rather than at the dial (`p2p.RefusedByPeer`), which is here.
-		refused.NoteDial(xerr)
 		if postSignDeadline.IsZero() && cer.hasSigned() {
 			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
 			// **And STOP ANNOUNCING, because the window needs the listener and not the
@@ -3042,23 +3051,38 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			// will refuse the next person to answer it.
 			armAnnouncer.Close()
 		}
-		switch {
-		case xerr == nil:
-			// **`servedReDelivery` is the second half, and without it a restart closed this window
-			// (/pending 334).** `hasSigned` means "this process signed", which a restart makes
-			// false by design — so a party that came back and answered from its STORED
-			// contribution took this branch and disarmed, and a second lost writeback then met a
-			// closed listener. The two are different facts and both keep the window open.
-			if !cer.hasSigned() && !cer.servedReDelivery() {
-				return // a clean completion that produced no signature (not the co-sign path) — done
-			}
-			// Signed and delivered cleanly, but a clean writeFrame does not prove the initiator read
-			// it; keep the window open for a possible re-delivery until postSignDeadline.
-		case isTransportLoss(xerr):
-			// The channel dropped: re-race (pre-signing) or re-accept (post-signing).
-		default:
-			return // a decided outcome — decline, MITM, consent timeout — ends the ceremony
+		// **Whether that spent the arm is asked of the ONE rule (/pending 766)** — the question
+		// `runSession` asks at the same point, of the same function. A decided outcome ends the
+		// ceremony's arm: a decline, a gate nobody answered, the tamper check. A clean completion
+		// ends it unless this arm now owes a re-delivery — and **`servedReDelivery` is half of
+		// that, without which a restart closed this window (/pending 334)**: `hasSigned` means
+		// "this process signed", which a restart makes false by design, so a party that came back
+		// and answered from its STORED contribution disarmed, and a second lost writeback then met
+		// a closed listener. Both facts are read inside the rule.
+		if s.armSpentBy(anchor, cer, xerr) {
+			return
 		}
+		if xerr != nil {
+			// Kept after a failure: the channel dropped, or the peer asked for something this arm
+			// does not serve. Re-race (pre-signing) or re-accept (post-signing) — **paced through
+			// the one door, like every other way round this loop**. A peer that completes the
+			// handshake and then fails its first frame could otherwise be taken again as fast as it
+			// fails, for the whole of the window it is failing inside.
+			n, deadline := &reraces, overallDeadline
+			if cer.hasSigned() {
+				n, deadline = &promotes, postSignDeadline
+			}
+			d, ok := reraceWait(*n, time.Now(), deadline)
+			if !ok {
+				return // the window this arm was waiting in has closed
+			}
+			*n++
+			if !sleepOrDone(ctx, d) {
+				return // the arm was cancelled while pacing
+			}
+		}
+		// Otherwise signed and delivered cleanly — but a clean writeFrame does not prove the
+		// initiator read it, so the window stays open for a re-delivery until postSignDeadline.
 	}
 }
 

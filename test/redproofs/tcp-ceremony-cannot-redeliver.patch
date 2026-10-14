@@ -1,15 +1,15 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 5073d43c..4addc8f8 100644
+index f94ffaac..4b2b64a4 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1907,9 +1907,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
- 		// cost an arm that outlives its session — P05.S01's whole point is that the arm is
- 		// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
- 		// decline or a consent timeout, which are decisions rather than losses.
--		if cer == nil || (!cer.hasSigned() && !cer.servedReDelivery()) {
--			return true // the arm is spent on a session, which is what it is for
--		}
-+		return true // the arm is spent on a session, which is what it is for
- 		if postSign.IsZero() {
- 			// **Stop announcing, for the reason runCeremonyReceive's twin gives (/pending 300):**
- 			// a re-delivery is a reconnect by a peer that already holds this address, so the
+@@ -2040,8 +2040,8 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte,
+ 		// This loop used to answer it from `served` — "did the connection put anything in front of
+ 		// the user" — and discard the error, which kept the arm listening after a failed commitment
+ 		// check, because that check runs before any word is shown.
+-		if s.armSpentBy(anchor, cer, xerr) {
+-			return true
++		if s.armSpentBy(anchor, cer, xerr) || xerr == nil {
++			return true // the arm is spent on a session, which is what it is for
+ 		}
+ 		// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
+ 		//
