@@ -755,7 +755,14 @@ func (c *ceremonyID) borrowEndpoint(end *p2p.SharedEndpoint, rz *rendezvous.Serv
 // where a received document exists before the user sees it, and `handleSessionInitiate`, where a
 // pasted invitation supplies the roster whose label, capacity and recital the local signature is
 // about to carry. This comment named only the first until P07.S07b, and the second had no check.
-func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
+//
+// # `telling` is the session whose status says the anchor is running (/pending 359)
+//
+// The content anchor at the bottom is the slow step, and it runs before either party has been shown
+// anything. Every production caller passes the server's session so its window can say "Checking the
+// document…" for exactly that step; nil tells nobody and is for a test driving the gate directly
+// (`TestEveryArrivalCheckTellsTheSession` holds the production callers to it).
+func (c *ceremonyID) checkArrival(pdf []byte, now time.Time, telling *session) error {
 	rec, err := ceremony.CheckRecord(pdf, now)
 	if err != nil {
 		return fmt.Errorf("this document's ceremony record could not be checked: %w", err)
@@ -850,13 +857,26 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	// convener signature for nothing. Comparing the digest against the `rec` already in hand is the
 	// same check for one parse.
 	//
-	// **8.7 s is still a lot and it is on a request path**, which `CLAUDE.md` reserves for Dan.
-	// It is bounded — the unsigned window is hop 1 only, so once per ceremony per side, and it
-	// scales with the document — and it is parked rather than assumed: see `/pending 359`.
+	// **It stays on the request path, by decision (`/pending 359`, 2026-10-12)**: a size threshold,
+	// an asynchronous check and a raw-byte hash in the record were each declined. It is bounded —
+	// the unsigned window is hop 1 only, so once per ceremony per side — and it scales with the
+	// document.
+	//
+	// **Re-measured 2026-10-12 on this tree** (rule 6, after /pending 488; three runs each, on a
+	// machine at load average 7–14, so read them as upper figures): `DocumentHashFor` 0.41–0.47 s
+	// at 0.8 MB, 4.7–7.3 s at 3.6 MB, 6.7–10.0 s at 6.8 MB and 29–35 s at 20.1 MB — text-heavy
+	// documents made the way the tier-4 harness makes its large one. `CheckRecord`, above, is
+	// 0.1 s, 1.7–2.2 s, 2.5–3.9 s and 5.8–12 s on the same four.
+	//
+	// **So the wait says what it is.** `telling.checkingDocument()` brackets the hash and nothing
+	// else, and the deferred call clears it on every way out of it.
 	if !sign.HasSignatureBlob(pdf) {
 		// Under the rule the record names (ADR-080): `CheckRecord` above has already refused a rule
 		// this build cannot compute, so `herr` here is the document's, never a version skew.
-		got, herr := ceremony.DocumentHashFor(pdf, rec)
+		got, herr := func() (string, error) {
+			defer telling.checkingDocument()()
+			return ceremony.DocumentHashFor(pdf, rec)
+		}()
 		switch {
 		case herr != nil:
 			// Named, because `DocumentHash` fails on an unreadable page and that reaches a user at

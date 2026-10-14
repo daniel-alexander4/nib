@@ -136,7 +136,7 @@ func (s *Server) handleCeremonySignTurn(w http.ResponseWriter, r *http.Request) 
 	// hop, and whether this party contributes at all. All of it BEFORE `buildCoSigned`: a signature
 	// cannot be taken back off a document.
 	now := time.Now()
-	if err := cer.checkArrival(pdf, now); err != nil {
+	if err := cer.checkArrival(pdf, now, &s.sess); err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}

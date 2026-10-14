@@ -1,11 +1,11 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -2940,12 +2940,6 @@
+@@ -3386,12 +3386,6 @@
  	// **Moved here from `handleSessionInitiate` with the dial it guards (P01.S02b).** It is the
  	// same check in the same position relative to `buildCoSigned`; what changed is that both
  	// doors onto a hop now reach it, rather than only the one that takes a pasted invitation.
 -	if cer != nil {
--		if err := cer.checkArrival(pdfBytes, time.Now()); err != nil {
+-		if err := cer.checkArrival(pdfBytes, time.Now(), &s.sess); err != nil {
 -			httpError(w, http.StatusConflict, err.Error())
 -			return
 -		}

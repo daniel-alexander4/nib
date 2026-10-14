@@ -35,6 +35,8 @@ let initiateAddress;   // the `address` field of the most recent /api/session/in
 let quoteCalls = 0;    // /api/cosign/quote hits — reached only if the refusal is gone
 let armBind;           // the `bind` field of the most recent /api/session/arm POST (S12 twin)
 let sendAddress;       // the `address` field of the most recent /api/session/send POST (/pending 506)
+let checking = false;  // what /api/session/status says about the arrival anchor (/pending 359)
+let holdInitiate = null; // a promise the initiate waits on, so a request can be IN FLIGHT
 
 const h = await boot({
   routes: {
@@ -43,7 +45,7 @@ const h = await boot({
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
     '/api/peers': () => ({ self: 'b'.repeat(64), fingerprint: 'b'.repeat(64), name: 'Me', peers: [PEER] }),
-    '/api/session/status': () => ({ armed: false }),
+    '/api/session/status': () => ({ armed: false, ...(checking ? { checking: true } : {}) }),
     '/api/session/arm': (opts) => {
       // The arm side's twin of the empty-address default: an empty bind is the LAN receive
       // path (server binds 0.0.0.0:0 and announces it), not an error.
@@ -59,7 +61,8 @@ const h = await boot({
       sendAddress = opts.body.get('address');
       return { sent: true };
     },
-    '/api/session/initiate': (opts) => {
+    '/api/session/initiate': async (opts) => {
+      if (holdInitiate) await holdInitiate;
       // opts.body is the FormData sessionInit() builds; `address` is the field S12
       // makes optional. Read it here rather than trusting the URL — the address never
       // appears in the path.
@@ -116,6 +119,39 @@ test('the typed-address fallback still reaches the initiate from behind the disc
   // wiring. A value typed there is the manual tier (D8 tier 5), which stays reachable.
   await coSign('203.0.113.4:8443');
   assert.equal(initiateAddress, '203.0.113.4:8443', 'the typed address did not reach the initiate POST');
+});
+
+// /pending 359 — the initiating side. Before it dials, the server hashes an unsigned ceremony
+// document against its record and says so as `checking` on the session status; the poller that runs
+// beside the request draws it, and the request ending — however it ends — takes it down.
+test('a co-sign in flight says the document is being checked, and stops saying so when it ends', async () => {
+  const note = () => doc.getElementById('checkingNote');
+  const beat = async () => { await new Promise((r) => setTimeout(r, 1000)); await settle(); };
+  let release;
+  holdInitiate = new Promise((r) => { release = r; });
+  checking = true;
+  doc.getElementById('sessionInitBtn').click();
+  await settle();
+  doc.getElementById('sinPeer').value = PEER.fingerprint;
+  doc.getElementById('sinGo').click();
+  await beat();
+  assert.ok(note() && !note().hidden, 'the server is checking the document before it dials and the window says nothing');
+  assert.equal(note().textContent, 'Checking the document…');
+
+  // The check ends and the call goes on: the line is for the check, not for the whole request.
+  checking = false;
+  await beat();
+  assert.equal(note().hidden, true, 'the check ended and the line is still up while the call continues');
+
+  // Still being checked when the request comes back (a refusal): the line goes with the request.
+  checking = true;
+  await beat();
+  assert.equal(note().hidden, false, 'setup: the line did not come back');
+  release();
+  holdInitiate = null;
+  await beat();
+  assert.equal(note().hidden, true, 'the request ended and the line stayed up — nothing polls after it to clear it');
+  checking = false;
 });
 
 // /pending 506. S12 removed the empty-address refusal from the co-sign and left its copy in the

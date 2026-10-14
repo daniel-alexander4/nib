@@ -19,13 +19,14 @@ const SECOND = 'ember flint grove harbour';
 
 let armed = false;
 let words = null;
+let checking = false; // what the status says about the arrival anchor (/pending 359)
 const answers = [];
 
 const { document: doc, settle } = await boot({
   routes: {
     '/api/peers': () => ({ self: 'b'.repeat(64), peers: [PEER] }),
     '/api/session/arm': () => { armed = true; return { armed: true, address: '127.0.0.1:8443' }; },
-    '/api/session/status': () => ({ armed, address: '127.0.0.1:8443', ...(words ? { verify: { words } } : {}) }),
+    '/api/session/status': () => ({ armed, address: '127.0.0.1:8443', ...(words ? { verify: { words } } : {}), ...(checking ? { checking: true } : {}) }),
     '/api/session/verify': (opts) => { answers.push(JSON.parse(opts.body)); words = null; return { ok: true }; },
     '/api/session/disarm': () => { armed = false; return {}; },
   },
@@ -62,4 +63,31 @@ test('the card shows the check that is waiting, and the answer names its words',
   assert.equal(answers.length, 1, 'setup: the answer was never sent');
   assert.deepEqual(answers[0], { confirmed: true, words: SECOND },
     'the answer does not name the words on screen, so the server cannot tell which check it is for');
+});
+
+// /pending 359 — the receiving side. An unsigned ceremony document is hashed against its record
+// before the consent screen; the server says so as `checking` on the status this poller reads, and
+// the line is up for exactly as long as the server says it.
+test('the wait says the document is being checked for as long as the server says so', async () => {
+  const note = () => doc.getElementById('checkingNote');
+  assert.ok(!note() || note().hidden, 'setup: the line is up before anything is being checked');
+
+  checking = true;
+  await tick();
+  assert.ok(note() && !note().hidden, 'the server is checking the document and the wait says nothing');
+  assert.equal(note().textContent, 'Checking the document…');
+  assert.equal(note().getAttribute('role'), 'status', 'the line is not announced');
+
+  checking = false;
+  await tick();
+  assert.equal(note().hidden, true, 'the check ended and the line still says it is running');
+
+  // And the poller stopping takes it down: nothing would ever clear it afterwards.
+  checking = true;
+  await tick();
+  assert.equal(note().hidden, false, 'setup: the line did not come back for the second check');
+  doc.getElementById('srvCancel').click();
+  await settle();
+  assert.equal(note().hidden, true, 'the receive flow was cancelled and its line stayed up over nothing');
+  checking = false;
 });
