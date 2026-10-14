@@ -287,6 +287,11 @@ func Scan(pdf []byte) (ScanReport, error) {
 		}
 	}
 
+	// A Web Capture record (/pending 889 part 2): where the document was converted from, kept by no reader.
+	if hasWebCapture(xt, root) {
+		add("webCapture", "low", "A record of the web pages this document was captured from", 0)
+	}
+
 	// XMP metadata stream.
 	_, catalogXMP := root.Find("Metadata")
 	if catalogXMP {
@@ -1183,7 +1188,10 @@ var ErrActiveContentRemains = errors.New("active content remains after stripping
 // to v1.215.1 the strip — `nib sanitize`, `nib watch --do sanitize`, the window's Strip — refused every document
 // holding such a field, where v1.214.39 had stripped it (/pending 888). A new kind is given a row here, or a
 // removal in StripActive, in the change that adds it; `TestEveryScanKindIsStrippedOrNamedAsLeft` holds the list.
-var strippedExempt = map[string]bool{"metadata": true, "info": true, "offPageFields": true}
+//
+// `webCapture` is a record of where the document came from, not something that runs: RemoveWebCapture's, asked for
+// (/pending 889 part 2).
+var strippedExempt = map[string]bool{"metadata": true, "info": true, "offPageFields": true, "webCapture": true}
 
 // verifyStripped re-scans StripActive's output with Scan — which reads through `api.ReadContext`, not the
 // rewrite's `ReadOptimized`, so it is a second reader rather than the writer checking itself — and refuses

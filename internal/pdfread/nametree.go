@@ -3,7 +3,9 @@ package pdfread
 import (
 	"errors"
 	"runtime"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"weak"
 
@@ -79,12 +81,38 @@ const maxWrittenNameTreeDepth = 32
 // 262,144 names.
 const nameTreeFan = 64
 
-// NameTreeRefusal is the sentence a user reads when a write is refused; the server's error door recognises it to
-// answer 422 with a cause.
-const NameTreeRefusal = "this document holds a list — its attachments, its named destinations or its scripts — that Nib could not read in full, and writing a changed copy would lose what the list holds — so nothing was changed"
+// NameTreeRefusal is the end of the sentence a user reads when a write is refused, after what the lost list holds
+// (`nameTreeWords`); the server's error door recognises it to answer 422 with a cause.
+const NameTreeRefusal = "which Nib could not read in full and cannot carry through a change — so nothing was changed"
+
+// WebCaptureWords is what a lost Web Capture tree (`/URLS`, `/IDS`) is called, in a refusal and wherever a
+// window offers to remove it (/pending 889 part 2); the server's error door recognises it to say the list can go.
+const WebCaptureWords = "a record of the web pages it was captured from"
+
+// nameTreeWords is what each catalog name tree holds, in a user's words. The refusal used to name three of the ten
+// whatever was lost, and a document whose only loss was its Web Capture record was told about its attachments.
+var nameTreeWords = map[string]string{
+	"Dests":                  "its named destinations",
+	"AP":                     "its named appearances",
+	"JavaScript":             "its scripts",
+	"Pages":                  "its named pages",
+	"Templates":              "its page templates",
+	"IDS":                    WebCaptureWords,
+	"URLS":                   WebCaptureWords,
+	"EmbeddedFiles":          "its attachments",
+	"AlternatePresentations": "its slide shows",
+	"Renditions":             "its media renditions",
+}
 
 // ErrNameTreeLost is Write's refusal of a context read from a document with a name tree nib could not read whole.
-var ErrNameTreeLost = errors.New(NameTreeRefusal)
+// `RefuseNameTreeLoss` wraps it in a sentence naming what was lost; errors.Is still answers it.
+var ErrNameTreeLost = errors.New("this document holds a list " + NameTreeRefusal)
+
+// nameTreeLost is ErrNameTreeLost naming the lists, each once.
+type nameTreeLost struct{ what string }
+
+func (e nameTreeLost) Error() string { return "this document holds " + e.what + ", " + NameTreeRefusal }
+func (e nameTreeLost) Unwrap() error { return ErrNameTreeLost }
 
 // ErrNameTreeUnread is what a READER of a marked tree answers with, in place of "the document has none".
 var ErrNameTreeUnread = errors.New("this part of the document could not be read in full, so what it holds is not known")
@@ -324,8 +352,9 @@ func NameTreeUnread(xt *model.XRefTable, tree string) bool {
 }
 
 // ForgetNameTree takes the mark off tree. Its callers are the operations that REMOVE that tree from the document
-// on purpose (`pdfops`' Remove active content and Remove files): the validator has already taken the tree out of
-// the context, the write leaves it out, and that is what was asked for.
+// on purpose — exactly three, held by `TestForgetNameTreeHasItsThreeNamedCallers`: `pdfops`' Remove active content
+// (scripts), Remove files (attachments) and Remove the Web Capture record (/pending 889 part 2). The validator has
+// already taken the tree out of the context, the write leaves it out, and that is what was asked for.
 func ForgetNameTree(xt *model.XRefTable, tree string) {
 	if xt == nil {
 		return
@@ -341,12 +370,41 @@ func RefuseNameTreeLoss(ctx *model.Context) error {
 	if ctx == nil || ctx.XRefTable == nil {
 		return nil
 	}
+	trees := UnreadNameTrees(ctx.XRefTable)
+	if len(trees) == 0 {
+		return nil
+	}
+	return nameTreeLost{NameTreeWords(trees)}
+}
+
+// NameTreeWords says what the catalog name trees named hold, each thing once — the ONE wording of a lost list, for
+// the refusal and for the document's answer the window words its notice from.
+func NameTreeWords(trees []string) string {
+	var said []string
+	for _, t := range trees {
+		if w := nameTreeWords[t]; w != "" && !slices.Contains(said, w) {
+			said = append(said, w)
+		}
+	}
+	return strings.Join(said, " and ")
+}
+
+// UnreadNameTrees is every catalog name tree still marked unread in the document xt was read from, sorted — what a
+// document's answer says it holds and Nib cannot carry (`pdfops.ReadAnswerFacts`).
+func UnreadNameTrees(xt *model.XRefTable) []string {
+	if xt == nil {
+		return nil
+	}
 	unreadTrees.Lock()
 	defer unreadTrees.Unlock()
-	if len(unreadTrees.m[weak.Make(ctx.XRefTable)]) > 0 {
-		return ErrNameTreeLost
+	var trees []string
+	for t, lost := range unreadTrees.m[weak.Make(xt)] {
+		if lost {
+			trees = append(trees, t)
+		}
 	}
-	return nil
+	slices.Sort(trees)
+	return trees
 }
 
 // nameNodeDepth is the deepest node under n (n itself 0), by a loop.

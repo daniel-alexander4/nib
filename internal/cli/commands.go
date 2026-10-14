@@ -50,19 +50,28 @@ func cmdSanitize(args []string) int {
 	inPlaceFlag(fs, &inPlace)
 	// The window asks before this removal and the command line has no one to ask, so it is a flag: a form may
 	// keep a field with no box on purpose, for its own calculations (ADR-166, /pending 888).
-	var fields bool
+	var fields, webCapture bool
 	fs.BoolVar(&fields, "fields", false, "also remove form fields that are on no page (and what was typed in them)")
-	fs.Usage = usageFunc(fs, "nib sanitize [--fields] IN -o OUT  |  nib sanitize [--fields] -w FILE...", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).\n--fields also removes form fields that are in the form's list and on none of its pages.")
+	// The same for a Web Capture record (/pending 889 part 2): where the document was converted from. It runs
+	// FIRST, because a record Nib could not read whole refuses every other rewrite until it is gone (ADR-164).
+	fs.BoolVar(&webCapture, "web-capture", false, "also remove the record of the web pages the document was captured from")
+	fs.Usage = usageFunc(fs, "nib sanitize [--fields] [--web-capture] IN -o OUT  |  nib sanitize [--fields] [--web-capture] -w FILE...", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).\n--fields also removes form fields that are in the form's list and on none of its pages.\n--web-capture also removes the record of the web pages the document was captured from.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	if !fields {
+	if !fields && !webCapture {
 		return runTransform(fs, out, inPlace, sanitize)
 	}
 	return runTransform(fs, out, inPlace, func(pdf []byte) ([]byte, error) {
+		if webCapture {
+			var err error
+			if pdf, err = pdfops.RemoveWebCapture(pdf); err != nil {
+				return nil, err
+			}
+		}
 		scrubbed, err := sanitize(pdf)
-		if err != nil {
-			return nil, err
+		if err != nil || !fields {
+			return scrubbed, err
 		}
 		return pdfops.RemoveOffPageFields(scrubbed)
 	})

@@ -1392,6 +1392,15 @@
         <span id="xfaNoticeText"></span>
         <button id="xfaNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
       </div>
+      <!-- The document holds a list Nib could not read whole (ADR-164), so every change is refused (/pending 889
+           part 2). A FOURTH banner, for the third's reason: it says something else, and is dismissed on its own.
+           It says so at the open, before the first change is refused, and where the list is a Web Capture record
+           it carries the removal — the one list that can go without losing anything a reader shows. -->
+      <div id="listNotice" role="status" aria-live="polite" hidden>
+        <span id="listNoticeText"></span>
+        <button id="listNoticeRemove" type="button" hidden>Remove it</button>
+        <button id="listNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
@@ -1665,6 +1674,7 @@
         <button id="scanMetaBtn">Strip identifying metadata<span class="hint">author, title, doc ID</span></button>
         <button id="scanSafeBtn">Remove files &amp; media<span class="hint">keeps everything else</span></button>
         <button id="scanFieldsBtn">Remove form entries on no page<span class="hint">keeps the form you can see</span></button>
+        <button id="scanWebCaptureBtn">Remove the web capture record<span class="hint">where it was converted from</span></button>
         <button id="scanFlattenBtn">Flatten to images<span class="hint">guaranteed inert</span></button>
       </div>
       <p class="libhint">Scanning is best-effort — it can't detect deliberately concealed or
