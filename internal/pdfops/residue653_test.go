@@ -17,12 +17,12 @@ func TestANegativeNumberIsNotAnOptionIndex(t *testing.T) {
 	box := func(v string) []*form.ComboBox {
 		return []*form.ComboBox{{Name: "colour", Value: v, Options: []string{"red", "green"}}}
 	}
-	if err := optionValuesOffered(nil, box("-1"), nil); err == nil {
+	if err := optionValuesOffered(nil, box("-1"), nil, nil); err == nil {
 		t.Error(`"-1" was accepted as an option index: no option has a negative index`)
 	}
 	// The controls: an index that is one, a value that is one, and an index past the end.
 	for v, ok := range map[string]bool{"1": true, "green": true, "2": false} {
-		if err := optionValuesOffered(nil, box(v), nil); (err == nil) != ok {
+		if err := optionValuesOffered(nil, box(v), nil, nil); (err == nil) != ok {
 			t.Errorf("value %q: err = %v, want accepted = %v", v, err, ok)
 		}
 	}

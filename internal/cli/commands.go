@@ -48,11 +48,24 @@ func cmdSanitize(args []string) int {
 	var inPlace bool
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
-	fs.Usage = usageFunc(fs, "nib sanitize IN -o OUT  |  nib sanitize -w FILE...", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).")
+	// The window asks before this removal and the command line has no one to ask, so it is a flag: a form may
+	// keep a field with no box on purpose, for its own calculations (ADR-166, /pending 888).
+	var fields bool
+	fs.BoolVar(&fields, "fields", false, "also remove form fields that are on no page (and what was typed in them)")
+	fs.Usage = usageFunc(fs, "nib sanitize [--fields] IN -o OUT  |  nib sanitize [--fields] -w FILE...", "Strip identifying metadata and active content (JavaScript, auto-actions, embedded files).\n--fields also removes form fields that are in the form's list and on none of its pages.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	return runTransform(fs, out, inPlace, sanitize)
+	if !fields {
+		return runTransform(fs, out, inPlace, sanitize)
+	}
+	return runTransform(fs, out, inPlace, func(pdf []byte) ([]byte, error) {
+		scrubbed, err := sanitize(pdf)
+		if err != nil {
+			return nil, err
+		}
+		return pdfops.RemoveOffPageFields(scrubbed)
+	})
 }
 
 // cmdPDFA converts a PDF to a PDF/A-2b archival candidate. It refuses (exit 1,

@@ -1175,9 +1175,15 @@ func freeGraph(xt *model.XRefTable, o types.Object) {
 var ErrActiveContentRemains = errors.New("active content remains after stripping")
 
 // strippedExempt is what StripActive deliberately leaves: identifying metadata, which is StripMetadata's
-// remit and not active. **An exempt set, not a remit list**: a Scan kind added later that StripActive does
+// remit and not active, and form fields that are on no page, which are RemoveOffPageFields' and go only when
+// asked (ADR-166). **An exempt set, not a remit list**: a Scan kind added later that StripActive does
 // not yet remove then refuses rather than passing unverified.
-var strippedExempt = map[string]bool{"metadata": true, "info": true}
+//
+// That is what happened to `offPageFields`: the kind was added in v1.215.0 with no row here, and from that build
+// to v1.215.1 the strip — `nib sanitize`, `nib watch --do sanitize`, the window's Strip — refused every document
+// holding such a field, where v1.214.39 had stripped it (/pending 888). A new kind is given a row here, or a
+// removal in StripActive, in the change that adds it; `TestEveryScanKindIsStrippedOrNamedAsLeft` holds the list.
+var strippedExempt = map[string]bool{"metadata": true, "info": true, "offPageFields": true}
 
 // verifyStripped re-scans StripActive's output with Scan — which reads through `api.ReadContext`, not the
 // rewrite's `ReadOptimized`, so it is a second reader rather than the writer checking itself — and refuses

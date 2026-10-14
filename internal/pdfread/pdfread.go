@@ -59,6 +59,8 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	}
 	restore := escapeInfoKeys(ctx)
 	putPacket := setAsideOversizedPacket(ctx)
+	// And the two annotation defects the validator refuses a whole document over (`annotaside.go`, ADR-168).
+	putAnnots := setAsideUnreadableAnnotationParts(ctx)
 	putBack := func() {}
 	if aside != nil {
 		putBack = aside(ctx)
@@ -79,6 +81,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		rememberNameTrees(ctx, trees)
 	}
 	putBack()
+	putAnnots()
 	putPacket()
 	restore()
 	if err != nil {

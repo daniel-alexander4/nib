@@ -150,6 +150,7 @@ These subcommands run headlessly, without a browser:
   nib optimize IN -o OUT          losslessly shrink a PDF
   nib merge IN... -o OUT          concatenate PDFs into one
   nib sanitize IN -o OUT          strip metadata and active content (JS, actions)
+                                  (--fields: also form fields that are on no page)
   nib sign IN -o OUT --cert C.p12 certify a PDF with an imported .p12 identity
   nib rotate IN -o OUT --deg N    rotate pages (90/180/270; --pages to limit)
   nib pages IN -o OUT --keep SEL  keep/reorder (or --remove) pages, e.g. 1-3,5

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"nib/internal/pdfread"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,7 +22,14 @@ import (
 // the filled PDF. Fields are matched by id or name. Any existing signature is
 // removed by the fill, since the content changes (pdfcpu does this unconditionally).
 func FillFormJSON(pdf, data []byte) ([]byte, error) {
-	return fillForm(pdf, data)
+	// What the document holds now, so a value the JSON only carries along is not judged (optionValuesOffered).
+	// Where the form cannot be exported the fill below says why, and every value is judged as before.
+	var held heldOptionValues
+	if now, err := pdfread.ExportForm(pdf, "nib", setPushButtonsAside); err == nil && now != nil && len(now.Forms) > 0 {
+		f := now.Forms[0]
+		held = optionValuesHeld(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes)
+	}
+	return fillForm(pdf, data, held)
 }
 
 // fillForm is pdfcpu's `api.FillForm` inside nib's own rewrite, and the one fill door every caller uses —
@@ -34,7 +42,7 @@ func FillFormJSON(pdf, data []byte) ([]byte, error) {
 // changes), refuse invalid JSON, an empty group and an option value the field does not offer, fill,
 // update the page tree — without the post-write validation no other nib rewrite performs. The rewrite
 // also drops an unverified PDF/UA identification (ADR-032).
-func fillForm(pdf, data []byte) ([]byte, error) {
+func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
 	if !json.Valid(data) {
 		return nil, api.ErrInvalidJSON
 	}
@@ -46,7 +54,7 @@ func fillForm(pdf, data []byte) ([]byte, error) {
 		return nil, api.ErrNoFormData
 	}
 	f := fg.Forms[0]
-	if err := optionValuesOffered(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes); err != nil {
+	if err := optionValuesOffered(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes, held); err != nil {
 		return nil, err
 	}
 	conf := model.NewDefaultConfiguration()
@@ -76,9 +84,16 @@ func fillForm(pdf, data []byte) ([]byte, error) {
 // and this move is not one. It takes the three option-bearing field lists rather than the form, so the
 // zero-caller scan, which indexes identifiers by name, does not read pdfcpu's `form.Form` as a caller of
 // `testpdf.Form`.
-func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lbs []*form.ListBox) error {
+//
+// **A value the fill does not change is not judged** (/pending 888). Every fill but a hand-written JSON one lays
+// the supplied values over the form's own export, so each field the data did not name arrives here holding what
+// the document already holds — and a real form had a choice field whose own value was none of its 80 options.
+// Every fill of that document was refused, naming a field the data never mentioned. held is what the document
+// holds; a field whose value is exactly that is passed over. A value the data CHANGES to something not offered
+// is refused as before.
+func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lbs []*form.ListBox, held heldOptionValues) error {
 	check := func(name, v string, options []string) (done bool, err error) {
-		if v == "" || len(options) == 0 || types.MemberOf(v, options) {
+		if v == "" || len(options) == 0 || types.MemberOf(v, options) || held.holds(name, v) {
 			return false, nil
 		}
 		// An index, as pdfcpu reads one — from 0. A negative number names no option (/pending 653).
@@ -108,6 +123,31 @@ func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lb
 		}
 	}
 	return nil
+}
+
+// heldOptionValues is, for each radio group, combo box and list box by name, the value or values the document
+// holds before a fill.
+type heldOptionValues map[string][]string
+
+// optionValuesHeld reads them from the form's own export. The three lists rather than the form, for the reason
+// optionValuesOffered takes them: the zero-caller scan reads pdfcpu's `form.Form` as a caller of `testpdf.Form`.
+func optionValuesHeld(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lbs []*form.ListBox) heldOptionValues {
+	held := heldOptionValues{}
+	for _, x := range rbgs {
+		held[x.Name] = []string{x.Value}
+	}
+	for _, x := range cbs {
+		held[x.Name] = []string{x.Value}
+	}
+	for _, x := range lbs {
+		held[x.Name] = x.Values
+	}
+	return held
+}
+
+// holds says whether v is a value the document already holds for the field called name.
+func (h heldOptionValues) holds(name, v string) bool {
+	return slices.Contains(h[name], v)
 }
 
 // FillFormCSV mail-merges pdf against a wide CSV — row 0 holds field names (or
@@ -197,6 +237,7 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked fu
 		return nil, err
 	}
 	f := &fg.Forms[0]
+	held := optionValuesHeld(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes) // before the values are laid over it: the skeleton is the document's own export
 	for _, x := range f.TextFields {
 		if v, ok := pick(values, x.Name, x.ID); ok {
 			x.Value = first(v)
@@ -231,7 +272,7 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked fu
 	if err != nil {
 		return nil, err
 	}
-	return fillForm(pdf, b)
+	return fillForm(pdf, b, held)
 }
 
 // rowValues turns a CSV record into the name→value(s) map fillFromValues consumes,
