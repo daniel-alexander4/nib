@@ -428,7 +428,7 @@ func groupRuns(runs []textRun) pageLayout {
 				noteUnsupported(&out, "text sits side by side on one baseline in a way the grouping cannot separate into columns")
 			}
 		}
-		ps := paragraphsOf(col, ci)
+		ps := columnParagraphs(col, ci)
 		for i := range ps {
 			ps[i].running = running != nil && running[ci]
 		}
@@ -948,12 +948,183 @@ func runningLinesOf(cols [][]textLine) ([][]textLine, []bool) {
 	return out, running
 }
 
+// cellRowsMin is how many rows a stretch of a column must set side by side across one gap to be read as rows of cells:
+// as many as a gutter needs lines (gutterLines).
+const cellRowsMin = 3
+
+// cellRows is a stretch of a page column whose lines stand in rows of cells (/pending 871) — a table drawn with no
+// rules that the page map would read as one (ADR-121 reads ruled grids only).
+type cellRows struct {
+	lines []textLine // top to bottom
+	frame [4]float64 // x0, lowest baseline, x1, highest baseline
+}
+
+// cellRowsOf sets apart the stretches of one column (its lines top to bottom) that are rows of cells, and returns the
+// lines that are in none.
+//
+// `columnsOf` clusters lines by overlapping extent, so one line the full width of a column joins everything under it
+// into one cluster, and a two-column table inside a page column was read line by line down the page with its cells
+// woven: on `designer/irs-fw9.pdf` p4 "Exempt payees 1 through 4." and "payment card or third-party", from two cells,
+// were one paragraph, and an edit there re-broke both. **A stretch begins at a row** — two lines on one baseline with a
+// gap between them — **and runs down to the first line drawn across the gap**: every line on the way is left of the gap
+// or right of it, and narrows it. It begins at a row and not above one because cells are set from their tops, and the
+// short last line of the paragraph above a table is left of the gap too. Fewer than cellRowsMin rows is a label beside
+// its value or a heading beside a date, and is left as it was read.
+//
+// Measured over the real-producer corpus (36 documents) before it was adopted: paragraphs holding two adjacent lines
+// that stand clear of each other across the page 285 → 23 (what is left is a contents line under its number, and figures
+// on a turned page that one wider line bridges into a cell); 49 pages read differently, and no paragraph of several lines that was not woven was parted.
+// Through reflow's censuses: multi-line paragraphs 2,436 → 2,268, those that do not re-break in place 65 → 65, and
+// paragraphs refused for mixing two text states 44 → 3 — the woven ones were where two cells' fonts met.
+// **The page still says text sits side by side** and its count of columns is unchanged: the cells are rows of the
+// column they are in, not columns of the page.
+func cellRowsOf(lines []textLine) (stretches []cellRows, rest []textLine) {
+	for i := 0; i < len(lines); {
+		if c, end := cellRowsFrom(lines, i); end > i {
+			stretches = append(stretches, c)
+			i = end
+			continue
+		}
+		rest = append(rest, lines[i])
+		i++
+	}
+	return stretches, rest
+}
+
+// cellRowsFrom reads the stretch that begins at lines[at], and returns the index after its last line — or at, when no
+// stretch begins there.
+func cellRowsFrom(lines []textLine, at int) (cellRows, int) {
+	a := lines[at]
+	// The gap is the one between a and a line on its baseline that stands clear of it; a third line on the baseline is
+	// left or right of that gap, as every line below is.
+	gl, gr := 0.0, -1.0
+	for j := at + 1; j < len(lines) && sameBaseline(a, lines[j]); j++ {
+		l, r := a, lines[j]
+		if r.x0 < l.x0 {
+			l, r = r, l
+		}
+		if r.x0 > l.x1 {
+			gl, gr = l.x1, r.x0
+		}
+	}
+	if gr <= gl {
+		return cellRows{}, at
+	}
+	c := cellRows{frame: [4]float64{math.Inf(1), a.y, math.Inf(-1), a.y}}
+	var left, right []textLine
+	end := at
+walk:
+	for ; end < len(lines); end++ {
+		l := lines[end]
+		switch {
+		case l.x0 < gl && math.Max(gl, l.x1) < gr:
+			left, gl = append(left, l), math.Max(gl, l.x1)
+		case l.x0 >= gl:
+			right, gr = append(right, l), math.Min(gr, l.x0)
+		default:
+			break walk // drawn across the gap: the stretch ends above it
+		}
+		c.frame[0], c.frame[1], c.frame[2] = math.Min(c.frame[0], l.x0), math.Min(c.frame[1], l.y), math.Max(c.frame[2], l.x1)
+	}
+	rows, j := 0, 0
+	for _, r := range right {
+		for j < len(left) && left[j].y > r.y && !sameBaseline(left[j], r) {
+			j++
+		}
+		if j < len(left) && sameBaseline(left[j], r) {
+			rows++
+			j++
+		}
+	}
+	if rows < cellRowsMin {
+		return cellRows{}, at
+	}
+	c.lines = lines[at:end]
+	return c, end
+}
+
+// paragraphs reads a stretch row by row, and each row cell by cell from the left: a row begins at every baseline two
+// of its lines share with a gap between them, a row's cells are its lines clustered as columns are (`columnsOf`), and
+// each cell's lines are broken into paragraphs by the one rule.
+//
+// **Rows, and not columns read whole**: read as columns, a table's figures became one paragraph a column — measured
+// over the real-producer corpus, 18,702 paragraphs fell to 10,898, and on `indesign/census-p60-280.pdf` p37 626 to 105,
+// each a column of numbers an edit would have re-broken as prose. A baseline shared starts a row, so nothing is joined
+// that was apart before. **Declared limits**: two cells whose second lines share a baseline are read as two rows, each
+// line a paragraph of its own (parted, never woven); and columns of prose under a heading that spans them still read
+// line by line across, and the page still says text sits side by side.
+//
+// right, typical and steps are the column's (`columnSteps`): a cell of two lines has no usual step of its own, and the
+// step that parts paragraphs in the column around the stretch parts them inside it. **The edge a cell's line stops short
+// of is where the next cell of its row begins**, and the column's for the last: the widest line of the cell itself was
+// measured and refused — three row labels set one under another, each nearly as wide as the next, read as one paragraph
+// (`indesign/cdc-mm7201-H.pdf` p13), where the cell beside them begins well clear of all three.
+func (c cellRows) paragraphs(column int, right, typical float64, steps int) []textParagraph {
+	var out []textParagraph
+	for from := 0; from < len(c.lines); {
+		to := from + 1
+		for ; to < len(c.lines); to++ {
+			if c.opensRow(to) {
+				break
+			}
+		}
+		cells := columnsOf(c.lines[from:to])
+		for i, cell := range cells {
+			sort.SliceStable(cell, func(i, j int) bool { return cell[i].y > cell[j].y })
+			edge := right
+			if i+1 < len(cells) {
+				edge = math.Inf(1)
+				for _, l := range cells[i+1] {
+					edge = math.Min(edge, l.x0)
+				}
+			}
+			out = append(out, paragraphsWith(cell, column, edge, typical, steps)...)
+		}
+		from = to
+	}
+	return out
+}
+
+// opensRow says whether line i begins a row: it shares a baseline with the line after it and not with the line before
+// it — the lines of one baseline are together, top to bottom, and the first of them opens the row.
+func (c cellRows) opensRow(i int) bool {
+	l := c.lines[i]
+	return !sameBaseline(c.lines[i-1], l) && i+1 < len(c.lines) && sameBaseline(l, c.lines[i+1])
+}
+
+// columnParagraphs breaks one column's lines (top to bottom) into paragraphs, the stretches that are rows of cells
+// (`cellRowsOf`) read as rows where they stand among the paragraphs around them — and a paragraph ends at one, as it
+// does at a ruled table (`splitAround`).
+func columnParagraphs(lines []textLine, column int) []textParagraph {
+	stretches, rest := cellRowsOf(lines)
+	if len(stretches) == 0 {
+		return paragraphsOf(lines, column)
+	}
+	// The column's right edge and usual step are read from all of its lines, as they are on a page with no stretch.
+	right, typical, steps := columnSteps(lines)
+	ps := paragraphsWith(rest, column, right, typical, steps)
+	for _, c := range stretches {
+		ps = splitAround(ps, c.frame)
+	}
+	for _, c := range stretches {
+		at := 0
+		for at < len(ps) && ps[at].lines[0].y > c.frame[3] {
+			at++
+		}
+		ps = append(ps[:at:at], append(c.paragraphs(column, right, typical, steps), ps[at:]...)...)
+	}
+	return ps
+}
+
 // paragraphsOf breaks one column's lines (top to bottom) into paragraphs.
 func paragraphsOf(lines []textLine, column int) []textParagraph {
-	if len(lines) == 0 {
-		return nil
-	}
-	right := 0.0
+	right, typical, steps := columnSteps(lines)
+	return paragraphsWith(lines, column, right, typical, steps)
+}
+
+// columnSteps is what the paragraph rule reads of a column as a whole: its right edge, the usual step from one line
+// down to the next, and how many steps that is the median of.
+func columnSteps(lines []textLine) (right, typical float64, n int) {
 	var steps []float64
 	for i, l := range lines {
 		right = math.Max(right, l.x1)
@@ -961,13 +1132,19 @@ func paragraphsOf(lines []textLine, column int) []textParagraph {
 			steps = append(steps, lines[i-1].y-l.y)
 		}
 	}
-	typical := median(steps)
+	return right, median(steps), len(steps)
+}
 
+// paragraphsWith is paragraphsOf over lines whose column's edge and usual step the caller has read.
+func paragraphsWith(lines []textLine, column int, right, typical float64, steps int) []textParagraph {
+	if len(lines) == 0 {
+		return nil
+	}
 	var out []textParagraph
 	cur := textParagraph{column: column, lines: []textLine{lines[0]}}
 	for i := 1; i < len(lines); i++ {
 		prev, l := lines[i-1], lines[i]
-		if breaksBefore(prev, l, right, typical, len(steps)) {
+		if breaksBefore(prev, l, right, typical, steps) {
 			out = append(out, cur)
 			cur = textParagraph{column: column}
 		}
