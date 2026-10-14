@@ -168,6 +168,8 @@ type document struct {
 	// label and tagged are docResponse.ConformanceLabel and docResponse.Tagged for those same bytes (ADR-147).
 	label  string
 	tagged bool
+	// unoptimized is docResponse.Unoptimized for those same bytes (/pending 766 part 7).
+	unoptimized bool
 
 	// historyEvicted records that this document's history was dropped to keep the
 	// global budget, rather than never having existed. Without it the two are
@@ -773,6 +775,12 @@ type docResponse struct {
 	// Tagged says the document claims tagging (`/MarkInfo /Marked true`, or a structure tree) — what the
 	// window needs to say, after a crop, that the hidden part is still read aloud (`/pending 577`).
 	Tagged bool `json:"tagged,omitempty"`
+	// Unoptimized says Nib does not compact this document when it changes it: pdfcpu's optimize pass, which
+	// merges a document's duplicate fonts and images, would not finish over it in reasonable time, so every
+	// write-path read skips it (`pdfread.Unaffordable`) and a changed copy is larger than it needs to be.
+	// Nothing is lost. A fact about the BYTES, read by the parse the flags already use and cached by the same
+	// rule (ADR-147's channel) — true for as long as the document has this shape, never a record of one write.
+	Unoptimized bool `json:"unoptimized,omitempty"`
 	// LostAnnots and LostFields are what operations on this document have destroyed and could not
 	// carry — comments, links and form fields (/pending 574). `omitempty`, so the overwhelmingly
 	// common case of a document that lost nothing puts nothing on the wire.
@@ -1913,6 +1921,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	data := doc.data
 	cached, fresh := doc.flags, sameBytes(doc.flagsFor, data)
 	xfaWas, labelWas, taggedWas := doc.xfa, doc.label, doc.tagged
+	unoptimizedWas := doc.unoptimized
 	// Snapshotted here with everything else and compared AFTER the unlock, for the
 	// reason the paragraph above gives about FlagsJSON: diskChanged stats the file and
 	// may read it, and a syscall under the server mutex serializes every route behind
@@ -1942,6 +1951,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	if fresh {
 		resp.Flags = cached
 		resp.XFA, resp.ConformanceLabel, resp.Tagged = xfaWas, labelWas, taggedWas
+		resp.Unoptimized = unoptimizedWas
 		return resp
 	}
 	facts, err := pdfops.ReadAnswerFacts(data)
@@ -1950,6 +1960,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	resp.XFA = xfaAfter(xfaWas, facts.XFA, err)
 	resp.ConformanceLabel, resp.Tagged = conformanceLabelOf(facts.Labelled, data), facts.Tagged
+	resp.Unoptimized = facts.Unoptimized
 	// Store it back, but only if this document still holds the bytes it was computed
 	// from: another request may have replaced them while the parse ran, and caching a
 	// result against bytes the document no longer has is worse than not caching.
@@ -1957,6 +1968,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 	if s.isRegisteredLocked(doc) && sameBytes(doc.data, data) {
 		doc.flags, doc.flagsFor, doc.xfa = resp.Flags, data, resp.XFA
 		doc.label, doc.tagged = resp.ConformanceLabel, resp.Tagged
+		doc.unoptimized = resp.Unoptimized
 	}
 	s.mu.Unlock()
 	return resp

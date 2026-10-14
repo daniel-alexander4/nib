@@ -2,7 +2,6 @@ package p2p
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"net"
 	"strings"
@@ -140,13 +139,10 @@ func asProtocolSkew(err error) error {
 // signature-exists-but-the-write-fails outcome postConsentDeadline was written to prevent,
 // one layer down where that fix cannot see it.
 //
-// **The fix is the keep-alive, not a bigger number**, and the reason is a coupling in
-// another package: `udpmux.peerTTL` is also 5 minutes, and a connection that outlives its
-// mux state starts routing short headers to the DHT — which `UseConnectionIDs`'s own doc
-// calls "the worse failure of the two". Raising quicIdle past peerTTL trades this defect
-// for that one. A keep-alive fixes both at once: the packets keep the connection up AND
-// refresh the mux's connection-id entry, so the two five-minute constants stop being a
-// pair that has to be kept in step across a package boundary.
+// **The fix is the keep-alive, not a bigger number.** (This paragraph used to rest on a
+// coupling with `udpmux.peerTTL`: the mux kept a table of connection ids that expired after
+// the same five minutes. That table is gone — the mux recognises an id by its own bytes,
+// `udpmux.NewConnectionID` — so the keep-alive is here for the connection alone.)
 //
 // A ceremony is never actually idle — the humans are thinking. This says so on the wire.
 const (
@@ -198,7 +194,7 @@ func QUICDial(ctx context.Context, addr string, identityCertPEM, identityKeyPEM,
 		return nil, err
 	}
 	mux := udpmux.New(sock)
-	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux)}
+	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux), VerifySourceAddress: newSourceCheck()}
 
 	// One closer for the whole stack, so a caller that defers Close does not have to
 	// know a QUIC session owns a transport and a socket as well as a connection.
@@ -399,7 +395,7 @@ func QUICListen(addr string, identityCertPEM, identityKeyPEM, pinnedSPKI []byte)
 		return nil, err
 	}
 	mux := udpmux.New(sock)
-	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux)}
+	tr := &quic.Transport{Conn: mux.QUIC(), ConnectionIDGenerator: newCIDGen(mux), VerifySourceAddress: newSourceCheck()}
 	ln, err := tr.Listen(cfg, quicConfig())
 	if err != nil {
 		tr.Close()
@@ -586,17 +582,9 @@ func quicChannel(qc *quic.Conn, st *quic.Stream) (Channel, error) {
 // whichever call site happens to be compiled first.
 var _ Stream = (*quic.Stream)(nil)
 
-// cidLen is how long the connection IDs this endpoint issues are.
-//
-// Eight bytes: long enough that a bencode dictionary or a stray datagram matching one
-// by chance is 2^-64, short enough to cost nothing per packet. quic-go's own default
-// is four; the mux looks these up on every short header, so a wider id buys
-// separation from the DHT traffic sharing the socket for one extra word of hashing.
-const cidLen = 8
-
-// cidGen issues this endpoint's connection IDs and tells the demultiplexer about each
-// one — which is what lets the mux route a short header on its DESTINATION connection
-// id rather than on the sender's address.
+// cidGen issues this endpoint's connection IDs from the demultiplexer — which is what lets
+// the mux route a short header on its DESTINATION connection id rather than on the sender's
+// address.
 //
 // It matters because the address rule over-claims: a DHT node at the same IP:port as
 // an active QUIC peer was routed to QUIC and its reply lost. P02.S03 documented that
@@ -605,22 +593,23 @@ const cidLen = 8
 //
 // Every id this endpoint issues comes through here — dial (transport.go:277), accept
 // (server.go:812, :912) and rotation (conn_id_generator.go:138) all call the
-// generator — so the table is complete by construction.
+// generator — and the mux recognises an id by a keyed tag inside it rather than by
+// remembering it (`udpmux.NewConnectionID`), so an id is good for as long as the endpoint
+// is: a spare one the peer rotates to after a five-minute consent prompt still routes.
 type cidGen struct{ mux *udpmux.Mux }
 
 func newCIDGen(m *udpmux.Mux) *cidGen {
-	m.UseConnectionIDs(cidLen)
+	m.UseConnectionIDs()
 	return &cidGen{mux: m}
 }
 
-func (g *cidGen) ConnectionIDLen() int { return cidLen }
+func (g *cidGen) ConnectionIDLen() int { return udpmux.ConnectionIDLen }
 
 func (g *cidGen) GenerateConnectionID() (quic.ConnectionID, error) {
-	b := make([]byte, cidLen)
-	if _, err := rand.Read(b); err != nil {
+	b, err := g.mux.NewConnectionID()
+	if err != nil {
 		return quic.ConnectionID{}, err
 	}
-	g.mux.RegisterConnectionID(b)
 	return quic.ConnectionIDFromBytes(b), nil
 }
 

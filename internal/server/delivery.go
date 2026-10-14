@@ -554,6 +554,11 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			publishWhenSlow(armCtx, cer, transportQUIC, browseWindow)
 		}()
 		openedHop := false
+		// What `deliveryArmKept` paces against and speaks through: the window this arm was armed
+		// for, as an absolute time, and the anchor every other notice of this arm is guarded by.
+		deadline := time.Now().Add(window)
+		anchor := consentAnchor{cer: cer, kind: armDelivery}
+		kept := 0
 		for {
 			conn, aerr := ln.Accept()
 			if aerr != nil {
@@ -576,7 +581,11 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			role, rerr := p2p.ReadRole(conn.Channel)
 			if rerr != nil {
 				conn.Close()
-				continue // unreadable role: a peer this build cannot serve, and the arm stands
+				// unreadable role: a peer this build cannot serve, and the arm stands
+				if !s.deliveryArmKept(armCtx, anchor, rerr, &kept, deadline) {
+					return
+				}
+				continue
 			}
 			// **The acknowledgement, and its absence was a real defect.** The co-sign branch
 			// gets one inside `serveOneSession`; the transfer branch had none, so the sending
@@ -587,10 +596,16 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			if !armServesRole(sessionModeDelivery, role) {
 				_ = p2p.RefuseRole(conn.Channel)
 				conn.Close()
+				if !s.deliveryArmKept(armCtx, anchor, p2p.ErrRoleRefused, &kept, deadline) {
+					return
+				}
 				continue
 			}
 			if aerr := p2p.AcceptRole(conn.Channel); aerr != nil {
 				conn.Close()
+				if !s.deliveryArmKept(armCtx, anchor, aerr, &kept, deadline) {
+					return
+				}
 				continue
 			}
 			if role == p2p.RoleCoSign {
@@ -602,7 +617,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// `TestTheUnattendedGatesHaveOneDoor` keeps that honest structurally: routing
 				// here goes through `serveOneSession`, which is `p2p.Receive`'s one call site
 				// and constructs the real Confirmer and Verifier.
-				final, answered, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
+				final, answered, herr := s.serveOneSession(anchor,
 					cer, conn, cert, key, convenerLabel, sessionModeDelivery, myFP, role, true)
 				// Opened ONCE: the convener re-delivers the same hop after a lost channel, and this
 				// arm now stays up to receive the copy, so a second serve must not stack a tab.
@@ -624,6 +639,12 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// answered — the finished document or the end state is still owed to this
 				// machine, and ending here would leave nothing listening for it. The delivery leg
 				// below asks nobody anything, so it has no decision to end on either.
+				//
+				// What it does with the outcome instead is `deliveryArmKept`'s: a hop that went
+				// wrong is paced, and a failed tamper check is said.
+				if !s.deliveryArmKept(armCtx, anchor, herr, &kept, deadline) {
+					return
+				}
 				continue
 			}
 			_, derr := s.deliverOneLeg(conn.Channel, cer, nil, nil, false)
@@ -634,9 +655,58 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			// A refused or failed leg does NOT spend the arm: refusal is free for whoever
 			// connects and expensive for the party still waiting for their copy. Same rule
 			// runSession states for a stray dial.
+			if !s.deliveryArmKept(armCtx, anchor, derr, &kept, deadline) {
+				return
+			}
 		}
 	}()
 	return nil
+}
+
+// deliveryArmKept is what the delivery arm does about a connection that did not deliver this
+// machine's copy and — because nothing but a delivered leg spends this arm (/pending 500) — did not
+// end it either. It reports whether the arm goes on to its next connection; false means its window
+// closed or it was disarmed while pacing. `err` is how the connection ended, nil for a hop it served
+// cleanly on the way. Every way back round the arm's loop comes through here
+// (`TestEveryWayRoundTheDeliveryArmLoopGoesThroughOneDoor`).
+//
+// Two things, and each had reached the other arms and not this one (/pending 766):
+//
+//   - **A failed tamper check is SAID.** `armSpentBy` says it for an arm it ends. This arm does not
+//     end — the finished document is still owed to this machine — and until now it said nothing at
+//     all: the leg returned the commit-reveal failure into a bare `continue`, the convener saw a
+//     closed connection, and the one machine that had evidence of something between the two parties
+//     kept it to itself. The class is the spend rule's own (`spendClass`), so "what is a tamper
+//     check" has one definition; only the sentence differs, because "stopped waiting" would be false
+//     here. Guarded by the arm's anchor like every arm notice, so an arm replaced meanwhile is not
+//     written over. Only a peer holding the convener's pinned identity can reach this at all — a
+//     stranger is refused in the TLS handshake — so nobody else can raise the notice.
+//   - **A failure is PACED**, through `reraceWait`, the one door: how fast this loop came round was
+//     how fast a peer that completes the pinned handshake could fail its first frame, for a window
+//     that is the record's whole remaining life. A hop served cleanly waits for nothing.
+//
+// An unanswered question at a resumed hop is NOT said here, deliberately: a gate torn down by a
+// newer arm leaves through the same sentinel a timeout does, and this arm outlives both, so the
+// anchor cannot tell them apart the way it can for an arm that ends.
+func (s *Server) deliveryArmKept(ctx context.Context, anchor consentAnchor, err error, attempt *int, deadline time.Time) bool {
+	if err == nil {
+		return true
+	}
+	if class, _ := spendClass(err, false); class == spendTamperCheck {
+		s.sess.noteArmEnded(anchor, "delivery-tamper-check",
+			"A connection for this ceremony failed a tamper check. This computer is still waiting.",
+			"While setting up the connection, the other side's numbers did not match what it had "+
+				"promised to send. That is what a machine sitting between you and the other person "+
+				"looks like, though a faulty program can cause it too. Nothing from that connection "+
+				"was signed or saved, and your own copies are unchanged. Check with the convener over "+
+				"a channel you trust. This computer goes on waiting for the finished document.")
+	}
+	d, ok := reraceWait(*attempt, time.Now(), deadline)
+	if !ok {
+		return false
+	}
+	*attempt++
+	return sleepOrDone(ctx, d)
 }
 
 // rearmDeliveries re-establishes a delivery arm for every ceremony this machine signed and has not

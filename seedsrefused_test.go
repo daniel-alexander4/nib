@@ -55,8 +55,9 @@ func TestInvitationSeedsReachNothingButTheDiagnostic(t *testing.T) {
 					what = "SeedSample"
 				case v.Sel.Name == "Seeds":
 					what = ".Seeds"
-				// `addrscope.Seed` is the address rule, a different thing with the same name.
-				case v.Sel.Name == "Seed" && (x == nil || x.Name != "addrscope"):
+				// `addrscope.Seed` is the address rule and `maphash.Seed` a hash key (the mux's
+				// connection-id tag), different things with the same name.
+				case v.Sel.Name == "Seed" && (x == nil || (x.Name != "addrscope" && x.Name != "maphash")):
 					what = ".Seed("
 				}
 			case *ast.KeyValueExpr:

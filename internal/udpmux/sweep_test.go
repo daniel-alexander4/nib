@@ -1,7 +1,6 @@
 package udpmux
 
 import (
-	"encoding/binary"
 	"net"
 	"net/netip"
 	"sync"
@@ -11,10 +10,11 @@ import (
 	"nib/internal/scaling"
 )
 
-// TestFillingATableIsNotQuadratic — /pending 711 R5-2. Both expiring tables swept the whole
+// TestFillingATableIsNotQuadratic — /pending 711 R5-2. The expiring peer table swept the whole
 // map on every insert, under the write lock the read loop takes per datagram, so filling
-// either was quadratic in how many entries a remote host chose to create (every QUIC Initial
-// registers an id and every reply learns a destination). The bound is on what an insert costs
+// it was quadratic in how many entries a remote host chose to create (every reply learns a
+// destination). The connection-id table that shared the defect is gone: an id is recognised by
+// its own bytes and nothing is stored (connid_test.go). The bound is on what an insert costs
 // against the table it lands in: a batch into a table sixteen times fuller must cost nowhere
 // near the sixteen times a per-insert sweep makes it.
 func TestFillingATableIsNotQuadratic(t *testing.T) {
@@ -37,26 +37,6 @@ func TestFillingATableIsNotQuadratic(t *testing.T) {
 		hold   func(held int)
 	}
 	fill := map[string]table{
-		"RegisterConnectionID": {
-			insert: func(i int) {
-				var id [8]byte
-				binary.BigEndian.PutUint64(id[:], uint64(i))
-				m.RegisterConnectionID(id[:])
-			},
-			hold: func(held int) {
-				m.cidMu.Lock()
-				m.cids = make(map[string]time.Time, held)
-				mu.Lock()
-				exp := now.Add(peerTTL)
-				mu.Unlock()
-				for i := 0; i < held; i++ {
-					var id [8]byte
-					binary.BigEndian.PutUint64(id[:], uint64(1<<62+i))
-					m.cids[string(id[:])] = exp
-				}
-				m.cidMu.Unlock()
-			},
-		},
 		"learn": {
 			insert: func(i int) {
 				m.learn(&net.UDPAddr{IP: net.IPv4(10, byte(i>>16), byte(i>>8), byte(i)), Port: 4000 + i%1000})

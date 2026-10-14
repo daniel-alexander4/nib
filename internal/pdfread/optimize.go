@@ -183,6 +183,9 @@ func optimize(ctx *model.Context, strict bool) error {
 		if strict {
 			return fmt.Errorf("%w: %s", ErrUnaffordable, why)
 		}
+		// Skipped, and SAID: the context carries the fact, so whoever answers for this document can tell its
+		// user that what Nib writes from it is not compacted (`OptimizeSkipped`, /pending 766 part 7).
+		rememberOptimizeSkipped(ctx)
 		return nil
 	}
 	if ctx.Conf != nil && ctx.Conf.OptimizeResourceDicts {

@@ -41,6 +41,8 @@ import (
 // `armForDelivery` is the named exemption (ADR-009): it asks nobody anything on its delivery leg —
 // the gates there are the unattended ones — and it is spent by exactly one thing, a leg that
 // delivered. A hop it serves on the way never spends it (/pending 500). See the note at its loop.
+// It still reads this table for what an outcome IS: `deliveryArmKept` says a failed tamper check
+// and paces a failure, as the arms this rule ends do.
 
 // armOutcome is one row of the rule: an outcome a served connection can end with, and whether the
 // arm goes on waiting after it.
@@ -178,8 +180,8 @@ func (s *Server) armSpentBy(anchor consentAnchor, cer *ceremonyID, err error) bo
 	return true
 }
 
-// noteArmEnded records why an arm stopped waiting — only while `anchor` still names an armed
-// session. A consent gate torn down by Cancel or by a newer arm leaves through the same sentinel a
+// noteArmEnded records why an arm stopped waiting — or, for the delivery arm, what it survived
+// (`deliveryArmKept`) — only while `anchor` still names an armed session. A consent gate torn down by Cancel or by a newer arm leaves through the same sentinel a
 // timeout does (`sessionConfirmer.Confirm`), and telling that user "nobody answered" about a wait
 // they ended themselves, or writing over the notice of the arm that replaced this one, would be a
 // false statement on the one surface that outlives the arm.
