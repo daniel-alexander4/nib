@@ -161,6 +161,78 @@ func TestOptimizeRefusesADocumentItsPassCannotAfford(t *testing.T) {
 	}
 }
 
+// inheriting moves page 1's resources onto its `/Pages` node, leaving each page `own` (an empty string: none) —
+// /pending 897's shape: a signed contract whose forms sat on its `/Pages` node estimated 0 walk steps.
+func inheriting(pdf []byte, own string) []byte {
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		panic(err)
+	}
+	pages := ctx.Table[2].Object.(types.Dict)
+	page := ctx.Table[3].Object.(types.Dict)
+	pages["Resources"] = page["Resources"]
+	delete(page, "Resources")
+	if own != "" {
+		// Both pages, or page 2 — which inherits everything — reaches the forms through the nearest dictionary alone.
+		ctx.Table[7] = &model.XRefTableEntry{Object: types.Dict{"Type": types.Name("ExtGState")}}
+		for _, nr := range []int{3, 5} {
+			ctx.Table[nr].Object.(types.Dict)["Resources"] = types.Dict{"ExtGState": types.Dict{"G0": *types.NewIndirectRef(7, 0)}}
+		}
+	}
+	var b bytes.Buffer
+	if err := api.WriteContext(ctx, &b); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+// TestAnInheritedFormGraphIsCharged — /pending 897. pdfcpu's pass puts every page's inherited `/Resources` ON the page
+// before it walks them (`optimizeResourceDicts`), and the estimate read only the page's own: forty forms naming their own
+// dictionary, moved up to the `/Pages` node, estimated nothing and `Optimize` did not return. Both shapes of the path —
+// the page inheriting everything, and the page holding a dictionary of its own beneath its parent's — because the second
+// is what reading the NEAREST dictionary alone would miss.
+func TestAnInheritedFormGraphIsCharged(t *testing.T) {
+	for _, own := range []string{"", "an ExtGState of its own"} {
+		pdf := inheriting(formsNamingTheirDictionary(40), own)
+		name := "forty forms naming their dictionary, on the /Pages node"
+		if own != "" {
+			name += ", the page holding " + own
+		}
+		// Stimulus first: no page holds the forms itself, and they are there to reach — counted on the validated read,
+		// since `formObjects` reads through the very pass this is about.
+		ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pg := range pdfread.Pages(ctx) {
+			if res, _ := ctx.DereferenceDict(pg.Dict["Resources"]); res["XObject"] != nil {
+				t.Fatalf("setup: %s — page %d holds the forms itself", name, pg.Nr)
+			}
+			if own != "" && len(pg.ResourcePath) != 2 {
+				t.Fatalf("setup: %s — page %d has %d /Resources on its path, want 2", name, pg.Nr, len(pg.ResourcePath))
+			}
+		}
+		forms := 0
+		for _, e := range ctx.Table {
+			if sd, ok := e.Object.(types.StreamDict); ok && sd.Dict.NameEntry("Subtype") != nil && *sd.Dict.NameEntry("Subtype") == "Form" {
+				forms++
+			}
+		}
+		if forms != 40 {
+			t.Fatalf("setup: %s holds %d form XObjects, want 40", name, forms)
+		}
+		finishesWithin(t, 20, "Optimize over "+name, func() { _, err = Optimize(pdf) })
+		if err == nil || !strings.Contains(err.Error(), "will not optimize") {
+			t.Fatalf("Optimize over %s returned %v, want a refusal", name, err)
+		}
+		// Convene's read: the default configuration runs the step, and `ContentDigest` reads through the pass.
+		finishesWithin(t, 20, "ContentDigest over "+name, func() { _, err = ContentDigest(pdf) })
+		if err != nil {
+			t.Fatalf("ContentDigest over %s: %v", name, err)
+		}
+	}
+}
+
 func TestAnOrdinaryDocumentIsStillOptimized(t *testing.T) {
 	// Two identical forms on one page: the pass merges them, and a skipped pass would not.
 	pdf := twoPages("<< /XObject << /X 100 0 R /Y 101 0 R >> >>", "/X Do /Y Do", map[int]string{

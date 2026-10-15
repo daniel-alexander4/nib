@@ -15,6 +15,11 @@ type Page struct {
 	Ref   *types.IndirectRef
 	Attrs *model.InheritedPageAttrs
 	Err   error
+	// ResourcePath is every `/Resources` dictionary on the path pdfcpu walked to this page, the root's first and the
+	// page's own last — what `checkInheritedPageAttrs(…, true)` WEAVES into one dictionary, where Attrs holds only the
+	// nearest (`consolidateRes` false). nil where pdfcpu's `PageDict` answered the page itself (pagesim.go's fallback).
+	// Its one reader is the optimize estimate (`passResources`, /pending 897).
+	ResourcePath []types.Dict
 }
 
 // Pages answers `ctx.PageDict(p, false)` for every page 1..PageCount, in order, from ONE walk of the page tree
@@ -73,6 +78,9 @@ type pathAttrs struct {
 	mediaBox, cropBox types.Array
 	rotate            int
 	resources         types.Dict
+	// resourcePath is every `/Resources` met on the way down, root first. It is appended with a full slice
+	// expression, so two siblings that share an ancestor's path never write into each other's.
+	resourcePath []types.Dict
 }
 
 func (a pathAttrs) resolve(xt *model.XRefTable) (*model.InheritedPageAttrs, bool) {
@@ -152,6 +160,9 @@ func (a *pathAttrs) apply(xt *model.XRefTable, d types.Dict) bool {
 			return false
 		}
 		a.resources = res
+		if len(res) > 0 { // pdfcpu weaves nothing from an empty one (`consolidateResources`)
+			a.resourcePath = append(a.resourcePath[:len(a.resourcePath):len(a.resourcePath)], res)
+		}
 	}
 	return true
 }
@@ -230,7 +241,7 @@ func walkPages(xt *model.XRefTable) ([]Page, bool) {
 					return 0, false
 				}
 				r := kr
-				out = append(out, Page{Nr: len(out) + 1, Dict: kd, Ref: &r, Attrs: resolved})
+				out = append(out, Page{Nr: len(out) + 1, Dict: kd, Ref: &r, Attrs: resolved, ResourcePath: leaf.resourcePath})
 				held++
 			default:
 				return 0, false
