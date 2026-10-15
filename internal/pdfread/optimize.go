@@ -305,8 +305,9 @@ var ErrUnaffordable = errors.New("nib cannot read this document the way its chec
 // Unaffordable says why pdfcpu's optimize pass over ctx would exceed a budget, or "" when it would not.
 func Unaffordable(ctx *model.Context) string {
 	e := optimizeEstimate{ctx: ctx, forms: map[int]*types.StreamDict{}, memo: map[int]objShape{}}
-	pages := pageDicts(ctx)
-	for _, res := range pageResources(ctx, pages) {
+	walked := Pages(ctx)
+	pages := pageDicts(walked)
+	for _, res := range passResources(ctx, walked) {
 		if !e.walk(res, nil) {
 			return fmt.Sprintf("its resources reach form XObjects along more than %d paths, and the optimizer "+
 				"walks every one", maxOptimizeWalk)
@@ -879,27 +880,96 @@ func satMul(a, b int) int {
 	return a * b
 }
 
-// pageResources is each page's own `/Resources`, uninherited, in page order — what `pdfops.scanPages` gives the
-// estimate there, restated because this package sits below `pdfops`. pdfcpu's pass starts from the same
-// dictionaries (optimize.go's `optimizeResources` over each page's `Resources`).
-func pageResources(ctx *model.Context, pages []types.Dict) []types.Dict {
+// passResources is, for each page in order, the resource dictionary pdfcpu's pass starts its walk from
+// (`parseResourcesDict` → `optimizeResources`, optimize.go:910-931, v0.13.0) — /pending 897.
+//
+// **Where the pass's resource step runs (`passInheritsResources`), that is NOT the page's own `/Resources`.** The step
+// (`optimizeResourceDicts`, optimize.go:1592-1607) first puts on every page the dictionary `PageDict(i, true)` builds:
+// every `/Resources` from the root down to the page WOVEN into one, a deeper name overriding, then cut to the names the
+// page's content uses. Reading the page's own dictionary saw nothing on a page that inherits everything — a real signed
+// contract whose forms sit on its `/Pages` node estimated 0 walk steps while the pass ran 1h35m without finishing;
+// woven, the estimate is past `maxOptimizeWalk` in 0.12 s. Over the 2,326-file local corpus that is the ONLY document
+// whose verdict moves; ten others estimate at most 405 steps more.
+//
+// The weave here is not cut to the content's names, so it is an upper bound, as the rest of the estimate is: it reads
+// only the two sub-dictionaries `walk` follows. Where the step does not run, the pass starts from the page's own
+// dictionary (nil for one that inherits), and so does this.
+func passResources(ctx *model.Context, pages []Page) []types.Dict {
+	inherits := passInheritsResources(ctx)
 	out := make([]types.Dict, 0, len(pages))
-	for _, d := range pages {
-		if res, e := ctx.DereferenceDict(d["Resources"]); e == nil && res != nil {
+	for _, pg := range pages {
+		if pg.Err != nil || pg.Dict == nil {
+			continue
+		}
+		if inherits {
+			if res := wovenResources(ctx, pg); res != nil {
+				out = append(out, res)
+			}
+			continue
+		}
+		if res, e := ctx.DereferenceDict(pg.Dict["Resources"]); e == nil && res != nil {
 			out = append(out, res)
 		}
 	}
 	return out
 }
 
-// pageDicts is every page's dictionary that resolves, in page order, gathered ONCE per estimate and handed to each
-// reader of it (`pageResources`, `contentNamings`). pdfcpu's `PageDict` walks the page tree from the root at every
-// call, so each pass over the pages is quadratic in their count: a second pass cost 11.2 s and 2.3 GiB on a
-// 7,059-page document (/pending 748). And the one pass that remained was itself quadratic on a flat tree, 12 s of
-// the same document, so it goes through `Pages`, which answers every page from one walk (/pending 753).
-func pageDicts(ctx *model.Context) []types.Dict {
-	out := make([]types.Dict, 0, ctx.PageCount)
-	for _, pg := range Pages(ctx) {
+// wovenResources is `checkInheritedPageAttrs(…, true)`'s weave of pg's resource path, for the `/XObject` and
+// `/ExtGState` the estimate walks. A path of one dictionary is that dictionary, uncopied: the common case costs nothing.
+// Where pdfcpu answered the page itself (no path recorded), the nearest dictionary stands in.
+func wovenResources(ctx *model.Context, pg Page) types.Dict {
+	path := pg.ResourcePath
+	if path == nil && pg.Attrs != nil && len(pg.Attrs.Resources) > 0 {
+		path = []types.Dict{pg.Attrs.Resources}
+	}
+	switch len(path) {
+	case 0:
+		return nil
+	case 1:
+		return path[0]
+	}
+	out := types.Dict{}
+	for _, res := range path {
+		for _, k := range []string{"XObject", "ExtGState"} {
+			sub, err := ctx.DereferenceDict(res[k])
+			if err != nil || sub == nil {
+				continue
+			}
+			woven, _ := out[k].(types.Dict)
+			if woven == nil {
+				woven = types.Dict{}
+				out[k] = woven
+			}
+			for name, v := range sub {
+				woven[name] = v
+			}
+		}
+	}
+	return out
+}
+
+// passInheritsResources is pdfcpu v0.13.0's own condition for running the pass's resource step
+// (`optimizeResourceDicts`, optimize.go:1646-1656), restated in ONE place: `passResources` and
+// `passDecodesPageContent` both read it, so an upgrade that changes it is a diff here, not two silent holes.
+func passInheritsResources(ctx *model.Context) bool {
+	if ctx.Configuration == nil || ctx.Conf == nil {
+		return true // no configuration to read: assume the step runs
+	}
+	switch ctx.Cmd {
+	case model.VALIDATE, model.OPTIMIZE, model.LISTIMAGES, model.EXTRACTIMAGES, model.UPDATEIMAGES:
+		return ctx.Conf.OptimizeResourceDicts // pdfcpu reads the XRefTable's Conf here, not the Context's
+	}
+	return false
+}
+
+// pageDicts is every page's dictionary that resolves, in page order, from ONE `Pages` walk gathered per estimate and
+// handed to each reader of it (`passResources`, `contentNamings`). pdfcpu's `PageDict` walks the page tree from the root
+// at every call, so each pass over the pages is quadratic in their count: a second pass cost 11.2 s and 2.3 GiB on a
+// 7,059-page document (/pending 748). And the one pass that remained was itself quadratic on a flat tree, 12 s of the
+// same document, so it goes through `Pages`, which answers every page from one walk (/pending 753).
+func pageDicts(pages []Page) []types.Dict {
+	out := make([]types.Dict, 0, len(pages))
+	for _, pg := range pages {
 		if pg.Err == nil && pg.Dict != nil {
 			out = append(out, pg.Dict)
 		}

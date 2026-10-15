@@ -320,7 +320,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 				pg = Page{Nr: p, Dict: d, Ref: ref, Attrs: a, Err: err}
 				break
 			}
-			pg.Dict, pg.Ref, pg.Attrs = o.dict, o.ref, attrs
+			pg.Dict, pg.Ref, pg.Attrs, pg.ResourcePath = o.dict, o.ref, attrs, o.attrs.resourcePath
 			if o.ref != nil {
 				r := *o.ref
 				pg.Ref = &r

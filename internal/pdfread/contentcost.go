@@ -48,8 +48,7 @@ import (
 // passDecodesPageContent is pdfcpu v0.13.0's own condition for decoding page content during its optimize pass,
 // restated in ONE place so an upgrade that changes it is a diff here, not a silent hole:
 //
-//   - optimize.go:1647-1653 — `optimizeResourceDicts` runs when `ctx.Cmd` is VALIDATE, OPTIMIZE, LISTIMAGES,
-//     EXTRACTIMAGES or UPDATEIMAGES and `ctx.Conf.OptimizeResourceDicts` is set; it consolidates every page's
+//   - optimize.go:1647-1653 — `optimizeResourceDicts` runs (`passInheritsResources`); it consolidates every page's
 //     resources against its content, decoding it.
 //   - optimize.go:997 — `ctx.OptimizeDuplicateContentStreams` runs `optimizePageContent`, whose
 //     `removeEmptyContentStreams` (optimize.go:69) decodes each content stream to see whether it is empty.
@@ -57,13 +56,7 @@ func passDecodesPageContent(ctx *model.Context) bool {
 	if ctx.Configuration == nil || ctx.Conf == nil {
 		return true // no configuration to read: assume the pass decodes
 	}
-	switch ctx.Cmd {
-	case model.VALIDATE, model.OPTIMIZE, model.LISTIMAGES, model.EXTRACTIMAGES, model.UPDATEIMAGES:
-		if ctx.Conf.OptimizeResourceDicts { // pdfcpu reads the XRefTable's Conf here, not the Context's
-			return true
-		}
-	}
-	return ctx.OptimizeDuplicateContentStreams
+	return passInheritsResources(ctx) || ctx.OptimizeDuplicateContentStreams
 }
 
 // contentNaming is one page-content stream and how many times the page tree names it.
