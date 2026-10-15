@@ -204,30 +204,7 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 // keys are every key any node holds; one no lookup reaches has no entry.
 func parentTreeEntries(ctx *model.Context, tree *structTree) (arrays map[int][]int, singles map[int]int) {
 	arrays, singles = map[int][]int{}, map[int]int{}
-	keys := map[int]bool{}
-	var walk func(o types.Object, depth int)
-	walk = func(o types.Object, depth int) {
-		if depth > maxStructDepth {
-			return
-		}
-		d, err := ctx.DereferenceDict(o)
-		if err != nil || d == nil {
-			return
-		}
-		if nums, e := ctx.DereferenceArray(d["Nums"]); e == nil && nums != nil {
-			for i := 0; i+1 < len(nums); i += 2 {
-				if n, ok := numsKey(ctx, nums[i]); ok {
-					keys[n] = true
-				}
-			}
-		}
-		if kids, e := ctx.DereferenceArray(d["Kids"]); e == nil && kids != nil {
-			for _, k := range kids {
-				walk(k, depth+1)
-			}
-		}
-	}
-	walk(tree.root["ParentTree"], 0)
+	keys := parentTreeKeys(ctx, tree.root["ParentTree"])
 
 	r := &parentTreeReader{ctx: ctx}
 	for key := range keys {
@@ -252,4 +229,60 @@ func parentTreeEntries(ctx *model.Context, tree *structTree) (arrays map[int][]i
 		}
 	}
 	return arrays, singles
+}
+
+// parentTreeKeys is every key any node of the number tree at ptObj holds, `/Kids` followed — the candidates; which of
+// them a reader REACHES, and with which value, is `parentTreeLookup`'s answer.
+func parentTreeKeys(ctx *model.Context, ptObj types.Object) map[int]bool {
+	keys := map[int]bool{}
+	var walk func(o types.Object, depth int)
+	walk = func(o types.Object, depth int) {
+		if depth > maxStructDepth {
+			return
+		}
+		d, err := ctx.DereferenceDict(o)
+		if err != nil || d == nil {
+			return
+		}
+		if nums, e := ctx.DereferenceArray(d["Nums"]); e == nil && nums != nil {
+			for i := 0; i+1 < len(nums); i += 2 {
+				if n, ok := numsKey(ctx, nums[i]); ok {
+					keys[n] = true
+				}
+			}
+		}
+		if kids, e := ctx.DereferenceArray(d["Kids"]); e == nil && kids != nil {
+			for _, k := range kids {
+				walk(k, depth+1)
+			}
+		}
+	}
+	walk(ptObj, 0)
+	return keys
+}
+
+// flattenParentTree rewrites the number tree pt (reached as ptObj) as one `/Nums` on its root: every key a reader
+// reaches, ascending, with the value `parentTreeLookup` finds for it — /pending 528. A key no lookup reaches (outside a
+// node's `/Limits`, or under a node whose own `/Nums` answers first) is not written, because no reader sees it; a row is
+// handed over as it stood, reference or array, so nothing the carry later cleans is shared with the nested node it came
+// from. `/Kids` and the root's `/Limits` go: the nodes below are then unreachable, and pdfcpu writes by reachability.
+func flattenParentTree(ctx *model.Context, pt types.Dict, ptObj types.Object) {
+	keys := make([]int, 0)
+	for k := range parentTreeKeys(ctx, ptObj) {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	r := &parentTreeReader{ctx: ctx}
+	flat := types.Array{}
+	for _, k := range keys {
+		holder, at := r.lookup(ptObj, k)
+		if holder == nil {
+			continue
+		}
+		nums, _ := ctx.DereferenceArray(holder["Nums"])
+		flat = append(flat, types.Integer(k), nums[at])
+	}
+	pt["Nums"] = flat
+	delete(pt, "Kids")
+	delete(pt, "Limits")
 }

@@ -68,7 +68,7 @@ type keptPage struct {
 // the output has earned the catalog's structure keys.
 //
 // **It never fails the operation.** Anything it does not fully understand — an unreadable tree, a
-// nested `/ParentTree`, a prune that leaves nothing anchored — returns `false`, and the page operation
+// prune that leaves nothing anchored — returns `false`, and the page operation
 // goes on to produce the honest loss it produced before this slice. An error comes back only where the
 // failure is nib's own (an xref insert).
 func carryStructure(ctx *model.Context, root types.Dict, kept []keptPage) (bool, error) {
@@ -103,14 +103,12 @@ func carryStructure(ctx *model.Context, root types.Dict, kept []keptPage) (bool,
 		return false, nil
 	}
 	if _, nested := pt["Kids"]; nested {
-		// A nested number tree is refused here. The write half has written one since P07.S07 (`parentTreeDict`),
-		// but this carry was built and measured over flat trees only, so it keeps its own refusal until a nested
-		// source is driven through it (`/pending 528`). It is NOT free: **7 of the 14** multi-page real-producer
-		// documents nest their `/ParentTree` (Acrobat, Designer, InDesign, Word; measured 2026-09-30 for P07.S07), so
-		// a subset of any of them drops its tags here. The earlier "costs nothing measurable" read only veraPDF's
-		// corpus (0 of 294 nest one) and LibreOffice's conversions (flat) — P07 phase-close review.
-		// Flattening it instead is `/pending 528`.
-		return false, nil
+		// A nested number tree is made flat FIRST, so everything below reads the shape it was built and measured over
+		// (`/pending 528`). It was refused here until the real control existed: **7 of the 14** multi-page
+		// real-producer documents nest their `/ParentTree` (Acrobat, Designer, InDesign, Word), so a subset of any of
+		// them dropped its tags. Flat is what `renumberParentTree` writes in any case — it rebuilds `/Nums` from the
+		// claimants the output keeps — and a refusal below drops the whole tree, so nothing is lost by doing it early.
+		flattenParentTree(ctx, pt, tree.root["ParentTree"])
 	}
 
 	p := &prune{ctx: ctx, live: live, annots: keptAnnots, decided: map[elemCtx]bool{}}
