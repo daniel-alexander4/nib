@@ -1,10 +1,12 @@
 package pdfread_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -173,6 +175,69 @@ func TestAPageEntryThatIsNotAPageDoesNotRefuseTheDocumentAndIsStillInIt(t *testi
 			}
 			if got := p.String(); got != "("+c.p+")" {
 				t.Errorf("the widget's /P reads %s after the read, want (%s)", got, c.p)
+			}
+		})
+	}
+}
+
+// TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument — /pending 899. pdfcpu v0.13 accepts only the
+// state models `Marked` and `Review`; Acrobat writes `MigrationStatus` on a migrated comment, and one real document of
+// 2,326 (three sticky notes) was refused by every operation for it. The pair is set aside for the validator and back
+// after it — every Text annotation's pair, a pair pdfcpu knows too (it reads one only to refuse it), so both kinds must
+// come back through a read and a write.
+func TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument(t *testing.T) {
+	note := func(pair string) string {
+		return "<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /Contents (a note) " + pair + " >>"
+	}
+	for _, c := range []struct {
+		name, pair    string
+		refusedBefore bool // what the validator says of this pair on its own
+	}{
+		{"Acrobat's migration model", "/State (MigrationNone) /StateModel (MigrationStatus)", true},
+		{"a model with no state", "/StateModel (Review)", true},
+		{"a state with no model", "/State (Accepted)", true},
+		{"a state the model does not allow", "/State (Accepted) /StateModel (Marked)", true},
+		{"a model written as a name", "/State (Marked) /StateModel /Marked", true},
+		{"a pair pdfcpu knows", "/State (Unmarked) /StateModel (Marked)", false},
+		{"a review pair as hex", "/State <436F6D706C65746564> /StateModel <526576696577>", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pdf := annotsDocument("[5 0 R]", map[int]string{5: note(c.pair)})
+			// Stimulus: pdfcpu's own validator, with nothing set aside, says what the case is named for.
+			raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := api.ValidateContext(raw); (err != nil) != c.refusedBefore {
+				t.Fatalf("setup: pdfcpu's validator on its own returned %v; refused should be %v", err, c.refusedBefore)
+			}
+			ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatalf("the document was refused: %v", err)
+			}
+			out, err := pdfread.Write(ctx)
+			if err != nil {
+				t.Fatalf("the document could not be written: %v", err)
+			}
+			again, err := pdfread.ReadOptimized(out, model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatalf("the written document was refused: %v", err)
+			}
+			for _, cx := range []*model.Context{ctx, again} {
+				d, _, _, err := cx.PageDict(1, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, _ := cx.DereferenceArray(d["Annots"])
+				if len(a) != 1 {
+					t.Fatalf("the page holds %d annotations, want the note", len(a))
+				}
+				ad, _ := cx.DereferenceDict(a[0])
+				for _, k := range []string{"State", "StateModel"} {
+					if want := strings.Contains(c.pair, "/"+k+" "); (ad[k] != nil) != want {
+						t.Errorf("/%s present = %v after the read or the write, want %v — set aside for the validator only", k, ad[k] != nil, want)
+					}
+				}
 			}
 		})
 	}
