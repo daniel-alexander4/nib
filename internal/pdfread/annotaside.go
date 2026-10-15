@@ -5,7 +5,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// setAsideUnreadableAnnotationParts takes out of the validator's sight the two annotation defects it refuses a whole
+// setAsideUnreadableAnnotationParts takes out of the validator's sight the annotation defects it refuses a whole
 // document over and nib reads nothing from, and returns what puts them back as parsed (ADR-168, /pending 888).
 //
 // Measured over 203 real documents with a form (`build/formrt.sh`'s local corpus): five could not be opened by any
@@ -19,15 +19,23 @@ import (
 //   - **A `/P` that is not a reference to a page** ("dereferenceDict: wrong type types.StreamDict",
 //     `validateEntryP`, `validate/annotation.go:1369`). One document: a widget whose `/P` names a 19-byte stream. `/P`
 //     is optional and nothing in nib reads it; the key is taken off and put back.
+//   - **A Text annotation's `/State` and `/StateModel` that are not a pair pdfcpu knows** ("dict=Text entry=StateModel
+//     invalid dict entry", `validateAnnotationDictText`, `validate/annotation.go:214-249`) — /pending 899. pdfcpu
+//     v0.13 accepts only the models `Marked` and `Review` with their own states; Acrobat writes `MigrationStatus` /
+//     `MigrationNone` on a migrated comment. One real document of 2,326 (a reviewed school handout, its sticky
+//     notes); v0.16 reads it. Nothing in nib reads either key, and the
+//     validator reads them only to refuse, so every Text annotation's pair is taken off and put back — the one
+//     exception to "only what the validator refuses", because a pair it accepts is one it does nothing with.
 //
 // Set aside, not repaired and not dropped: what a viewer shows of these documents is in those entries (the stamps'
 // appearance streams), and a document that came back from an operation without them would have lost content nobody
 // asked to remove. So every reader after the validator — nib's, pdfcpu's writer, the content digest — sees the
 // document as it was parsed, exactly as with `escapeInfoKeys`.
 //
-// Only what the validator refuses is touched, so a document that read before this reads the same: neither defect
-// can be in one. Objects are looked up with `ctx.Dereference` alone (ADR-116: the typed lookups mark an object
-// validated before the validator has seen it).
+// A document that read before this reads the same: everything set aside is back before any reader has the context,
+// the first two can be in no document the validator accepted, and the third is a pair it does nothing with but
+// refuse. Objects are looked up with `ctx.Dereference` alone (ADR-116: the typed lookups mark an object validated
+// before the validator has seen it).
 func setAsideUnreadableAnnotationParts(ctx *model.Context) (restore func()) {
 	var undo []func()
 	restore = func() {
@@ -83,6 +91,31 @@ func setAsideUnreadableAnnotationParts(ctx *model.Context) (restore func()) {
 		delete(d, "P")
 		undo = append(undo, func() { d["P"] = held })
 	}
+	// A Text annotation's /State and /StateModel, together and whatever they hold: the validator reads them only to
+	// refuse, so setting aside a pair it would accept changes nothing it does — restating its rule would only be a
+	// second copy to keep in step with pdfcpu's.
+	asideState := func(d types.Dict) {
+		st, _ := xt.Dereference(d["Subtype"])
+		if n, ok := st.(types.Name); !ok || n != "Text" {
+			return
+		}
+		state, model := d["State"], d["StateModel"]
+		if state == nil && model == nil {
+			return
+		}
+		_, hadState := d["State"]
+		_, hadModel := d["StateModel"]
+		delete(d, "State")
+		delete(d, "StateModel")
+		undo = append(undo, func() {
+			if hadState {
+				d["State"] = state
+			}
+			if hadModel {
+				d["StateModel"] = model
+			}
+		})
+	}
 	nrOf := func(o types.Object) int {
 		if r, ok := o.(types.IndirectRef); ok {
 			return r.ObjectNumber.Value()
@@ -127,6 +160,7 @@ func setAsideUnreadableAnnotationParts(ctx *model.Context) (restore func()) {
 				continue
 			}
 			asideP(ad, nrOf(e))
+			asideState(ad)
 			_, hasSubtype := ad["Subtype"]
 			_, isField := ad["FT"]
 			_, hasParent := ad["Parent"]
