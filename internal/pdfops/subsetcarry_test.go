@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -426,33 +429,116 @@ func TestAnOBJROnADroppedPageGoesAndOneOnAKeptPageStays(t *testing.T) {
 	}
 }
 
-// TestASubsetRefusesToCarryANestedParentTree — the shape the SUBSET carry still refuses (`carryStructure`, `/pending
-// 528`), though the write half has written a nested tree since P07.S07 (`parentTreeDict`).
-//
-// Measured: 0 of 294 tagged files in veraPDF's corpus nest one and neither LibreOffice conversion does, but 7 of the 14
-// multi-page real-producer documents do (P07 phase-close review) — so this refusal is reached in practice, not only here.
-func TestASubsetRefusesToCarryANestedParentTree(t *testing.T) {
-	// **The control is a `Collect` OF the flat fixture, not the fixture's own bytes.** Reading the
-	// hand-assembled fixture says `carried` whatever the carry does — measured, with
-	// `carryStructure` returning `(false, nil)` this test passed — so the control has to be the same
-	// operation on the same objects with only the nesting changed.
+// TestASubsetCarriesANestedParentTree — /pending 528. The subset carry refused a nested `/ParentTree` and dropped the
+// whole tree, and **7 of the 14** multi-page real-producer documents nest one (Acrobat, Designer, InDesign, Word). It is
+// now made flat before the prune (`flattenParentTree`), so the same subset of the same objects carries exactly as the
+// flat fixture's does — and nothing hangs on through the `/Kids` the flat tree no longer names. Measured with the
+// `/Kids` left in place: the dropped pages' three elements were written (their `/Pg` stripped, so not their text — but an
+// element carries its own `/Alt`, `/ActualText` and `/T`), seven elements in a file whose tree reaches four.
+func TestASubsetCarriesANestedParentTree(t *testing.T) {
+	// **The control is a `Collect` OF the flat fixture, not the fixture's own bytes**: reading the hand-assembled
+	// fixture says `carried` whatever the carry does, so the control is the same operation on the same objects with
+	// only the nesting changed.
 	flat, ferr := Collect(subsetFixture(), []string{"1", "2"})
 	if ferr != nil {
 		t.Fatal(ferr)
 	}
-	if !inspectTags(flat).tree {
-		t.Fatal("setup: a subset of the FLAT fixture does not carry either, so a refusal below is " +
-			"not about the nesting")
+	fv, fd, fo, fe := carryOf(t, flat)
+	if fv != "carried" || len(fd) > 0 || len(fo) > 0 {
+		t.Fatalf("setup: a subset of the FLAT fixture is %s with %d defects and %d orphans, so the nested case below "+
+			"is not about the nesting", fv, len(fd), len(fo))
 	}
 	src := assembleFixture(nestedParentTreeObjects())
+	if raw, streams := fileCarries(src, "ZZPAGETHREE"); !raw && streams == 0 {
+		t.Fatal("setup: the dropped page's text is not in the source, so its absence below proves nothing")
+	}
 	out, err := Collect(src, []string{"1", "2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := inspectTags(out); s.tree {
-		t.Errorf("a nested /ParentTree was carried (%+v). The subset carry refuses one (`carryStructure`, "+
-			"/pending 528): it was built and measured over flat trees only", s)
+	v, d, o, e := carryOf(t, out)
+	if v != fv || len(d) > 0 || len(o) > 0 || e != fe {
+		t.Errorf("a subset of the NESTED fixture is %s, %d defects, %d orphans, %d elements; the same subset of the "+
+			"flat one is %s, 0, 0, %d (%v)", v, len(d), len(o), e, fv, fe, d)
 	}
+	ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := ctx.DereferenceDict(ctx.RootDict["StructTreeRoot"])
+	if pt, _ := ctx.DereferenceDict(root["ParentTree"]); pt == nil || pt["Kids"] != nil {
+		t.Errorf("the carried /ParentTree is %v, want one flat /Nums", pt)
+	}
+	written := 0
+	for _, entry := range ctx.Table {
+		if d, ok := entry.Object.(types.Dict); ok && d.NameEntry("Type") != nil && *d.NameEntry("Type") == "StructElem" {
+			written++
+		}
+	}
+	if written != e {
+		t.Errorf("the output writes %d structure elements and its tree reaches %d — a dropped page's element shipped "+
+			"through something the carried tree does not name", written, e)
+	}
+	for _, m := range []string{"ZZPAGETHREE", "ZZPAGEFOUR"} {
+		if raw, streams := fileCarries(out, m); raw || streams > 0 {
+			t.Errorf("a dropped page's text (%s) reached the output", m)
+		}
+	}
+}
+
+// TestRealNestedParentTreesAreCarried — /pending 528's gate was a REAL nested tree, never only a synthetic one: on each
+// local real-producer document that nests its `/ParentTree`, a subset of one page, of every page but the first, and a
+// duplicated first page are each `carried` with no completeness defect and no orphan — or `partial` exactly where the
+// source itself is (cdc-mm7201-H.pdf is, and so is every subset holding its page 20). Measured before the flatten: all
+// 21 were `dropped`.
+func TestRealNestedParentTreesAreCarried(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	root := filepath.Join(home, "nib", "producers")
+	var files []string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.EqualFold(filepath.Ext(p), ".pdf") {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if len(files) == 0 {
+		t.Skip("no corpus under ~/nib/producers")
+	}
+	nested := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		ctx, err := pdfread.Validated(b, model.NewDefaultConfiguration())
+		if err != nil || ctx.PageCount < 2 {
+			continue
+		}
+		str, _ := ctx.DereferenceDict(ctx.RootDict["StructTreeRoot"])
+		pt, _ := ctx.DereferenceDict(str["ParentTree"])
+		if pt == nil || pt["Kids"] == nil {
+			continue
+		}
+		nested++
+		sv := fate(b) // the source as read; carryOf refuses a source pdfcpu's own read refuses
+		for _, sel := range [][]string{{"1"}, {fmt.Sprintf("2-%d", ctx.PageCount)}, {"1", "1"}} {
+			out, err := Collect(b, sel)
+			if err != nil {
+				t.Errorf("%s %v: %v", f, sel, err)
+				continue
+			}
+			v, d, o, _ := carryOf(t, out)
+			if (v != "carried" && v != sv) || len(d) > 0 || len(o) > 0 {
+				t.Errorf("%s %v: %s with %d defects and %d orphans (the source is %s)", filepath.Base(f), sel, v, len(d), len(o), sv)
+			}
+		}
+	}
+	// A corpus present and nothing nested found is a red, never a pass: the claim is about real nested trees.
+	if nested == 0 {
+		t.Fatalf("%d documents under %s and none nests its /ParentTree", len(files), root)
+	}
+	t.Logf("%d real nested /ParentTree documents carried", nested)
+
 }
 
 // nestedParentTreeObjects is subsetFixture with its `/ParentTree` expressed as a nested number
