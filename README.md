@@ -23,36 +23,36 @@ identity live in an encrypted vault only your SSH key can open.
 
 ## How Nib compares
 
-How Nib's feature set lines up against the three best-known commercial PDF editors and two popular free ones.
+How Nib's feature set lines up against four commercial PDF editors, two popular free ones and two open-source ones.
 **Legend:** ✅ built in · 🟡 partial or limited · ❌ not available.
 
-| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor | PDF24 Creator | PDFgear |
-| --- | :--: | :--: | :--: | :--: | :--: | :--: |
-| Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ |
-| Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
-| On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
-| Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 |
-| Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Tag an untagged document automatically ◊ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Review and correct the tag tree and reading order ◊ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| PDF/A archival export | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ |
-| Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 | ❌ | 🟡 |
-| Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| AES-256 encryption | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 | 🟡 | 🟡 |
-| Runs offline §, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ | ✅ | 🟡 |
-| **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier | 🟢 Free | 🟢 Free |
+| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor | Xodo PDF Studio | PDF24 Creator | PDFgear | Stirling-PDF | Okular |
+| --- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
+| Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ |
+| Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 | 🟡 | ❌ |
+| On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ❌ |
+| True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ❌ |
+| Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | ❌ | 🟡 | ❌ |
+| Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 | 🟡 | ❌ |
+| Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tag an untagged document automatically ◊ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Review and correct the tag tree and reading order ◊ | ✅ | ✅ | ✅ | ✅ | 🟡 | ❌ | ❌ | ❌ | ❌ |
+| Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| PDF/A archival export | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
+| Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 | ✅ | ❌ | 🟡 | ✅ | ❌ |
+| Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | ❌ |
+| AES-256 encryption | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ❌ |
+| **Scriptable command line** / batch a folder | ✅ | ❌ | ❌ | 🟡 | 🟡 | 🟡 | 🟡 | ✅ | ❌ |
+| Runs offline §, no account, no telemetry | ✅ | ❌ | 🟡 | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ✅ |
+| **Free & open source** (AGPLv3) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 🟡 | ✅ |
+| Single self-contained binary, cross-platform ‡ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Price** | 🟢 **Free** | 🔴 Subscription | 🔴 Paid | 🟡 Free tier | 🔴 Paid | 🟢 Free | 🟢 Free | 🟡 Free tier | 🟢 Free |
 
 <sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor and PDF24 Creator are Windows-only; PDFgear has no Linux build). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
 
@@ -62,11 +62,15 @@ How Nib's feature set lines up against the three best-known commercial PDF edito
 
 <sub>‖ The PDF24 Creator and PDFgear columns are read from those projects' own feature pages, help forum and changelog, not measured, and ❌ there means *not listed*. PDF24 Creator: redaction and compare are listed with no pattern search and no text diff described; signing takes a certificate but a timestamp authority is on its to-do list; it has a command-line tool (`pdf24-DocTool`). PDFgear: text editing, redaction, OCR and certificate signatures are listed, a compare tool is not; it works offline except for its cloud AI assistant, and batch work is conversion only.</sub>
 
+<sub>The Xodo PDF Studio, Stirling-PDF and Okular columns are read from their own documentation and release notes (October 2026), not measured; ❌ means *not listed*. **Xodo PDF Studio** is Xodo's paid desktop editor (formerly Qoppa PDF Studio); most of its ✅ are Pro features, it needs a licence sign-in to leave demo mode, and it collects anonymous usage statistics from 2026.1.2; its redaction searches by regex (ready-made PII patterns are documented only for the online redactor); its tag pane documents no reading-order editing; it encrypts at "the highest level" without naming AES-256; batch work is in the app, not a command line; its send-to-sign is Xodo Sign, a cloud service. **Stirling-PDF** is a server you host and use through a browser, or Stirling's cloud — offline only when you run the server yourself, and its desktop app hands OCR, form detection and some conversions to a server. Its default image has five OCR languages, it detects fields on flat PDFs only, its compare is text only, its text editing may shift the layout, it lists no Bates numbering or page labels and does not name AES-256, and it batches through a REST API and folder scanning rather than a command line. Its core is MIT and some directories are proprietary; the free server plan covers five users, and analytics are opt-in. **Okular** is KDE's viewer: it fills forms, annotates (including typing on a flat page) and signs with a certificate already in an NSS store, with no timestamp server, and it edits, converts and reshapes nothing. It runs on Linux and Windows; its macOS builds are untested nightlies.</sub>
+
 <sub>\* The three signing rows are about doing it *without a service*. Acrobat and Foxit both offer send-to-sign and multi-party workflows — through Acrobat Sign and Foxit eSign, which means their servers, their accounts, and your document on someone else's machine. Nib's equivalents run between the signers' own copies of Nib, pinned to keys the signers compared themselves.</sub>
 
-Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
+Acrobat, Foxit, PDF-XChange and Xodo are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. PDF24
 Creator and PDFgear are free, capable everyday tools, though neither is open source.
+Stirling-PDF is an open-core toolbox you run as a server, and Okular is an open-source
+viewer that also fills, annotates and signs.
 The table is about the jobs Nib *does* cover, and where it works differently.
 
 **Choose Nib** when you want to own your tools: work entirely offline with no
