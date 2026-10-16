@@ -26,7 +26,7 @@ identity live in an encrypted vault only your SSH key can open.
 How Nib's feature set lines up against four commercial PDF editors, two popular free ones and two open-source ones.
 **Legend:** ✅ built in · 🟡 partial or limited · ❌ not available.
 
-| Capability | **Nib** | Adobe Acrobat Pro | Foxit PDF Editor | PDF-XChange Editor | Xodo PDF Studio | PDF24 Creator | PDFgear | Stirling-PDF | Okular |
+| Capability | <sub>**Nib**</sub> | <sub>Adobe Acrobat Pro</sub> | <sub>Foxit PDF Editor</sub> | <sub>PDF-XChange Editor</sub> | <sub>Xodo PDF Studio</sub> | <sub>PDF24 Creator</sub> | <sub>PDFgear</sub> | <sub>Stirling-PDF</sub> | <sub>Okular</sub> |
 | --- | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: |
 | Fill forms — including flat & scanned | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Detect fields, turn a scan into a fillable form | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 | 🟡 | ❌ |
@@ -39,7 +39,7 @@ How Nib's feature set lines up against four commercial PDF editors, two popular 
 | Review and correct the tag tree and reading order ◊ | ✅ | ✅ | ✅ | ✅ | 🟡 | ❌ | ❌ | ❌ | ❌ |
 | Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
-| **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Open&shy;Timestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
