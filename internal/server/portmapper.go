@@ -234,6 +234,19 @@ func (p *portMapper) startRefresh() {
 			if err != nil {
 				continue // a failed refresh is not fatal; the lease still has time — try next cycle
 			}
+			// **Carry the observation across the refresh.** UPnP's Refresh re-runs the obtain,
+			// which reports the lease we ASKED for and marks it unobserved — so storing `nm`
+			// as-is threw away what ObserveLease had just learned, flipped the mapping back to
+			// unobserved every cycle, and made the loop re-read the lease (and re-log a
+			// permanent one) on every tick forever. Only carried when the refresh names the
+			// same mapping; a moved port is a different mapping and its lease is unknown again.
+			// Carried BEFORE the closed branch below, which stores `nm` too: carried only on the
+			// open path, a close that began during the refresh threw the observation away
+			// (/pending 900 — TestAnUnobservedLeaseIsResolvedAndReported failed about 1 run in 60).
+			if cur.LifetimeObserved && nm.SameTarget(cur) {
+				nm.LifetimeObserved, nm.LeasePermanent = true, cur.LeasePermanent
+				nm.LifetimeSec = cur.LifetimeSec
+			}
 			p.mu.Lock()
 			if p.closed {
 				// close() began while this refresh was in flight, and the router has answered
@@ -245,16 +258,6 @@ func (p *portMapper) startRefresh() {
 				p.current = nm
 				p.mu.Unlock()
 				return
-			}
-			// **Carry the observation across the refresh.** UPnP's Refresh re-runs the obtain,
-			// which reports the lease we ASKED for and marks it unobserved — so storing `nm`
-			// as-is threw away what ObserveLease had just learned, flipped the mapping back to
-			// unobserved every cycle, and made the loop re-read the lease (and re-log a
-			// permanent one) on every tick forever. Only carried when the refresh names the
-			// same mapping; a moved port is a different mapping and its lease is unknown again.
-			if cur.LifetimeObserved && nm.SameTarget(cur) {
-				nm.LifetimeObserved, nm.LeasePermanent = true, cur.LeasePermanent
-				nm.LifetimeSec = cur.LifetimeSec
 			}
 			if nm.ExternalPort != p.current.ExternalPort {
 				// The router did not honour the same-port request: the published record now

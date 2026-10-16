@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"log"
 	"net/netip"
 	"os"
@@ -414,6 +415,65 @@ func TestAConfirmedMappingIsNotDeletedTwice(t *testing.T) {
 
 	if got := atomic.LoadInt32(&f.unmaps); got != 1 {
 		t.Errorf("close() sent %d deletes for ONE mapping, want 1", got)
+	}
+}
+
+// TestAnObservationSurvivesARefreshACloseOvertakes — /pending 900. The refresh loop stores the
+// router's answer even when close() began while the refresh was in flight (/pending 772), and that
+// branch stored it raw: the carry that keeps an observed lease across a refresh ran only on the open
+// path, so a close landing mid-refresh threw the observation away. The row above met it about one
+// run in sixty; here the refresh is held in flight until close() has begun.
+func TestAnObservationSurvivesARefreshACloseOvertakes(t *testing.T) {
+	f := newFake()
+	f.observed = &portmap.Mapping{
+		Protocol: portmap.UDP, InternalPort: 40404, ExternalPort: f.extPort,
+		LifetimeSec: portmap.DefaultLeaseSec, LifetimeObserved: true, LeasePermanent: true,
+	}
+	f.gate = make(chan struct{})
+	f.inflight = make(chan struct{}, 1)
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	pm := newPortMapper(f, portmap.UDP, 40404)
+	pm.refreshFloor = 20 * time.Millisecond
+	if _, ok := pm.obtain(context.Background()); !ok {
+		t.Fatal("setup: obtain failed")
+	}
+	pm.startRefresh()
+	select {
+	case <-f.inflight: // the observation is stored and the refresh it precedes is in flight
+	case <-time.After(5 * time.Second):
+		t.Fatal("setup: no refresh started")
+	}
+	pm.mu.Lock()
+	stored := pm.current.LifetimeObserved
+	pm.mu.Unlock()
+	if !stored {
+		t.Fatal("setup: the observation was not stored before the refresh began")
+	}
+	closed := make(chan struct{})
+	go func() { pm.close(); close(closed) }()
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		pm.mu.Lock()
+		c := pm.closed
+		pm.mu.Unlock()
+		if c {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("setup: close() never began")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(f.gate) // the router answers the refresh after close() has begun
+	<-closed
+
+	pm.mu.Lock()
+	cur := pm.current
+	pm.mu.Unlock()
+	if !cur.LifetimeObserved || !cur.LeasePermanent {
+		t.Errorf("after a close overtook the refresh the mapper holds observed=%v permanent=%v — the "+
+			"closed branch stored the refresh's answer without the observation", cur.LifetimeObserved, cur.LeasePermanent)
 	}
 }
 
