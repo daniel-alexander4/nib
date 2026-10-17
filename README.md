@@ -44,7 +44,7 @@ How Nib's feature set lines up against four commercial PDF editors, two popular 
 | **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | PDF/A archival export | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
+| Office → PDF conversion † | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ❌ |
 | Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 | ✅ | ❌ | 🟡 | ✅ | ❌ |
 | Merge, split, rotate, crop, N-up, Bates, page labels | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | ❌ |
 | AES-256 encryption | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ❌ |
