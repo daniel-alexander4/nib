@@ -2,6 +2,8 @@ package nib
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -391,4 +393,55 @@ func TestTheExhibitBRefusalFires(t *testing.T) {
 				"Nib links today.", err, out)
 		}
 	})
+}
+
+// TestTheOCREnginesLibrariesAreInTheNotices holds the credit for what is compiled INSIDE the
+// vendored OCR engine. `tesseract-core-simd.wasm.js` is one WebAssembly program built from
+// Tesseract, Leptonica and six image and compression libraries, and nothing in the file's name
+// or in Tesseract.js's own licence says so. The notices credited Tesseract alone until v2.1.1,
+// while every BSD-style licence among those six asks for its notice beside a binary copy.
+//
+// The list was read from tesseract.js-core v5.1.1's build (`build.sh`, the `third_party/`
+// submodules, Leptonica's link flags) and checked against strings in the decoded program. The
+// pin is the trigger: a different engine may link a different set, so a bump fails here until
+// someone re-reads its build, updates build/gen-notices.sh, and moves the digest.
+func TestTheOCREnginesLibrariesAreInTheNotices(t *testing.T) {
+	const engine = "web/vendor/tesseract/tesseract-core-simd.wasm.js"
+	const pinned = "63f232c4f7a97b04e52eb940202700b2c6239783a75d0ff0553274fac530cd5c" // tesseract.js-core 5.1.1
+	b, err := os.ReadFile(engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(b)); got != pinned {
+		t.Fatalf("%s is not tesseract.js-core 5.1.1 (sha256 %s): read the new core's build for the "+
+			"libraries it links, credit them in build/gen-notices.sh, then move this pin", engine, got)
+	}
+	notices, err := os.ReadFile("THIRD-PARTY-NOTICES.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(notices)
+	i := strings.Index(body, "\n## Tesseract.js ")
+	if i < 0 {
+		t.Fatal("THIRD-PARTY-NOTICES.md has no `## Tesseract.js` section")
+	}
+	section := body[i+1:]
+	if j := strings.Index(section, "\n## "); j >= 0 {
+		section = section[:j]
+	}
+	for _, lib := range []string{"Leptonica", "libtiff", "libpng", "libjpeg", "giflib", "libwebp", "zlib"} {
+		if !strings.Contains(section, "\n### "+lib+" ") {
+			t.Errorf("the OCR engine links %s and the Tesseract section of THIRD-PARTY-NOTICES.md "+
+				"has no `### %s` entry crediting it", lib, lib)
+		}
+	}
+	// The IJG's terms for a binary-only distribution ask for this sentence, said BY Nib. The
+	// licence text quoted below it contains the phrase too, in lower case and inside quotation
+	// marks, so the check reads the capitalised statement and its full stop, which only Nib's
+	// own line carries.
+	if !strings.Contains(strings.Join(strings.Fields(section), " "),
+		"This software is based in part on the work of the Independent JPEG Group.") {
+		t.Error("the Tesseract section does not state that the software is based in part on " +
+			"the work of the Independent JPEG Group, which libjpeg's licence requires")
+	}
 }
