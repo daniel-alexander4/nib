@@ -802,6 +802,10 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		// Windows an argv built where a Linux machine can test it (`convertproc.go`).
 		"internal/pdfops/convertproc_unix.go":    "Setpgid",
 		"internal/pdfops/convertproc_windows.go": "taskkillCommand",
+		// A Nib that `nib watch --do open` launches is in a process group of its own on both, so the
+		// Ctrl-C that stops the watch does not close the window it opened (/pending 403).
+		"internal/cli/watchopen_unix.go":    "Setpgid",
+		"internal/cli/watchopen_windows.go": "CREATE_NEW_PROCESS_GROUP",
 		// The association verbs answer on every platform; off Windows the answer is a real message
 		// naming where the association comes from instead, never a silent success.
 		"internal/cli/register_windows.go": "registry.CreateKey",
