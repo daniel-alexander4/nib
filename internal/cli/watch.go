@@ -31,10 +31,10 @@ func cmdWatch(args []string) int {
 	fs := flag.NewFlagSet("nib watch", flag.ContinueOnError)
 	var op string
 	var interval int
-	fs.StringVar(&op, "do", "", "operation per PDF: timestamp | optimize | sanitize | ua (required)")
+	fs.StringVar(&op, "do", "", "operation per PDF: open | timestamp | optimize | sanitize | ua (required)")
 	fs.IntVar(&interval, "interval", 2, "seconds between directory scans")
-	fs.Usage = usageFunc(fs, "nib watch DIR --do timestamp|optimize|sanitize|ua",
-		"Watch DIR and run an operation on each PDF added to it, until interrupted.\ntimestamp writes a .ots sidecar; optimize/sanitize rewrite the file in place;\nua writes the accessibility report \"nib ua\" prints to FILE.ua.txt.")
+	fs.Usage = usageFunc(fs, "nib watch DIR --do open|timestamp|optimize|sanitize|ua",
+		"Watch DIR and run an operation on each PDF added to it, until interrupted.\nopen opens each one in Nib, as a double-click would (print to a PDF in DIR: \"Print to Nib\");\ntimestamp writes a .ots sidecar; optimize/sanitize rewrite the file in place;\nua writes the accessibility report \"nib ua\" prints to FILE.ua.txt.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -53,7 +53,7 @@ func cmdWatch(args []string) int {
 	}
 	act, ok := watchOps[op]
 	if !ok {
-		errf("--do must be one of: timestamp, optimize, sanitize, ua")
+		errf("--do must be one of: open, timestamp, optimize, sanitize, ua")
 		return 1
 	}
 	info, err := os.Stat(dir)
@@ -75,10 +75,28 @@ func cmdWatch(args []string) int {
 type watchAction func(path string) (status string, err error)
 
 var watchOps = map[string]watchAction{
+	"open":      watchOpen,
 	"timestamp": watchTimestamp,
 	"optimize":  func(p string) (string, error) { return watchTransform(p, pdfops.Optimize, "optimized") },
 	"sanitize":  func(p string) (string, error) { return watchTransform(p, sanitize, "sanitized") },
 	"ua":        watchUA,
+}
+
+// watchAgainOnChange names the operations that act on a file AGAIN when its bytes change after
+// they acted (/pending 403). Only `open`: a print dialog offers the same name each time
+// ("output.pdf") and asks to replace it, so a second printout is the same path with new bytes,
+// and a watch that ignored it would open the first printout and never the second. The rewriting
+// operations stay once per name for /pending 508's reason — a changed file there may be the user
+// editing a document, and rewriting it again is irreversible; opening it again is not.
+var watchAgainOnChange = map[string]bool{"open": true}
+
+// watchDone is the state an operation in watchAgainOnChange last acted on each file in, and nil for
+// every other operation, which acts once per name.
+func watchDone(op string) map[string]fileState {
+	if watchAgainOnChange[op] {
+		return map[string]fileState{}
+	}
+	return nil
 }
 
 // fileState is the size+mtime fingerprint used to tell when a file has settled.
@@ -95,6 +113,7 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 	seen := map[string]fileState{}
 	processed := map[string]bool{}
 	failed := map[string]fileState{}
+	done := watchDone(opName)
 
 	// Everything already in the directory is marked processed BEFORE the first scan,
 	// so the watch acts only on files that arrive after it starts.
@@ -106,24 +125,36 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 	// every PDF already in it, in place, stripping metadata from files the user
 	// never intended to touch. A destructive default that three separate documents
 	// said would not happen.
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
-				continue
-			}
-			processed[filepath.Join(dir, e.Name())] = true
-		}
-	}
+	markExisting(dir, processed, done)
 
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	for {
-		scanOnce(dir, seen, processed, failed, act)
+		scan(dir, seen, processed, failed, done, act)
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\nnib: stopped")
 			return 0
 		case <-ticker.C:
+		}
+	}
+}
+
+// markExisting marks every PDF already in dir processed, and records its state in done when the
+// operation acts again on change. See watchLoop.
+func markExisting(dir string, processed map[string]bool, done map[string]fileState) {
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			processed[path] = true
+			// As it stands now, so a file already here acts only once it CHANGES — a printout
+			// saved over an older one — and never merely for being here.
+			if info, err := e.Info(); err == nil && done != nil {
+				done[path] = fileState{info.Size(), info.ModTime()}
+			}
 		}
 	}
 }
@@ -136,6 +167,13 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 // in seen/processed/failed across calls, and a path the scan no longer sees is
 // forgotten from all three.
 func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, failed map[string]fileState, act watchAction) {
+	scan(dir, seen, processed, failed, nil, act)
+}
+
+// scan is scanOnce, plus `done` for an operation in watchAgainOnChange: the state each processed
+// file was in when the operation last acted on it. A processed file whose state has moved since
+// is treated as new — it settles and is acted on again. nil means once per name, as scanOnce.
+func scan(dir string, seen map[string]fileState, processed map[string]bool, failed map[string]fileState, done map[string]fileState, act watchAction) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		errf("%v", err)
@@ -159,7 +197,7 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 	// command the user can run by hand and can see was not run; a rewrite it should not have done is
 	// silent and costs them the document.
 	defer func() {
-		for _, m := range []map[string]fileState{seen, failed} {
+		for _, m := range []map[string]fileState{seen, failed, done} {
 			for p := range m {
 				if !present[p] {
 					delete(m, p)
@@ -178,12 +216,17 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 		}
 		path := filepath.Join(dir, e.Name())
 		present[path] = true
-		if processed[path] {
-			continue
-		}
 		info, err := e.Info()
 		if err != nil {
 			continue
+		}
+		if processed[path] {
+			if done == nil || done[path] == (fileState{info.Size(), info.ModTime()}) {
+				continue
+			}
+			// Changed since it was acted on: new again. `seen` still holds the state it was acted
+			// on in, so it settles over the next two scans like any arrival.
+			delete(processed, path)
 		}
 		// REGULAR FILES ONLY, and a symlink is the reason.
 		//
@@ -219,6 +262,9 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 			errf("%s: %v", path, err)
 		} else {
 			processed[path] = true
+			if done != nil {
+				done[path] = st
+			}
 			// The name is whatever was dropped in the folder, not something the user typed (/pending 727).
 			fmt.Printf("%s: %s\n", termText(path), termText(status))
 		}

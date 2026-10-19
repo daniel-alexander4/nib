@@ -10,6 +10,9 @@
 #
 # The row records a REFUSAL rather than a fix, which is why it is worth having: without it the only
 # evidence that this was decided is a paragraph of prose.
+#
+# Re-pointed at v2.1.0 (/pending 403): `scan` now acts again on change for `--do open` alone, through
+# `done`, and the patch makes every operation compare against `seen` the way the refused version did.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/cli -run TestAFileReplacedInPlaceIsNotTreatedAsNew"
 EXPECT="after its bytes changed"

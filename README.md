@@ -1631,7 +1631,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib attachments IN [--json]` | List embedded files; `--extract ID -o OUT` pulls one out (the id `--json` lists, or a name only one file carries), `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
-| `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. |
+| `nib watch DIR --do OP` | Run `open`/`timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. `open` opens each one in Nib — "Print to Nib" from any program's print dialog. |
 | `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
 | `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing unless you add `--self-test`, which also publishes one throwaway record and fetches it back. |
 | `nib version` | Print the version. |
@@ -1713,11 +1713,17 @@ set — a no-echo prompt, so it's never on the command line where other processe
 could see it. Add `--tsa URL` to fix the signing time with an RFC3161 timestamp
 authority.
 
-`nib watch DIR --do timestamp|optimize|sanitize|ua` runs that operation on each PDF
+`nib watch DIR --do open|timestamp|optimize|sanitize|ua` runs that operation on each PDF
 dropped into `DIR` and keeps running until you stop it (Ctrl-C) — the "process
 my inbox" / scheduled-job workflow. It polls (no background file-watching
 dependency), waits for each file to finish copying before acting, and handles
-each file once. `timestamp` writes a `.ots` sidecar; `optimize`/`sanitize`
+each file once. `open` opens each new PDF in Nib exactly as a double-click would — a tab
+in the window already open, or a new Nib if none is running — and opens a file again
+when a new one is saved over it. **That is "Print to Nib" from any program:** every
+platform's print dialog can save a PDF (*Print to File* on Linux, *Save as PDF* on
+macOS, *Microsoft Print to PDF* on Windows), so run `nib watch ~/Printouts --do open`
+and save your printouts into that folder. Stopping the watch leaves open any Nib it
+started. Nib installs no printer of its own. `timestamp` writes a `.ots` sidecar; `optimize`/`sanitize`
 rewrite in place — and so skip any signed PDF that lands in the directory,
 reporting it, rather than silently invalidating its signatures. `ua` writes the report `nib ua`
 prints — the table and its verdict — to `FILE.ua.txt` beside each PDF and touches nothing else.
