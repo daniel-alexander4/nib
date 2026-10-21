@@ -125,12 +125,14 @@ func TestEveryRewriteOfAHeldDocumentIsClassifiedForItsFlags(t *testing.T) {
 			}
 		}
 	}
-	// flagsStripped rests on the client: the bake strips NibFlags from a flagged document.
+	// flagsStripped rests on the client: the bake strips NibFlags from a flagged document. The one
+	// exception is Save As with nothing to bake (`asIs && !baked`, v2.2.0): the bytes are then the
+	// document as it arrived, written as they are, and no route below receives them.
 	app, err := os.ReadFile("../../web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(app), "if (owner.docHadFlags) {\n    try { out = await embedFlags(out, null, docId); }") {
+	if !strings.Contains(string(app), "if (owner.docHadFlags && !(asIs && !baked)) {\n    try { out = await embedFlags(out, null, docId); }") {
 		t.Errorf("bakedBytes no longer strips NibFlags from a flagged document, so the flagsStripped rows are false")
 	}
 	if len(found) < 8 {
