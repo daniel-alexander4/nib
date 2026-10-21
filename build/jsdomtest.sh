@@ -121,7 +121,9 @@ fi
 # because it answers the page's confirm and no other file does.
 # 111 since ADR-169 (quitbutton.test.mjs, quitevent.test.mjs): the power button and the stream's quit event each
 # leave the page saying Nib has quit and closed — each its own boot, because quitting is for the page's whole life.
-Nib_expect_files=111
+# 112 since v2.2.0 (saveas.test.mjs): Save As offers the file's own name and writes an unchanged document as it
+# arrived — its own boot, because its open route answers a pathless or flagged document on request.
+Nib_expect_files=112
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

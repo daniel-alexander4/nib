@@ -212,7 +212,7 @@ const els = {
   bgThresh: $('bgThresh'), bgThreshRow: $('bgThreshRow'),
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
   autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
-  saveFlatBtn: $('saveFlatBtn'), saveEditableBtn: $('saveEditableBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
+  saveFlatBtn: $('saveFlatBtn'), saveAsBtn: $('saveAsBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
   fieldNameModal: $('fieldNameModal'), fieldNameList: $('fieldNameList'), fieldNameGo: $('fieldNameGo'), fieldNameCancel: $('fieldNameCancel'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
@@ -3530,7 +3530,7 @@ function repaintForActiveView() {
   els.viewerWrap.classList.toggle('has-doc', open);
   els.saveBtn.disabled = !docShowing(); // a view activated behind a page (its neighbour was closed) is not showing
   els.saveBtn.title = open
-    ? (view.docMeta.canSave ? 'Save (overwrites ' + view.docMeta.path + ')' : 'Save a copy (downloads — opened without a local path)')
+    ? (view.docMeta.canSave ? 'Save (overwrites ' + view.docMeta.path + ')' : 'Save As… (opened without a folder of its own — choose where to keep it)')
     : 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
@@ -4026,7 +4026,7 @@ async function setDocumentFromServer(meta, target = view) {
     all('.pageCount').forEach((s) => { s.textContent = '/ ' + target.pdfDocument.numPages; });
     els.saveBtn.disabled = !docShowing();
     setDocControls(true);
-    els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save a copy (downloads — opened without a local path)';
+    els.saveBtn.title = meta.canSave ? 'Save (overwrites ' + meta.path + ')' : 'Save As… (opened without a folder of its own — choose where to keep it)';
   }
   // updateBadge WRITES view.lastSig as its first statement, so a background load must not
   // call it — that would overwrite the ACTIVE view's signature result, which is the trust
@@ -5438,8 +5438,10 @@ async function save() {
     // now be a different document with a different answer, and getting this wrong
     // either downloads a file the user asked to have overwritten or overwrites a file
     // the user asked to have downloaded.
+    // It went to the browser's downloads as "document.pdf" until v2.2.0, whatever the file was
+    // called; it is Save As now, under the file's own name and in a folder the user chooses.
     if (!doc.canSave) {
-      downloadBlob(new Blob([bytes], { type: 'application/pdf' }), 'document.pdf');
+      openSaveAs(new Blob([bytes], { type: 'application/pdf' }), ownFileName(owner), 'Save As');
       return;
     }
     let res = await apiFetch('/api/save', {
@@ -10054,13 +10056,34 @@ els.reduceSave.onclick = () => {
   els.reduceModal.hidden = true;
   openSaveAs(reduceBlob, reduceName + '-smaller.pdf', 'Save reduced PDF');
 };
-els.saveEditableBtn.onclick = async () => {
-  // Export name captured at operation entry — see exportBase (D7).
-  const exportName = exportBase();
-  if (!view.pdfDocument) return;
-  const bytes = await bakedBytes();
-  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), exportName + '-editable.pdf', 'Save editable copy');
-};
+// Save As… writes the document as it stands, under the file's own name, into a folder the user
+// chooses — the name is the dialog's editable field, so it can be changed there. It replaced "Save
+// editable copy" (the same bytes under "-editable.pdf"), Dan 2026-10-21: a PDF that arrived by email
+// is often to be kept exactly as it came.
+//
+// **Unchanged means byte for byte.** With nothing to bake, `bakedBytes(…, asIs)` answers pdf.js's
+// `getData()` — the bytes it loaded, which are the bytes Nib holds — and skips the signing-flags
+// strip, which would be a change; `/api/write` then writes bytes equal to a held document exactly as
+// posted (`holdsBytes`: no PDF/UA drop). Edits the user made are baked in, as Save bakes them.
+//
+// The name and the view are captured at the press (D7, see exportBase).
+els.saveAsBtn.onclick = () => saveAs(view);
+async function saveAs(owner) {
+  if (!owner.pdfDocument || !owner.docMeta) return;
+  const name = ownFileName(owner);
+  const bytes = await bakedBytes(owner.docMeta.id, owner, null, true);
+  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), name, 'Save As');
+}
+
+// ownFileName is the name Save As offers: the document's own file name as it was opened, kept as
+// it is ("Invoice March.PDF" stays exactly that). A document whose name is not a PDF's — a photo or
+// an Office file opened as a PDF — offers the same name with ".pdf" in place of its extension, never
+// a PDF's bytes under ".png".
+function ownFileName(v) {
+  const n = ((v && (v.originalName || (v.docMeta && v.docMeta.name))) || '').trim();
+  if (/\.pdf$/i.test(n)) return n;
+  return (n.replace(/\.[^./\\]+$/, '') || 'document') + '.pdf';
+}
 
 // Save as fillable PDF: turn detected/placed text + checkbox fields into real
 // interactive AcroForm widgets (a blank form to distribute), not flattened text.
@@ -14004,7 +14027,7 @@ const DOC_REQUIRED = [
   'handBtn',
   // A document that came back (P03.S01): the sheet is ABOUT the open document, and has no subject without one.
   'returnedBtn',
-  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
+  'saveFlatBtn', 'saveAsBtn', 'saveFillableBtn', 'printBtn',
   'exportPagesBtn', 'exportFormBtn', 'exportTableBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
   // The accessibility report (P07.S06) checks the open document; with nothing open it has no subject.
@@ -15023,7 +15046,9 @@ function collectStamps(owner = view, exclude = null) {
 // default exists only for the call sites that enter it first thing.
 // `exclude` is a Set of overlay records to leave OUT of the bake — the one caller is Save as fillable
 // form, whose fields become AcroForm widgets and must not also be burned in underneath them.
-async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view, exclude = null) {
+// `asIs` is Save As's: when there is nothing to bake, the loaded bytes are answered untouched — the
+// signing-flags strip below is skipped too, because it rewrites a file the user did not change.
+async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view, exclude = null, asIs = false) {
   // The request was already pinned by docId; the PREDICATE that decides whether to strip
   // NibFlags was not. Read after the bake round-trip, a save of a flagged document that
   // raced a switch got the OTHER document's answer, and the finished signed file kept its
@@ -15067,7 +15092,8 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view,
   // A document opened with embedded signing flags carries the NibFlags property,
   // which the bake preserves — strip it from any baked output so the finished
   // file doesn't reopen in signing mode. (Server no-op once it's already gone.)
-  if (owner.docHadFlags) {
+  const baked = out !== saved || owner.pdfDocument.annotationStorage.size > 0;
+  if (owner.docHadFlags && !(asIs && !baked)) {
     try { out = await embedFlags(out, null, docId); } catch (e) {
       console.error('flag strip failed', e);
       toast('warning: could not remove the signing flags — this file may reopen in signing mode');

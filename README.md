@@ -1267,7 +1267,12 @@ prefix or folder. `nib split` and `nib fill --out-dir` refuse the same way.
 
 **Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
-original, or as a flattened or editable copy. **Print** the current document —
+original, or as a flattened copy. **Save As…** (File → Save a Copy) keeps the
+document under its own name — or one you type — in a folder you choose, and a
+document you have not changed is written exactly as it arrived, byte for byte: a
+PDF that came by email stays the file that was sent. A document opened without a
+folder of its own (dropped onto the window, or opened from a web address) goes
+there when you press Save. **Print** the current document —
 fills, signatures, and all — straight from the **File** tab through your
 browser's print dialog.
 

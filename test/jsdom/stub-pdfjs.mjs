@@ -172,7 +172,8 @@ export function getDocument(opts) {
     getPage: async (n) => makePage(n, cfg.renders === true,
       Array.isArray(cfg.text) ? (cfg.text[n - 1] || '') : (cfg.text || '')),
     getOutline: async () => cfg.outline,
-    getData: async () => { if (dataGate) await dataGate; return new Uint8Array(); },
+    // `data` is the file's bytes as loaded, for a test that asks what a save writes (Save As).
+    getData: async () => { if (dataGate) await dataGate; return cfg.data ? Uint8Array.from(cfg.data) : new Uint8Array(); },
     saveDocument: async () => new Uint8Array(),
     destroy: async () => {},
   };

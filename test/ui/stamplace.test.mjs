@@ -137,7 +137,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
   assert.ok(placed.cy > 0.55,
     `setup: after the drag the stamp's centre is at ${placed.cy.toFixed(3)} down the page, still in the top half — the drag did not take, and a mirrored bake would land in the same half it started in`);
 
-  // "Save editable copy" rather than Save, so the fixture survives for a re-read and the
+  // "Save As…" rather than Save, so the fixture survives for a re-read and the
   // assertion below is about a file this test can name. It is also the path that puts
   // the overlay through `collectStamps` → `/api/bake` → `pdfops.StampImages`, which is
   // the seam under test; the flattened path rasterises the page instead and would prove
@@ -146,7 +146,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
   // Save as was a dropdown in the toolbar and is a CARD since v1.124.0 (ADR-022) — the card is
   // the disclosure, so there is no menu to open first, only a header to expand.
   await h.card('Save a Copy');
-  await page.click('#saveEditableBtn');
+  await page.click('#saveAsBtn');
   await page.waitForFunction(() => !document.getElementById('saveAsModal').hidden, null, { timeout: 30000 });
   await page.fill('#saveAsName', 'stamped.pdf');
   await page.fill('#saveAsDir', OUT_DIR);

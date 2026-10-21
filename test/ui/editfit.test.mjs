@@ -26,19 +26,19 @@ after(() => shutdown(h));
 
 const DOC = writeFixture('editfit.pdf', { pages: 1, label: 'edit fit page' });
 const EDIT = '.viewerContainer:not([hidden]) .ovl-edit';
-// bakeViaSaveEditable drives a bake that KEEPS the overlay.
+// bakeViaSaveAs drives a bake that KEEPS the overlay.
 //
 // "Save" is the obvious choice and it is the wrong one: it reloads the document from
 // the server after writing, so `clearOverlays` destroys the field the marker was just
 // applied to — measured, `edits: 0` immediately after — and its own "Saved" toast
 // replaces the fit message. That is a real limitation of where the report is
-// delivered, filed as /pending 460, not something this test should paper over. "Save
-// editable copy" bakes through the same /api/bake and hands back a download, so the
+// delivered, filed as /pending 460, not something this test should paper over. "Save As…"
+// bakes through the same /api/bake and hands back a download, so the
 // overlay survives and the marker is observable.
-async function bakeViaSaveEditable() {
+async function bakeViaSaveAs() {
   await h.mode('file');
   await h.card('Save a Copy');
-  await page.click('#saveEditableBtn');
+  await page.click('#saveAsBtn');
   // openSaveAs raises the naming modal once the bake returns — that is the signal the
   // round trip finished, and dismissing it leaves the shared server as we found it.
   await page.waitForSelector('#saveAsModal:not([hidden])');
@@ -62,12 +62,12 @@ test('an edit too long for its box is visibly marked after the bake', async () =
   assert.equal(await page.locator(EDIT).evaluate((el) => el.classList.contains('ovl-misfit')), false,
     'setup: the field is marked BEFORE any bake, so the marker says nothing about the fit');
 
-  await bakeViaSaveEditable();
+  await bakeViaSaveAs();
 
   // **Class and computed style in ONE evaluate.** Read separately, the element can be
   // gone between them: measured 2026-09-09, `Save` reloads the document from the
   // server after writing it — correctly, since the file now carries the baked edits —
-  // and `clearOverlays` takes the field with it. This path (Save editable copy) hands
+  // and `clearOverlays` takes the field with it. This path (Save As…) hands
   // back a download and does not reload, which is why it is the one driven here.
   const seen = await page.locator(EDIT).evaluate((el) => {
     const s = getComputedStyle(el);
@@ -95,7 +95,7 @@ test('an edit that fits its box is not marked', async () => {
   await page.waitForSelector(EDIT);
 
   await page.fill(EDIT, 'ok');
-  await bakeViaSaveEditable();
+  await bakeViaSaveAs();
 
   const cls = await page.locator(EDIT).evaluate((el) => [...el.classList]);
   assert.ok(!cls.includes('ovl-misfit') && !cls.includes('ovl-refit'),

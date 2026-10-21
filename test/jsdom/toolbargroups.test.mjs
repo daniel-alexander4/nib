@@ -166,7 +166,7 @@ test('the ⋯ More menu is built inside its own pane, not beside it', () => {
 // `responsive.test.mjs`'s to assert; what is checkable here is where each control lives.
 const LIFECYCLE = [
   'openMenuItem', 'openRecentBtn', 'officeOpenBtn',             // open
-  'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'reduceBtn', 'pdfaBtn',   // save a copy
+  'saveAsBtn', 'saveFlatBtn', 'saveFillableBtn', 'reduceBtn', 'pdfaBtn',   // save a copy
   'exportPagesBtn', 'exportTableBtn', 'exportFormBtn', 'printBtn',               // export & print
 ];
 // Closing left File with ADR-103: one document closes on its tab's ×, and Close all sits at the end
