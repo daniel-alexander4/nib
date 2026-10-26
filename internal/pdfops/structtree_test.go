@@ -453,7 +453,7 @@ func TestACyclicTreeIsRefusedRatherThanFollowedForever(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("reading a cyclic structure tree did not terminate in 10s")
 	}
-	if err == nil && tree.elements() > 2 {
+	if err == nil && tree != nil && tree.elements() > 2 {
 		t.Errorf("a two-element cycle produced %d elements — the walk went round at least once",
 			tree.elements())
 	}

@@ -350,11 +350,17 @@ func TestAStampLeavesAFontItCannotVouchForAlone(t *testing.T) {
 				ref := d["ToUnicode"].(types.IndirectRef)
 				entry, _ := ctx.FindTableEntryForIndRef(&ref)
 				entry.Object = *sd
+				// v0.16 will not rebuild a face whose descriptor has no /CIDSet, and nib drops it after every stamp; the
+				// fixture carries one again so that pdfcpu ALONE proceeds to the rewrite this case exists to show.
+				restoreCIDSetsOf(ctx, []string{nibSans})
 			},
 			harm: func(t *testing.T, fixture, raw []byte, rawErr error) bool {
+				if rawErr != nil {
+					return false // v0.16 refuses this rewrite outright: raw is empty and there is nothing to compare
+				}
 				_, before, _ := faceStreams(t, fixture, nibSans)
 				_, after, _ := faceStreams(t, raw, nibSans)
-				return rawErr == nil && !bytes.Equal(before, after)
+				return !bytes.Equal(before, after)
 			},
 		},
 	} {

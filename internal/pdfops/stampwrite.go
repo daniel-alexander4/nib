@@ -71,6 +71,9 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 					emb = false
 				}
 			}
+			if emb {
+				restoreCIDSetsOf(ctx, faces)
+			}
 			if err := func() (err error) {
 				defer fault.Catch(&err)
 				return stampInPlace(ctx, func() error { return add(ctx, emb) })

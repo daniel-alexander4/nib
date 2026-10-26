@@ -115,12 +115,12 @@ func TestEveryStampSiteGoesThroughStampText(t *testing.T) {
 			sites++
 			// The first argument must be an identifier that stampText produced. Anything
 			// else — a field selector, a literal, a Sprintf — is raw text.
-			id, ok := call.Args[0].(*ast.Ident)
+			id, ok := call.Args[1].(*ast.Ident) // Args[0] is the context v0.16 added (P02.S01)
 			if !ok || id.Obj == nil {
 				t.Errorf("%s:%d: TextWatermark's text argument is not a local bound from "+
 					"stampText — a %% in it is dropped, substituted, or panics, and on the "+
 					"finalize path the result is SIGNED",
-					f, fset.Position(call.Args[0].Pos()).Line)
+					f, fset.Position(call.Args[1].Pos()).Line)
 				return true
 			}
 			as, ok := id.Obj.Decl.(*ast.AssignStmt)
