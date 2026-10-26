@@ -4414,10 +4414,20 @@ const HANDOFF_NOTICES = {
 const baseTitle = document.title;
 // adoptHandedOff waits out a reconcile already running rather than skipping: that one may have
 // read the server before this document was installed.
-function adoptHandedOff() {
-  if (reconciling) { setTimeout(adoptHandedOff, 100); return; }
+//
+// **`ask` is a hand-off of a path already open (/pending 914).** The server only activated that tab;
+// it never read the file, so a printout saved over the one on screen came up as the FIRST. The
+// focus listener cannot be the answer: it asked about the tab that was in front when the window
+// regained focus, and this activation can land after it, or in a window that never lost focus.
+// Asked after the reconcile, of the tab the reconcile put in front — a clean one reloads, a dirty one
+// shows the banner (`recheckDisk`'s own rule, not restated here).
+function adoptHandedOff(ask = false) {
+  if (reconciling) { setTimeout(() => adoptHandedOff(ask), 100); return; }
   reconciling = true;
-  reconcileWithServer().catch(() => {}).finally(() => { reconciling = false; });
+  reconcileWithServer().catch(() => {}).finally(() => {
+    reconciling = false;
+    if (ask) recheckDisk();
+  });
 }
 // applyHandoffEvent is a launch's document arriving in a window that was already open (ADR-086).
 //
@@ -4430,7 +4440,7 @@ function adoptHandedOff() {
 // the window is next focused, which is what a taskbar shows.
 function applyHandoffEvent(ev) {
   if (ev.result === 'refused' || ev.result === 'queued') toast(HANDOFF_NOTICES['handoff-' + ev.result]);
-  if (ev.result === 'opened' || ev.result === 'focused') adoptHandedOff();
+  if (ev.result === 'opened' || ev.result === 'focused') adoptHandedOff(ev.result === 'focused');
   if (!document.hasFocus()) {
     document.title = '● ' + baseTitle;
     window.addEventListener('focus', () => { document.title = baseTitle; }, { once: true });
@@ -4508,7 +4518,7 @@ async function reconcileWithServer() {
 // document already on screen is surprising rather than helpful.
 async function openOrActivate(path) {
   const already = views.find((v) => v.pdfDocument && v.docMeta && v.docMeta.path === path);
-  if (already) { showDocument(already); return; }
+  if (already) { showDocument(already); recheckDisk(); return; } // the OS handed over a file that may have changed (/pending 914)
   return openPath(path);
 }
 

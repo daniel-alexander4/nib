@@ -129,7 +129,8 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 
 	// D16: a path already open is activated, not opened twice. Two tabs on one path are
 	// two independent working copies of the same file, and whichever saves last silently
-	// discards the other's work. This check only spares the file read: the AUTHORITATIVE one
+	// discards the other's work. The server never reads the open copy's file here: the page does, after it
+	// brings the tab forward (`adoptHandedOff`, /pending 914). This check only spares the file read: the AUTHORITATIVE one
 	// is inside openHandedOff's install, under the hold that registers (/pending 590).
 	if s.focusPath(path) {
 		s.answerHandoff(w, "focused", "")
