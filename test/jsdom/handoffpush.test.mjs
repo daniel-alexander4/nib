@@ -20,6 +20,7 @@ const B = { id: 'test-epoch:2', name: 'beta.pdf', path: '/tmp/beta.pdf', canSave
 // What the server holds. The launch's own document is opened by the page from `?open=`.
 let held = { docs: [], activeId: '' };
 const opened = [];
+let fileMoved = false;
 
 setNextDocument({ numPages: 2, outline: null });
 
@@ -28,6 +29,9 @@ const h = await boot({
   routes: {
     '/api/docs': () => held,
     '/api/lastopen': () => [],
+    // /pending 914: what the server says of the file under the tab the page asks about.
+    '/api/doc': () => ({ ...A, diskChanged: fileMoved }),
+    '/api/reload': () => { fileMoved = false; return { ...A, diskChanged: false }; },
     '/api/open': (opts) => {
       opened.push(JSON.parse(opts.body).path);
       held = { docs: [A], activeId: A.id };
@@ -105,4 +109,27 @@ test('a vault restore pushed to this window is said once, in the alert that stay
   h.pushWindowEvent('vault', JSON.stringify({ what: 'something-else', summary: 'x', at: '2026-10-12T21:00:00Z' }));
   h.pushWindowEvent('vault', 'not json');
   assert.equal(box.hidden, true);
+});
+
+// /pending 914 — a printout saved over a document already open is handed to Nib again, and the server only
+// activates the tab it already holds. Reading the file is the page's: a clean tab shows the new one.
+test('a hand-off of an open path whose file changed reloads the tab it brings forward', async () => {
+  held = { docs: [A, B], activeId: A.id };
+  fileMoved = true;
+  setNextDocument({ numPages: 2, outline: null });
+  const from = h.calls.length;
+  h.pushWindowEvent('handoff', JSON.stringify({ result: 'focused' }));
+  await settle(); await settle();
+  const reloads = h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload'));
+  assert.equal(reloads.length, 1, 'the second printout was brought forward and the tab went on showing the first');
+  assert.ok(reloads[0].headers['X-Nib-Doc'], 'the reload went out unpinned');
+});
+
+test('a hand-off that finds the file unchanged reads nothing more', async () => {
+  held = { docs: [A, B], activeId: A.id };
+  fileMoved = false;
+  const from = h.calls.length;
+  h.pushWindowEvent('handoff', JSON.stringify({ result: 'focused' }));
+  await settle(); await settle();
+  assert.equal(h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload')).length, 0, 'an unchanged file was reloaded');
 });
