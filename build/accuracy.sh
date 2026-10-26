@@ -27,6 +27,7 @@ cd "$(dirname "$0")/.."
 . "$(dirname "$0")/tiergate.sh" # nib_skip
 LIST="${NIB_ACCURACY_LIST:-$HOME/nib/accuracy-corpus.txt}"
 [ -f "$LIST" ] || nib_skip "no accuracy corpus at $LIST (a local list of PDF paths; see this script's header)"
+nib_corpus_check "$LIST"
 command -v node >/dev/null 2>&1 || nib_skip "node not installed; skipping the accuracy harness"
 [ -d node_modules/playwright-core ] || nib_skip "playwright-core not installed (run: npm install); skipping the accuracy harness"
 BROWSER="${NIB_UI_BROWSER:-}"

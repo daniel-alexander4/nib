@@ -85,3 +85,42 @@ nib_population() {
 	fi
 	return 0
 }
+
+# nib_corpus_check <list> — the corpus-driven instruments (accuracy.sh, formrt.sh, pdfcpudiff.sh) read a LOCAL list of
+# real documents, and a list that is empty, or is not the list that was measured, makes every number after it a number
+# about something else (PLAN-pdfcpu-upgrade P01.S01). Called once the list EXISTS (an absent list is nib_skip's, and
+# under NIB_REQUIRE_TIERS=1 that already refuses).
+#
+#   - an empty list always fails;
+#   - a manifest beside it (`<list>.sha256`, one sha256 per listed file — `build/pdfcpudiff.sh --manifest <list>` writes
+#     one) is always checked, and any listed file that is missing or differs fails;
+#   - NO manifest warns, and under NIB_REQUIRE_TIERS=1 fails: a phase-close run must be able to say which list it read.
+nib_corpus_check() {
+	local list="$1" n i=0 want got p
+	n="$(grep -vc '^[[:space:]]*\(#\|$\)' "$list")"
+	if [ "$n" -eq 0 ]; then
+		echo "FAIL: the corpus list $list names no documents" >&2
+		exit 1
+	fi
+	if [ ! -f "$list.sha256" ]; then
+		if [ "${NIB_REQUIRE_TIERS:-}" = "1" ]; then
+			echo "FAIL: no manifest at $list.sha256 (build/pdfcpudiff.sh --manifest $list) and NIB_REQUIRE_TIERS=1" >&2
+			exit 1
+		fi
+		echo "note: no manifest at $list.sha256 — this run cannot say which list it read" >&2
+		return 0
+	fi
+	if [ "$(wc -l <"$list.sha256")" -ne "$n" ]; then
+		echo "FAIL: the manifest at $list.sha256 holds $(wc -l <"$list.sha256") hashes for $n listed documents" >&2
+		exit 1
+	fi
+	while IFS= read -r p; do
+		i=$((i + 1))
+		want="$(sed -n "${i}p" "$list.sha256")"
+		got="$(sha256sum "$p" 2>/dev/null | cut -d' ' -f1)"
+		if [ "$want" != "$got" ]; then
+			echo "FAIL: listed document $i is missing or differs from its manifest hash" >&2
+			exit 1
+		fi
+	done < <(grep -v '^[[:space:]]*\(#\|$\)' "$list")
+}

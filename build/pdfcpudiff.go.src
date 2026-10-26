@@ -1,0 +1,254 @@
+package pdfops
+
+// The row writer for build/pdfcpudiff.sh (PLAN-pdfcpu-upgrade P01.S01). NOT compiled with the repo: it carries
+// no `.go` extension, and the harness lays it into a tree's internal/pdfops through `go test -overlay` as
+// zz_pdfcpudiff_test.go, so the same source runs against two trees (HEAD, and a tree on another pdfcpu) and
+// nothing is written into either. It lives in package pdfops because the reads it compares are partly
+// unexported (`formFields`).
+//
+// One TSV row per listed document, in list order: an INDEX, never a path, and every refusal reduced to a class
+// (a hash of its text with digits and quoted strings removed) — a pdfcpu refusal can quote a field name, a font
+// name or a string from the document, and the corpus is somebody's. NIB_PDFCPUDIFF_EXPLAIN=<file> writes the
+// unreduced text there for the operator to read locally; it is never part of the compared output.
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfread"
+	"nib/internal/sign"
+)
+
+var diffDropText = regexp.MustCompile(`"[^"]*"|\([^)]*\)|[0-9]+`)
+
+// diffClass is a refusal's class: stable across runs, equal for the same refusal on two trees, and carrying none of
+// the document's own text.
+func diffClass(err error, explain *os.File, idx int) string {
+	if err == nil {
+		return "ok"
+	}
+	norm := diffDropText.ReplaceAllString(err.Error(), "")
+	if explain != nil {
+		fmt.Fprintf(explain, "%d\t%s\n", idx, err.Error())
+	}
+	sum := sha256.Sum256([]byte(norm))
+	return "refused:" + hex.EncodeToString(sum[:3])
+}
+
+func diffHash(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:6])
+}
+
+// diffUnreachable counts live objects no path from the trailer reaches: an orphan leaves every digest unchanged, so
+// no other column can see a writer or optimizer that keeps what it used to drop.
+func diffUnreachable(xt *model.XRefTable) int {
+	seen := map[int]bool{}
+	var walk func(o types.Object)
+	walk = func(o types.Object) {
+		switch v := o.(type) {
+		case types.IndirectRef:
+			n := v.ObjectNumber.Value()
+			if seen[n] {
+				return
+			}
+			e, ok := xt.Table[n]
+			if !ok || e == nil || e.Free {
+				return
+			}
+			seen[n] = true
+			// Dereference, not e.Object: an object inside an object stream is undecoded until asked for, and a count
+			// that depends on how lazy each pdfcpu version is is noise between the very trees it compares.
+			if d, err := xt.Dereference(v); err == nil {
+				walk(d)
+			}
+		case types.Dict:
+			for _, x := range v {
+				walk(x)
+			}
+		case types.StreamDict:
+			walk(v.Dict)
+		case types.Array:
+			for _, x := range v {
+				walk(x)
+			}
+		}
+	}
+	if xt.Root != nil {
+		walk(*xt.Root)
+	}
+	if xt.Info != nil {
+		walk(*xt.Info)
+	}
+	live := 0
+	for n, e := range xt.Table {
+		if n != 0 && e != nil && !e.Free {
+			live++
+		}
+	}
+	return live - len(seen)
+}
+
+func TestPdfcpuDiffRows(t *testing.T) {
+	list, out := os.Getenv("NIB_PDFCPUDIFF_LIST"), os.Getenv("NIB_PDFCPUDIFF_OUT")
+	if list == "" || out == "" {
+		t.Skip("run through build/pdfcpudiff.sh")
+	}
+	var explain *os.File
+	if p := os.Getenv("NIB_PDFCPUDIFF_EXPLAIN"); p != "" {
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		explain = f
+	}
+	raw, err := os.ReadFile(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	of, err := os.Create(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer of.Close()
+	budget := 90 * time.Second
+	if v := os.Getenv("NIB_PDFCPUDIFF_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			budget = d
+		}
+	}
+	idx := 0
+	for _, ln := range strings.Split(string(raw), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+		idx++
+		ch := make(chan string, 1)
+		go func(i int, l string) {
+			defer func() {
+				if r := recover(); r != nil {
+					// a panic message can quote the document; it is a class like any refusal
+					ch <- fmt.Sprintf("%d\tpanic=%s", i, diffClass(fmt.Errorf("%v", r), explain, i))
+				}
+			}()
+			ch <- diffRowFor(i, l, explain)
+		}(idx, ln)
+		select {
+		case row := <-ch:
+			fmt.Fprintln(of, row)
+		case <-time.After(budget):
+			// A document that does not finish is a ROW (an answer: it hangs here) and then the run FAILS: its goroutine is
+			// still working, sharing pdfcpu's globals with every later document, so rows after it are not rows of the
+			// document they name. Remove it from the list or raise NIB_PDFCPUDIFF_TIMEOUT.
+			fmt.Fprintf(of, "%d\ttimeout\n", idx)
+			of.Sync()
+			t.Fatalf("document %d did not finish within %v", idx, budget)
+		}
+	}
+}
+
+// diffRowFor is one document's row.
+func diffRowFor(idx int, ln string, explain *os.File) string {
+	cols := []string{fmt.Sprint(idx)}
+	pdf, rerr := os.ReadFile(ln)
+	if rerr != nil {
+		cols = append(cols, "unreadable-file")
+		return strings.Join(cols, "\t")
+	}
+	// read
+	conf := model.NewDefaultConfiguration()
+	ctx, cerr := pdfread.ReadOptimized(pdf, conf)
+	cols = append(cols, "read="+diffClass(cerr, explain, idx))
+	// digest under the fixed rule (6): a tree that no longer computes it says so, it is never another rule's value
+	if ContentDigestRuleReadable(6) {
+		d, derr := ContentDigestAt(pdf, 6)
+		if derr != nil {
+			cols = append(cols, "digest6="+diffClass(derr, explain, idx))
+		} else {
+			cols = append(cols, "digest6="+d[:min(12, len(d))])
+		}
+	} else {
+		cols = append(cols, "digest6=rule6-not-computed")
+	}
+	// signature verdict
+	st := sign.Verify(pdf)
+	cols = append(cols, fmt.Sprintf("verify=%v|%d|%v|%v|%d|%d|%v", st.State, len(st.Signers), st.AddedAfter,
+		st.AddedAfterCause, len(st.Refused), len(st.Timestamps), st.Unchecked))
+	// facts and scan
+	if f, ferr := ReadAnswerFacts(pdf); ferr != nil {
+		cols = append(cols, "facts="+diffClass(ferr, explain, idx))
+	} else {
+		cols = append(cols, fmt.Sprintf("facts=%s|%v|%v|%v|%d", f.XFA, f.Labelled, f.Tagged, f.Unoptimized, len(f.UnreadLists)))
+	}
+	if sr, serr := Scan(pdf); serr != nil {
+		cols = append(cols, "scan="+diffClass(serr, explain, idx))
+	} else {
+		n := map[string]int{}
+		for _, f := range sr.Findings {
+			n[fmt.Sprint(f.Kind)]++
+		}
+		ks := make([]string, 0, len(n))
+		for k := range n {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		var b strings.Builder
+		for _, k := range ks {
+			fmt.Fprintf(&b, "%s:%d,", k, n[k])
+		}
+		cols = append(cols, "scan="+b.String())
+	}
+	// form fields: counts by type and page, never names or values
+	if cerr == nil && ctx != nil {
+		ff, ferr := formFields(ctx.XRefTable)
+		if ferr != nil {
+			cols = append(cols, "fields="+diffClass(ferr, explain, idx))
+		} else {
+			n := map[string]int{}
+			for _, f := range ff {
+				k := f.kind
+				if f.onPage {
+					k += "+"
+				}
+				n[k]++
+			}
+			ks := make([]string, 0, len(n))
+			for k := range n {
+				ks = append(ks, k)
+			}
+			sort.Strings(ks)
+			var b strings.Builder
+			for _, k := range ks {
+				fmt.Fprintf(&b, "%s:%d,", k, n[k])
+			}
+			cols = append(cols, "fields="+b.String())
+		}
+		cols = append(cols, fmt.Sprintf("unreachable=%d", diffUnreachable(ctx.XRefTable)))
+		// the page map of the first pages, hashed: a read nobody thought to measure moves this
+		h := sha256.New()
+		for p := 1; p <= ctx.PageCount && p <= 3; p++ {
+			pm, merr := MapPage(pdf, p)
+			if merr != nil {
+				fmt.Fprintf(h, "p%d:%s", p, diffClass(merr, nil, 0))
+				continue
+			}
+			j, _ := json.Marshal(pm)
+			h.Write(j)
+		}
+		cols = append(cols, "maphash="+hex.EncodeToString(h.Sum(nil))[:12])
+	}
+	return strings.Join(cols, "\t")
+}
