@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -82,7 +83,7 @@ func TestRunTextAndBaselinesAgreeWithPdfjs(t *testing.T) {
 		if jerr := json.Unmarshal(out, &js); jerr != nil {
 			t.Fatalf("%s: pdf.js output is not JSON: %v", doc.name, jerr)
 		}
-		ctx, cerr := api.ReadValidateAndOptimize(bytes.NewReader(doc.pdf), model.NewDefaultConfiguration())
+		ctx, cerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(doc.pdf), model.NewDefaultConfiguration(), nil)
 		if cerr != nil {
 			t.Fatal(cerr)
 		}

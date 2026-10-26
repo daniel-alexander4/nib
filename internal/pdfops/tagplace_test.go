@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -56,7 +57,7 @@ func TestAnElementIsPlacedOnThePageAsDisplayed(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			shape := func(pdf []byte) []byte {
 				return mustMutate(t, pdf, func(ctx *model.Context) error {
-					d, _, _, err := ctx.PageDict(1, false)
+					d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 					if err != nil {
 						return err
 					}

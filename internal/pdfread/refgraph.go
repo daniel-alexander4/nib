@@ -191,7 +191,6 @@ func tooManyPaths(paths, budget uint64) error {
 // The validator decodes nearly all of them anyway, so this moves that work ahead of the door rather than adding it.
 // One that will not decode stays as it is: it names nothing to pdfcpu either, which reports it on reaching it.
 func resolveCompressed(ctx *model.Context) {
-	cur := ctx.CurObj
 	for nr, e := range ctx.Table {
 		if e == nil || e.Free {
 			continue
@@ -204,7 +203,8 @@ func resolveCompressed(ctx *model.Context) {
 			_, _ = ctx.Dereference(*types.NewIndirectRef(nr, gen))
 		}
 	}
-	ctx.CurObj = cur
+	// v0.13 recorded the last dereferenced object in ctx.CurObj, which this pass saved and put back; v0.16 has no such
+	// field, so there is nothing to put back (a D7 restatement, P02.S03a).
 }
 
 // pathBudget is `basePaths` plus `pathsPerObject` for each LIVE object in ctx — one that is not free and holds an

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -15,13 +16,13 @@ import (
 // whether the page orders its tabs by structure; plus how many /Annot elements the tree holds.
 func noteFacts(t *testing.T, pdf []byte) (notes, described, annotElems int, tabsS bool) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	tabsS = true
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil || d == nil {
 			t.Fatal(derr)
 		}

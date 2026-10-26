@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -62,8 +63,8 @@ func TestScanPagesIsWhatPageDictAndPageDictIndRefAnswer(t *testing.T) {
 	recs := scanPages(ctx)
 	live := livePageObjects(ctx)
 	for i, r := range recs {
-		d, _, _, err := ctx.PageDict(i+1, false)
-		ir, ierr := ctx.PageDictIndRef(i + 1)
+		d, _, _, err := ctx.PageDict(context.Background(), i+1, false)
+		ir, ierr := ctx.PageDictIndRef(context.Background(), i+1)
 		if err != nil || ierr != nil || r.nr != i+1 || fmt.Sprintf("%p", d) != fmt.Sprintf("%p", r.dict) || *ir != *r.ref {
 			t.Fatalf("page %d: record %+v is not PageDict's answer", i+1, r)
 		}

@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -31,7 +32,7 @@ func sameAsPageDict(t *testing.T, name string, ctx *model.Context, got []pdfread
 	}
 	for i, g := range got {
 		p := i + 1
-		d, ref, attrs, err := ctx.PageDict(p, false)
+		d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 		switch {
 		case g.Nr != p:
 			t.Fatalf("%s: page %d reported as number %d", name, p, g.Nr)
@@ -55,7 +56,7 @@ func readUnvalidated(t *testing.T, b []byte, mode int) *model.Context {
 	t.Helper()
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = mode
-	ctx, err := api.ReadContext(bytes.NewReader(b), conf)
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(b), conf)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

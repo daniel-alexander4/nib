@@ -2,6 +2,7 @@ package mdpdf
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -44,7 +45,7 @@ func checkPacket(t *testing.T, out []byte, wantPages int) {
 	if !bytes.HasPrefix(out, []byte("%PDF-")) {
 		t.Fatal("packet is not a PDF")
 	}
-	if err := api.Validate(bytes.NewReader(out), model.NewDefaultConfiguration()); err != nil {
+	if err := api.Validate(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil); err != nil {
 		t.Fatalf("invalid packet: %v", err)
 	}
 	if n := pageCount(t, out); n != wantPages {
@@ -176,7 +177,7 @@ func TestPagesAreUSLetter(t *testing.T) {
 		"convert": render(t, "# Letter\n\nBody."),
 		"image":   mustImageToPDF(t, pngFixture(t)),
 	} {
-		dims, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		dims, err := api.PageDims(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("%s: PageDims: %v", name, err)
 		}

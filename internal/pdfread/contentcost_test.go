@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -30,7 +31,7 @@ func distinctStreams(t *testing.T, size, n int) *model.Context {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, _, _, err := ctx.PageDict(1, false)
+	page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestTheEstimateRunsOnlyWherePdfcpusPassDecodesPageContent(t *testing.T) {
 	var err error
 	alloc := allocatedBy(func() {
 		if why = pdfread.Unaffordable(ctx); why == "" {
-			err = api.OptimizeContext(ctx)
+			err = api.OptimizeContext(context.Background(), ctx)
 		}
 	})
 	if why != "" || err != nil {
@@ -141,7 +142,7 @@ func TestDecodingOnceChangesNothingWritten(t *testing.T) {
 			t.Fatal(err)
 		}
 		var b bytes.Buffer
-		if err := api.WriteContext(ctx, &b); err != nil {
+		if err := api.WriteContext(context.Background(), ctx, &b); err != nil {
 			t.Fatal(err)
 		}
 		return b.Bytes(), alloc

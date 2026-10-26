@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 // no embedded fonts trivially has no CIDSets, and the two results must never be confused.
 func cidSetCount(t *testing.T, pdf []byte) (withCIDSet, embedded int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestTheCIDSetTailIsSkippedForACoreFontSpec(t *testing.T) {
 // TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew — `dropCIDSetsOf` with faces named leaves every other
 // descriptor's /CIDSet alone: a stamp drew those faces, and the user's own fonts are their file's.
 func TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew(t *testing.T) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(threePagePDF(t)), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(threePagePDF(t)), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew(t *testing.T) {
 // /CIDSet — so a test can tell a door's own face from the document's.
 func descriptorCIDSets(t *testing.T, pdf []byte, face string) (found, withCIDSet int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"math"
 	"nib/internal/pdfread"
 
@@ -41,7 +42,7 @@ func NormalizePageSizes(pdf []byte) ([]byte, error) {
 		if err := pdfread.SeparateContents(ctx, nil); err != nil {
 			return err
 		}
-		return pdfcpu.Resize(ctx, pages, res)
+		return pdfcpu.Resize(context.Background(), ctx, pages, res)
 	})
 }
 

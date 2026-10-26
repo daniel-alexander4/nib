@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -18,7 +19,7 @@ import (
 func ownerRestricted(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &out, model.NewAESConfiguration("", "ownersecret", 256)); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &out, model.NewAESConfiguration("", "ownersecret", 256)); err != nil {
 		t.Fatalf("building the restricted fixture: %v", err)
 	}
 	return out.Bytes()
@@ -33,7 +34,7 @@ func ownerRestricted(t *testing.T, pdf []byte) []byte {
 // rather than on the comparison.
 func protectionOf(t *testing.T, pdf []byte) bool {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewAESConfiguration("", "", 256))
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewAESConfiguration("", "", 256), nil)
 	if err != nil {
 		t.Fatalf("reading back the artifact: %v", err)
 	}

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sort"
@@ -26,7 +27,7 @@ func shownFiles(t *testing.T, pdf []byte) []string {
 	if ctx.Names["EmbeddedFiles"] == nil {
 		return nil
 	}
-	aa, err := ctx.ExtractAttachments(nil)
+	aa, err := ctx.ExtractAttachments(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

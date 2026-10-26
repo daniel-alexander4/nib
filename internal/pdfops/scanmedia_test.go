@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 // because the unvalidated one leaves objects held in object streams unread.)
 func writtenFacts(t *testing.T, pdf []byte) (annots, objrs, types_ map[string]int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}
@@ -93,7 +94,7 @@ func taggedWithNotes(t *testing.T, media bool) []byte {
 		return out
 	}
 	return mustMutate(t, out, func(ctx *model.Context) error {
-		pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+		pd, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -137,7 +138,7 @@ func TestARemovedMediaAnnotationLeavesTheStructureTree(t *testing.T) {
 			t.Errorf("%s: OBJRs by what they name = %v, want only the note's — an OBJR naming the removed annotation, or nothing, is left", name, objrs)
 		}
 		// The annotation's own row of the parent tree goes with it: a row no object claims describes nothing.
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}

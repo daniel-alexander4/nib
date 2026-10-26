@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -374,8 +375,8 @@ func destReachesAKeptPage(xt *model.XRefTable, o types.Object, keptPages map[int
 	if node == nil {
 		return false
 	}
-	v, ok := node.Value(key)
-	if !ok {
+	v, ok, verr := node.Value(context.Background(), key)
+	if verr != nil || !ok {
 		return false
 	}
 	return destNamesAKeptPage(xt, v, keptPages)

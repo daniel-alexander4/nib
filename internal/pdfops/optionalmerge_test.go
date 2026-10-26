@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -20,7 +21,7 @@ func layerState(t *testing.T, pdf []byte, page, cfg int) (in map[string]bool, d 
 	if err != nil {
 		t.Fatal(err)
 	}
-	pref, err := ctx.PageDictIndRef(page)
+	pref, err := ctx.PageDictIndRef(context.Background(), page)
 	if err != nil {
 		t.Fatal(err)
 	}

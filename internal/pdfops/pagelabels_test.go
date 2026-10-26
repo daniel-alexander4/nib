@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -24,7 +25,7 @@ func TestSetPageLabels(t *testing.T) {
 
 	// The number tree must survive a validating re-read — every later document
 	// op reads through ReadValidateAndOptimize, so an invalid tree would break them.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestSetPageLabelsEscapesPrefix(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SetPageLabels(%q): %v", prefix, err)
 			}
-			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 			if err != nil {
 				t.Fatalf("prefix %q made the document unreadable: %v", prefix, err)
 			}

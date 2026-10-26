@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -18,11 +19,11 @@ import (
 // pageContent returns one page's decoded content stream.
 func pageContent(t *testing.T, pdf []byte, page int) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	d, _, _, derr := ctx.PageDict(page, false)
+	d, _, _, derr := ctx.PageDict(context.Background(), page, false)
 	if derr != nil || d == nil {
 		t.Fatalf("page %d: %v", page, derr)
 	}
@@ -35,7 +36,7 @@ func pageContent(t *testing.T, pdf []byte, page int) []byte {
 
 func catalogLangOf(t *testing.T, pdf []byte) string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestTheComposedDocumentGainsNoUA1Clause(t *testing.T) {
 	// against a readme rendered WITHOUT it, which is what the mutation probe drives. What this
 	// asserts is the weaker and still useful thing: the composed document is valid and
 	// self-consistent with the declaration in it.
-	if _, rerr := api.ReadValidateAndOptimize(bytes.NewReader(before), model.NewDefaultConfiguration()); rerr != nil {
+	if _, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(before), model.NewDefaultConfiguration(), nil); rerr != nil {
 		t.Errorf("the composed document does not validate: %v", rerr)
 	}
 	if n := strings.Count(string(pageContent(t, before, 2)), "/Span"); n != 1 {

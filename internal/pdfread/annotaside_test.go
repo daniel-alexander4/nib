@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ const (
 // annotsOf is the page's /Annots as object numbers, with "!" after one whose dictionary has no /Subtype.
 func annotsOf(t *testing.T, ctx *model.Context) string {
 	t.Helper()
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,11 +205,11 @@ func TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument(t *
 		t.Run(c.name, func(t *testing.T) {
 			pdf := annotsDocument("[5 0 R]", map[int]string{5: note(c.pair)})
 			// Stimulus: pdfcpu's own validator, with nothing set aside, says what the case is named for.
-			raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+			raw, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := api.ValidateContext(raw); (err != nil) != c.refusedBefore {
+			if err := api.ValidateContext(context.Background(), raw); (err != nil) != c.refusedBefore {
 				t.Fatalf("setup: pdfcpu's validator on its own returned %v; refused should be %v", err, c.refusedBefore)
 			}
 			ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
@@ -224,7 +225,7 @@ func TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument(t *
 				t.Fatalf("the written document was refused: %v", err)
 			}
 			for _, cx := range []*model.Context{ctx, again} {
-				d, _, _, err := cx.PageDict(1, false)
+				d, _, _, err := cx.PageDict(context.Background(), 1, false)
 				if err != nil {
 					t.Fatal(err)
 				}

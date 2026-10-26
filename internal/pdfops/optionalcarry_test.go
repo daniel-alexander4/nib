@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -43,7 +44,7 @@ func layeredFixture(t *testing.T, tweak func(ctx *model.Context, root types.Dict
 				"OFF":   types.Array{*ocgRef},
 			},
 		}
-		pref, perr := ctx.PageDictIndRef(1)
+		pref, perr := ctx.PageDictIndRef(context.Background(), 1)
 		if perr != nil {
 			return perr
 		}
@@ -95,7 +96,7 @@ func hiddenGroupOfPage1(t *testing.T, pdf []byte) (group int, off map[int]bool, 
 		t.Fatal(err)
 	}
 	group = -1
-	pref, perr := ctx.PageDictIndRef(1)
+	pref, perr := ctx.PageDictIndRef(context.Background(), 1)
 	if perr != nil {
 		t.Fatal(perr)
 	}
@@ -204,7 +205,7 @@ func TestAHiddenLayerIsStillHiddenAfterASelection(t *testing.T) {
 func TestOptionalContentReachingADroppedPageIsRefused(t *testing.T) {
 	src := layeredFixture(t, func(ctx *model.Context, root types.Dict, ocg types.IndirectRef) error {
 		// Page 2 is the page the selection below drops.
-		second, err := ctx.PageDictIndRef(2)
+		second, err := ctx.PageDictIndRef(context.Background(), 2)
 		if err != nil {
 			return err
 		}
@@ -382,7 +383,7 @@ func TestUseOCIsCarriedOnlyWhereItsOptionalContentSurvived(t *testing.T) {
 		if err := useOC(ctx, root, ocg); err != nil {
 			return err
 		}
-		second, err := ctx.PageDictIndRef(2)
+		second, err := ctx.PageDictIndRef(context.Background(), 2)
 		if err != nil {
 			return err
 		}

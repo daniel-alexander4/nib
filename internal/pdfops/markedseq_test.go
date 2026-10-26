@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -33,11 +34,11 @@ func TestTheRunReaderRecordsEachMarkedSequence(t *testing.T) {
 		4: streamObject("", page),
 		5: streamObject("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", form),
 	})
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(src), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	content, err := ctx.PageContent(d, 1)
 	if err != nil {
 		t.Fatal(err)

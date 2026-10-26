@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ import (
 // writer directly, because `pdfread.Write` now removes exactly this.
 func withXFA(t *testing.T, base []byte, needsRendering bool) []byte {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(base), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -45,7 +46,7 @@ func withXFA(t *testing.T, base []byte, needsRendering bool) []byte {
 	form["XFA"] = *ref
 	root["NeedsRendering"] = types.Boolean(needsRendering)
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	return out.Bytes()

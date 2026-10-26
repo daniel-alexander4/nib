@@ -1,7 +1,7 @@
 package mdpdf
 
 import (
-	"encoding/gob"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -134,28 +134,22 @@ func installFallbacks(fonts []Font) error {
 // process performs its first font operation, which is a constraint a package cannot state
 // and a caller cannot honour.
 func registerMetrics(name string) error {
-	// Before the path is built, because this one gob-decodes what it opens.
+	// Before the path is built, because the font loader reads what it opens.
 	if !safeFontName(name) {
 		return fmt.Errorf("refusing to load a font named %q", name)
 	}
-	font.UserFontMetricsLock.RLock()
-	_, ok := font.UserFontMetrics[name]
-	font.UserFontMetricsLock.RUnlock()
-	if ok {
+	c := context.Background()
+	if _, ok, err := font.UserFont(c, name); err == nil && ok {
 		return nil
 	}
-	f, err := os.Open(filepath.Join(font.UserFontDir, name+".gob"))
-	if err != nil {
-		return fmt.Errorf("read installed font %s: %w", name, err)
+	// v0.16 keeps the registry private: the supported way to make a just-installed face known to the running program is to
+	// reload the directory (it replaces the in-memory set wholesale, so every face on disk is known afterwards).
+	if err := font.ReloadUserFonts(c); err != nil {
+		return fmt.Errorf("load installed font %s: %w", name, err)
 	}
-	defer f.Close()
-	var ttf font.TTFLight
-	if err := gob.NewDecoder(f).Decode(&ttf); err != nil {
-		return fmt.Errorf("decode installed font %s: %w", name, err)
+	if _, ok, err := font.UserFont(c, name); err != nil || !ok {
+		return fmt.Errorf("read installed font %s: not found after reload", name)
 	}
-	font.UserFontMetricsLock.Lock()
-	font.UserFontMetrics[name] = ttf
-	font.UserFontMetricsLock.Unlock()
 	return nil
 }
 

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -56,7 +57,7 @@ func carried(t *testing.T, pdf []byte, pi int, dy float64) ([]byte, string) {
 		return nil, cause
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes(), ""

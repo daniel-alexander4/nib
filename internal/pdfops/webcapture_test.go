@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -70,7 +71,7 @@ func TestARefusedWebCaptureRecordIsNamedAndRemovedWhenAsked(t *testing.T) {
 	if webCaptureKinds(t, out) != 0 {
 		t.Errorf("the scan still lists a web capture record after its removal")
 	}
-	rctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	rctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

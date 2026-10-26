@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
@@ -144,7 +145,7 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 			return nil, false, err
 		}
 		pdfread.PutBackValidatorLosses(src)
-		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
+		if err := pdfcpu.MergeXRefTables(context.Background(), strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, false, err
 		}
 		// `MergeXRefTables` returns nil when appending the page tree fails (pdfcpu `merge.go`: `if err

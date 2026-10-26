@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -409,7 +410,7 @@ func TestAnUnresolvedFontRefusesTheCIDSetClauseBesideOneThatResolved(t *testing.
 func withTextRunInFont(t *testing.T, pdf []byte, name string) []byte {
 	t.Helper()
 	return mutate(t, pdf, func(ctx *model.Context) error {
-		page, _, _, err := ctx.PageDict(1, false)
+		page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}

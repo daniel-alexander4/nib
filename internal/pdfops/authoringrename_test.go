@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,7 +109,7 @@ func TestAWatermarkOnADocumentCarryingRobotoKeepsItsEmbeddedFace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(host), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(host), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestAWatermarkOnADocumentCarryingRobotoKeepsItsEmbeddedFace(t *testing.T) {
 		t.Fatal("setup: the host carries no Roboto-Regular, so nothing in it can collide with a face of that name")
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	foreign := buf.Bytes()

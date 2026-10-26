@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,7 +73,7 @@ func associatedFilesShape(version string, listed bool, where string) []byte {
 // object in the file, or "no key".
 func associatedFiles(t *testing.T, pdf []byte) (catalog, page, elem string) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var raw bytes.Buffer
-	if err := api.WriteContext(ctx, &raw); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &raw); err != nil {
 		t.Fatal(err)
 	}
 	out := raw.Bytes()

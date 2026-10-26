@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -1040,7 +1041,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 		return nil
 	}
 	var doomed []string
-	if err := node.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+	if err := node.Process(context.Background(), xt, func(_ *model.XRefTable, k string, v *types.Object) error {
 		if !destNamesAKeptPage(xt, *v, keptPages) {
 			doomed = append(doomed, k)
 		}
@@ -1074,7 +1075,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 		// Freeing was never needed here: this file turns on pdfcpu writing by REACHABILITY, which is
 		// why `unlinkDroppedPages` unlinks rather than deletes and why the allowlist drops catalog
 		// keys rather than their objects. An unreferenced destination array is not written.
-		if _, _, err := node.Remove(nil, k); err != nil {
+		if _, _, err := node.Remove(context.Background(), nil, k); err != nil {
 			return err
 		}
 	}
@@ -1082,7 +1083,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 	// compared the number removed against the number left — equal whenever exactly half the
 	// destinations pointed at dropped pages, so a two-destination document that lost one lost the
 	// whole tree.
-	left, err := node.KeyList()
+	left, err := node.KeyList(context.Background())
 	if err != nil {
 		return err
 	}

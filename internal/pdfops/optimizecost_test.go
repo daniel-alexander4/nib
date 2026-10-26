@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"nib/internal/pdfread"
 	"strings"
@@ -180,7 +181,7 @@ func inheriting(pdf []byte, own string) []byte {
 		}
 	}
 	var b bytes.Buffer
-	if err := api.WriteContext(ctx, &b); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &b); err != nil {
 		panic(err)
 	}
 	return b.Bytes()
@@ -265,7 +266,7 @@ func TestEveryOperationOverAnApiReadFinishesOnHostileForms(t *testing.T) {
 	conf := model.NewAESConfiguration("pw", "pw", 256)
 	conf.Optimize = false // the fixture's own encryption must not run the unbudgeted pass this test is about
 	var enc bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &enc, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &enc, conf); err != nil {
 		t.Fatalf("setup: encrypting the fixture: %v", err)
 	}
 	png := onePixelPNG()

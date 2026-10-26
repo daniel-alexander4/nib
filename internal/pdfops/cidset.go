@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -112,7 +113,7 @@ func specNamesAUserFont(spec []byte) bool {
 		}
 		switch x := n.(type) {
 		case string:
-			if font.IsUserFont(x) {
+			if is, _ := font.IsUserFont(context.Background(), x); is {
 				found = true
 			}
 		case []any:

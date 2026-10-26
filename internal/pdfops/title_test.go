@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func authoredPDF(t *testing.T) []byte {
 // read every later operation performs, so a title that only survives a raw byte scan does not count.
 func titleParts(t *testing.T, pdf []byte) (xmp string, info string, displayDocTitle *bool) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}

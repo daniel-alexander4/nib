@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -356,7 +357,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 				// at all: measured, a `/Hide` with no `/T` validates relaxed and is refused strict.
 				strict := model.NewDefaultConfiguration()
 				strict.ValidationMode = model.ValidationStrict
-				if verr := api.Validate(bytes.NewReader(out), strict); verr != nil {
+				if verr := api.Validate(context.Background(), bytes.NewReader(out), strict, nil); verr != nil {
 					t.Errorf("pdfcpu's validator refuses the output: %v", verr)
 				}
 				act := derefDict(ctx.XRefTable, pages[0][0]["A"])
@@ -375,7 +376,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 // object in a compressed object stream is seen as well as one written plainly.
 func eachParsedObject(t *testing.T, pdf []byte, fn func(xt *model.XRefTable, o types.Object)) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("the output does not read: %v", err)
 	}

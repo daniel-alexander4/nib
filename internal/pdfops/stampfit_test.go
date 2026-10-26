@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -35,11 +36,11 @@ func emittedBBoxWidth(t *testing.T, pdf []byte, f Field) float64 {
 	if err != nil {
 		t.Fatalf("StampFields(%q): %v", f.Text, err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read stamped PDF: %v", err)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatalf("PageDict: %v", err)
 	}
@@ -220,11 +221,11 @@ func emittedAnchorX(t *testing.T, pdf []byte, f Field) float64 {
 	if err != nil {
 		t.Fatalf("StampFields: %v", err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatalf("PageDict: %v", err)
 	}
@@ -469,11 +470,11 @@ func emittedTfSize(t *testing.T, pdf []byte, f Field) float64 {
 	if err != nil {
 		t.Fatalf("StampFields: %v", err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	res, _ := ctx.DereferenceDict(d["Resources"])
 	xo, _ := ctx.DereferenceDict(res["XObject"])
 	for _, ref := range xo {
@@ -686,7 +687,7 @@ func TestAnUnfittableFieldStillProducesAWholeDocument(t *testing.T) {
 			FitOverran, fits[0].OverrunPt)
 	}
 	// The document is readable and the text is really on the page.
-	if _, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration()); err != nil {
+	if _, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil); err != nil {
 		t.Fatalf("the returned PDF does not re-read: %v", err)
 	}
 	if len(out) <= len(pdf) {

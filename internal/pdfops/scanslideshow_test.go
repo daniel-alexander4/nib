@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -91,7 +92,7 @@ func TestASlideshowIsSeenAndStripped(t *testing.T) {
 			t.Errorf("%s on the spec's shape: error %v, want the validator's refusal %q", name, err, refusal)
 		}
 	}
-	if _, err := api.ReadContext(bytes.NewReader(spec), model.NewDefaultConfiguration()); err != nil {
+	if _, err := api.ReadContext(context.Background(), bytes.NewReader(spec), model.NewDefaultConfiguration()); err != nil {
 		t.Errorf("the unvalidated read Scan uses refused the spec's shape: %v", err)
 	}
 

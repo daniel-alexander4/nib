@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -207,7 +208,7 @@ func TestUncoveredDrawingSpansReadsEveryKindOfDrawing(t *testing.T) {
 func withUnmarkedPicture(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
-		d, _, attrs, err := ctx.PageDict(1, false)
+		d, _, attrs, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}

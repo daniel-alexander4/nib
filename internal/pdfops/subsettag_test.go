@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // subsetNames is every tagged `/FontName` in pdf's descriptors, sorted as found.
 func subsetNames(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}

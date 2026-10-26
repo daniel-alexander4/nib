@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,7 +98,7 @@ func TestPreparePDFA(t *testing.T) {
 	}
 
 	// OutputIntents present in the catalog.
-	ctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

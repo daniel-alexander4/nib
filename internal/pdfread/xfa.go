@@ -2,6 +2,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"regexp"
 	"runtime"
@@ -180,7 +181,7 @@ func XFAOf(ctx *model.Context) string {
 // a ceremony's refusal to be convened over one.
 func ReadXFA(pdf []byte) (read string, err error) {
 	defer fault.Catch(&err)
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return "", err
 	}

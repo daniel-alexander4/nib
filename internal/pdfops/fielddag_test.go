@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func fieldDAG(k, levels int, ft string) []byte {
 
 func readDAG(t *testing.T, pdf []byte) (*model.Context, types.Dict) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), subsetConf())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), subsetConf(), nil)
 	if err != nil {
 		t.Fatalf("setup: the fixture does not read: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestKeepFieldsDropsACycleWithoutLosingTheField(t *testing.T) {
 	})
 	// pdfcpu's validating read refuses a circular field tree, so the shape is reachable only through
 	// a read that does not validate — the one this test uses to reach keepFields at all.
-	ctx, err := api.ReadContext(bytes.NewReader(src), subsetConf())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(src), subsetConf())
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestASignatureAtTheEndOfAFieldDAGIsStillErased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), subsetConf())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), subsetConf(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}

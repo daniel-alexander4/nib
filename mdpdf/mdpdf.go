@@ -20,6 +20,7 @@ package mdpdf
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,7 +228,7 @@ func convert(md []byte, base *Faces, fallbacks []Font) ([]byte, *layout, error) 
 		return nil, nil, err
 	}
 	var out bytes.Buffer
-	if err := api.Create(nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
+	if err := api.Create(context.Background(), nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, nil, fmt.Errorf("render pdf: %w", err)
 	}
 	return out.Bytes(), r.l, nil

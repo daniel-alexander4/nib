@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,7 +43,7 @@ func ignoredChain(links, nest int, ring bool) map[int]string {
 
 func unvalidated(t *testing.T, pdf []byte) *model.Context {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: pdfcpu's unvalidated read: %v", err)
 	}

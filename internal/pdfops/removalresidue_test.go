@@ -3,6 +3,7 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"log"
 	"strconv"
@@ -43,7 +44,7 @@ func xmpImageDoc() []byte {
 // metadataHolders the strip does — and counts the dictionaries still carrying /Metadata.
 func holdersIn(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestRemoveFilesAndMediaRemovesATreePdfcpuCannotList(t *testing.T) {
 				ok = false
 			}
 		}()
-		_, lerr := ctx.ListAttachments()
+		_, lerr := ctx.ListAttachments(context.Background())
 		return lerr == nil
 	}(); listable {
 		t.Fatal("setup: pdfcpu lists this tree, so the test does not reach the unlistable case")

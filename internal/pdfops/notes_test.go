@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -17,7 +18,7 @@ func TestAddNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

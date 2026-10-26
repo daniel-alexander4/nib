@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -24,7 +25,7 @@ import (
 // chainFrom follows `/UseCMap` references from nr in the RAW read — the stimulus, read without the door.
 func chainFrom(t *testing.T, pdf []byte, nr, steps int) []int {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: the unvalidated read failed: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestAUseCMapLoopIsRefusedBeforeTheValidator(t *testing.T) {
 		if got := chainFrom(t, c.PDF, 20, len(c.Loop)-1); fmt.Sprint(got) != fmt.Sprint(c.Loop) {
 			t.Fatalf("setup: %s's /UseCMap chain from 20 is %v, want %v", name, got, c.Loop)
 		}
-		raw, err := api.ReadContext(bytes.NewReader(c.PDF), model.NewDefaultConfiguration())
+		raw, err := api.ReadContext(context.Background(), bytes.NewReader(c.PDF), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("setup: %s — the unvalidated read failed: %v", name, err)
 		}
@@ -106,7 +107,7 @@ func TestEveryUnguardedReferenceLoopIsRefusedBeforeTheValidator(t *testing.T) {
 		}
 		// The walk first, on the unvalidated read: a door missing this edge fails here, and the loop is never handed
 		// to the validator that would kill the binary.
-		raw, err := api.ReadContext(bytes.NewReader(c.Loop), model.NewDefaultConfiguration())
+		raw, err := api.ReadContext(context.Background(), bytes.NewReader(c.Loop), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("setup: %s — the unvalidated read failed: %v", c.Edge, err)
 		}
@@ -216,7 +217,7 @@ func sparseDoc(nr int) []byte {
 // phase-close review): its slots were sized by the largest number, so a 400-byte file naming object 2^25 cost 6.1 GB.
 func TestTheReferenceWalkIsSizedByObjectsNotByTheirNumbers(t *testing.T) {
 	pdf := sparseDoc(1 << 20)
-	raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	raw, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: the sparse document does not read: %v", err)
 	}
@@ -333,11 +334,11 @@ func freeEntriesDoc(n int) []byte {
 // 3-object document from 262,208 paths to 16,262,208 — 62×, measured).
 func TestFreeXrefEntriesDoNotRaiseThePathBudget(t *testing.T) {
 	conf := model.NewDefaultConfiguration()
-	plain, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(0)), conf)
+	plain, err := api.ReadContext(context.Background(), bytes.NewReader(freeEntriesDoc(0)), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	padded, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(100000)), conf)
+	padded, err := api.ReadContext(context.Background(), bytes.NewReader(freeEntriesDoc(100000)), conf)
 	if err != nil {
 		t.Fatal(err)
 	}

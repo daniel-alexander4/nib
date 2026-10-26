@@ -2,6 +2,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"runtime"
 	"sync"
@@ -67,7 +68,7 @@ func Write(ctx *model.Context) ([]byte, error) {
 	PutBackValidatorLosses(ctx)
 	shapeNameTrees(ctx)
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -246,7 +247,7 @@ func rememberValidatorLosses(ctx *model.Context, pdf []byte) {
 	if len(suspects) == 0 {
 		return
 	}
-	written, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	written, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return
 	}

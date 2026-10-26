@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -137,7 +138,7 @@ func TestANUpCarriesTheNoteOfADividedPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	raw, _ := ctx.PageContent(d, 1) //pagecontent:exempt test — the join pdfcpu's NUp writes
 	door, _ := pdfread.PageContent(ctx, d, 1)
 	if bytes.Equal(raw, door) {
@@ -188,7 +189,7 @@ func TestANUpCarriesTheTagsOfADividedPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	raw, _ := ctx.PageContent(d, 1) //pagecontent:exempt test — the join pdfcpu's NUp writes
 	door, _ := pdfread.PageContent(ctx, d, 1)
 	if bytes.Equal(raw, door) {
@@ -212,7 +213,7 @@ func TestAWrappedPageClosesItsClipAfterATrailingComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	if err := setPageContent(ctx, d, []byte("0 0 10 10 re f % a trailing comment")); err != nil {
 		t.Fatal(err)
 	}

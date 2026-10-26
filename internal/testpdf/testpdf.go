@@ -6,6 +6,7 @@ package testpdf
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strconv"
 
@@ -41,7 +42,7 @@ const formJSON = `{
 // ("fullName") and a checkbox ("agree").
 func Form() ([]byte, error) {
 	var out bytes.Buffer
-	if err := api.Create(nil, bytes.NewReader([]byte(formJSON)), &out, nil); err != nil {
+	if err := api.Create(context.Background(), nil, bytes.NewReader([]byte(formJSON)), &out, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -70,7 +71,7 @@ func Text(pages ...string) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	if err := api.Create(nil, bytes.NewReader(b), &out, nil); err != nil {
+	if err := api.Create(context.Background(), nil, bytes.NewReader(b), &out, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil

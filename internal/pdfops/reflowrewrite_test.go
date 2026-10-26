@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -37,12 +38,12 @@ func reflowed(t *testing.T, pdf []byte, pi int, text string) ([]byte, string) {
 	if out.content == nil {
 		return nil, out.cause
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	if err := setPageContent(ctx, d, out.content); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes(), ""
@@ -282,12 +283,12 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						if out.content == nil {
 							return false, out.cause
 						}
-						d, _, _, _ := c2.PageDict(p, false)
+						d, _, _, _ := c2.PageDict(context.Background(), p, false)
 						if err := setPageContent(c2, d, out.content); err != nil {
 							t.Fatal(err)
 						}
 						var buf bytes.Buffer
-						if err := api.WriteContext(c2, &buf); err != nil {
+						if err := api.WriteContext(context.Background(), c2, &buf); err != nil {
 							t.Fatal(err)
 						}
 						c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())

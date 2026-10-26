@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
@@ -102,7 +103,7 @@ func TestFreeGraphFreesWhatPdfcpuFrees(t *testing.T) {
 		return s
 	}
 	theirs, o := build()
-	if err := theirs.DeleteObject(o); err != nil {
+	if err := theirs.DeleteObject(context.Background(), o); err != nil {
 		t.Fatalf("setup: pdfcpu's DeleteObject: %v", err)
 	}
 	ours, o := build()

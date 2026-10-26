@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -298,7 +299,7 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 				return fmt.Errorf("an attachment named %q already exists", name)
 			}
 		}
-		return ctx.AddAttachment(model.Attachment{Reader: bytes.NewReader(data), ID: name}, false)
+		return ctx.AddAttachment(context.Background(), model.Attachment{Reader: bytes.NewReader(data), ID: name}, false)
 	})
 }
 
@@ -585,7 +586,7 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 			if i-1 < len(answers) {
 				d, err = answers[i-1].Dict, answers[i-1].Err
 			} else {
-				d, _, attrs, err = ctx.PageDict(i, false)
+				d, _, attrs, err = ctx.PageDict(context.Background(), i, false)
 			}
 			if err != nil {
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
@@ -1036,7 +1037,7 @@ func nameTreeEntries(xt *model.XRefTable, tree string) ([]embeddedEntry, error) 
 	}
 	var entries []embeddedEntry
 	if root := xt.Names[tree]; root != nil {
-		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+		_ = root.Process(context.Background(), xt, func(_ *model.XRefTable, k string, v *types.Object) error {
 			entries = append(entries, embeddedEntry{key: k, fs: *v})
 			return nil
 		})

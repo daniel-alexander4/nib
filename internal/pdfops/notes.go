@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -39,7 +40,7 @@ func AddNotes(pdf []byte, notes []Note) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.ADDANNOTATIONS
 	noted, err := rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
-		ok, err := pdfcpu.AddAnnotationsMap(ctx, m, false)
+		ok, err := pdfcpu.AddAnnotationsMap(context.Background(), ctx, m, false)
 		if err != nil {
 			return err
 		}

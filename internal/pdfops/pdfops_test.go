@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -56,7 +57,7 @@ func TestImagesToPDFPageSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dims, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestPageOpsMultiPageIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	conf := model.NewDefaultConfiguration()
-	baseDims, err := api.PageDims(bytes.NewReader(base), conf)
+	baseDims, err := api.PageDims(context.Background(), bytes.NewReader(base), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestPageOpsMultiPageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rd, err := api.PageDims(bytes.NewReader(removed), conf)
+	rd, err := api.PageDims(context.Background(), bytes.NewReader(removed), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestPageOpsMultiPageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rot, err := api.PageDims(bytes.NewReader(rotated), conf)
+	rot, err := api.PageDims(context.Background(), bytes.NewReader(rotated), conf)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestAFillOfAFieldShownInSeveralPlacesLeavesNoWidgetHoldingTheOldValue(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadContext(bytes.NewReader(filled), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(filled), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

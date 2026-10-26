@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log"
 	"math"
@@ -27,7 +28,7 @@ var nibSans = stampFaceFor["Helvetica"]
 
 func fontsNotEmbedded(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -44,7 +45,7 @@ func carriesFace(t *testing.T, pdf []byte, face string) bool {
 // faceStreams returns the decoded font program and ToUnicode map of pdf's subset font of face.
 func faceStreams(t *testing.T, pdf []byte, face string) (program, toUnicode []byte, ok bool) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -247,7 +248,7 @@ func ownFontDocument(t *testing.T, mutate func(ctx *model.Context, font types.Di
 	if mutate == nil {
 		return stamped
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(stamped), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(stamped), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +273,7 @@ func ownFontDocument(t *testing.T, mutate func(ctx *model.Context, font types.Di
 		t.Fatalf("setup: the first stamp carries no %s to mutate", nibSans)
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
@@ -282,12 +283,12 @@ func ownFontDocument(t *testing.T, mutate func(ctx *model.Context, font types.Di
 // asserts is harmful before grading nib's answer.
 func rawStamp(t *testing.T, pdf []byte, face string) ([]byte, error) {
 	t.Helper()
-	wm, err := api.TextWatermark("more", "fontname:"+face+", points:12, scalefactor:1 abs, position:bl, offset:60 300, rotation:0", true, false, types.POINTS)
+	wm, err := api.TextWatermark(context.Background(), "more", "fontname:"+face+", points:12, scalefactor:1 abs, position:bl, offset:60 300, rotation:0", true, false, types.POINTS, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, map[int][]*model.Watermark{1: {wm}}, model.NewDefaultConfiguration())
+	err = api.AddWatermarksSliceMap(context.Background(), bytes.NewReader(pdf), &out, map[int][]*model.Watermark{1: {wm}}, model.NewDefaultConfiguration())
 	return out.Bytes(), err
 }
 
@@ -393,11 +394,11 @@ func TestAnUnforeseenEmbeddedFailureRetriesInCoreFaces(t *testing.T) {
 		if embedded {
 			return errors.New("pdfcpu: corrupt fontDict") // the shape the review reproduced
 		}
-		wm, werr := api.TextWatermark("more", "fontname:Helvetica, points:12, scalefactor:1 abs, position:bl, offset:60 300, rotation:0", true, false, types.POINTS)
+		wm, werr := api.TextWatermark(context.Background(), "more", "fontname:Helvetica, points:12, scalefactor:1 abs, position:bl, offset:60 300, rotation:0", true, false, types.POINTS, nil)
 		if werr != nil {
 			return werr
 		}
-		return pdfcpu.AddWatermarksSliceMap(ctx, map[int][]*model.Watermark{1: {wm}})
+		return pdfcpu.AddWatermarksSliceMap(context.Background(), ctx, map[int][]*model.Watermark{1: {wm}})
 	})
 	// Stimulus first: the embedded attempt really ran and really failed.
 	if len(attempts) == 0 || !attempts[0] {

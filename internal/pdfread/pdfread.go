@@ -29,6 +29,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 
@@ -51,7 +52,7 @@ func Validated(pdf []byte, conf *model.Configuration) (*model.Context, error) {
 // context every reader sees afterwards is the document as parsed (`ReadOptimizedOrRefuseSettingAside`).
 func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context) (restore func())) (ctx *model.Context, err error) {
 	defer fault.Catch(&err)
-	if ctx, err = api.ReadContext(bytes.NewReader(pdf), conf); err != nil {
+	if ctx, err = api.ReadContext(context.Background(), bytes.NewReader(pdf), conf); err != nil {
 		return nil, err
 	}
 	if err := refuseUnboundedReferences(ctx); err != nil {
@@ -73,7 +74,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	// And the structure tree's `/IDTree`, whose `/Limits` the validator empties past that depth (`/pending 883`).
 	settleIDTree(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
-	err = api.ValidateContext(ctx)
+	err = api.ValidateContext(context.Background(), ctx)
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
 		rememberAssociatedFiles(ctx)

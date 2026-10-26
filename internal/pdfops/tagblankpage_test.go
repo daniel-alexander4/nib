@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,12 +57,12 @@ func TestAMarkdownPageThatDrawsNoTextIsStillTagged(t *testing.T) {
 				t.Errorf("the tagged tree lost the heading: %v", kinds)
 			}
 			// What the blank page draws is still content, and untagged content fails 7.1 t3: it is an artifact.
-			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, p := range blank {
-				d, _, _, err := ctx.PageDict(p, false)
+				d, _, _, err := ctx.PageDict(context.Background(), p, false)
 				if err != nil {
 					t.Fatal(err)
 				}

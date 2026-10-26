@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"nib/internal/pdfread"
@@ -40,7 +41,7 @@ func TestAnUnparsableClaimOverADanglingReferenceDoesNotRefuseTheEdit(t *testing.
 	entry, _ := ctx.XRefTable.FindTableEntryForIndRef(&ir)
 	entry.Object = *sd
 	var b bytes.Buffer
-	if err := api.WriteContext(ctx, &b); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &b); err != nil {
 		t.Fatal(err)
 	}
 	src := b.Bytes()

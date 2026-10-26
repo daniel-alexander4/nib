@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ var mediaActionCases = map[string]struct {
 // object, not along the roads the removal walks, so a holder the removal forgot is still seen.
 func eachObjectIn(t *testing.T, pdf []byte, fn func(types.Object)) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}

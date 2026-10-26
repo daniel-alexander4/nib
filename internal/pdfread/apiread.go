@@ -2,6 +2,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sort"
 	"strconv"
@@ -55,7 +56,7 @@ func PageDims(pdf []byte, conf *model.Configuration) (pd []types.Dim, err error)
 	if err != nil {
 		return nil, err
 	}
-	if pd, err = ctx.PageDims(); err != nil {
+	if pd, err = ctx.PageDims(context.Background()); err != nil {
 		return nil, err
 	}
 	if len(pd) != ctx.PageCount {
@@ -71,7 +72,7 @@ func Bookmarks(pdf []byte) (bms []pdfcpu.Bookmark, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return pdfcpu.Bookmarks(ctx)
+	return pdfcpu.Bookmarks(context.Background(), ctx)
 }
 
 // ExportForm is `api.ExportForm` (form.go:402).
@@ -87,7 +88,7 @@ func ExportForm(pdf []byte, source string, prepare func(*model.Context)) (fg *fo
 	if prepare != nil {
 		prepare(ctx)
 	}
-	fg, ok, err := form.ExportForm(ctx.XRefTable, source)
+	fg, ok, err := form.ExportForm(context.Background(), ctx.XRefTable, source)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +110,7 @@ func ExportFormJSON(pdf []byte, source string, prepare func(*model.Context)) (ou
 		prepare(ctx)
 	}
 	var b bytes.Buffer
-	ok, err := form.ExportFormJSON(ctx.XRefTable, source, &b)
+	ok, err := form.ExportFormJSON(context.Background(), ctx.XRefTable, source, &b)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +145,7 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 	}
 	maxPageDigits := len(strconv.Itoa(sp[len(sp)-1]))
 	for _, p := range sp {
-		mm, err := pdfcpu.ExtractPageImages(ctx, p, false)
+		mm, err := pdfcpu.ExtractPageImages(context.Background(), ctx, p, false)
 		if err != nil {
 			return err
 		}
@@ -223,7 +224,7 @@ func mergeRawOnce(pdfs [][]byte) (out []byte, err error) {
 		}
 		PutBackValidatorLosses(src) // before the merge renumbers its references (`write.go`)
 		layers := SourceOptionalContent(src)
-		if err := pdfcpu.MergeXRefTables(strconv.Itoa(i), src, dest, false, false); err != nil {
+		if err := pdfcpu.MergeXRefTables(context.Background(), strconv.Itoa(i), src, dest, false, false); err != nil {
 			return nil, err
 		}
 		// A later part's hidden layers stay hidden (`optionalmerge.go`, ADR-131).

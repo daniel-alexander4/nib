@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -264,7 +265,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 	rootRef, err := xt.Pages()
 	if err != nil || rootRef == nil {
 		for p := 1; p <= n; p++ { // every call fails at the root, at no cost
-			d, ref, attrs, err := ctx.PageDict(p, false)
+			d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 			out = append(out, Page{Nr: p, Dict: d, Ref: ref, Attrs: attrs, Err: err})
 		}
 		return out, n
@@ -307,7 +308,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 				break
 			}
 			s.steps += p // PageDict walks from the root; charge it
-			d, ref, attrs, err := ctx.PageDict(p, false)
+			d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 			if err == nil { // the replay and pdfcpu parted: pdfcpu's answer stands
 				pg = Page{Nr: p, Dict: d, Ref: ref, Attrs: attrs}
 				break
@@ -316,7 +317,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 		default:
 			attrs, ok := o.attrs.resolve(xt)
 			if !ok { // apply admitted every rectangle, so this is unreachable; pdfcpu's answer stands
-				d, ref, a, err := ctx.PageDict(p, false)
+				d, ref, a, err := ctx.PageDict(context.Background(), p, false)
 				pg = Page{Nr: p, Dict: d, Ref: ref, Attrs: a, Err: err}
 				break
 			}
