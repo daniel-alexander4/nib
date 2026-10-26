@@ -11,6 +11,11 @@ Run them all after a change. Each states what it can see, and — more important
 what it cannot, because a check whose blind spots are undocumented gets trusted
 for things it never looked at.
 
+**Building needs Go 1.26 or newer** (`go.mod`'s `go` directive; since v2.2.5 — pdfcpu v0.16 requires it, and the toolchain was
+moved first, on its own). With `GOTOOLCHAIN=auto` (the default) an older `go` fetches 1.26 into the module cache and changes
+nothing on the system; with `GOTOOLCHAIN=local` it stops at the directive. `GOOS=windows go vet ./...` and
+`GOOS=darwin go vet ./...` are clean and stay so: they compile the test files that `TestEveryPlatformCompiles` does not.
+
 | # | Command | What it verifies |
 |---|---------|------------------|
 | 0 | `go build ./...` | it compiles **for this host** — see the note below |

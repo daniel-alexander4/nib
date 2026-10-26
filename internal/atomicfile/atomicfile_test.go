@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 )
 
@@ -135,15 +134,6 @@ func TestWriteDurableREPLACESTheFileRatherThanWritingThrough(t *testing.T) {
 	if string(got) != "the replacement" {
 		t.Errorf("read back %q, want %q", got, "the replacement")
 	}
-}
-
-// inode returns the file's inode number where the platform exposes one.
-func inode(fi os.FileInfo) (uint64, bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
-	}
-	return uint64(st.Ino), true
 }
 
 // TestACheckThatRefusesLeavesTheFileAndNoStagedCopy — ADR-144, the door the vault's key rotation

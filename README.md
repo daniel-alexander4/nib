@@ -1,7 +1,7 @@
 # Nib
 
 [![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
-![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-555)
 ![100% local](https://img.shields.io/badge/data-100%25%20local-success)
 ![cgo-free](https://img.shields.io/badge/build-pure%20Go%2C%20single%20binary-00ADD8)
