@@ -241,7 +241,7 @@ opaque, unmeasured). The README badge ("Go-1.25+") and the CONTRIBUTING build no
 Goal: v0.16.2 replaces v0.13.0 with every nib workaround re-read, every new refusal dispositioned, and the digest on rule 7.
 Exit criteria: the P02 close gate below is green on the MERGED tree; `pdfcpudiff.sh` shows only declared moves; each slice closed on its named red→green set.
 
-#### P02.S01 — Mechanical
+#### P02.S01 — Mechanical *(done 2026-10-25, branch pdfcpu-v016 `ccb58743`-amended; unmerged)*
 Refs: D3, D9.
 go.mod to v0.16.2, drop the fork (D9), thread `context.Context` (the deepdive's edit log
 is the map; it is redone on the current tree, not copied). **Exit:** `go build ./...` and `go vet ./...` clean; the
@@ -255,8 +255,9 @@ re-running the script, and reads S02–S09 as the semantic diff. A "dependency d
 0.54→0.57 (vault, TLS, ceremony), `x/image` 0.41→0.46, `x/text` 0.40→0.42, `hhrutter/tiff`; with licence, `gen-notices.sh` re-run and a
 vulnerability check. The `x/crypto` raise is why tiers 4 and 6 and the vault tests are in the close gate. The red list is compared with a fresh run on the
 current tree, not the saved file.
+**Built (branch `pdfcpu-v016`, worktree `/home/dan/repos/nib-pdfcpu-v016`, no VERSION bump).** go.mod v0.16.2, `third_party/pdfcpu`, its `replace` and `TestThePdfcpuPatchIsTheCryptFilterLineOnly` removed (D9; the "sixteen walkers' skips" name no pdfcpu path — every `third_party` skip is the digitorus forks', so none was removed). `build/pdfcpuctx.go` (a `//go:build ignore` tool, committed on the branch) threads `context.Background()` from the compiler's own `not enough arguments` diagnostics — 356 + 47 + 18 + … edits over ~500 files, a table of callees that also gained a trailing `nil` (`api.TextWatermark`/`ImageWatermark`/`PDFWatermark` conf; `ReadValidateAndOptimize`/`Optimize`/`Validate` progress options). Hand edits the new signatures force: `Node.Value` (3 returns) ×5, `font.CharWidth`/`Descent`/`BoundingBox`/`IsUserFont` (errors) ×6, `ctx.CurObj` gone (refgraph's save/restore dropped), `font.UserFontMetrics` registry gone (`registerMetrics` → `font.UserFont`/`ReloadUserFonts`, stampwrite reads `font.UserFont`), `mdpdf.mustWidth` (a panic as v0.13's loud failure; `LineHeight` keeps v0.13's 0). Policy: `Background()` in library code — no request context reaches `pdfread`/`pdfops` — so the C6 pin's "scan that fails on Background() in a handler file" is still owed. `go build`, `go vet`, `go test -run '^$'` clean for linux. First full run (suiterun, 41m50s): **52 tests + 2 panics red**, saved as `memory/instruments/pdfcpu-upgrade/branch-red-P02S01.txt`; the 2 panics hid the rest of two packages, so that list is incomplete — the true red list is the one S02's run records. The deepdive's saved 48 and this 52 differ by 5 new (the `/pending 899` fixture whose premise v0.16 removes; the slice-gate commit-message rule; two restatement guards; gofmt of a file I edited) and 1 green (`TestSplitRegionsReadsThePageOnce`).
 
-#### P02.S02 — Port artifacts
+#### P02.S02 — Port artifacts *(in progress)*
 Refs: D9.
 The user-font reload (`registerMetrics` → `ReloadUserFonts`) breaking OCR and a second
 stamp; `freerefs_test.go`'s `go:linkname` signature; the structure-tree panic after a refusal. **Exit:** no test
