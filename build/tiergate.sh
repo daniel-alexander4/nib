@@ -96,8 +96,10 @@ nib_population() {
 #     one) is always checked, and any listed file that is missing or differs fails;
 #   - NO manifest warns, and under NIB_REQUIRE_TIERS=1 fails: a phase-close run must be able to say which list it read.
 nib_corpus_check() {
-	local list="$1" n i=0 want got p
-	n="$(grep -vc '^[[:space:]]*\(#\|$\)' "$list")"
+	local list="$1" n i=0 want got p sum
+	# A list from a CRLF editor, and a manifest with no final newline, are both ordinary: read the list without \r and
+	# count the manifest by lines, not by newlines.
+	n="$(tr -d '\r' <"$list" | grep -vc '^[[:space:]]*\(#\|$\)')"
 	if [ "$n" -eq 0 ]; then
 		echo "FAIL: the corpus list $list names no documents" >&2
 		exit 1
@@ -107,20 +109,22 @@ nib_corpus_check() {
 			echo "FAIL: no manifest at $list.sha256 (build/pdfcpudiff.sh --manifest $list) and NIB_REQUIRE_TIERS=1" >&2
 			exit 1
 		fi
-		echo "note: no manifest at $list.sha256 — this run cannot say which list it read" >&2
+		echo "corpus: $n listed, NO manifest at $list.sha256 — this run cannot say which list it read" >&2
 		return 0
 	fi
-	if [ "$(wc -l <"$list.sha256")" -ne "$n" ]; then
-		echo "FAIL: the manifest at $list.sha256 holds $(wc -l <"$list.sha256") hashes for $n listed documents" >&2
+	if [ "$(grep -c '' "$list.sha256")" -ne "$n" ]; then
+		echo "FAIL: the manifest at $list.sha256 holds $(grep -c '' "$list.sha256") hashes for $n listed documents" >&2
 		exit 1
 	fi
+	sum="sha256sum"; command -v sha256sum >/dev/null 2>&1 || sum="shasum -a 256" # macOS has the latter
 	while IFS= read -r p; do
 		i=$((i + 1))
 		want="$(sed -n "${i}p" "$list.sha256")"
-		got="$(sha256sum "$p" 2>/dev/null | cut -d' ' -f1)"
+		got="$($sum "$p" 2>/dev/null | cut -d' ' -f1)"
 		if [ "$want" != "$got" ]; then
 			echo "FAIL: listed document $i is missing or differs from its manifest hash" >&2
 			exit 1
 		fi
-	done < <(grep -v '^[[:space:]]*\(#\|$\)' "$list")
+	done < <(tr -d '\r' <"$list" | grep -v '^[[:space:]]*\(#\|$\)')
+	echo "corpus: $n listed, manifest verified" >&2
 }

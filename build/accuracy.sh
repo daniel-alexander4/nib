@@ -26,6 +26,7 @@ cd "$(dirname "$0")/.."
 
 . "$(dirname "$0")/tiergate.sh" # nib_skip
 LIST="${NIB_ACCURACY_LIST:-$HOME/nib/accuracy-corpus.txt}"
+[ -f "$LIST" ] || { [ -z "${NIB_ACCURACY_LIST:-}" ] || { echo "FAIL: NIB_ACCURACY_LIST names $LIST and there is no such file" >&2; exit 1; }; }
 [ -f "$LIST" ] || nib_skip "no accuracy corpus at $LIST (a local list of PDF paths; see this script's header)"
 nib_corpus_check "$LIST"
 command -v node >/dev/null 2>&1 || nib_skip "node not installed; skipping the accuracy harness"
