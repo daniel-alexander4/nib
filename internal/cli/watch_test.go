@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"testing"
 	"time"
 
@@ -120,7 +119,7 @@ func TestTheWatchRefusesToReadThroughASymlink(t *testing.T) {
 	// A fifo is the other non-regular case: O_NOFOLLOW does not refuse it, and a read on
 	// one blocks the whole watch loop with no timeout and no way out but Ctrl-C.
 	fifo := filepath.Join(dir, "pipe.pdf")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+	if err := mkfifo(fifo); err != nil {
 		t.Skipf("cannot create a fifo here: %v", err)
 	}
 	done := make(chan error, 1)
