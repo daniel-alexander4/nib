@@ -64,7 +64,7 @@ func TestTheDigestFallbackWalksThePageTreeOnce(t *testing.T) {
 		}
 		st, err := &digestStats{}, error(nil)
 		took := scaling.TimeOnce(func() { _, err = digestReadContext(ctx, st) })
-		if st.fastPath || err == nil || !strings.Contains(err.Error(), "no page at that number") {
+		if st.fastPath || err == nil || !(strings.Contains(err.Error(), "no page at that number") || strings.Contains(err.Error(), "page not found")) {
 			t.Fatalf("setup: the digest did not take its fallback to the last page (fast path %v, %v)", st.fastPath, err)
 		}
 		return took

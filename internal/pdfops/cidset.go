@@ -33,7 +33,7 @@ import (
 // # Why this does not break PDF/A
 //
 // `/CIDSet` is **required for subset fonts by PDF/A-1 only**; PDF/A-2 dropped it. Nib targets
-// **PDF/A-2b** — `pdfa.go:49` writes `<pdfaid:part>2</pdfaid:part>` and the veraPDF tests assert
+// **PDF/A-2b** — nib's own `xmpPDFA2B` (`pdfa.go`; pdfcpu v0.16.2 has no PDF/A path) writes `<pdfaid:part>2</pdfaid:part>` and the veraPDF tests assert
 // the `2b` flavour — and the Ghostscript path rebuilds font descriptors itself. Checked, not
 // assumed: `TestDroppingCIDSetsKeepsPDFAConformance`.
 //

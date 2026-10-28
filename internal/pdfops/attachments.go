@@ -94,9 +94,9 @@ func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 
 // treeFiles is the name-tree half of embeddedFiles, and it is nib's ONLY listing of that tree: pdfcpu's
 // `ListAttachments` (and every pdfcpu reader built on the same `fileSpecStreamDictInfo` — `ExtractAttachments`,
-// `SearchEmbeddedFilesNameTreeNodeByContent`, `pdfcpu.Info`) nil-dereferences on a filespec with no /EF, which
-// is an ordinary reference to an EXTERNAL file and legal under ISO 32000-1 §7.11.3 (`model/attach.go:155`,
-// measured). `TestNothingAsksPdfcpuWhatIsAttached` holds every other site off those readers.
+// `SearchEmbeddedFilesNameTreeNodeByContent`, `pdfcpu.Info`) FAILS the whole list on a filespec with no /EF (v0.13 nil-dereferenced; v0.16.2 returns "missing embedded file stream", `model/attach.go:197-199`),
+// which is an ordinary reference to an EXTERNAL file and legal under ISO 32000-1 §7.11.3.
+// `TestNothingAsksPdfcpuWhatIsAttached` holds every other site off those readers.
 func treeFiles(xt *model.XRefTable) ([]embeddedFile, error) {
 	entries, err := treeEntries(xt)
 	if err != nil {
