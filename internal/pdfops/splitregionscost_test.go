@@ -58,12 +58,17 @@ func TestSplitRegionsReadsThePageOnce(t *testing.T) {
 	out1, alloc1 := measure(1)
 	out16, alloc16 := measure(16)
 	t.Logf("source %d B; 1 region: %d B out, %d B allocated; 16 regions: %d B out, %d B allocated", len(src), out1, alloc1, out16, alloc16)
+	// Absolute, not only a ratio (D8): one region on this page allocated 81 MB on the release before; the floor is 90 MB.
+	if alloc1 > 90<<20 {
+		t.Errorf("one region allocated %d MB; the floor is 90 MB (the release before: 81 MB)", alloc1>>20)
+	}
 	// The page's image is ~all of the source. Sixteen regions of one page are one image and sixteen small content
 	// streams; the floor of 2× leaves room for those and nothing like a copy per region.
 	if out16 > 2*out1 {
 		t.Errorf("16 regions wrote %d B against %d B for one — the page's resources are carried once per region", out16, out1)
 	}
-	// One read of this page allocates ~5 MB (measured: a read per region added 78 MB over 15 regions), and the
+	// One call on this page allocates ~73 MB on v0.16.2 and 81 MB on the release before (medians of 7, P02.S07; a read per
+	// region adds ~78 MB over 15 regions), and the
 	// fifteen regions past the first cost ~14 MB when the page is read once, whatever the image's size; the old
 	// one-at-a-time merge cost ~120 MB on a page a tenth this size. Eight reads' worth separates them.
 	// Signed: the first call carries a one-time cost of its own, so the sixteen-region run can allocate LESS than the
