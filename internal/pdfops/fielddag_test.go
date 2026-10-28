@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfread"
 )
 
 // `/pending 689` — the field-tree walks a page selection runs are bounded by the number of distinct
@@ -44,7 +47,7 @@ func fieldDAG(k, levels int, ft string) []byte {
 
 func readDAG(t *testing.T, pdf []byte) (*model.Context, types.Dict) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), subsetConf(), nil)
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), subsetConf())
 	if err != nil {
 		t.Fatalf("setup: the fixture does not read: %v", err)
 	}
@@ -157,26 +160,13 @@ func TestDropSignatureWalksTheFieldTreeThroughTheOneDoor(t *testing.T) {
 }
 
 // TestASignatureAtTheEndOfAFieldDAGIsStillErased — the merged walk kept dropSignature's reach: a
-// signature at the bottom of the chain is still found and erased by a page operation.
+// signature at the bottom of the chain is found and erased by a page operation. pdfcpu v0.16.2 refuses a form
+// whose /Kids name one field twice (`ErrFormFieldDuplicate`, `model/recursion.go:43`) before any walk of nib's
+// runs, so through the validated door the property is now a NAMED refusal, `pdfread.ErrNodeNamedTwice`; the
+// walks' own DAG bound is held by the three tests above on the unvalidated read Scan uses.
 func TestASignatureAtTheEndOfAFieldDAGIsStillErased(t *testing.T) {
-	out, err := RemovePages(fieldDAG(4, 12, "Sig"), []string{"2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), subsetConf(), nil)
-	if rerr != nil {
-		t.Fatal(rerr)
-	}
-	root, _ := ctx.XRefTable.Catalog()
-	found := false
-	if form := derefDict(ctx.XRefTable, root["AcroForm"]); form != nil {
-		eachFormField(ctx.XRefTable, form, func(_ types.Object, d types.Dict) {
-			if nameVal(d, "FT") == "Sig" {
-				found = true
-			}
-		})
-	}
-	if found {
-		t.Error("a signature field at the end of a 12-level field DAG survived a page operation")
+	_, err := RemovePages(fieldDAG(4, 12, "Sig"), []string{"2"})
+	if !errors.Is(err, pdfread.ErrNodeNamedTwice) || !errors.Is(err, model.ErrFormFieldDuplicate) {
+		t.Fatalf("a page operation over a 12-level field DAG: %v — want the named refusal pdfread.ErrNodeNamedTwice", err)
 	}
 }

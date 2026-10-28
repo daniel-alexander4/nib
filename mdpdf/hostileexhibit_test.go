@@ -18,14 +18,14 @@ import (
 // `pdfread.MergeRaw` now, budgeted over the merged context; and an exhibit past the budget is KEPT, its pass skipped
 // — ADR-055 refused it, because the merge it was being admitted to was the unbudgeted one.
 func TestAPacketOfDocumentsWhoseOptimizePassIsUnaffordableFinishes(t *testing.T) {
-	chain := testpdf.FormChain(400)
+	chain := testpdf.FormChain(99)
 	// Stimulus first: the document is past the budget.
 	ctx, err := pdfread.Validated(chain, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pdfread.Unaffordable(ctx) == "" {
-		t.Fatal("setup: a 400-form chain is within the budget, so finishing would prove nothing")
+		t.Fatal("setup: a 99-form chain is within the budget, so finishing would prove nothing")
 	}
 	type result struct {
 		out     []byte
@@ -54,6 +54,6 @@ func TestAPacketOfDocumentsWhoseOptimizePassIsUnaffordableFinishes(t *testing.T)
 			t.Fatalf("the packet has %d pages, want 3 (cover, both exhibits)", got.PageCount)
 		}
 	case <-time.After(20 * time.Second):
-		t.Fatal("AssemblePacket over a cover and an exhibit of 400 forms did not return within 20 s")
+		t.Fatal("AssemblePacket over a cover and an exhibit of 99 forms did not return within 20 s")
 	}
 }

@@ -74,7 +74,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	// And the structure tree's `/IDTree`, whose `/Limits` the validator empties past that depth (`/pending 883`).
 	settleIDTree(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
-	err = api.ValidateContext(context.Background(), ctx)
+	err = nameValidatorRefusal(api.ValidateContext(context.Background(), ctx))
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
 		rememberAssociatedFiles(ctx)
