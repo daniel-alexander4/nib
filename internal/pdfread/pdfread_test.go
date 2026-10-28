@@ -126,10 +126,14 @@ func TestSharedReferencesAreRefusedOnlyPastThePathBudget(t *testing.T) {
 		t.Errorf("a pattern shared by two names three levels deep was refused: %v", err)
 	}
 	// A name-tree node named twice is a hard error in v0.16.2 (validate/tree_traversal.go:55-67, "duplicate name tree
-	// node") and cheap to refuse (1 ms at 60 deep, measured), so sharing no longer READS and no longer multiplies.
-	if _, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration()); err == nil ||
-		!strings.Contains(err.Error(), "duplicate name tree node") {
-		t.Errorf("a name tree sharing its kids three levels deep: %v, want pdfcpu's duplicate-node refusal", err)
+	// node") and cheap to refuse (1 ms at 60 deep, measured), so sharing no longer multiplies. nib CARRIES it
+	// (settleNameTrees, D4): the tree is kept out of the validator's sight, the document reads, and the tree is
+	// UNREAD — every reader says so and the write refuses (ADR-164).
+	ctx, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Errorf("a name tree sharing its kids three levels deep was refused: %v, want it read and marked unread", err)
+	} else if len(pdfread.UnreadNameTrees(ctx.XRefTable)) == 0 {
+		t.Error("a name tree sharing its kids three levels deep read, and no tree is marked unread — it would be called empty")
 	}
 	refusedAs(t, pdfread.ErrReferencePaths, "Validated over a name tree sharing its kids 30 deep", func() error {
 		_, err := pdfread.Validated(testpdf.SharedNameTree(30), model.NewDefaultConfiguration())

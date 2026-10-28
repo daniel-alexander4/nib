@@ -9,8 +9,13 @@ import (
 // ErrNodeNamedTwice is the refusal of a document in which one node of a form, a page tree, a structure tree or a
 // name or number tree is reached from two places. pdfcpu v0.16.2's validator refuses it (`model/recursion.go`,
 // `ErrFormFieldDuplicate` and its four siblings) because each such structure is a TREE and a second naming makes
-// the walk multiply; v0.13.0 followed it silently (/pending 898, P02.S04, D4).
+// the walk multiply; the release before followed it silently (/pending 898, P02.S04, D4).
 var ErrNodeNamedTwice = errors.New("it names one node of a list, tree or form from more than one place")
+
+// ErrNestedTooDeep is the refusal of a document nested past pdfcpu v0.16.2's 100 levels (`model/recursion.go:118`:
+// forms in forms, patterns in patterns, fields in fields). It is the VALIDATOR's refusal, named; the reference
+// door's own is `ErrReferenceDepth`, and the two are kept apart so a test can tell which of them spoke.
+var ErrNestedTooDeep = errors.New("it nests one thing inside another more levels deep than nib reads")
 
 // validatorRefusals is how the validator's bounded-walk errors (model/recursion.go) are named. Each is a refusal
 // that exists to bound recursion, a cycle or a size, so each defaults to a NAMED refusal, not a carry (D4, the
@@ -19,7 +24,7 @@ var validatorRefusals = []struct {
 	pdfcpu []error
 	named  error
 }{
-	{[]error{model.ErrMaxRecursionDepthExceeded}, ErrReferenceDepth},
+	{[]error{model.ErrMaxRecursionDepthExceeded}, ErrNestedTooDeep},
 	{[]error{
 		model.ErrFormFieldCycle, model.ErrNameTreeCycle, model.ErrNumberTreeCycle, model.ErrPageTreeCycle,
 		model.ErrStructureTreeCycle, model.ErrFunctionCycle, model.ErrHalftoneCycle, model.ErrMediaClipCycle,

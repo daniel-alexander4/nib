@@ -70,7 +70,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	xfa := xfaIn(ctx)
 	// And each catalog name tree is walked HERE, and one nested deeper than the validator follows is made flat
 	// for it: the validator drops such a tree and says nothing (`nametree.go`, ADR-164).
-	trees := settleNameTrees(ctx)
+	trees, putTrees := settleNameTrees(ctx)
 	// And the structure tree's `/IDTree`, whose `/Limits` the validator empties past that depth (`/pending 883`).
 	settleIDTree(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
@@ -82,6 +82,7 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		rememberNameTrees(ctx, trees)
 	}
 	putBack()
+	putTrees()
 	putAnnots()
 	putPacket()
 	restore()

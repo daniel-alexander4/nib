@@ -157,7 +157,7 @@ func TestAPageOperationOnHostileFormsFinishesAndKeepsEveryForm(t *testing.T) {
 
 // TestFormsNestedPastPdfcpusCapAreANamedRefusal — D4, P02.S04. v0.13 read a chain of 400 forms and the budget
 // existed to survive it; v0.16.2 refuses nesting past 100 levels (`model/recursion.go:118`). The refusal is
-// adopted, and it is NAMED: `pdfread.ErrReferenceDepth`, with pdfcpu's words behind it, never a bare validator
+// adopted, and it is NAMED: `pdfread.ErrNestedTooDeep`, with pdfcpu's words behind it, never a bare validator
 // string. A page operation, Optimize and a read all answer it, and none takes long.
 func TestFormsNestedPastPdfcpusCapAreANamedRefusal(t *testing.T) {
 	for name, pdf := range map[string][]byte{
@@ -166,10 +166,10 @@ func TestFormsNestedPastPdfcpusCapAreANamedRefusal(t *testing.T) {
 	} {
 		var err error
 		finishesWithin(t, 20, "RemovePages over "+name, func() { _, err = RemovePages(pdf, []string{"2"}) })
-		if !errors.Is(err, pdfread.ErrReferenceDepth) || !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
-			t.Errorf("RemovePages over %s: %v — want pdfread.ErrReferenceDepth over pdfcpu's own error", name, err)
+		if !errors.Is(err, pdfread.ErrNestedTooDeep) || !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
+			t.Errorf("RemovePages over %s: %v — want pdfread.ErrNestedTooDeep over pdfcpu's own error", name, err)
 		}
-		if !strings.Contains(fmt.Sprint(err), "too deep") {
+		if !strings.Contains(fmt.Sprint(err), "more levels deep") {
 			t.Errorf("RemovePages over %s: %q does not say what is wrong in nib's words", name, err)
 		}
 	}
