@@ -215,6 +215,13 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := names.Find("EmbeddedFiles"); ok {
 			add("attachment", "medium", "Embedded files attached to the document", 0)
 		}
+	}
+	// Associated files (ISO 32000-2 §14.13, P02.S06): a file the catalog's /AF names need not be in the name tree,
+	// and pdfcpu v0.16.2 writes it. Reported as an attachment, which StripActive and Remove files both remove.
+	if _, ok := root.Find("AF"); ok {
+		add("attachment", "medium", "Associated files attached to the document", 0)
+	}
+	if names := derefDict(xt, root["Names"]); names != nil {
 		// The document's named media clips (`/pending 824`): media no annotation need name. See removeMedia.
 		if _, ok := names.Find("Renditions"); ok {
 			add("media", "medium", "Media clips the document can play (renditions)", 0)
@@ -334,6 +341,9 @@ func Scan(pdf []byte) (ScanReport, error) {
 	if err := eachPage(xt, root, func(page types.Dict, nr int) {
 		if _, ok := page.Find("AA"); ok {
 			add("additionalActions", "medium", "Page additional actions (run on open or close)", nr)
+		}
+		if _, ok := page.Find("AF"); ok {
+			add("attachment", "medium", "Associated files attached to a page", nr)
 		}
 	}); err != nil {
 		return ScanReport{}, err
@@ -1303,7 +1313,42 @@ func removeAllAttachments(ctx *model.Context) error {
 	delete(xt.Names, "EmbeddedFiles")
 	// Files in a tree nib could not read whole go too, and the write is not refused for them (ADR-164).
 	pdfread.ForgetNameTree(xt, "EmbeddedFiles")
+	// **And every associated file** (P02.S06, D6). pdfcpu v0.16.2 writes the catalog's `/AF` and a structure
+	// element's, with the files they name, so a PDF/A-3 file listed in both places was written back in behind the
+	// removal. `/AF` is stripped wherever it sits, and the write is not refused for a page's.
+	dropAssociatedFileKeys(xt)
+	pdfread.ForgetAssociatedFiles(ctx)
 	return nil
+}
+
+// dropAssociatedFileKeys deletes the `/AF` key from every dictionary the document holds — the catalog, pages,
+// structure elements, annotations, form and image dictionaries, inline or indirect — and from nothing else. One
+// pass over the cross-reference table, descending only through direct objects (an indirect one is its own entry).
+func dropAssociatedFileKeys(xt *model.XRefTable) {
+	var strip func(o types.Object, depth int)
+	strip = func(o types.Object, depth int) {
+		if depth > 64 {
+			return
+		}
+		switch v := o.(type) {
+		case types.Dict:
+			delete(v, "AF")
+			for _, c := range v {
+				strip(c, depth+1)
+			}
+		case types.StreamDict:
+			strip(v.Dict, depth+1)
+		case types.Array:
+			for _, c := range v {
+				strip(c, depth+1)
+			}
+		}
+	}
+	for _, e := range xt.Table {
+		if e != nil && !e.Free {
+			strip(e.Object, 0)
+		}
+	}
 }
 
 // errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could

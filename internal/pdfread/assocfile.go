@@ -21,6 +21,11 @@ import (
 // /EmbeddedFiles (PDF/A-3 requires that of every embedded file) is carried whole, so is one a page's file
 // attachment annotation names through `/FS`, and so is a structure element's `/AF`.
 //
+// **v0.16.2 narrows this to the PAGE's key** (P02.S06, D6): its writer now writes the catalog's `/AF` and the files it
+// names (`write.go:382`), so a document whose files only the catalog's `/AF` reaches is written as it stands, and
+// every operation that takes files away on purpose strips `/AF` itself (`pdfops.removeAllAttachments`,
+// `dropAssociatedFileKeys`, then `ForgetAssociatedFiles`). `writePages.go` still has no `AF`, so a page's is refused.
+//
 // **So a document that arrives holding such a file is not written at all**, and the refusal names its cause
 // (`ErrAssociatedFileLost`). The loss is the writer's, and unlike a font the validator took out there is nothing
 // to put back: the objects are in the context and the writer does not reach them.
@@ -43,7 +48,7 @@ import (
 var ErrAssociatedFileLost = errors.New(AssociatedFileRefusal)
 
 // AssociatedFileRefusal is the sentence a user reads; it names the cause and what would have happened.
-const AssociatedFileRefusal = "this document holds an associated file (/AF on the document or on a page) that is not in its list of attachments, and writing a changed copy would delete that file — so nothing was changed"
+const AssociatedFileRefusal = "this document holds an associated file (/AF on a page) that is not in its list of attachments, and writing a changed copy would delete that file — so nothing was changed"
 
 // afOnly holds the contexts read from a document with an associated file only `/AF` reaches. Keyed weakly, as
 // `losses` is: a context nobody writes is collected with its mark.
@@ -60,12 +65,9 @@ var afOnly = struct {
 // 0.37 / 1.0 / 10.5 ms against a validated read of 92 ms / 637 ms / 3.9 s.
 func rememberAssociatedFiles(ctx *model.Context) {
 	xt := ctx.XRefTable
+	// Pages only: v0.16.2 writes the catalog's `/AF` and the files it names (`write.go:382`, measured by
+	// `TestWhatARewriteDoesToAnAssociatedFile`); it still writes no page's (`writePages.go` has no `AF`). P02.S06.
 	var holders []types.Dict
-	if root, err := xt.Catalog(); err == nil && root != nil {
-		if _, ok := root["AF"]; ok {
-			holders = append(holders, root)
-		}
-	}
 	for _, e := range xt.Table {
 		if e == nil || e.Free {
 			continue
@@ -165,4 +167,17 @@ func refuseAssociatedFileLoss(ctx *model.Context) error {
 		return ErrAssociatedFileLost
 	}
 	return nil
+}
+
+// ForgetAssociatedFiles takes the mark off ctx. Its one caller is `pdfops`' `removeAllAttachments`, which strips
+// every `/AF` key from the document before the write (P02.S06, D6): the refusal exists to stop a write from
+// deleting a file the user did not ask to lose, and a removal of every attachment is that ask. Held by
+// `TestForgetAssociatedFilesHasOneNamedCaller`.
+func ForgetAssociatedFiles(ctx *model.Context) {
+	if ctx == nil {
+		return
+	}
+	afOnly.Lock()
+	delete(afOnly.m, weak.Make(ctx))
+	afOnly.Unlock()
 }
