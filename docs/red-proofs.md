@@ -5695,7 +5695,7 @@ passed for the wrong reason rather than a defect the suite missed.
 | proof | check | expects |
 |---|---|---|
 | `a-page-operation-empties-the-bookmark-panel` — the outline is dropped by the selection, as it was from the first `Collect` until /pending 524 | `go test ./internal/pdfops/ -run TestAReorderedDocumentKeepsItsBookmarksPointingAtTheirOwnPages -count=1` | `outline has 0 items, want 3` |
-| `a-dropped-named-destination-takes-the-survivors` — `pruneNames` hands pdfcpu the xref table again, so `Node.Remove` frees each removed destination's object graph | `go test ./internal/pdfops/ -run TestDroppingOneNamedDestinationKeepsTheRest -count=1` | `removing the two that died took the ` |
+| ~~`a-dropped-named-destination-takes-the-survivors`~~ — **retired at the pdfcpu v0.16.2 bump (P02.S04).** The row's mutation passed the xref table to `Node.Remove`; v0.16.2's `removeKid` now preserves the surviving subtree (`model/nameTree.go:555-565`), so the defect no longer reproduces and the test stays green under the mutation (measured). `TestDroppingOneNamedDestinationKeepsTheRest` still guards the prune itself. | — | — |
 
 **The drop was a correct decision that outlived its reason, which is why it needed measuring rather
 than arguing.** `api.Collect` built a fresh context in which every page object number changed, so a
