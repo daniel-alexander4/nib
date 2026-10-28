@@ -442,14 +442,7 @@ func widgetKind(xt *model.XRefTable, d types.Dict) string {
 	case "Sig":
 		return "signature"
 	case "Btn":
-		ff := fieldFlags(xt, d)
-		switch {
-		case ff&(1<<16) != 0: // pushbutton
-			return "button"
-		case ff&(1<<15) != 0: // radio
-			return "radio"
-		}
-		return "check"
+		return buttonKind(fieldFlags(xt, d))
 	}
 	return "text"
 }

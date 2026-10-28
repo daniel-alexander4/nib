@@ -18,12 +18,12 @@ import (
 // object that is not in the file — the shape two of 206 real forms carry (P02.S05, D4).
 func formWithAWidgetWhoseParentIsEmpty() []byte {
 	return testpdf.Assemble(map[int]string{
-		1:  "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 10 Tf 0 g) >> >>",
-		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R 9 0 R] >>",
-		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		6:  "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (before) /DA (/Helv 10 Tf 0 g) /Rect [10 10 150 30] /P 3 0 R >>",
-		9:  "<< /Type /Annot /Subtype /Widget /FT /Tx /T (orphan) /Parent 99 0 R /Rect [10 40 70 60] /P 3 0 R >>",
+		1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 10 Tf 0 g) >> >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R 9 0 R] >>",
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		6: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (before) /DA (/Helv 10 Tf 0 g) /Rect [10 10 150 30] /P 3 0 R >>",
+		9: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (orphan) /Parent 99 0 R /Rect [10 40 70 60] /P 3 0 R >>",
 	})
 }
 

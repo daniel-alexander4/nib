@@ -32,7 +32,20 @@ type formField struct {
 }
 
 // pushButton reports a button that only does something — it holds no value (ISO 32000-1 Table 226, bit 17).
-func (f formField) pushButton() bool { return f.kind == "Btn" && f.flags&(1<<16) != 0 }
+func (f formField) pushButton() bool { return f.kind == "Btn" && buttonKind(f.flags) == "button" }
+
+// buttonKind is the ONE answer to what a button field is, from its `/Ff` flags alone (ISO 32000-1 Table 226: bit 17 a
+// push button, bit 16 a radio button, else a check box) — as pdfcpu v0.16.2 and pdf.js read it, never from how many
+// widgets it has (P02.S05, D5). `widgetKind` (pagemap.go) and `formField.pushButton` both route through it.
+func buttonKind(ff int) string {
+	switch {
+	case ff&(1<<16) != 0:
+		return "button"
+	case ff&(1<<15) != 0:
+		return "radio"
+	}
+	return "check"
+}
 
 // fillable reports a field `nib fill`, the mail-merge and the export are about: one that holds a value a person
 // gives it. A signature is not one, and neither is a push button.
