@@ -278,9 +278,10 @@ the pdfread cluster, pdfops, then uacheck / contentstream / root. The exit is th
 census green) — the two old guards are tripwires only and "green" on them discharges nothing. The pdfread slice precedes S07 (it re-derives
 `contentcost.go` and `optimize.go`, which are the cost-floor logic).
 
-#### P02.S03b — Restatements (D7): `pdfops`
+#### P02.S03b — Restatements (D7): `pdfops` *(done 2026-10-27, branch pdfcpu-v016 `6b8e1a68`; unmerged)*
 Refs: D7.
 The `pdfops` rows of P01.S02's table. **Exit:** every row has a verdict, a v0.16.2 `file:line` and the census green; the turns-green set is named.
+**Built (branch, no VERSION bump).** All 66 `pdfops` rows have a verdict (36 re-cite, 27 re-derive, 3 delete — the three PDF/A rows, pdfcpu v0.16.2 has no `pdfaid`/`injectPDFAMarkers`) and a v0.16.2 cite, read by three agents and then checked by a fourth that opened every re-cite/delete cite: 8 cites were corrected (reachability rows now `write.go:398-470` + `writePages.go`, a direct-dict dereference, a narrowed `/Metadata` claim); two agent objections were rejected on reading (`DereferenceStreamDict`, `Dict.Clone`). The writer still writes only what the catalog and page tree reach, but now also carries unlisted catalog keys (`write.go:393-395`). Turns-green set: `TestAPageThatPdfcpuAnswersAsNothingIsNamed`, `TestTheDigestFallbackWalksThePageTreeOnce` (ErrPageNotFound), `TestASlideshowIsSeenAndStripped` (the spec's `/Resources` dictionary is READ when each script names a `/Type`; typed variant added). **The full `pdfops` package run (26m50s, before these fixes) had 25 reds; 22 belong to S04/S06/S07/S08 and are triaged on `hardening/P02-pdfcpu-upgrade.md`, one (`TestNoOperationAddsAUA1ClauseItsInputDidNotFail`, 7.21.4.2 t2 on StampImages/StampTextLayer) is unattributed.** Not done, declared: the slice's full-suite close gate (S03c's is the next full run), `/redproof` over the three edited tests, the seam-inventory re-check, and six false-claim comments left worded for v0.13 (listed in the hardening file); the verdicts rest on agent reads of v0.16.2 source, no probes.
 
 #### P02.S03c — Restatements (D7): `uacheck`, `contentstream` and the root
 Refs: D7.
