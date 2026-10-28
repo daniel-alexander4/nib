@@ -103,7 +103,7 @@ func wordInk(fontName string, face *sfnt.Font, text string) (advance, bottom, to
 		// the rounding, which a wide box multiplies.
 		cw, cerr := pdffont.CharWidth(context.Background(), fontName, r)
 		if cerr != nil {
-			return 0, 0, 0, false // v0.13 panicked on a font it did not carry; a word nobody can measure is not fitted
+			return 0, 0, 0, false // pdfcpu before v0.16 panicked on a font it did not carry; a word nobody can measure is not fitted
 		}
 		advance += float64(cw) / 1000
 		if bounds.Max.Y > bounds.Min.Y { // sfnt's y runs down

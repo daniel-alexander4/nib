@@ -203,7 +203,7 @@ func resolveCompressed(ctx *model.Context) {
 			_, _ = ctx.Dereference(*types.NewIndirectRef(nr, gen))
 		}
 	}
-	// v0.13 recorded the last dereferenced object in ctx.CurObj, which this pass saved and put back; v0.16 has no such
+	// pdfcpu before v0.16 recorded the last dereferenced object in ctx.CurObj, which this pass saved and put back; v0.16 has no such
 	// field, so there is nothing to put back (a D7 restatement, P02.S03a).
 }
 
