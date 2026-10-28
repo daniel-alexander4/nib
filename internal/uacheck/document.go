@@ -310,12 +310,27 @@ func open(pdf []byte) (*Document, error) {
 	// which is most — while this hook was already looking at the context that still held it. Only the catalog's own
 	// entry is read: looking an object up before the validation can exempt it from it (`fontsTheValidatorLoses`).
 	var form types.Object
-	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, func(parsed *model.Context) func() {
-		if root, rerr := parsed.XRefTable.Catalog(); rerr == nil && root != nil {
-			form = root["AcroForm"]
-		}
-		return setAsideForValidator(parsed)
-	})
+	read := func(withoutTree bool) (*model.Context, error) {
+		return pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, func(parsed *model.Context) func() {
+			if root, rerr := parsed.XRefTable.Catalog(); rerr == nil && root != nil {
+				form = root["AcroForm"]
+			}
+			putBack := setAsideForValidator(parsed)
+			if withoutTree {
+				putTree := setAsideStructureTree(parsed)
+				return func() { putTree(); putBack() }
+			}
+			return putBack
+		})
+	}
+	ctx, err := read(false)
+	// pdfcpu v0.16.2 refuses the whole document over a structure tree that loops or names an element twice
+	// (`ErrStructureTreeCycle`, `ErrStructureTreeDuplicate`, and the parent tree's number-tree twins); the checker
+	// reads that tree itself and reports such a defect as a finding (7.4.4 t1 "lists itself", cannot-check), so it is
+	// read again with the tree out of the validator's sight (P02.S04, D4: carry — nothing here is written out).
+	if err != nil && structureTreeRefusal(err) {
+		ctx, err = read(true)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
