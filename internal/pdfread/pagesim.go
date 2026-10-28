@@ -326,6 +326,12 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 				r := *o.ref
 				pg.Ref = &r
 			}
+			if o.dict == nil {
+				// The walk ran out of tree without reaching the page. v0.13's PageDict answered (nil dict, attrs, nil error)
+				// for it; v0.16.2 answers ErrPageNotFound and no attributes (model/xreftable.go:2562-2564), so a page
+				// the tree does not hold is an error here too (P02.S03a).
+				pg.Err, pg.Attrs, pg.ResourcePath = model.ErrPageNotFound, nil, nil
+			}
 		}
 		out = append(out, pg)
 	}

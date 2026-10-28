@@ -194,7 +194,10 @@ func TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument(t *
 		name, pair    string
 		refusedBefore bool // what the validator says of this pair on its own
 	}{
-		{"Acrobat's migration model", "/State (MigrationNone) /StateModel (MigrationStatus)", true},
+		// v0.16.2's relaxed mode accepts a non-standard StateModel when a State is present (validate/annotation.go:203-236,
+		// :213-222 shows only a spec violation), so this pair is no longer refused on its own: /pending 899's document reads
+		// without the set-aside. The other four shapes below are still refused, and the set-aside still carries them.
+		{"Acrobat's migration model", "/State (MigrationNone) /StateModel (MigrationStatus)", false},
 		{"a model with no state", "/StateModel (Review)", true},
 		{"a state with no model", "/State (Accepted)", true},
 		{"a state the model does not allow", "/State (Accepted) /StateModel (Marked)", true},
