@@ -299,6 +299,19 @@ func TestTheDigestIsUnchangedByTheMemosBudget(t *testing.T) {
 	}
 }
 
+// sameReport is whether two reports agree. A digest agrees only with itself. A REFUSAL agrees with a refusal that says
+// the same thing: v0.16.2's `api.ReadValidateAndOptimize` (the reference walk's door) puts "prepare PDF context:
+// validation error (obj#:N):" in front of the validator's sentence and `pdfread` (the fast walk's) does not, so two
+// walks that refuse the same document for the same reason differ in that prefix (P02.S08). A digest against a refusal
+// never agrees.
+func sameReport(got, want string) bool {
+	if got == want {
+		return true
+	}
+	const e = "ERROR:"
+	return strings.HasPrefix(got, e) && strings.HasPrefix(want, e) && strings.Contains(want, strings.TrimPrefix(got, e))
+}
+
 func short16(s string) string {
 	if len(s) > 16 {
 		return s[:16]
@@ -339,7 +352,7 @@ func TestEveryExternalCorpusDocumentAgreesWithTheReferenceWalk(t *testing.T) {
 			continue
 		}
 		rel, _ := filepath.Rel(root, f)
-		if got, want := reportDigest(b), reportReference(b); got != want {
+		if got, want := reportDigest(b), reportReference(b); !sameReport(got, want) {
 			t.Errorf("%s: fast %s vs reference %s", filepath.ToSlash(rel), got, want)
 		}
 		if _, st, err := contentDigest(b); err == nil && !st.fastPath {

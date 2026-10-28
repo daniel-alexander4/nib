@@ -247,12 +247,17 @@ func TestExtractReadsTheEntryTheDigestExcludes(t *testing.T) {
 	}
 }
 
-// TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt — ADR-080. A record signed under the legacy content-digest rule
-// (rule 5 since ADR-143: every record the previous release wrote) is compared with the number THAT rule computes
-// for the document, at every comparing door: not refused as a skew, which halted the ceremony across every bump
-// before ADR-080, and not compared with the current rule's number, which is a tampering sentence. A real change to
-// the document is still a mismatch under the legacy rule.
-func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
+// TestARecordUnderARetiredDigestRuleIsARecordButNotAHash — D1, P02.S08. Rules 5 and 6 were retired together at the
+// pdfcpu v0.16.2 bump (the rule number is bound into the digest, so this build computes only rule 7). What that means
+// is two different things, and this holds both:
+//
+//   - a RECORD under a retired rule is still a record. `CheckRecord` — identity, roster, signatures, completeness —
+//     accepts it, so a finished ceremony's document keeps its roster verdict, and `ReadMirrorToEnd` reads an
+//     unsigned mirror so the convener can stop it and the close-out can move it (a damaged copy is still caught by
+//     the checksum beside it);
+//   - a DIGEST under a retired rule is never computed. `CheckDocument`, `DocumentHashFor` and `ReadMirror` — the
+//     doors that continue a ceremony — answer "started with an older Nib" (wire code 18), never a mismatch.
+func TestARecordUnderARetiredDigestRuleIsARecordButNotAHash(t *testing.T) {
 	cert, key, cfp := identity(t, "Convener")
 	_, _, afp := identity(t, "A")
 	base, err := testpdf.Text("the lease")
@@ -263,25 +268,60 @@ func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The rule before the current one, by its number: the one earlier rule ADR-080 keeps readable.
-	const legacy = pdfops.ContentDigestVersion - 1
-	if !pdfops.ContentDigestRuleReadable(legacy) {
-		t.Fatalf("setup: this build does not compute rule %d, so no record under it can be checked by it", legacy)
+	now := time.Now()
+	for _, rule := range []int{pdfops.ContentDigestVersion - 2, pdfops.ContentDigestVersion - 1} {
+		t.Run(fmt.Sprintf("rule %d", rule), func(t *testing.T) {
+			if pdfops.ContentDigestRuleReadable(rule) || !pdfops.ContentDigestRuleRetired(rule) {
+				t.Fatalf("setup: rule %d is not a retired rule of this build", rule)
+			}
+			r := draft(t, cfp, afp)
+			r.DocHash = strings.Repeat("0", 64) // another rule's number: never compared
+			r.DigestVersion = rule
+			if err := r.Sign(cert, key); err != nil {
+				t.Fatal(err)
+			}
+			doc, err := Embed(prepared, r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The record: accepted.
+			if _, err := CheckRecord(doc, now); err != nil {
+				t.Errorf("CheckRecord on a record under retired rule %d: %v — want nil", rule, err)
+			}
+			// The hash: the skew, in the direction of the older side, and the wire refusal for it.
+			for door, err := range map[string]error{
+				"CheckDocument":   func() error { _, e := CheckDocument(doc, now); return e }(),
+				"DocumentHashFor": func() error { _, e := DocumentHashFor(doc, r); return e }(),
+			} {
+				if !errors.Is(err, ErrDigestVersion) || !errors.Is(err, p2p.ErrCeremonyRuleRetired) || errors.Is(err, ErrMirrorDamaged) {
+					t.Errorf("%s under retired rule %d: %v — want the older-nib skew and nothing else", door, rule, err)
+				}
+			}
+			root := t.TempDir()
+			if _, err := WriteMirror(root, r, doc); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadMirror(root, r.ID, now); !errors.Is(err, p2p.ErrCeremonyRuleRetired) {
+				t.Errorf("ReadMirror (a door that continues the ceremony) under retired rule %d: %v — want the older-nib skew", rule, err)
+			}
+			// Reading to end: the unsigned mirror is read.
+			if got, _, err := ReadMirrorToEnd(root, r.ID, now); err != nil || got.ID != r.ID {
+				t.Fatalf("ReadMirrorToEnd under retired rule %d: %v — want the record", rule, err)
+			}
+			// And it is moved to ended/ and read back from there.
+			if err := CloseOutMirror(root, r.ID); err != nil {
+				t.Fatalf("CloseOutMirror: %v", err)
+			}
+			if pdf, ended, err := ReadMirrorFor(root, r, now); err != nil || !ended || len(pdf) == 0 {
+				t.Errorf("ReadMirrorFor an ended copy under retired rule %d: ended=%v err=%v", rule, ended, err)
+			}
+		})
 	}
-	hLegacy, err := pdfops.ContentDigestAt(prepared, legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hCurrent, err := DocumentHash(prepared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hLegacy == hCurrent {
-		t.Fatal("setup: the two rules agree on this document, so a comparison under the wrong one would pass too")
-	}
+	// The controls. A rule long gone is a skew even for the reader that ends a ceremony, and a damaged copy is damage
+	// under a retired rule too — skipping the hash must not skip the checksum.
 	r := draft(t, cfp, afp)
-	r.DocHash = hLegacy
-	r.DigestVersion = legacy
+	r.DocHash = strings.Repeat("0", 64)
+	r.DigestVersion = 3
 	if err := r.Sign(cert, key); err != nil {
 		t.Fatal(err)
 	}
@@ -289,34 +329,45 @@ func TestARecordWrittenUnderTheLegacyRuleIsCheckedByIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now()
-	if _, err := CheckDocument(doc, now); err != nil {
-		t.Fatalf("CheckDocument on a legacy-rule record over its own document: %v — want nil", err)
-	}
 	root := t.TempDir()
 	if _, err := WriteMirror(root, r, doc); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ReadMirror(root, r.ID, now); err != nil {
-		t.Fatalf("ReadMirror on a legacy-rule record over its own document: %v — want nil", err)
+	if _, _, err := ReadMirrorToEnd(root, r.ID, now); !errors.Is(err, ErrDigestVersion) {
+		t.Errorf("ReadMirrorToEnd under rule 3: %v — want the skew, a rule long gone is not a retired rule", err)
 	}
-
-	// The control: the same record over a different document is still the tampering sentence, under the legacy rule.
-	other, err := testpdf.Text("the other lease")
+	r2 := draft(t, cfp, afp)
+	r2.DocHash = strings.Repeat("0", 64)
+	r2.DigestVersion = pdfops.ContentDigestVersion - 1
+	if err := r2.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	doc2, err := Embed(prepared, r2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherPrepared, err := p2p.PrepareDocument(other)
-	if err != nil {
+	root2 := t.TempDir()
+	if _, err := WriteMirror(root2, r2, doc2); err != nil {
 		t.Fatal(err)
 	}
-	swapped, err := Embed(otherPrepared, r)
-	if err != nil {
-		t.Fatal(err)
+	dir, _ := MirrorDir(root2, r2.ID)
+	entries, _ := os.ReadDir(dir)
+	damaged := false
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".pdf") {
+			b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+			b = append(b, []byte("%damaged")...)
+			if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			damaged = true
+		}
 	}
-	_, err = CheckDocument(swapped, now)
-	if err == nil || errors.Is(err, ErrDigestVersion) || !strings.Contains(err.Error(), "not the same document") {
-		t.Fatalf("a legacy-rule record over a different document reported %v — want the mismatch sentence", err)
+	if !damaged {
+		t.Fatal("setup: the mirror has no document file to damage")
+	}
+	if _, _, err := ReadMirrorToEnd(root2, r2.ID, now); !errors.Is(err, ErrMirrorDamaged) {
+		t.Errorf("ReadMirrorToEnd of a damaged copy under a retired rule: %v — want ErrMirrorDamaged", err)
 	}
 }
 

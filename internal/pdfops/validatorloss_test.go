@@ -235,7 +235,7 @@ func TestARewriteKeepsTheFontsTheValidatorTakes(t *testing.T) {
 			if !rw.digest {
 				continue
 			}
-			for _, rule := range []int{legacyContentDigestVersion, ContentDigestVersion} {
+			for _, rule := range []int{ContentDigestVersion} {
 				before, err1 := ContentDigestAt(src, rule)
 				after, err2 := ContentDigestAt(out, rule)
 				if err1 != nil || err2 != nil {
@@ -363,7 +363,7 @@ func TestTwoPagesKeepTheirOwnLostFontOfOneName(t *testing.T) {
 			t.Errorf("page %d: /F1 reaches %q after the rewrite, was %q", i+1, got[i]["F1"], want[i]["F1"])
 		}
 	}
-	for _, rule := range []int{legacyContentDigestVersion, ContentDigestVersion} {
+	for _, rule := range []int{ContentDigestVersion} {
 		before, err1 := ContentDigestAt(src, rule)
 		after, err2 := ContentDigestAt(out, rule)
 		if err1 != nil || err2 != nil || before != after {

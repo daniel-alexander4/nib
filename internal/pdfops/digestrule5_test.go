@@ -26,7 +26,7 @@ import (
 // against rule 5 in the same way.
 
 // readableRules is every rule this build computes, oldest first.
-var readableRules = []int{legacyContentDigestVersion, ContentDigestVersion}
+var readableRules = []int{ContentDigestVersion}
 
 // digestsUnder returns the document's digest under each of readableRules, in that order.
 func digestsUnder(t *testing.T, pdf []byte) []string {

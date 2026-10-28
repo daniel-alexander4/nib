@@ -1761,7 +1761,7 @@ func (s *Server) endCeremony(cer *ceremonyID, state string) {
 	if v == nil {
 		return
 	}
-	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	rec, _, err := ceremony.ReadMirrorToEnd(defaultOutputDir(), cer.inv.ID, time.Now())
 	if err != nil {
 		return // no verified record here: nothing to bind an attestation to
 	}
