@@ -153,13 +153,12 @@ func noFormFields(err error) error {
 	return err
 }
 
-// A push button — Print, Reset, Submit — holds no value, so it is nothing to export or fill. pdfcpu has no such
-// kind: it reads every button as a check box, and one with more than one widget as a radio group, whose
-// widgets' appearances it then asks for as dictionaries of states. A push button's appearance is one stream, so
-// the whole export or fill failed on it ("dereferenceDict: wrong type types.StreamDict" — three real forms of
-// 193, `/pending 888`), and where it did not fail the button was listed as a check box nobody can tick. So the
-// button's widgets are taken out of the pages' `/Annots` for the length of pdfcpu's walk, which finds fields
-// from there, and put back.
+// A push button — Print, Reset, Submit — holds no value, so it is nothing to export or fill. pdfcpu v0.13.0 had no
+// such kind: it read every button as a check box, and one with more than one widget as a radio group, whose
+// widgets' appearances it then asked for as dictionaries of states; a push button's is one stream, so the whole
+// export or fill failed on it (three real forms of 193, `/pending 888`). v0.16.2 reads the flags and skips a push
+// button itself (`form/form.go:463-471`, `fill.go:752`), so the button's widgets are kept out of the walk here as
+// belt and braces, and so are widgets whose `/Parent` pdfcpu cannot walk (`unwalkableWidgets`), and put back.
 
 // setPushButtonsAside is pushButtonsAside for a context that is read and thrown away (an export).
 func setPushButtonsAside(ctx *model.Context) { pushButtonsAside(ctx.XRefTable) }
@@ -170,7 +169,7 @@ func pushButtonsAside(xt *model.XRefTable) (putBack func()) {
 	putBack = func() {}
 	fields, err := formFields(xt)
 	if err != nil {
-		return putBack
+		fields = nil // the push buttons cannot be found; a widget pdfcpu cannot walk still can
 	}
 	aside := map[int]bool{}
 	for _, f := range fields {
@@ -186,11 +185,12 @@ func pushButtonsAside(xt *model.XRefTable) (putBack func()) {
 			}
 		}
 	}
-	if len(aside) == 0 {
-		return putBack
-	}
 	root, err := xt.Catalog()
 	if err != nil || root == nil {
+		return putBack
+	}
+	unwalkableWidgets(xt, root, aside)
+	if len(aside) == 0 {
 		return putBack
 	}
 	var undo []func()
@@ -217,11 +217,63 @@ func pushButtonsAside(xt *model.XRefTable) (putBack func()) {
 		page["Annots"] = kept
 		undo = append(undo, func() { page["Annots"] = was })
 	})
+	// pdfcpu's fill and its export of choice fields walk `PageAnnots`, the cache the read built from the same arrays
+	// (`form/fill.go:1368`, `form/form.go:874`), so the widgets leave it for the walk too.
+	for _, pa := range xt.PageAnnots {
+		for _, an := range pa {
+			if an.IndRefs == nil {
+				continue
+			}
+			refs := an.IndRefs
+			was := *refs
+			kept := make([]types.IndirectRef, 0, len(was))
+			for _, r := range was {
+				if !aside[r.ObjectNumber.Value()] {
+					kept = append(kept, r)
+				}
+			}
+			if len(kept) == len(was) {
+				continue
+			}
+			*refs = kept
+			undo = append(undo, func() { *refs = was })
+		}
+	}
 	return func() {
 		for _, u := range undo {
 			u()
 		}
 	}
+}
+
+// unwalkableWidgets adds to aside every page annotation whose `/Parent` chain reaches an empty or unresolvable
+// dictionary (P02.S05, D4). pdfcpu v0.16.2 names a widget's field by walking up its `/Parent` and answers the
+// whole export or fill "corrupt field" at a link that dereferences to nothing (`form/form.go:154-156`); v0.13.0
+// skipped the widget and read the rest. Two of 206 real forms (a 9 MB pair) lost their export to it. The widget is
+// set aside with the push buttons and put back with them, so it is written as it was found. The walk is bounded
+// as `formFields`' is: a `/Parent` chain is the file's to write.
+func unwalkableWidgets(xt *model.XRefTable, root types.Dict, aside map[int]bool) {
+	_ = eachPageAnnots(xt, root, func(_ types.Dict, raw types.Object, _ int) {
+		for _, a := range derefArray(xt, raw) {
+			ir, ok := a.(types.IndirectRef)
+			if !ok {
+				continue
+			}
+			cur := derefDict(xt, ir)
+			for hop := 0; hop < 50 && cur != nil; hop++ {
+				p, has := cur["Parent"]
+				if !has {
+					break
+				}
+				pd := derefDict(xt, p)
+				if len(pd) == 0 {
+					aside[ir.ObjectNumber.Value()] = true
+					break
+				}
+				cur = pd
+			}
+		}
+	})
 }
 
 // ErrOffPageFieldsRemain is RemoveOffPageFields' own check failing: the result still holds a field on no page.
