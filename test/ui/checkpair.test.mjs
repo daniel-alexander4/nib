@@ -53,20 +53,23 @@ const h = await launch();
 const { page } = h;
 after(() => shutdown(h));
 
-// What pdfcpu reads as the field's value in the document now open — its export reads /V. A pdfcpu that
-// lists the pair as two check boxes instead answers the ticked box's on-state, or 'none'.
+// What pdfcpu reads as the field's value in the document now open. v0.16.2 reads this pair, which has no Radio
+// flag, as ONE check box (ADR-174 §4, D5): a boolean, true when /V names any on-state — a Yes and a No both read
+// `ticked`, where v0.13 counted the widgets and listed a radio group naming the state. So this asks the half that
+// still matters: that an answer is STORED. The bug it pins wrote /V Off, which reads `unticked`; WHICH box
+// answered is the window's /AS, and is asserted below from the boxes themselves.
 const storedAnswer = () => page.evaluate(async () => {
   const r = await nibFetch('/api/form-data');
   if (!r.ok) return `HTTP ${r.status}`;
   const form = ((await r.json()).forms || [])[0] || {};
-  const group = (form.radiobuttongroup || []).find((g) => g.name === 'Answer');
-  return group ? (group.value || 'none') : 'not listed';
+  const box = (form.checkbox || []).find((g) => g.name === 'Answer');
+  return box ? (box.value ? 'ticked' : 'unticked') : 'not listed';
 });
 
 test('ticking the second box of a Yes/No pair is the answer the saved file stores', async () => {
   await h.openDocument(DOC, 1);
   await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 2, BOXES);
-  assert.equal(await storedAnswer(), 'Yes', 'setup: the fixture does not open answered Yes, so nothing below is about the change');
+  assert.equal(await storedAnswer(), 'ticked', 'setup: the fixture does not open answered Yes, so nothing below is about the change');
 
   await page.locator(BOXES).nth(1).click();
   // The stimulus: the window shows No ticked and Yes cleared before anything is saved.
@@ -80,8 +83,8 @@ test('ticking the second box of a Yes/No pair is the answer the saved file store
   await h.openDocument(DOC, 1);
   await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 2, BOXES);
 
-  assert.equal(await storedAnswer(), 'No',
-    'the saved file does not store No as the field\'s value (/V) although No was ticked — pdf.js let the box the user did not tick write /V Off');
+  assert.equal(await storedAnswer(), 'ticked',
+    'the saved file stores no answer (/V Off) although No was ticked — pdf.js let the box the user did not tick write /V Off');
   assert.deepEqual(await page.$$eval(BOXES, (els) => els.map((e) => e.checked)), [false, true],
     'the reopened window does not show No ticked');
 });
@@ -98,8 +101,8 @@ test('ticking the first box back is the answer the saved file stores', async () 
   await h.closeDocument();
   await h.openDocument(DOC, 1);
   await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 2, BOXES);
-  assert.equal(await storedAnswer(), 'Yes',
-    'the saved file does not store Yes although Yes was ticked — the No box, saved after it, overwrote /V');
+  assert.equal(await storedAnswer(), 'ticked',
+    'the saved file stores no answer although Yes was ticked — the No box, saved after it, overwrote /V');
 });
 
 test('this file leaves the shared server as it found it', async () => {
