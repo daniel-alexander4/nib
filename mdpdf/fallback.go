@@ -147,6 +147,10 @@ func registerMetrics(name string) error {
 	if err := font.ReloadUserFonts(c); err != nil {
 		return fmt.Errorf("load installed font %s: %w", name, err)
 	}
+	// The reload replaced the set the remembered advances were read from.
+	runeAdvance.Lock()
+	runeAdvance.m = map[runeKey]int{}
+	runeAdvance.Unlock()
 	if _, ok, err := font.UserFont(c, name); err != nil || !ok {
 		return fmt.Errorf("read installed font %s: not found after reload", name)
 	}
