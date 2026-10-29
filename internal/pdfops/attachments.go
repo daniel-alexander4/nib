@@ -545,11 +545,10 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	return digestRule(ctx, sc, st, ContentDigestVersion)
 }
 
-// digestRule is the digest under rule `version` — ContentDigestVersion or legacyContentDigestVersion, which
-// its callers have already checked. **Rule 5's arm is rule 5 byte for byte** (ADR-080): the external and
-// generated goldens are pinned under both rules, because a record written under rule 5 is checked by this
-// arm for as long as rule 5 is readable. The two rules differ in ONE place — which kinds of a page's
-// effective resources are followed (hashEffectivePage).
+// digestRule is the digest under rule `version`, which its callers have already checked is readable
+// (ContentDigestRuleReadable: the current rule only since rule 7, D1 / P02.S08). The `version >= 6` argument to
+// hashEffectivePage is therefore always true; its `everyKind == false` arm is rule 5's and is dead code kept for a
+// later cleanup (ADR-174 Consequences), not a rule this build computes.
 func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int) (string, error) {
 	h := sha256.New()
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first

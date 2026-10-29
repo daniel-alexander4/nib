@@ -510,6 +510,39 @@ func TestTheArrivalGateRoutesThroughTheDeadlineDoor(t *testing.T) {
 		t.Error("checkArrival no longer verifies the record it judges — an unverified Expires is " +
 			"a number a stranger chose")
 	}
+	// CheckRecord ACCEPTS a record under a retired digest rule (a finished ceremony's roster verdict does not need the
+	// digest), and the hash below it runs on hop 1 only, so this call is the only thing that stops hop 2 of a rule-5/6
+	// ceremony being signed on a build that cannot compute its digest (ADR-174 §1, P02 close F04).
+	if !strings.Contains(body, "ceremony.RequireComputableRule(") {
+		t.Error("checkArrival does not route through ceremony.RequireComputableRule: hop 2 and later of a ceremony " +
+			"begun under a retired digest rule would be signed on a build that cannot compute that digest")
+	}
+}
+
+// TestTheEndStateGateReadsTheMirrorToEnd — P02 close F02. Receiving a stopped, declined or expired end state ENDS a
+// ceremony, so its gate asks the record-level question: ReadMirrorToEnd accepts a mirror written under a retired
+// digest rule where ReadMirror refuses it with the skew, and a party holding an unsigned rule-5/6 mirror would
+// otherwise never be able to receive the stop.
+func TestTheEndStateGateReadsTheMirrorToEnd(t *testing.T) {
+	raw, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripLineComments(string(raw))
+	i := strings.Index(src, "func (s *Server) checkDeliveredPayload(")
+	if i < 0 {
+		t.Fatal("setup: checkDeliveredPayload not found — this guard is pinned to a function that no longer exists")
+	}
+	body := funcBodyFrom(src, i)
+	if len(body) < 200 {
+		t.Fatalf("setup: checkDeliveredPayload's body read as %d bytes — the brace matcher is not reading the function", len(body))
+	}
+	if !strings.Contains(body, "ceremony.ReadMirrorToEnd(") {
+		t.Error("checkDeliveredPayload does not read the mirror with ReadMirrorToEnd")
+	}
+	if strings.Contains(body, "ceremony.ReadMirror(") {
+		t.Error("checkDeliveredPayload reads the mirror with ReadMirror, which refuses a retired digest rule as a skew")
+	}
 }
 
 // TestAnUnsignedArrivalIsAnchoredToItsOwnRecord — P08.S03, C04's decoy clause.

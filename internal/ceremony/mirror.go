@@ -320,7 +320,10 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 // attestation. A mirror written under a retired digest rule (5 or 6) is read — its stored bytes are still checked
 // against the checksum beside them, which is what detects a damaged copy — but its document is not compared with the
 // record's DocHash, because this build cannot compute that rule (D1, P02.S08). Every operation that would CONTINUE the
-// ceremony stays on ReadMirror and is refused with the skew.
+// ceremony stays on ReadMirror and is refused with the skew — for an UNSIGNED mirror only: a signed mirror's rule is
+// not checked here at all (its signatures, not DocHash, bind the parties), so continuing a signed ceremony of a
+// retired rule is refused where its document ARRIVES (checkArrival → RequireComputableRule), not on the sending
+// side. That is a declared gap of ADR-174 §1.
 func ReadMirrorToEnd(root, id string, now time.Time) (Record, []byte, error) {
 	dir, err := MirrorDir(root, id)
 	if err != nil {
