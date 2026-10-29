@@ -5,7 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
+
+	"nib/internal/ceremony"
 )
 
 func TestVersionLess(t *testing.T) {
@@ -181,5 +185,79 @@ func TestAssetURLNeverHandsOnANonHTTPURL(t *testing.T) {
 	}
 	if got := assetURL("linux", "amd64", false, good); got != good[1].URL {
 		t.Errorf("standalone: assetURL = %q, want the binary URL", got)
+	}
+}
+
+// An update that strands a ceremony says so, and no other update does (ADR-175). The count rides on the
+// update check only where the update crosses ceremonyFlagDay: a warning on an ordinary update teaches
+// people to ignore it before the one that matters.
+func TestUpdateCheckCountsOpenCeremoniesOnlyAcrossTheFlagDay(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// The stimulus: one proceeding that has not ended is on disk, and the door counts it. Without
+	// this the cases below that expect zero would pass on a machine that holds nothing.
+	_, rec, doc := convenedCeremony(t, 6*time.Hour, strings.Repeat("ab", 32))
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := openCeremonies(); got != 1 {
+		t.Fatalf("setup: openCeremonies() = %d with one unended proceeding on disk, want 1", got)
+	}
+	for _, c := range []struct {
+		current, latest string
+		want            int
+	}{
+		{"2.2.18", "2.3.0", 1},  // the flag day itself
+		{"2.2.18", "2.4.0", 1},  // and past it
+		{"2.2.17", "2.2.18", 0}, // an update that stays below it strands nothing
+		{"2.3.0", "2.4.0", 0},   // from at or above it, nothing is stranded either
+		{"dev", "2.3.0", 1},     // a build with no version is below every release
+	} {
+		stubLatest(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v" + c.latest, "html_url": "https://example.test/rel"})
+		})
+		s := &Server{version: c.current}
+		rec := httptest.NewRecorder()
+		s.handleUpdateCheck(rec, httptest.NewRequest(http.MethodGet, "/api/update/check", nil))
+		var resp updateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if !resp.Available {
+			t.Fatalf("%s -> %s: no update offered, so nothing below is about the warning", c.current, c.latest)
+		}
+		if resp.OpenCeremonies != c.want {
+			t.Errorf("%s -> %s: openCeremonies = %d, want %d", c.current, c.latest, resp.OpenCeremonies, c.want)
+		}
+	}
+	// Up to date: the directory is not read and nothing is said.
+	stubLatest(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "v2.2.18", "html_url": "https://example.test/rel"})
+	})
+	s := &Server{version: "2.2.18"}
+	rec2 := httptest.NewRecorder()
+	s.handleUpdateCheck(rec2, httptest.NewRequest(http.MethodGet, "/api/update/check", nil))
+	var up updateResponse
+	if err := json.NewDecoder(rec2.Body).Decode(&up); err != nil {
+		t.Fatal(err)
+	}
+	if up.Available || up.OpenCeremonies != 0 {
+		t.Errorf("an up-to-date check said %+v, want nothing available and no count", up)
+	}
+}
+
+func TestCrossesCeremonyFlagDay(t *testing.T) {
+	for _, c := range []struct {
+		current, latest string
+		want            bool
+	}{
+		{"2.2.18", "2.3.0", true},
+		{"2.2.18", "2.2.19", false},
+		{"2.3.0", "2.3.1", false},
+		{"1.0.0", "3.0.0", true},
+		{"2.3.0", "2.2.18", false},
+	} {
+		if got := crossesCeremonyFlagDay(c.current, c.latest); got != c.want {
+			t.Errorf("crossesCeremonyFlagDay(%q, %q) = %v, want %v", c.current, c.latest, got, c.want)
+		}
 	}
 }

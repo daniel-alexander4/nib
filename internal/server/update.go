@@ -30,6 +30,20 @@ type updateResponse struct {
 	Available   bool   `json:"updateAvailable"`
 	URL         string `json:"url,omitempty"`         // release page
 	DownloadURL string `json:"downloadUrl,omitempty"` // asset matching this OS/arch, if present
+	// OpenCeremonies is how many proceedings on this machine have not ended, and it is sent ONLY
+	// where this update crosses ceremonyFlagDay (ADR-175): a count, never an id.
+	OpenCeremonies int `json:"openCeremonies,omitempty"`
+}
+
+// ceremonyFlagDay is the first version whose content digest is rule 7 (ADR-174 §1): a ceremony
+// convened on an earlier build cannot be finished on this one, and the earlier build sees a dial
+// refusal that names no cause. An update from below it to at or above it is the only one that
+// strands a ceremony, so it is the only one the update check counts them for (ADR-175).
+const ceremonyFlagDay = "2.3.0"
+
+// crossesCeremonyFlagDay reports whether updating from current to latest passes ceremonyFlagDay.
+func crossesCeremonyFlagDay(current, latest string) bool {
+	return versionLess(current, ceremonyFlagDay) && !versionLess(latest, ceremonyFlagDay)
 }
 
 // **`Managed` was a FIELD here and is now a local (/pending 350, 2026-09-01).**
@@ -70,6 +84,9 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		resp.Available = versionLess(resp.Current, resp.Latest)
 		if resp.Available {
 			resp.DownloadURL = assetURL(runtime.GOOS, runtime.GOARCH, managed, rel.Assets)
+			if crossesCeremonyFlagDay(resp.Current, resp.Latest) {
+				resp.OpenCeremonies = openCeremonies()
+			}
 		}
 	}
 	writeJSON(w, resp)

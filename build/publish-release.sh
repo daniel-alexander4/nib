@@ -32,8 +32,12 @@ tag="v$version"
 if gh release view "$tag" >/dev/null 2>&1; then
   gh release upload "$tag" "$@" --clobber
 else
+  # A version with a hand-written note (docs/release-notes/<version>.md) is published WITH it: the digest
+  # flag day (ADR-175) has to reach the people it strands, and "Nib 2.4.0" tells them nothing.
+  notes=(--notes "Nib $version")
+  [ -f "docs/release-notes/$version.md" ] && notes=(--notes-file "docs/release-notes/$version.md")
   gh release create "$tag" "$@" \
-    --target "$branch" --title "Nib $version" --notes "Nib $version"
+    --target "$branch" --title "Nib $version" "${notes[@]}"
 fi
 
 draft="$(gh release view "$tag" --json isDraft --jq .isDraft)" \

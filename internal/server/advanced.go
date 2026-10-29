@@ -149,24 +149,30 @@ func (s *Server) SeedAdvanced(v *vault.Vault) {
 	})
 }
 
-// hasLiveCeremony reports whether this machine holds a proceeding that has not ended.
+// openCeremonies counts the proceedings this machine holds that have not ended.
 //
 // `ListStored` reads `record.json` and nothing else (P08.S03), and `rearmCeremonies` already walks
 // exactly this list at every unlock — so this costs a directory read the unlock path was making
 // anyway. `Ended` is empty for a running ceremony AND for one whose end nobody has observed, and
-// treating the unknown as live is the right direction here: it errs towards leaving a feature on.
-func hasLiveCeremony() bool {
+// treating the unknown as open is the right direction for both callers: it errs towards leaving a
+// feature on and towards telling a person a ceremony may still be waiting. A record that did not
+// load is counted too — it has not ended either.
+func openCeremonies() int {
 	stored, err := ceremony.ListStored(defaultOutputDir(), time.Now())
 	if err != nil {
-		return false
+		return 0
 	}
+	n := 0
 	for _, st := range stored {
 		if st.Ended == "" {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
+
+// hasLiveCeremony reports whether this machine holds a proceeding that has not ended.
+func hasLiveCeremony() bool { return openCeremonies() > 0 }
 
 // gateRendezvous stamps the advanced-features answer onto a ceremony this server is about to use.
 //
