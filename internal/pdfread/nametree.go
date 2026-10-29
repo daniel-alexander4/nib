@@ -496,3 +496,65 @@ func shapeNameTrees(ctx *model.Context) {
 		root.Kmin, root.Kmax = level[0].Kmin, level[len(level)-1].Kmax
 	}
 }
+
+// setAsideExternalFiles gives each filespec of the catalog's `/EmbeddedFiles` tree that names an EXTERNAL file — a
+// dictionary with no `/EF` — an empty one for the validator, and returns what takes it off again (P02.S04, D4).
+//
+// pdfcpu v0.16.2 refuses a whole document over such an entry ("EmbeddedFiles name tree value: expected matching
+// embedded file stream", `validate/nameTree.go:612`) where v0.13.0 read it; an external reference is legal under
+// ISO 32000-1 §7.11.3 and is not an embedded file at all. The relaxed validator accepts an EMPTY `/EF`
+// (`isEmptyEmbeddedFileSpecification`, `nameTree.go:639`), so the entry is made to look like one for the read and is
+// put back as the file wrote it: nothing nib writes or lists changes, and nib's own listing (`treeFiles`) never asked
+// pdfcpu what was attached. The walk is `walkNameTree`'s, iterative and visited-set bounded, and a tree it could not
+// read whole is left alone (it is already `settleNameTrees`' to set aside).
+func setAsideExternalFiles(ctx *model.Context) func() {
+	noop := func() {}
+	if ctx == nil || ctx.XRefTable == nil {
+		return noop
+	}
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return noop
+	}
+	o, err := ctx.Dereference(root["Names"])
+	if err != nil {
+		return noop
+	}
+	names, ok := o.(types.Dict)
+	if !ok {
+		return noop
+	}
+	to, err := ctx.Dereference(names["EmbeddedFiles"])
+	if err != nil {
+		return noop
+	}
+	td, ok := to.(types.Dict)
+	if !ok || len(td) == 0 {
+		return noop
+	}
+	pairs, _, whole := walkNameTree(ctx, td)
+	if !whole {
+		return noop
+	}
+	var given []types.Dict
+	for _, p := range pairs {
+		v, err := ctx.Dereference(p.v)
+		if err != nil {
+			continue
+		}
+		d, ok := v.(types.Dict)
+		if !ok {
+			continue
+		}
+		if _, has := d["EF"]; has {
+			continue
+		}
+		d["EF"] = types.Dict{}
+		given = append(given, d)
+	}
+	return func() {
+		for _, d := range given {
+			delete(d, "EF")
+		}
+	}
+}
