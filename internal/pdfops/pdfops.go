@@ -2304,12 +2304,14 @@ func addWatermarksWith(pdf []byte, wms map[int][]*model.Watermark, around func(c
 				return err
 			}
 		}
-		restoreCIDSetsOf(ctx, nil) // a second stamp over a face the first one wrote: see restoreCIDSetsOf
-		return around(ctx, func() error {
+		restored := restoreCIDSetsOf(ctx, nil) // a second stamp over a face the first one wrote: see restoreCIDSetsOf
+		err := around(ctx, func() error {
 			return stampInPlace(ctx, func() error {
 				return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(context.Background(), ctx, wms) })
 			})
 		})
+		dropRestoredCIDSets(restored)
+		return err
 	})
 }
 

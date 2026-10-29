@@ -94,7 +94,7 @@ func dropCIDSetsOf(ctx *model.Context, faces []string) {
 // faces — pdfcpu overwrites its content as it adds the glyphs — and dropCIDSetsOf removes it again after the stamp.
 // A descriptor that is not one of `faces` (none named: not a registered user font), or has no embedded TrueType program,
 // is left alone.
-func restoreCIDSetsOf(ctx *model.Context, faces []string) {
+func restoreCIDSetsOf(ctx *model.Context, faces []string) (restored []types.Dict) {
 	only := map[string]bool{}
 	for _, f := range faces {
 		only[f] = true
@@ -137,7 +137,19 @@ func restoreCIDSetsOf(ctx *model.Context, faces []string) {
 		}
 		if ir, err := ctx.XRefTable.IndRefForNewObject(*sd); err == nil && ir != nil {
 			d["CIDSet"] = *ir
+			restored = append(restored, d)
 		}
+	}
+	return restored
+}
+
+// dropRestoredCIDSets takes the `/CIDSet` back off exactly the descriptors restoreCIDSetsOf gave one. The doors that
+// name no faces (plain image and text-layer stamps, OCR) cannot use dropCIDSetsOf for this: with no faces named it
+// removes the stream from EVERY descriptor, the user's own fonts included. Left in place, the empty stream the restore
+// wrote claims a font program with no glyphs (PDF/UA 7.21.4.2 t2 — `TestNoOperationAddsAUA1ClauseItsInputDidNotFail`).
+func dropRestoredCIDSets(restored []types.Dict) {
+	for _, d := range restored {
+		delete(d, "CIDSet")
 	}
 }
 
