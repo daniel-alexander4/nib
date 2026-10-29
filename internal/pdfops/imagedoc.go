@@ -37,7 +37,7 @@ import (
 //
 // # EXIF orientation is applied as a page rotation, not by rewriting pixels
 //
-// **pdfcpu never reads EXIF** — a named search over its Go source (`pdfcpu@v0.13.0/pkg/**.go`,
+// **pdfcpu never reads EXIF** — a named search over its Go source (`pdfcpu@v0.16.2/pkg/**.go`,
 // case-insensitive `exif`) returns nothing — so a phone photo carrying orientation 6 would open
 // sideways unless nib does something. Rotating the pixels means decoding and re-encoding: lossy for
 // a JPEG, and hugely larger for a PNG. A page `/Rotate` is lossless, is one dictionary key, and is

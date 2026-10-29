@@ -19,8 +19,8 @@ import (
 // Every read in nib that wants pdfcpu's consolidated context calls `ReadOptimized` — `pdfops`, the checker
 // (`uacheck.open`, `/pending 714`) and mdpdf's packet — and every place that optimizes a context it built
 // itself (`pdfops.mergeInto`) calls `Optimize`. Both ask
-// `Unaffordable` first. **pdfcpu's optimize pass has no budget of its own** (v0.13.0: no
-// `ResourceLimits` field reaches `optimize.go`), and two of its shapes are hostile:
+// `Unaffordable` first. **pdfcpu's optimize pass has no work budget of its own** (v0.16.2: only `MaxRecursionDepth`, read
+// at optimize.go:1167 for the duplicate walk — grepped; v0.13.0 had no limit at all), and two of its shapes are hostile:
 //
 //   - **The comparison.** `optimizeXObjectForm` compares each form XObject with every cached form of the
 //     same `/Length` through a deep `model.EqualObjects`, which follows `/Resources` into the forms they
@@ -101,9 +101,9 @@ func ReadOptimizedOrRefuseSettingAside(pdf []byte, conf *model.Configuration, as
 // ReadForInspection is `ReadOptimized` without pdfcpu's per-page resource step, for a reader that NEVER writes the
 // context back out — `/pending 754` (the carry gate, where it began) and `/pending 763`.
 //
-// The step (`optimizeResourceDicts`, optimize.go:1592, v0.13.0) calls `PageDict(i, true)` for every page, which on a
-// flat page tree dereferences every kid before the one it wants: quadratic in pages, ~15 s of a 7,059-page document's
-// prepare. (`optimize` now reshapes the tree for the pass so the step is not quadratic — `pagebalance.go`,
+// The step (`optimizeResourceDicts`, optimize.go:1788, v0.16.2) calls `ConsolidatePageResources` (xreftable.go:2670), one walk; in v0.13.0 it called
+// `PageDict(i, true)` for every page, which on a flat page tree dereferenced every kid before the one it wanted: quadratic in pages,
+// ~15 s of a 7,059-page document's prepare (v0.16.2 not re-measured). (`optimize` now reshapes the tree for the pass so the step is not quadratic — `pagebalance.go`,
 // `/pending 825` — but a reader still has no use for what the step does, so it still skips it.) It does two things. It prunes each page's `/Resources` to the names its content uses — a reader that
 // looks names up from the content sees the same objects — and it puts inherited `/Resources` on the page, which a
 // reader of a page's own dictionary does see, so that half is restored here from one `Pages` walk (the nearest
@@ -157,7 +157,7 @@ func readOptimized(pdf []byte, conf *model.Configuration, strict bool, aside fun
 }
 
 // cmdAssumingOptimization is pdfcpu's unexported list of the commands that optimize whatever
-// `conf.Optimize` says (pkg/api/api.go:205, v0.13.0), restated because `ReadOptimized` replaces the function
+// `conf.Optimize` says (pkg/api/api.go:290-298, used at :327, v0.16.2), restated because `ReadOptimized` replaces the function
 // that consults it.
 func cmdAssumingOptimization(cmd model.CommandMode) bool {
 	switch cmd {
@@ -200,11 +200,11 @@ func optimize(ctx *model.Context, strict bool) error {
 // freeReferencePass is `fixFreeReferences`, a variable so a test can see that the pass runs it.
 var freeReferencePass = fixFreeReferences
 
-// fixFreeReferences is pdfcpu's `fixReferencesToFreeObjects` (optimize.go:1412-1528, v0.13.0) done without recursion,
+// fixFreeReferences is pdfcpu's `fixReferencesToFreeObjects` (optimize.go:1722, v0.16.2) done without recursion,
 // ahead of pdfcpu's own — /pending 840.
 //
 // The first step of pdfcpu's pass walks every reference from the catalog, under any key, replacing a reference to a
-// free object with one to a null object. It enters an object once (`ctx.Optimize.Cache`, :1470-1473) and recurses once
+// free object with one to a null object. It enters an object once (`ctx.Optimize.Cache`, :1660-1663) and recurses once
 // per link with no bound: `N 0 obj [N+1 0 R]` chained under a catalog key the validator never reads was a fatal stack
 // overflow at 1,500,000 links (80 MB), which no recover holds. Bounding that depth at the door instead would refuse
 // honest documents: the only bound a door can prove charges everything that names each other back and forth — a page
@@ -316,7 +316,7 @@ func Unaffordable(ctx *model.Context) string {
 	}
 	if e.unnamed != 0 {
 		// pdfcpu's relaxed validator reads `/Subtype 5 0 R` through its reference and passes it; the pass then asks the
-		// dictionary for a NAME and dereferences the nil it gets (`*sd.Subtype()`, optimize.go:697 and :801, v0.13.0) —
+		// dictionary for a NAME and dereferences the nil it gets (`*sd.Subtype()`, optimize.go:697 and :801, v0.13.0; no such call in v0.16.2's optimize.go — grepped, not re-run) —
 		// a runtime panic, which `fault.Catch` hands on (it holds pdfcpu's own `fault.Fail` and nothing else). Two SHA-1
 		// collision PDFs in the Go module cache are written that way — sha1cd's shattered-1.pdf and -2.pdf, the 2 of
 		// its 1,577 PDFs that panicked (/pending 867).
@@ -341,8 +341,8 @@ func Unaffordable(ctx *model.Context) string {
 // duplicateLoop says why pdfcpu's pass would never leave a loop under a font or an image, or "" — /pending 867.
 //
 // For every font or image the pass finds equal to one it has already registered, it marks everything the duplicate
-// names (`calcRedundantObjects` → `traverseObjectGraphAndMarkDuplicates` → `traverse`, optimize.go:1019-1108, v0.13.0)
-// and that walk remembers nothing: a loop under ANY key — one the validator never reads will do — recurses until Go's
+// names (`calcRedundantObjects` → `traverseObjectGraphAndMarkDuplicates` → `traverse`, optimize.go:1019-1108, v0.13.0; v0.16.2: :1254, :1195, :1181)
+// and that walk remembered nothing (v0.16.2 stops it at depth 100, :1167 — the refusal below is kept, unmeasured there): a loop under ANY key — one the validator never reads will do — recurses until Go's
 // stack limit, which is fatal and which no recover holds (measured in a throwaway process: two equal fonts naming
 // `10 0 obj [10 0 R]` under /Foo). The door's depth pass bounds chains, not loops, and it must not refuse loops: a
 // Type 3 font that names itself in its own `/Resources /Font` is a real document.
@@ -406,8 +406,8 @@ func isFont(o types.Object) bool {
 // entries, their widths, their descriptor or their glyph procedures; two that agree this far are taken for equal.
 const dupPrintDepth = 4
 
-// dupPrint is a fingerprint two objects share whenever pdfcpu's `model.EqualObjects` (model/equal.go:51-250, v0.13.0)
-// could call them equal — the comparison that makes one font or image the duplicate of another (optimize.go:274, :486).
+// dupPrint is a fingerprint two objects share whenever pdfcpu's `model.EqualObjects` (model/equal.go:57, v0.16.2; lines below are from v0.13.0 and unchecked)
+// could call them equal — the comparison that makes one font or image the duplicate of another (optimize.go:291, :544, v0.16.2).
 // It restates that comparison to `dupPrintDepth`, and what it cannot restate it leaves out of the hash:
 //
 //   - a reference is read through, so a value and a reference to an equal value print alike;
@@ -699,7 +699,7 @@ func (e *optimizeEstimate) compareUnits() int {
 	return units
 }
 
-// pairSteps counts the steps pdfcpu's `model.EqualObjects` (v0.13.0, model/equal.go) takes comparing a and b, and
+// pairSteps counts the steps pdfcpu's `model.EqualObjects` (model/equal.go:57, v0.16.2; its walk not re-read) takes comparing a and b, and
 // stops counting once *left runs out — `/pending 715`. It mirrors the walk: equal references are equal at once, a
 // pair of object numbers already on the path is equal at once (the ONLY cut on a cycle, which is why two cycles of
 // different lengths are walked to their lcm), and otherwise dictionaries and arrays of one size descend. It errs
@@ -882,10 +882,10 @@ func satMul(a, b int) int {
 }
 
 // passResources is, for each page in order, the resource dictionary pdfcpu's pass starts its walk from
-// (`parseResourcesDict` → `optimizeResources`, optimize.go:910-931, v0.13.0) — /pending 897.
+// (`parseResourcesDict` → `optimizeResources`, optimize.go:1037, :1058, v0.16.2) — /pending 897.
 //
 // **Where the pass's resource step runs (`passInheritsResources`), that is NOT the page's own `/Resources`.** The step
-// (`optimizeResourceDicts`, optimize.go:1592-1607) first puts on every page the dictionary `PageDict(i, true)` builds:
+// (`optimizeResourceDicts`, optimize.go:1592-1607 in the old tree; v0.16.2's is `ConsolidatePageResources`, xreftable.go:2670, not re-compared) first puts on every page the dictionary `PageDict(i, true)` builds:
 // every `/Resources` from the root down to the page WOVEN into one, a deeper name overriding, then cut to the names the
 // page's content uses. Reading the page's own dictionary saw nothing on a page that inherits everything — a real signed
 // contract whose forms sit on its `/Pages` node estimated 0 walk steps while the pass ran 1h35m without finishing;
@@ -949,8 +949,8 @@ func wovenResources(ctx *model.Context, pg Page) types.Dict {
 	return out
 }
 
-// passInheritsResources is pdfcpu v0.13.0's own condition for running the pass's resource step
-// (`optimizeResourceDicts`, optimize.go:1646-1656), restated in ONE place: `passResources` and
+// passInheritsResources is pdfcpu v0.16.2's own condition for running the pass's resource step
+// (`shouldOptimizeResourceDicts`, optimize.go:1841-1846, called at :1865), restated in ONE place: `passResources` and
 // `passDecodesPageContent` both read it, so an upgrade that changes it is a diff here, not two silent holes.
 func passInheritsResources(ctx *model.Context) bool {
 	if ctx.Configuration == nil || ctx.Conf == nil {

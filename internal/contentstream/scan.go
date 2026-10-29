@@ -4,8 +4,8 @@
 //
 // `PLAN-accessibility.md` P05 needs to bracket page content in `BDC`/`EMC` so a structure tree has
 // marked content to point at, and `PLAN-text-reflow.md` P05 needs to replace one text run's bytes.
-// Both are edits to a content stream, and nothing in this repo — or in pdfcpu v0.13.0, which has no
-// content-stream tokenizer and no text extraction at all — could read one.
+// Both are edits to a content stream, and nothing in this repo — or in pdfcpu (v0.13.0 had no content-stream
+// tokenizer and no text extraction; v0.16.2's `model/parseContent.go` only scans a page for resource names, text extraction unchecked) — could read one.
 //
 // # The one design decision, and everything follows from it
 //

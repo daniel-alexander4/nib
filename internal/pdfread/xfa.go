@@ -21,7 +21,7 @@ import (
 // that some readers draw INSTEAD of the pages. nib shows and fills only the pages. Before this door two things
 // happened to the packet, neither of them asked for. pdfcpu's validator deletes the whole `/AcroForm` of a
 // document whose form has no fields — an XFA-only form — before any of nib's code has the context
-// (`validate/form.go` `validateAcroForm`, v0.13.0), and every write then left the catalog's `/NeedsRendering true`
+// (`validate/form.go:983` and `:993`, v0.16.2), and every write then left the catalog's `/NeedsRendering true`
 // behind, telling a reader to build the pages from a form that was gone. And a form holding both kept its packet
 // through every change, so an XFA-aware reader went on drawing what the packet said while nib changed the pages.
 //

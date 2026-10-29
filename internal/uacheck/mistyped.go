@@ -199,7 +199,7 @@ func fontsTheValidatorLoses(ctx *model.Context) []asideEntry {
 			}
 			if ff, ok := v["FontFile3"]; ok {
 				// **`Dereference`, never `DereferenceStreamDict`, before the validation.** The second marks the object
-				// VALID as it returns it (pdfcpu `xreftable.go`, v0.13.0), and the validator skips what is marked — so
+				// VALID as it returns it (pdfcpu v0.16.2 `model/xreftable.go:1214-1216`), and the validator skips what is marked — so
 				// merely looking the stream up that way made the document readable with nothing set aside, an
 				// exemption from validation nobody had chosen. Found by switching the set-aside off and seeing no test
 				// go red.

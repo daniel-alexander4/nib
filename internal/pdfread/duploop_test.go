@@ -53,7 +53,7 @@ const (
 
 // TestALoopUnderAFontOrImagePdfcpuCouldMergeSkipsThePass — /pending 867. For every font or image pdfcpu's optimize
 // pass finds equal to another it follows everything the duplicate names, remembering nothing (`traverse`,
-// optimize.go:1019, v0.13.0), so a loop under a key the validator never reads was a fatal stack overflow — measured in
+// optimize.go:1019, v0.13.0; v0.16.2 depth-bounds it, optimize.go:1167), so a loop under a key the validator never reads was a fatal stack overflow — measured in
 // a throwaway process on the first shape here. The pass is not run over such a document: a reader that only wants the
 // document still gets it, and one whose answer depends on the pass is refused. **Each shape is asked of `Unaffordable`
 // before the pass is ever started**, so a rule that stops refusing fails here as an assertion and not as a dead process.
@@ -144,7 +144,7 @@ func TestAFontThatNamesItselfIsStillOptimized(t *testing.T) {
 
 // TestAnXObjectWhoseSubtypeIsAReferenceSkipsThePass — /pending 867's second note. pdfcpu's relaxed validator reads
 // `/Subtype 20 0 R` through the reference; its optimize pass asks the dictionary for a name and dereferences the nil it
-// gets (optimize.go:697, :801, v0.13.0), a runtime panic. Found on the two SHA-1 collision PDFs in the Go module cache.
+// gets (optimize.go:697, :801, v0.13.0; v0.16.2's optimize.go has no `*sd.Subtype()` — grepped, not re-run), a runtime panic. Found on the two SHA-1 collision PDFs in the Go module cache.
 func TestAnXObjectWhoseSubtypeIsAReferenceSkipsThePass(t *testing.T) {
 	f := fmt.Sprintf(dupHelv, "")
 	indirect := strings.Replace(fmt.Sprintf(dupImage, ""), "/Subtype /Image", "/Subtype 20 0 R", 1)

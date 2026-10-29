@@ -32,7 +32,7 @@ import (
 // # What is true, measured three ways because two of them have been wrong before
 //
 // On a LibreOffice-produced tagged PDF — 4 pages, `/Marked true`, 45 `/StructElem`, every page
-// carrying `/StructParents` — against pdfcpu v0.13.0:
+// carrying `/StructParents` — against pdfcpu v0.13.0 (MEASURED THEN, not re-measured on v0.16.2):
 //
 //	operation              claim  elements  anchored  undescribed pages
 //	Rotate / Optimize      yes    45        45        0            carried

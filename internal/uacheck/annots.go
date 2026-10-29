@@ -104,7 +104,7 @@ func (d *Document) annots() ([]annotSubject, string) {
 			ad := d.dict(a)
 			if ad == nil {
 				// veraPDF drops an entry that is not a dictionary, and so does this — but **nothing reaches
-				// this branch through nib's own reader**, measured on pdfcpu v0.13.0: a dangling reference and
+				// this branch through nib's own reader**, measured on pdfcpu v0.13.0, NOT re-measured on v0.16.2: a dangling reference and
 				// a `null` literal are REMOVED from the array by `ReadValidateAndOptimize` (and the `/Annots`
 				// key with them when the array empties), and an entry resolving to an array makes the
 				// validator refuse the file before any rule runs. It is a declared red-proof survivor rather

@@ -24,7 +24,7 @@ import (
 // `SplitByBookmarks`, `StampTextLayer`, `StampImages`, `FillFormCSV`, `FillFormXFDF`, `ExportFormJSON`, image
 // extraction, `Encrypt`, `RemovePassword` and `RedactPages` (through `MergeRaw`'s closing pass) each ran past 30 s.
 // Restated, each reads once, through `Validated` and the budgeted pass, and then does exactly what the `api`
-// function did with the context (pkg/api, v0.13.0; the line is cited on each). `Encrypt` and `RemovePassword` are
+// function did with the context (pkg/api; the line cited on each was read in v0.13.0 and is NOT re-checked against v0.16.2). `Encrypt` and `RemovePassword` are
 // no longer restated here: they are `pdfops`' rewrite door under the command (`protectRewrite`), over the same
 // `ReadOptimized`, because a password change must drop a conformance identification (`/pending 641`).
 //

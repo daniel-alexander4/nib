@@ -16,6 +16,14 @@ moved first, on its own). With `GOTOOLCHAIN=auto` (the default) an older `go` fe
 nothing on the system; with `GOTOOLCHAIN=local` it stops at the directive. `GOOS=windows go vet ./...` and
 `GOOS=darwin go vet ./...` are clean and stay so: they compile the test files that `TestEveryPlatformCompiles` does not.
 
+**pdfcpu is v0.16.2, as published (ADR-174).** `go.mod` requires it with no `replace`. The content digest is taken over
+pdfcpu's own post-validation graph, so it is **rule 7** (`ContentDigestVersion`), and `digestRulePdfcpu`
+(`internal/pdfops/digestpdfcpu.go`) names the pdfcpu release the rule was measured against: bumping pdfcpu without
+re-running `build/pdfcpudiff.sh` and reading its digest column is a red test, not a silent move of every ceremony's anchor.
+Every place nib restates pdfcpu is a row in `internal/pdfread/restatements.tsv`; read the row, then the v0.16.2 source in
+`$(go env GOMODCACHE)/github.com/pdfcpu/pdfcpu@v0.16.2`, before changing either. Nothing may turn on pdfcpu's network code
+(`TestNibNeverTurnsOnPdfcpuNetworkCode`).
+
 | # | Command | What it verifies |
 |---|---------|------------------|
 | 0 | `go build ./...` | it compiles **for this host** — see the note below |

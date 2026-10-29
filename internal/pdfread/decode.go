@@ -26,7 +26,7 @@ var ErrDecodeLimit = errors.New("the stream decodes to more than nib will read")
 // with a stream's decoded size, and charging it after `sd.Decode()` returns bounds what nib parses and nothing
 // about what it inflated: a few hundred kilobytes of flate inflate to pdfcpu's own ceiling (512 MiB), which
 // measured ~1 s and a ~1.8 GiB peak heap per stream, before a 20 MiB budget could say no. pdfcpu's
-// `DecodeWithLimit` (v0.13.0) applies the limit to EVERY stage of a filter chain: Flate, LZW, RunLength, ASCII85
+// `DecodeWithLimit` (types/streamdict.go:373, v0.16.2; the limit reaches each filter through `NewFilter`, filter/filter.go:67-78; the per-stage behaviour here was measured on v0.13.0 and is not re-read) applies the limit to EVERY stage of a filter chain: Flate, LZW, RunLength, ASCII85
 // and CCITTFax stop while they stream, ASCIIHex and DCT refuse from the size they would produce. A stage that
 // buffers its input first (ASCIIHex, ASCII85, DCT) buffers bytes the previous stage already capped, or the raw
 // stream, which ADR-005 bounds. The length check after it covers what the limit cannot see: a stream decoded

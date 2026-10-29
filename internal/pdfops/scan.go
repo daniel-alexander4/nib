@@ -731,8 +731,8 @@ var mediaAnnots = map[string]mediaAnnot{
 }
 
 // removeMediaAnnots takes every mediaAnnots subtype out of every page's /Annots array — nib's own removal, not
-// pdfcpu's `RemoveAnnotations`, for two reasons read in pdfcpu v0.13.0: its type table (`model.AnnotTypes`) has no
-// `RichMedia`, so the name is taken as an annotation ID and removes nothing; and it works off `ctx.PageAnnots`, which
+// pdfcpu's `RemoveAnnotations`, for two reasons read in pdfcpu v0.13.0 (the first re-checked: v0.16.2's `model.AnnotTypes`, `model/annotation.go:82`, still has no
+// `RichMedia`; the second, on `ctx.PageAnnots`, is not): its type table has no `RichMedia`, so the name is taken as an annotation ID and removes nothing; and it works off `ctx.PageAnnots`, which
 // holds only annotations reached by indirect reference, so a DIRECT media annotation dict survived both tiers. The
 // annotation is unlinked rather than freed: `DeleteObject` follows every key, `/P` included, which names the page.
 // An object nothing names any longer is not written.

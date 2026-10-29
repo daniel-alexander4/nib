@@ -11,9 +11,9 @@ import (
 // The depth pdfcpu recurses through every reference under a font or an image — /pending 840.
 //
 // The two passes before this one follow the edges pdfcpu's VALIDATOR follows. pdfcpu's optimize pass has three walks
-// that follow every reference, whatever key it sits under, one recursion per link and with no bound on depth (v0.13.0):
+// that follow every reference, whatever key it sits under, one recursion per link and with no bound on depth (v0.13.0; the duplicate walk now has one, optimize.go:1167):
 //
-//   - `fixReferencesToFreeObjects` (optimize.go:1526, first step of `OptimizeXRefTable`, :1642), from the catalog. nib
+//   - `fixReferencesToFreeObjects` (optimize.go:1722, first step of `OptimizeXRefTable`, called at :1860, v0.16.2), from the catalog. nib
 //     makes that walk itself, iteratively, and pdfcpu's then does not recurse (`fixFreeReferences`, optimize.go) — so
 //     it needs no bound here, and gets none: see below.
 //   - `traverseObjectGraphAndMarkDuplicates` (optimize.go:1042, with `traverse` :1019; from `calcRedundantObjects`

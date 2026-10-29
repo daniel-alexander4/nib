@@ -156,7 +156,7 @@ func TestAPageOperationOnHostileFormsFinishesAndKeepsEveryForm(t *testing.T) {
 }
 
 // TestFormsNestedPastPdfcpusCapAreANamedRefusal — D4, P02.S04. v0.13 read a chain of 400 forms and the budget
-// existed to survive it; v0.16.2 refuses nesting past 100 levels (`model/recursion.go:118`). The refusal is
+// existed to survive it; v0.16.2 refuses nesting past 100 levels (`model/recursion.go:118`, limit 100 at `model/configuration.go:538`). The refusal is
 // adopted, and it is NAMED: `pdfread.ErrNestedTooDeep`, with pdfcpu's words behind it, never a bare validator
 // string. A page operation, Optimize and a read all answer it, and none takes long.
 func TestFormsNestedPastPdfcpusCapAreANamedRefusal(t *testing.T) {

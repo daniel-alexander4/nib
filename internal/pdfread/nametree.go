@@ -18,7 +18,7 @@ import (
 // ADR-164, `/pending 880`.
 //
 // pdfcpu's relaxed validator walks each tree under the catalog's `/Names` by recursion and gives up on a kid more
-// than `MaxRecursionDepth` (100) nodes down (`validate/nameTree.go:707`, v0.13.0). It does not refuse the
+// than `MaxRecursionDepth` (100) nodes down (`validate/nameTree.go:707`, v0.13.0; v0.16.2 refuses the document instead — `fatalTreeError`, tree_traversal.go:76-78, returned at nameTree.go:1237-1240 — so the rest of this paragraph is v0.13.0's and the walk below is what still reads such a tree). It did not refuse the
 // document: the error is swallowed where the kid was asked for (`:750-756`, `continue`), the upper bound the
 // failed call returned — the empty string — is written over the parent's (`:750`, and into the file's own
 // `/Limits` by `:688-690`), and a tree whose bound is empty is not kept (`validate/xReftable.go:325`). The
