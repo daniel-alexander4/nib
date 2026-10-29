@@ -12,9 +12,9 @@ import (
 // The optimize pass's third estimate — `/pending 748`: the page content the pass DECODES.
 //
 // **The pass is the first decode of a page's content, before any reader of nib's runs**, on the reads that ask it
-// to: `optimizeResourceDicts` (pdfcpu optimize.go:1592, v0.13.0) calls `PageDict(i, true)` for every page, which
-// reaches `consolidateResourcesWithContent` (model/xreftable.go:1981) and so `XRefTable.PageContent`
-// (xreftable.go:1986), decoding every stream of every page's `/Contents` at every naming. Each decode is capped at
+// to: `optimizeResourceDicts` (pdfcpu optimize.go:1788, v0.16.2) calls `ConsolidatePageResources` (xreftable.go:2670), which
+// reaches `consolidateResourcesWithContent` (model/xreftable.go:2337) and so `XRefTable.PageContent`
+// (xreftable.go:2343, defined :2184), decoding every stream of every page's `/Contents` at every naming. Each decode is capped at
 // pdfcpu's 512 MiB and nothing caps the sum, so one stream named many times — by a `/Contents` array, or by many
 // pages — is inflated at each naming. Measured through `ReadOptimizedOrRefuse` on a ~100 KB file naming one
 // 100 MiB flate stream N times: N=1 0.8 s, N=10 8.3 s and 2.6 GiB peak heap, N=40 36.7 s and 9.8 GiB.
@@ -41,17 +41,17 @@ import (
 // `MaxPageContentBytes` — and charged at every naming. And the decode is not repeated: an affordable estimate
 // leaves each decoded stream's bytes on its table entry (`sd.Content`), which pdfcpu's pass then reads instead of
 // decoding again (`DecodeLengthWithLimit` returns a non-nil Content, streamdict.go:436-445). The writer writes
-// `sd.Raw` and never `sd.Content` (writeObjects.go:465), so what is written is unchanged; the price is the
+// `sd.Raw` and never `sd.Content` (writeObjects.go:513, v0.16.2), so what is written is unchanged; the price is the
 // document's decoded page content held for the context's life, which the budget bounds. An unaffordable estimate
 // takes the bytes back off, since no pass will read them.
 
-// passDecodesPageContent is pdfcpu v0.13.0's own condition for decoding page content during its optimize pass,
+// passDecodesPageContent is pdfcpu v0.16.2's own condition for decoding page content during its optimize pass,
 // restated in ONE place so an upgrade that changes it is a diff here, not a silent hole:
 //
-//   - optimize.go:1647-1653 — `optimizeResourceDicts` runs (`passInheritsResources`); it consolidates every page's
+//   - optimize.go:1841-1846, :1865 — `shouldOptimizeResourceDicts` lets `optimizeResourceDicts` run (`passInheritsResources`); it consolidates every page's
 //     resources against its content, decoding it.
-//   - optimize.go:997 — `ctx.OptimizeDuplicateContentStreams` runs `optimizePageContent`, whose
-//     `removeEmptyContentStreams` (optimize.go:69) decodes each content stream to see whether it is empty.
+//   - optimize.go:1101 — `ctx.OptimizeDuplicateContentStreams` runs `optimizePageContent`, whose
+//     `removeEmptyContentStreams` (optimize.go:86, called at :156) decodes each content stream to see whether it is empty.
 func passDecodesPageContent(ctx *model.Context) bool {
 	if ctx.Configuration == nil || ctx.Conf == nil {
 		return true // no configuration to read: assume the pass decodes

@@ -11,8 +11,8 @@ import (
 // TestPdfcpuStillCannotFillAFieldSetInAnEmbeddedFace is `/pending 479`'s gate, and the half that rots.
 //
 // AuthorForm sets field text in Base-14 Helvetica, which fails PDF/UA 7.21.4.1, because the embedded
-// face every other authoring door uses cannot be FILLED: measured, pdfcpu v0.13.0 writes the value as
-// one-byte text against the Identity-H font and v0.15.0 refuses the fill. The fill tests cannot see
+// face every other authoring door uses cannot be FILLED: measured, pdfcpu v0.13.0 wrote the value as
+// one-byte text against the Identity-H font and v0.15.0 refused the fill (v0.16.2 not re-measured; `model/text.go:275-277` still skips the glyph encoding for a fill font). The fill tests cannot see
 // this — they read the value back through the form export, which is right either way — so the
 // observable here is what a reader draws, read out with poppler.
 //

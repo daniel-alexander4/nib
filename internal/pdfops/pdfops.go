@@ -908,7 +908,7 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	return pdfread.MergeRaw(segments)
 }
 
-// PageCount returns the number of pages in the PDF: `api.PageCount` (pkg/api/page.go:213, v0.13.0 — a
+// PageCount returns the number of pages in the PDF: `api.PageCount` (pkg/api/page.go:255-271, v0.16.2 — a
 // validated read, then the context's count) restated over the read door, so the reference door runs
 // on the one parse rather than a second (`/pending 675`, `/pending 764`; see FlagsJSON).
 func PageCount(pdf []byte) (int, error) {
@@ -1182,7 +1182,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	return honest(raw)
 }
 
-// nUpSeparated is `api.NUp` (api/nup.go:95, v0.13.0) for a PDF source, step for step — the same read
+// nUpSeparated is `api.NUp` (api/nup.go:192-251, v0.16.2) for a PDF source, step for step — the same read
 // (`ReadAndValidate`, as `pdfread.Validated`, which puts the reference door inside it as `pdfread.Reader` did in
 // front of it), every page selected, `NUpFromPDF`, the same write (`pdfread.Write`) — with one step added before the
 // composition: `pdfread.SeparateContents`. `NUpFromPDF` builds each sheet's forms from

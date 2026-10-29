@@ -181,8 +181,8 @@ func TestAPageEntryThatIsNotAPageDoesNotRefuseTheDocumentAndIsStillInIt(t *testi
 	}
 }
 
-// TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument — /pending 899. pdfcpu v0.13 accepts only the
-// state models `Marked` and `Review`; Acrobat writes `MigrationStatus` on a migrated comment, and one real document of
+// TestATextAnnotationsStateModelPdfcpuDoesNotKnowDoesNotRefuseTheDocument — /pending 899. pdfcpu v0.13 refused every state model but
+// `Marked` and `Review` (v0.16.2's relaxed mode does not, annotation.go:211-224); Acrobat writes `MigrationStatus` on a migrated comment, and one real document of
 // 2,326 (three sticky notes) was refused by every operation for it. The pair is set aside for the validator and back
 // after it — every Text annotation's pair, a pair pdfcpu knows too (it reads one only to refuse it), so both kinds must
 // come back through a read and a write.

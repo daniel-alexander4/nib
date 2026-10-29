@@ -205,7 +205,7 @@ func TestTheAnnotationRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 		// --- the population --------------------------------------------------------------------
 		{"an annotation written inline in /Annots", annotFixture{elem: annotTag,
 			annots: "[<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] /Contents (a) /StructParent 1 >>]"}, Pass, Pass},
-		// pdfcpu REMOVES a dangling reference from the array before any rule sees it (measured, v0.13.0),
+		// pdfcpu REMOVES a dangling reference from the array before any rule sees it (measured on v0.13.0, not re-measured on v0.16.2),
 		// so this row measures nib's answer over a page that then has no annotations — not the door's
 		// own "a non-dict entry is not a subject" branch, which nib's reader cannot reach.
 		{"a dangling reference in /Annots", annotFixture{annots: "[99 0 R]"}, NotApplicable, NotApplicable},
@@ -1203,7 +1203,7 @@ func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.
 //     DEFINITE branch and reports "the /StructParent names no element", a Fail over a tree nib never
 //     finished reading. `elementForMCID` separates the two for its own array read; this walk did not.
 //
-// **Neither shape can be reached through a file**, measured against pdfcpu v0.13.0: a `/Fields` or a
+// **Neither shape can be reached through a file**, measured against pdfcpu v0.13.0 (not re-measured on v0.16.2): a `/Fields` or a
 // `/Nums` that is present and is not an array is refused by its validator first
 // (`dereferenceArray: wrong type types.Dict`), before any rule runs. That is a fact about the
 // DEPENDENCY, not about nib — the same footing `openMutated` already states — so the state is made in

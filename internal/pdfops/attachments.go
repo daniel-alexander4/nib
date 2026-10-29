@@ -1348,7 +1348,7 @@ var resourceKinds = []string{"Font", "XObject"}
 // # And "Font" was inert
 //
 // `DereferenceStreamDict` type-asserts `types.StreamDict` and errors otherwise (verified in
-// pdfcpu v0.13.0 model/xreftable.go:989). A page `/Font` entry is a font DICTIONARY; the font
+// pdfcpu v0.16.2 model/xreftable.go:1196-1204 and :1218-1220). A page `/Font` entry is a font DICTIONARY; the font
 // program is a stream several levels below, under `/FontDescriptor /FontFile2`. So the old
 // loop `continue`d on every font on every page while the doc claimed fonts were folded in —
 // leaving `/BaseFont`, `/Encoding`, `/Differences` and the embedded program all free to change

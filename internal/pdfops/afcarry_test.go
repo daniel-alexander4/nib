@@ -114,8 +114,8 @@ func associatedFiles(t *testing.T, pdf []byte) (catalog, page, elem string) {
 // TestWhatARewriteDoesToAnAssociatedFile — `/pending 655`, MEASURED on a document that already carries `/AF`.
 //
 // pdfcpu's writer serialises the catalog and each page dictionary whole and then writes what a FIXED LIST of
-// their keys reaches (`write.go:276-322`, `writePages.go:75-102`, v0.13.0). `/AF` is on neither list, so the key
-// is written and the object it names is not. The validator and the optimize pass are not the cause — the objects
+// their keys reaches. On v0.16.2 the catalog's list names `/AF` (`write.go:382`) and the page's does not
+// (`writePages.go:78-110`), so a page's key is written and the object it names is not (measured below). The validator and the optimize pass are not the cause — the objects
 // are in the context after `pdfread.ReadOptimized`, and pdfcpu's own unvalidated read followed by its write loses
 // them the same way — so there is nothing for `pdfread.Write` to put back as it does a font (ADR-129): it refuses
 // the write instead (`pdfread.ErrAssociatedFileLost`), and this test holds both the refusal and the measurement

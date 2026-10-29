@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-// TestTheContentCostGateNamesThePdfcpuItRestates — passDecodesPageContent restates pdfcpu v0.13.0's own
-// condition for decoding page content during its optimize pass (optimize.go:1647-1653, :997). An upgrade that
+// TestTheContentCostGateNamesThePdfcpuItRestates — passDecodesPageContent restates pdfcpu's own
+// condition for decoding page content during its optimize pass (v0.13.0 optimize.go:1647-1653, :997; v0.16.2 :1841-1846, :1101). An upgrade that
 // moves that condition would leave the gate closed on a path that now decodes, and nothing would say so; this
 // fails on the upgrade, so the lines are re-read before it lands (/pending 748). Moved to v0.16.2 on 2026-10-27
 // (P02.S03a): the condition is unchanged (optimize.go:1841-1847).
 func TestTheContentCostGateNamesThePdfcpuItRestates(t *testing.T) {
 	if got := pdfcpuPin(t); got != "v0.16.2" {
-		t.Errorf("go.mod pins pdfcpu %s, and passDecodesPageContent (contentcost.go) restates v0.13.0's "+
-			"optimize.go:1647-1653 and :997 — re-read those lines in %s, update the gate, then this pin", got, got)
+		t.Errorf("go.mod pins pdfcpu %s, and passDecodesPageContent (contentcost.go) restates v0.16.2's "+
+			"optimize.go:1841-1847 — re-read those lines in %s, update the gate, then this pin", got, got)
 	}
 }
 
@@ -25,7 +25,7 @@ func TestTheContentCostGateNamesThePdfcpuItRestates(t *testing.T) {
 // (P02.S03a): the door is KEPT — three annotation-action loops still overflow the stack there.
 func TestTheReferenceDoorNamesThePdfcpuItRestates(t *testing.T) {
 	if got := pdfcpuPin(t); got != "v0.16.2" {
-		t.Errorf("go.mod pins pdfcpu %s, and the reference door (refgraph.go) restates v0.13.0's unguarded "+
+		t.Errorf("go.mod pins pdfcpu %s, and the reference door (refgraph.go) restates the unguarded "+
 			"recursion — re-trace %s's validate/ package, update the edge table, then this pin", got, got)
 	}
 }

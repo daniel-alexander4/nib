@@ -14,7 +14,7 @@ import (
 // An associated file the writer would delete — `/pending 655`, extending ADR-129's door.
 //
 // pdfcpu's writer serialises the catalog and each page dictionary whole and then writes only what a FIXED LIST of
-// their keys reaches (`write.go:276-322`, `writePages.go:75-102`, v0.13.0). `/AF` — an associated file, ISO
+// their keys reaches (v0.16.2: the catalog's list holds `AF` at `write.go:382`, `writePages.go` has none; older line ranges dropped, unchecked). `/AF` — an associated file, ISO
 // 32000-2 §14.13 — is on neither list: after any write a catalog's or a page's `/AF` is still there and the file
 // specification it names is not, unless something the writer does follow names the same object. Measured, and
 // held by `pdfops`' `TestWhatARewriteDoesToAnAssociatedFile`: a specification also entered in /Names

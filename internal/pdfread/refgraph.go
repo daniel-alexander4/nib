@@ -12,7 +12,7 @@ import (
 
 // The reference door — `/pending 764`, ADR-069.
 //
-// pdfcpu v0.13.0's validator recurses through a document's references, and on most chains it remembers nothing it
+// pdfcpu's validator (traced on v0.13.0; v0.16.2 added visit sets and depth checks to the name, number and page trees — tree_traversal.go, xreftable.go:2619 — and the rest is NOT re-traced here) recurses through a document's references, and on most chains it remembers nothing it
 // has visited. Where it does not, three shapes are hostile, and `refuseUnboundedReferences` refuses each before the
 // validator runs:
 //

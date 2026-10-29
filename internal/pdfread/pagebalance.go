@@ -7,7 +7,7 @@ import (
 
 // The optimize pass's per-page resource step, made linear on a flat page tree — `/pending 825`, `/pending 763`.
 //
-// pdfcpu's `optimizeResourceDicts` (optimize.go:1592, v0.13.0) asks `PageDict(i, true)` for every page, and `PageDict`
+// pdfcpu's `optimizeResourceDicts` (optimize.go:1592, v0.13.0) asked `PageDict(i, true)` for every page (v0.16.2's, optimize.go:1788, makes one walk, xreftable.go:2670, so this reshaping may no longer be needed — unmeasured), and `PageDict`
 // walks from the root: at a `/Pages` node it skips a child `/Pages` node whose `/Count` ends before the page, but it
 // must look at every LEAF before the one it wants (`processPageTreeKidForPageDict` dereferences each to read its
 // `/Type`). On a flat tree — what pdfcpu's own writer and nib's Markdown conversion produce — that is n²/2 lookups:

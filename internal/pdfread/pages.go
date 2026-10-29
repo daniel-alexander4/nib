@@ -36,7 +36,7 @@ type Page struct {
 //
 // Every caller was written against `PageDict`'s answer, and several write what they read (a crop, a tab order, a
 // language), so this must never re-decide what a page is. The walk mirrors pdfcpu's own
-// (`processPageTreeForPageDictDepth`, `model/xreftable.go`, v0.13.0) for every page at once, and wherever the two
+// (`processPageTreeForPageDictDepth`, `model/xreftable.go:2458`, v0.16.2; the mirroring was written against v0.13.0 and is not re-compared) for every page at once, and wherever the two
 // could part company it gives up and takes the tolerant walk (pagesim.go), which replays pdfcpu page by page with
 // the work shared between pages (/pending 818):
 //
