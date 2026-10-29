@@ -237,11 +237,11 @@ GODEBUG defaults (`cryptocustomrand`, `httpservecontentmaxranges` read as not ma
 opaque, unmeasured). The README badge ("Go-1.25+") and the CONTRIBUTING build note move to 1.26.
 
 
-### P02 — The port, on branch `pdfcpu-v016` (D3)
+### P02 — The port, on branch `pdfcpu-v016` (D3) *(done 2026-10-29, v2.3.0, merged `b73eb024`; main before the merge `f7c553fa`)*
 Goal: v0.16.2 replaces v0.13.0 with every nib workaround re-read, every new refusal dispositioned, and the digest on rule 7.
 Exit criteria: the P02 close gate below is green on the MERGED tree; `pdfcpudiff.sh` shows only declared moves; each slice closed on its named red→green set.
 
-#### P02.S01 — Mechanical *(done 2026-10-25, branch pdfcpu-v016 `ccb58743`-amended; unmerged)*
+#### P02.S01 — Mechanical *(done 2026-10-25, merged in v2.3.0; branch sha ccb58743 predates the close rebase)*
 Refs: D3, D9.
 go.mod to v0.16.2, drop the fork (D9), thread `context.Context` (the deepdive's edit log
 is the map; it is redone on the current tree, not copied). **Exit:** `go build ./...` and `go vet ./...` clean; the
@@ -257,7 +257,7 @@ vulnerability check. The `x/crypto` raise is why tiers 4 and 6 and the vault tes
 current tree, not the saved file.
 **Built (branch `pdfcpu-v016`, worktree `/home/dan/repos/nib-pdfcpu-v016`, no VERSION bump).** go.mod v0.16.2, `third_party/pdfcpu`, its `replace` and `TestThePdfcpuPatchIsTheCryptFilterLineOnly` removed (D9; the "sixteen walkers' skips" name no pdfcpu path — every `third_party` skip is the digitorus forks', so none was removed). `build/pdfcpuctx.go` (a `//go:build ignore` tool, committed on the branch) threads `context.Background()` from the compiler's own `not enough arguments` diagnostics — 356 + 47 + 18 + … edits over ~500 files, a table of callees that also gained a trailing `nil` (`api.TextWatermark`/`ImageWatermark`/`PDFWatermark` conf; `ReadValidateAndOptimize`/`Optimize`/`Validate` progress options). Hand edits the new signatures force: `Node.Value` (3 returns) ×5, `font.CharWidth`/`Descent`/`BoundingBox`/`IsUserFont` (errors) ×6, `ctx.CurObj` gone (refgraph's save/restore dropped), `font.UserFontMetrics` registry gone (`registerMetrics` → `font.UserFont`/`ReloadUserFonts`, stampwrite reads `font.UserFont`), `mdpdf.mustWidth` (a panic as v0.13's loud failure; `LineHeight` keeps v0.13's 0). Policy: `Background()` in library code — no request context reaches `pdfread`/`pdfops` — so the C6 pin's "scan that fails on Background() in a handler file" is still owed. `go build`, `go vet`, `go test -run '^$'` clean for linux. First full run (suiterun, 41m50s): **52 tests + 2 panics red**, saved as `memory/instruments/pdfcpu-upgrade/branch-red-P02S01.txt`; the 2 panics hid the rest of two packages, so that list is incomplete — the true red list is the one S02's run records. The deepdive's saved 48 and this 52 differ by 5 new (the `/pending 899` fixture whose premise v0.16 removes; the slice-gate commit-message rule; two restatement guards; gofmt of a file I edited) and 1 green (`TestSplitRegionsReadsThePageOnce`).
 
-#### P02.S02 — Port artifacts *(done 2026-10-27, branch pdfcpu-v016 `62914a33`; unmerged)*
+#### P02.S02 — Port artifacts *(done 2026-10-27, merged in v2.3.0; branch sha 62914a33 predates the close rebase)*
 Refs: D9.
 The user-font reload (`registerMetrics` → `ReloadUserFonts`) breaking OCR and a second
 stamp; `freerefs_test.go`'s `go:linkname` signature; the structure-tree panic after a refusal. **Exit:** no test
@@ -267,7 +267,7 @@ panics; OCR and stamping tests green.
 ctx *model.Context) error` (`optimize.go:1722`, read) and a mismatched declaration still LINKS (undefined behaviour, no link error): the declaration
 and the comment ("fails this file's link") are updated as a D7 restatement.
 
-#### P02.S03a — Restatements (D7): the `pdfread` cluster *(done 2026-10-27, branch pdfcpu-v016 `85ecdc4e`; unmerged)*
+#### P02.S03a — Restatements (D7): the `pdfread` cluster *(done 2026-10-27, merged in v2.3.0; branch sha 85ecdc4e predates the close rebase)*
 Refs: D7.
 Work P01.S02's table. Expected heaviest: `pdfread/optimize.go` (10 citations),
 `contentcost.go`, `pdfread.go`, the set-asides, `pagesim.go`, the reference door. **Exit:** every row has a verdict;
@@ -278,17 +278,17 @@ the pdfread cluster, pdfops, then uacheck / contentstream / root. The exit is th
 census green) — the two old guards are tripwires only and "green" on them discharges nothing. The pdfread slice precedes S07 (it re-derives
 `contentcost.go` and `optimize.go`, which are the cost-floor logic).
 
-#### P02.S03b — Restatements (D7): `pdfops` *(done 2026-10-27, branch pdfcpu-v016 `6b8e1a68`; unmerged)*
+#### P02.S03b — Restatements (D7): `pdfops` *(done 2026-10-27, merged in v2.3.0; branch sha 6b8e1a68 predates the close rebase)*
 Refs: D7.
 The `pdfops` rows of P01.S02's table. **Exit:** every row has a verdict, a v0.16.2 `file:line` and the census green; the turns-green set is named.
 **Built (branch, no VERSION bump).** All 66 `pdfops` rows have a verdict (36 re-cite, 27 re-derive, 3 delete — the three PDF/A rows, pdfcpu v0.16.2 has no `pdfaid`/`injectPDFAMarkers`) and a v0.16.2 cite, read by three agents and then checked by a fourth that opened every re-cite/delete cite: 8 cites were corrected (reachability rows now `write.go:398-470` + `writePages.go`, a direct-dict dereference, a narrowed `/Metadata` claim); two agent objections were rejected on reading (`DereferenceStreamDict`, `Dict.Clone`). The writer still writes only what the catalog and page tree reach, but now also carries unlisted catalog keys (`write.go:393-395`). Turns-green set: `TestAPageThatPdfcpuAnswersAsNothingIsNamed`, `TestTheDigestFallbackWalksThePageTreeOnce` (ErrPageNotFound), `TestASlideshowIsSeenAndStripped` (the spec's `/Resources` dictionary is READ when each script names a `/Type`; typed variant added). **The full `pdfops` package run (26m50s, before these fixes) had 25 reds; 22 belong to S04/S06/S07/S08 and are triaged on `hardening/P02-pdfcpu-upgrade.md`, one (`TestNoOperationAddsAUA1ClauseItsInputDidNotFail`, 7.21.4.2 t2 on StampImages/StampTextLayer) is unattributed.** Not done, declared: the slice's full-suite close gate (S03c's is the next full run), `/redproof` over the three edited tests, the seam-inventory re-check, and six false-claim comments left worded for v0.13 (listed in the hardening file); the verdicts rest on agent reads of v0.16.2 source, no probes.
 
-#### P02.S03c — Restatements (D7): `uacheck`, `contentstream` and the root *(done 2026-10-27, branch pdfcpu-v016 `d6e0fba5`; unmerged)*
+#### P02.S03c — Restatements (D7): `uacheck`, `contentstream` and the root *(done 2026-10-27, merged in v2.3.0; branch sha d6e0fba5 predates the close rebase)*
 Refs: D7.
 The remaining rows. **Exit:** as S03b; the table has no row without a verdict.
 **Built (branch, no VERSION bump).** The last 24 rows have verdicts: the table is 167 rows, 117 re-cite, 43 re-derive, 7 delete, **0 pending**; both census guards green. Verdicts rest on agent reads of v0.16.2 source (no probes); several carry a half-claim the reader marked UNREAD (listed per row in the cite). Substantive changes found: inline-image `/L` is trusted (`parseContent.go:200-218`), a bad `/AP` entry is deleted in relaxed mode, no clause fails a CIDFontType2 for a missing `/CIDToGIDMap`, an indirect `/P` dereferences, the structure-tree root `/K` refusal is strict-mode only. Package runs: contentstream and p2p green; `uacheck` 9 and `mdpdf` 1 red, **all ten new validator refusals — S04's**, triaged on `hardening/P02-pdfcpu-upgrade.md`; S03c turns nothing green. **Not done, declared:** the full-suite close gate (the branch is red by design until S04-S08; it runs at S04's close), `/redproof` (no test edited in this slice), the inventory re-check.
 
-#### P02.S04 — New refusals (D4) *(done 2026-10-28, branch pdfcpu-v016 `7648e204`; unmerged)*
+#### P02.S04 — New refusals (D4) *(done 2026-10-28, merged in v2.3.0; branch sha 7648e204 predates the close rebase)*
 Refs: D4.
 The ~25 kinds: the 100-level `traverse` cap (deep form chains, field DAGs), an
 embedded-file entry with no `/EF` (external file specifications), ADR-164's deep/unread name trees (now fatal even
@@ -299,7 +299,7 @@ v0.16 verdict count is at least as large or each lost document is named; the clo
  **Exit:** each kind dispositioned in
 the seam inventory; uacheck's veraPDF-agreement tests at their v0.13 counts; population scan 0 newly refused.
 **Built (branch, no VERSION bump).** Eleven refusal kinds dispositioned (`instruments/pdfcpu-upgrade/S04-refusals.md`): carry for name trees past the walk budget, external-file filespecs (empty `/EF` for the validator only), the checker's mistyped `/Widths`, ExtGState `/Font` and MediaClip `/Alt`, and the structure tree (checker only); refuse-named for nesting past 100 (`ErrNestedTooDeep`), reference cycles (`ErrReferenceCycle`) and duplicate nodes (`ErrNodeNamedTwice`), each over pdfcpu's own words (`pdfread/refusal.go`); adopt for the Bookmark kid (strict-mode only upstream) and the media rendition `/P`, with the fixtures fixed. Measured: uacheck veraPDF agreement 73,605 of 73,605 pairs over 701 documents on both trees; population scan **0 newly refused** over 2,021 documents (documents 704 and 1837 dropped from a scratchpad copy of the list, 704 absent, 1837 hangs v0.13, `/pending 897`); 35 rows differ, 24 of them `digest6` moves for S08. Also fixed: an empty CIDSet left behind by S02's restore (`dropRestoredCIDSets`). The first close gate was red on five unexpected tests (notices regenerated; 3 restatement rows added, 4 moved; two typed reads moved into `uacheck/document.go`'s door; one red proof retired because v0.16.2's `Node.Remove` preserves the surviving subtree, measured green under the mutation, `recorded` 604 → 603); the re-run (`83523415fd3a`, 33m15s) is red only on the five tests that belong to later slices: S06 `TestWhatARewriteDoesToAnAssociatedFile`, S07 `TestAPageOfManyWordsIsNotDeflatedOncePerWord`, S08 the two digest golden tests and `TestEveryExternalCorpusDocumentAgreesWithTheReferenceWalk`. **Declared gaps:** the gate-fix commit has had no independent review, nor has the S02 to S04 diff (owed with the P02 close `/code-review`); no `/redproof` run over S03b/S04 tests; verdicts rest on source reads; the `facts` change at population index 1886 is not investigated; eleven comments still word a false claim for v0.13.
-#### P02.S05 — Forms (D5) *(done 2026-10-28, branch pdfcpu-v016 `432716fa`; unmerged)*
+#### P02.S05 — Forms (D5) *(done 2026-10-28, merged in v2.3.0; branch sha 432716fa predates the close rebase)*
 Refs: D5.
 Radio by `Ff`; re-key ADR-172, `heldOptionValues`, formrt; the document (#164) v0.16 can
 no longer export. **Exit:** `build/formrt.sh` on the 203-document list: every value read and written back as on
@@ -308,7 +308,7 @@ v0.13, with the reclassification as the only declared move.
 #13 (list and combo fills change) — see D5's pin; "the only declared move" is replaced by that list.
 **Built (branch, no VERSION bump).** `build/formrt.sh` on a rebuilt 206-document list (`~/nib/formrt-corpus.txt`; the 203-list was not on disk), v0.13 (main) against the branch: 83 forms read both ways and 9,633 fields on no page, equal; 10 of 206 documents differ, **all declared**: 133 multi-widget check boxes in 9 documents (radio 180 → 47 on the window side, now "checkbox: several widgets", and pdfcpu → window they read and write back as check boxes, 0 wrong) and #13's list boxes (the v0.13 fill refusal is gone; 4 list values read back as another value). **One undeclared move found and fixed:** 2 forms of ~9 MB lost their export, because v0.16.2 answers "corrupt field" at a widget whose `/Parent` reaches nothing (`form/form.go:154-156`) where v0.13 skipped it; carried by `unwalkableWidgets` (the widget leaves `/Annots` and pdfcpu's `PageAnnots` cache for the walk and is put back; `TestAWidgetWhoseParentIsEmptyDoesNotEndTheExport`, three mutations red). The S04 population scan could not see it (no form export). `buttonKind(ff)` is the one answer for push button / radio / check box (`widgetKind` and `formField.pushButton` route through it). With the push-button half of `pushButtonsAside` off the formrt rows are identical on all 206 documents (v0.16.2 skips push buttons itself): kept as belt and braces, retiring it needs a superseding ADR (S09). ADR-172's patch is pdf.js-side and kept (argued from source; `test/ui/checkpair.test.mjs` not run). Gate (fp `07223b99246e`, 39m30s): red on the five later-slice tests plus `TestSplitRegionsReadsThePageOnce`, a latent flake (unsigned allocation difference wrapped when the 16-region run allocated less than the 1-region run; fixed, 8/8 green, a read-per-region mutation red at 1.16 GB). **The gate was not re-run after that test-only fix** (recorded assumption; S06's gate re-certifies it). One read of the 4 MB page now allocates ~77 MB against the comment's ~5 MB: S07's evidence. Tiers 4 and 6 did not fire (no `internal/server` session/ceremony/delivery/discovery, `p2p` or `rendezvous` change). Declared: no independent review of the S05 diff (owed with the whole-branch `/code-review`).
 
-#### P02.S06 — `/AF` (D6) *(done 2026-10-28, branch pdfcpu-v016 `55a6c100`; unmerged)*
+#### P02.S06 — `/AF` (D6) *(done 2026-10-28, merged in v2.3.0; branch sha 55a6c100 predates the close rebase)*
 Refs: D6.
 **Exit:** a test per door — remove-attachments, extract, redaction — that the removed
 file is reachable from nothing, red on the unstripped writer.
@@ -322,7 +322,7 @@ put through remove-attachments, leaves no filespec object and no /EF stream; (6)
 extract (`ExtractAttachment` removes nothing).
 **Built (branch, no VERSION bump).** Measured red first: pdfcpu v0.16.2 writes the catalog's `/AF` and the files it names (`write.go:382`), so remove-files and sanitize left the catalog's and a structure element's file reachable from the trailer whenever a PDF/A-3 file was listed in both `/EmbeddedFiles` and `/AF`. `removeAllAttachments` (the one door both reach) now strips `/AF` from every dictionary (`dropAssociatedFileKeys`) and clears the read mark (`pdfread.ForgetAssociatedFiles`, one named caller, held by `TestForgetAssociatedFilesHasOneNamedCaller`); a document whose files only `/AF` reaches goes through the removal instead of being refused. The write refusal narrows to a **page's** `/AF` (`writePages.go` still has no `AF`); the catalog's alone is written as it stands. The scan reports `/AF` under the existing `attachment` kind (already removed by `StripActive`, so `TestEveryScanKindIsStrippedOrNamedAsLeft` needed no new row). One graph-walk test per door (RemoveFilesAndMedia, StripActive, Collect, RedactPages, SplitPage, SplitRegions): extract and redaction were already clean (allowlist and structure strip), only the removal doors leaked. Mutation-probed: strip, forget, allowlist, element strip and a second caller each red. `TestWhatARewriteDoesToAnAssociatedFile` re-derived and green. Gate (fp `3c148f4a6b0f`, 41m36s): red on the four later-slice tests (S07 `TestAPageOfManyWordsIsNotDeflatedOncePerWord`; S08 the two digest goldens and `TestEveryExternalCorpusDocumentAgreesWithTheReferenceWalk`) and two `internal/server` ceremony timing tests (`TestADeclinedSpokenCheckSpendsTheArm`, `TestAnAbandonedConnectionIsFollowedByAWorkingSession`: a 10 s and a 15 s wait for the spoken check, both at 07:30 while `pdfops` ran; green twice alone, in a package this slice did not touch: recorded as load flakes, not credited as proof). This run also re-certifies S05's test-only fix. Tiers 4 and 6 did not fire. Declared: `SplitPage`/`SplitRegions` may still answer the refusal for a listed page file (the mark does not follow into the new document); the S06 diff has had no independent review (owed with the whole-branch `/code-review`); rule 7's `/AF` hashing is S08's.
 
-#### P02.S07 — Cost (D8) *(done 2026-10-29, branch pdfcpu-v016 32b770ef; unmerged)*
+#### P02.S07 — Cost (D8) *(done 2026-10-29, merged in v2.3.0; branch sha 32b770ef predates the close rebase)*
 Refs: D8.
 **Exit:** every cost floor at its v0.13 value or better, measured both builds.
 **(plan-review pin: performance/QA, 2026-10-25)** Per D8's pin: absolute v0.13 numbers recorded first (the stamp / `SplitRegions` floors are
@@ -332,7 +332,7 @@ the mitigation shown to Dan before it is built. "Or better" is replaced by the a
 
 **Width cache (Dan's go, 2026-10-29, option A via /discuss).** `runeWidths` (`ocrfit.go`) holds `font.CharWidth` per rune and `font.Descent` per size for one `StampTextLayer` call and is dropped with it; nil asks pdfcpu as before (the page-map reader's `fittedInk` keeps that). A CPU profile of the 600-word stamp puts `fitWord` at 21% before and 4% after. `TestStampingSixHundredWordsIsNotSlowerThanItWas` is un-skipped: green with the cache and red (best of 5 over 600 ms) with `var widths *runeWidths` in its place, both at load ~16; the prototype measured held 242 ms at load 5-6. **Declared:** no quiet-machine median was taken after the build (load never fell under 5 in 20 minutes); the `SplitRegions` 22 to 46 ms move did not reproduce in the prototype and is read as load noise, unresolved; `fittedInk` per run still clones per rune. Per-commit tier: `pdfops` and `pdfread` whole packages green (`-timeout 90m`); tiers 4/6 did not fire (`internal/pdfops` only).
 
-#### P02.S08 — Digest rule 7 (D1) *(done 2026-10-29, branch pdfcpu-v016 bbde337f; unmerged)*
+#### P02.S08 — Digest rule 7 (D1) *(done 2026-10-29, merged in v2.3.0; branch sha bbde337f predates the close rebase)*
 Refs: D1.
 `ContentDigestVersion` 7; rules 5/6 retired via `digestSkew`; goldens regenerated
 under 7 only (`-v5`/`-v6` goldens never regenerated — they become the retired rules' record); new ADR.
@@ -364,7 +364,7 @@ abandoned-connection tests), all four green alone on the same tree; the two reco
 **Declared gaps:** pin 1 per-file causes; pin 2 fixtures and the N-process determinism run; `endCeremony` visible failure; the comparison instrument not re-run on
 the rule-7 tree; the dead rule-5 branch in `hashEffectivePage`; the ADR is written at the merge (S09 / P02 close).
 
-#### P02.S09 — Pins and docs *(done 2026-10-29, branch pdfcpu-v016 45e095da; unmerged)*
+#### P02.S09 — Pins and docs *(done 2026-10-29, merged in v2.3.0; branch sha 45e095da predates the close rebase)*
 Refs: D1, D7, D9.
 `contentcostpin`, notices, the red-proof table rows that staled, every ADR citing v0.13
 behaviour (superseded, not edited), `CLAUDE.md`, `CONTRIBUTING.md`.
@@ -383,6 +383,8 @@ the `sign.Verify` verdict is identical on v0.13 and v0.16 except declared rows, 
 ~25 new refusals can turn a signed file `Invalid`/`Unchecked` with no digest move; `verify.go:925-943`); the live-unreachable-object count is
 unchanged across sanitize, extract and split on the corpus; any instrument that skips fails the close. The branch is rebased before this gate, never after.
 
+
+**P02 close — built 2026-10-29 (merged `b73eb024`, v2.3.0; revert target `f7c553fa`, `git revert -m1`).** Phase review: six scoped agents, 0 critical, 15 warnings; F01/F02/F04/F08 fixed, F06 in part, F03 corrected as a doc change, the rest filed (/pending 919, 920); redproof of 54 conditions, 40 red, 12 distinct survivors, 3 closed by tests, 9 filed (920). Rebased once (24 commits, no overlap) BEFORE the gate. Gate on the final tree (fp `42b5830a3044`): Go suite OK 22m04s; tier 2 858 tests, tier 3 264 (2 skipped by design); tier 4 over both transports, 4d `-n 4` and tier 6 31/31 green; `formrt.sh` (206 documents), `accuracy.sh` (19, identical in every leaf but the timestamp) and `pdfcpudiff.sh` (2,022 of 2,022 read on both trees; `sign.Verify` verdict, fields and page maps identical; no document newly refused) show only declared moves — detail `memory/instruments/pdfcpu-upgrade/P02-close-gate.md`. **Found at the close by instruments the per-commit tier does not run, and fixed on the branch:** (1) the Markdown converter was 4x slower (v0.16.2's `font.CharWidth` clones the whole face per call; a per-rune advance cache in `mdpdf` restores 2m35s on a 22 MB fixture); (2) `checkpair.test.mjs` read a v0.13 radio group — v0.16.2 exports the Yes/No pair as one check box (`Yes` for either box), now declared in ADR-174 §4; (3) the `pdfcpudiff.sh` selftest was vacuous once rule 6 stopped being computed (a `digestcur` column) and gained an `opsunreach` column for the unreachable-object criterion (one benign extra Font dictionary after sanitize in 1 document of 2,022). Declared gaps carried: the digest column cannot compare rules 6 and 7; the largest document needs `NIB_PDFCPUDIFF_TIMEOUT=30m`; tiers 2-3 need a `node_modules` in the worktree.
 
 ### P03 — After the merge, on main
 Goal: the port ships, or waits, on Dan's word.
