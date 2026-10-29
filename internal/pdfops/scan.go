@@ -584,10 +584,10 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// A tree nib could not read whole is removed all the same — the validator took it out of the context and
 		// the write leaves it out — so the write is not refused for it (`pdfread/nametree.go`, ADR-164).
 		pdfread.ForgetNameTree(xt, "JavaScript")
-		// A slideshow, and its parsed copy for the same reason (`/pending 864`). Only the shape pdfcpu's
-		// validator accepts gets this far — /Resources as an array; the name tree ISO 32000-1 Table 273 gives
-		// is refused at the read (`validate/nameTree.go:467`, v0.13.0), so such a document is refused whole
-		// and never returned as stripped (`TestASlideshowIsSeenAndStripped`).
+		// A slideshow, and its parsed copy for the same reason (`/pending 864`). v0.13.0 took /Resources as an
+		// array only; the name tree ISO 32000-1 Table 273 gives was refused (`validate/nameTree.go:467`, v0.13.0)
+		// and v0.16.2 reads it when each script names a /Type (`nameTree.go:729`); a document it still refuses is
+		// refused whole, never returned as stripped (`TestASlideshowIsSeenAndStripped`).
 		if names := derefDict(xt, root["Names"]); names != nil {
 			dropKey(xt, names, "AlternatePresentations")
 		}
@@ -1289,8 +1289,7 @@ func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Contex
 //
 // **It does not ask pdfcpu what is attached first** (`/pending 812`). It used to call `ListAttachments` and read
 // any error as "nothing attached", so a tree pdfcpu could not list stayed and the removal succeeded; and a
-// filespec with no /EF — an ordinary reference to an EXTERNAL file, legal under §7.11.3 — does not error there
-// but nil-dereferences (`attach.go:155`, measured), so the removal panicked instead. Removing the files is the
+// filespec with no /EF — an ordinary reference to an EXTERNAL file, legal under §7.11.3 — errors there on v0.16.2 (`model/attach.go:197-199`; v0.13 nil-dereferenced, `attach.go:155`), so the removal failed or panicked instead. Removing the files is the
 // remit, parsing them is not: the key goes whatever the tree holds.
 func removeAllAttachments(ctx *model.Context) error {
 	xt := ctx.XRefTable

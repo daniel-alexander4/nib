@@ -100,7 +100,9 @@ func TestContentDigestRefusesAPageTreeTwoReadingsOrderDifferently(t *testing.T) 
 // branch. Shape (b) — a /Page carrying a direct /Kids — appended to by the merge a ceremony's
 // prepare uses: the one walk's count no longer matches, so the fallback asks PageDict, which answers
 // page 1 with nothing and no error. The sentence printed `%!w(<nil>)` there (measured through
-// Convene before /pending 755's pre-prepare check).
+// Convene before /pending 755's pre-prepare check). v0.16.2's `PageDict` answers `ErrPageNotFound` for
+// it (model/xreftable.go:2562-2564), so the refusal now arrives through the error branch and reads
+// "page not found"; the branch for a nil dict stays for a reader that still answers nothing.
 func TestAPageThatPdfcpuAnswersAsNothingIsNamed(t *testing.T) {
 	tail, err := testpdf.Text("appended")
 	if err != nil {
@@ -114,7 +116,7 @@ func TestAPageThatPdfcpuAnswersAsNothingIsNamed(t *testing.T) {
 	if err == nil {
 		t.Fatal("setup: the document hashed, so the nil-dict branch was not reached")
 	}
-	if strings.Contains(err.Error(), "%!") || !strings.Contains(err.Error(), "no page at that number") {
+	if strings.Contains(err.Error(), "%!") || !(strings.Contains(err.Error(), "no page at that number") || strings.Contains(err.Error(), "page not found")) {
 		t.Errorf("the nil-dict refusal reads %q — want its own sentence, not a formatted nil", err)
 	}
 }
