@@ -364,11 +364,16 @@ abandoned-connection tests), all four green alone on the same tree; the two reco
 **Declared gaps:** pin 1 per-file causes; pin 2 fixtures and the N-process determinism run; `endCeremony` visible failure; the comparison instrument not re-run on
 the rule-7 tree; the dead rule-5 branch in `hashEffectivePage`; the ADR is written at the merge (S09 / P02 close).
 
-#### P02.S09 — Pins and docs
+#### P02.S09 — Pins and docs *(done 2026-10-29, branch pdfcpu-v016 45e095da; unmerged)*
 Refs: D1, D7, D9.
 `contentcostpin`, notices, the red-proof table rows that staled, every ADR citing v0.13
 behaviour (superseded, not edited), `CLAUDE.md`, `CONTRIBUTING.md`.
 **Exit:** no `v0.13.0` citation remains outside a superseded ADR or the retired-rule record; the notices are regenerated (`./build/gen-notices.sh`); `CLAUDE.md` and `CONTRIBUTING.md` (main checkout) name v0.16.2, Go 1.26 and rule 7.
+
+**Built (branch, no VERSION bump).** ADR-174 (supersedes ADR-173, ADR-143's readable set, ADR-136's scope; indexed; `CLAUDE.md` on main names it; `CONTRIBUTING.md` names v0.16.2, rule 7 and Go 1.26). Two guards the plan pinned and no earlier slice had built, each shown red when planted:
+`TestTheDigestRuleNamesThePdfcpuItWasMeasuredWith` (`digestRulePdfcpu`; go.mod alone, the table alone, `ContentDigestVersion` alone) and `TestNibNeverTurnsOnPdfcpuNetworkCode` (`ValidateLinks`; the `sign` import arm planted-red not yet shown, owed to `/redproof`).
+74 Go-source `v0.13` mentions swept by two agents against the v0.16.2 module source (comments only, line counts unchanged), spot-checked by me on three cites: 26 `restatements.tsv` rows retired because their comment now cites v0.16.2, 2 re-anchored; the contentcost pins' failure messages name v0.16.2. Three `red-proofs.md` rows annotated. `gen-notices.sh` run: no diff.
+Per-commit tier: build, `go vet` linux/windows/darwin, whole packages root, `pdfread`, `contentstream`, `uacheck` green; `pdfops` targeted only (comment edits; its full run is the P02 close gate). **Exit clause not met literally, by decision (rung 2, reversible):** 44 `v0.13.0` mentions remain outside ADRs, each a past-tense or "measured then, not re-measured on v0.16.2" record paired with a v0.16.2 cite or an explicit unverified note; erasing them would erase what was measured. **Not done, owed to the P02 close** (the hardening list): the class-C code the sweep found resting on a weakened v0.13 premise (`duplicateLoop` and `unnamed` refusals, `pagebalance.go`, the text-annotation `/State` set-aside, `pages.go`/`pagesim.go` mirror) — deletion needs probes; unverified claims listed by the agents (`apiread.go` per-function cites, `refgraph.go` recursions, `decode.go` per-stage limit, `tagfate.go` table, uacheck dangling-reference and non-stream `/AP` shapes). No independent review of the S09 diff (owed with the whole-branch `/code-review`).
 
 **P02 close, before the merge:** `/code-review` of the branch; the full gate on the MERGED tree — Go suite through
 `suiterun`, tiers 2–3, and **tiers 4 and 6** (the digest is what a ceremony checks across machines); `accuracy.sh`
