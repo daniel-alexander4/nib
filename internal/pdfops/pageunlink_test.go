@@ -327,7 +327,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 				// The pages draw a rectangle and name no font: roadDoc's font dictionary is one pdfcpu's
 				// strict mode refuses for itself, and this test's question is the action.
 				objs := map[int]string{
-					2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+					2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] /Resources << >> >>", // /Resources: v0.16.2 strict mode requires it
 					5: stream("0 0 10 10 re f"),
 					6: stream("0 0 10 10 re f"),
 				}
@@ -470,7 +470,7 @@ func actionChain(a types.Object) []string {
 func coDoc() []byte {
 	return assembleFixture(map[int]string{
 		1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 9 0 R] /CO [6 0 R 9 0 R] /DA (/Helv 0 Tf 0 g) >> >>",
-		2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+		2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] /Resources << >> >>", // /Resources: v0.16.2 strict mode requires it
 		3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [7 0 R] >>",
 		4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [8 0 R 9 0 R] >>",
 		5: stream("0 0 10 10 re f"),

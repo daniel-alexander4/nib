@@ -773,6 +773,10 @@ func TestTheMediaClipRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 		// is the row that says `hasCorrectAlt` is a shape test and not "there is a description".
 		{"an empty /Alt array", clipFixture("/Alt []", ct), Pass, Pass},
 		{"no /CT", clipFixture("/Alt [() (a clip)]", ""), Fail, Pass},
+		// pdfcpu v0.16.2 refuses a malformed /Alt array (`validate/array_cardinality.go:58`), so the checker takes it out
+		// of the validator's sight and grades the document as written (`entriesTheValidatorRefuses`). Measured with
+		// veraPDF 1.30.2 on exactly this fixture (2026-10-27): 7.18.6.2 test 2 fails, test 1 does not.
+		{"a non-string /Alt entry", clipFixture("/Alt [() /aname]", ct), Pass, Fail},
 	} {
 		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != tc.t1 {
 			t.Errorf("%s: 7.18.6.2 t1 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t1)
@@ -781,14 +785,13 @@ func TestTheMediaClipRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 			t.Errorf("%s: 7.18.6.2 t2 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t2)
 		}
 	}
-	// Three shapes veraPDF grades and nib's reader refuses, each with the refusal pdfcpu actually prints —
+	// Two shapes veraPDF grades and nib's reader refuses, each with the refusal pdfcpu actually prints —
 	// recorded so that a bump which starts accepting them turns this row red rather than reintroducing a
-	// divergence silently. **Read, not assumed**: the three errors name three different entries.
+	// divergence silently. **Read, not assumed**: the two errors name two different entries.
 	for _, tc := range []struct {
 		name, want string
 		pdf        []byte
 	}{
-		{"a non-string /Alt entry", "validateStringArrayEntry: invalid type at index 1", clipFixture("/Alt [() /aname]", ct)},
 		{"an /Alt that is not an array", "entry=Alt invalid type", clipFixture("/Alt (a clip)", ct)},
 		{"a name-typed /CT", "entry=CT invalid type", clipFixture("/Alt [() (a clip)]", "/CT /audio ")},
 	} {

@@ -1,6 +1,9 @@
 package uacheck
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -109,6 +112,15 @@ func setAsideForValidator(ctx *model.Context) (restore func()) {
 		taken = append(taken, held{h.dict, h.key, h.val})
 		delete(h.dict, h.key)
 	}
+	// And three entries v0.16.2's validator refuses a whole document over that veraPDF reads (`entriesTheValidatorRefuses`).
+	for _, h := range entriesTheValidatorRefuses(ctx) {
+		taken = append(taken, held{h.dict, h.key, h.val})
+		if h.with != nil {
+			h.dict[h.key] = h.with
+		} else {
+			delete(h.dict, h.key)
+		}
+	}
 	return func() {
 		for _, h := range taken {
 			h.dict[h.key] = h.val
@@ -132,6 +144,9 @@ type asideEntry struct {
 	dict types.Dict
 	key  string
 	val  types.Object
+	// with, when set, stands in for val during the validation instead of the entry being taken out: a required
+	// entry cannot be absent, only made to satisfy the validator (`entriesTheValidatorRefuses`).
+	with types.Object
 }
 
 // maxAsideNesting bounds how far the search below follows DIRECT objects inside one another; every indirect object
@@ -176,7 +191,7 @@ func fontsTheValidatorLoses(ctx *model.Context) []asideEntry {
 					if fd, ok := fr.(types.Dict); ok {
 						for name, f := range fd {
 							if isType3(f) {
-								found = append(found, asideEntry{fd, name, f})
+								found = append(found, asideEntry{dict: fd, key: name, val: f})
 							}
 						}
 					}
@@ -206,7 +221,7 @@ func fontsTheValidatorLoses(ctx *model.Context) []asideEntry {
 					switch st.(type) {
 					case types.Name:
 					default:
-						found = append(found, asideEntry{v, "FontFile3", ff})
+						found = append(found, asideEntry{dict: v, key: "FontFile3", val: ff})
 					}
 				}
 			}
@@ -235,4 +250,181 @@ func fontsTheValidatorLoses(ctx *model.Context) []asideEntry {
 		}
 	}
 	return found
+}
+
+// structureTreeRefusal reports whether err is the validator's refusal of the structure tree or of its parent tree.
+func structureTreeRefusal(err error) bool {
+	for _, target := range []error{
+		model.ErrStructureTreeCycle, model.ErrStructureTreeDuplicate, model.ErrNumberTreeCycle, model.ErrNumberTreeDuplicate,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// setAsideStructureTree takes the catalog's `/StructTreeRoot` out of the validator's sight and returns what puts it
+// back. For the checker only: it never writes the context out (ADR-115), and it reads the tree through its own
+// bounded walks.
+func setAsideStructureTree(ctx *model.Context) (restore func()) {
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return func() {}
+	}
+	held, ok := root["StructTreeRoot"]
+	if !ok {
+		return func() {}
+	}
+	delete(root, "StructTreeRoot")
+	return func() { root["StructTreeRoot"] = held }
+}
+
+// maxStandInWidths bounds the zero-filled /Widths array `entriesTheValidatorRefuses` builds: a /LastChar past it is
+// left to the validator's own answer.
+const maxStandInWidths = 1 << 16
+
+// entriesTheValidatorRefuses finds the entries pdfcpu v0.16.2's validator refuses a whole document over that the
+// checker reads for itself (P02.S04, D4: carry — the checker never writes the context out, ADR-115), each answered by
+// a rule veraPDF measures on the document as written:
+//
+//   - **a simple font's `/Widths` whose length is not LastChar − FirstChar + 1** (`validate/font.go:590-620`; relaxed
+//     mode forgives only some). The glyph-metric rules (7.21.5) are about exactly this mismatch. A zero-filled array
+//     of the length the validator wants stands in for the validation and the document's own is put back.
+//   - **an ExtGState's `/Font` whose first element is not an indirect reference** (`validate/extGState.go:977`).
+//     Taken out for the validation; the glyph rules read what the document wrote.
+//   - **a media clip's `/Alt` that is not a well-formed multi-language array** (`validate/array_cardinality.go:58`).
+//     Taken out for the validation.
+//
+// The walk is fontsTheValidatorLoses': every object in the table, direct dictionaries and arrays followed, an
+// indirect reference not (its target is a starting point of its own), nesting bounded by maxAsideNesting.
+func entriesTheValidatorRefuses(ctx *model.Context) []asideEntry {
+	var found []asideEntry
+	intOf := func(o types.Object) (int, bool) {
+		r, err := ctx.Dereference(o)
+		if err != nil {
+			return 0, false
+		}
+		i, ok := r.(types.Integer)
+		return int(i), ok
+	}
+	nameIs := func(o types.Object, want ...string) bool {
+		r, err := ctx.Dereference(o)
+		if err != nil {
+			return false
+		}
+		n, ok := r.(types.Name)
+		if !ok {
+			return false
+		}
+		for _, w := range want {
+			if string(n) == w {
+				return true
+			}
+		}
+		return false
+	}
+	check := func(v types.Dict) {
+		// Simple fonts.
+		if nameIs(v["Type"], "Font") && nameIs(v["Subtype"], "TrueType", "Type1", "MMType1") {
+			if fc, ok := intOf(v["FirstChar"]); ok {
+				if lc, ok := intOf(v["LastChar"]); ok && lc >= fc && lc-fc+1 <= maxStandInWidths {
+					if r, err := ctx.Dereference(v["Widths"]); err == nil {
+						if a, isArr := r.(types.Array); isArr && len(a) != lc-fc+1 {
+							stand := make(types.Array, lc-fc+1)
+							for i := range stand {
+								stand[i] = types.Integer(0)
+							}
+							found = append(found, asideEntry{dict: v, key: "Widths", val: v["Widths"], with: stand})
+						}
+					}
+				}
+			}
+		}
+		// ExtGState /Font.
+		if raw, ok := v["Font"]; ok {
+			if r, err := ctx.Dereference(raw); err == nil {
+				if a, isArr := r.(types.Array); isArr && len(a) == 2 {
+					if _, indirect := a[0].(types.IndirectRef); !indirect {
+						found = append(found, asideEntry{dict: v, key: "Font", val: raw})
+					}
+				}
+			}
+		}
+		// Media clip /Alt.
+		if nameIs(v["Type"], "MediaClip") {
+			if raw, ok := v["Alt"]; ok {
+				if r, err := ctx.Dereference(raw); err == nil {
+					if a, isArr := r.(types.Array); isArr && !multiLanguageText(ctx, a) {
+						found = append(found, asideEntry{dict: v, key: "Alt", val: raw})
+					}
+				}
+			}
+		}
+	}
+	var visit func(o types.Object, depth int)
+	visit = func(o types.Object, depth int) {
+		if depth > maxAsideNesting {
+			return
+		}
+		switch v := o.(type) {
+		case types.Dict:
+			check(v)
+			for _, k := range v {
+				if _, indirect := k.(types.IndirectRef); !indirect {
+					visit(k, depth+1)
+				}
+			}
+		case types.StreamDict:
+			visit(v.Dict, depth+1)
+		case *types.StreamDict:
+			if v != nil {
+				visit(v.Dict, depth+1)
+			}
+		case types.Array:
+			for _, k := range v {
+				if _, indirect := k.(types.IndirectRef); !indirect {
+					visit(k, depth+1)
+				}
+			}
+		}
+	}
+	for _, e := range ctx.XRefTable.Table {
+		if e != nil && !e.Free && e.Object != nil {
+			visit(e.Object, 0)
+		}
+	}
+	return found
+}
+
+// multiLanguageText reports whether a is what `validateMultiLanguageTextEntry` accepts: pairs of a language
+// identifier string and a text string, no identifier twice (compared lower-cased).
+func multiLanguageText(ctx *model.Context, a types.Array) bool {
+	if len(a) == 0 || len(a)%2 == 1 {
+		return false
+	}
+	seen := map[string]bool{}
+	for i := 0; i < len(a); i += 2 {
+		o, err := ctx.Dereference(a[i])
+		if err != nil {
+			return false
+		}
+		s, err := types.StringOrHexLiteral(o)
+		if err != nil || s == nil {
+			return false
+		}
+		k := strings.ToLower(*s)
+		if seen[k] {
+			return false
+		}
+		seen[k] = true
+		t, err := ctx.Dereference(a[i+1])
+		if err != nil {
+			return false
+		}
+		if _, err := types.StringOrHexLiteral(t); err != nil {
+			return false
+		}
+	}
+	return true
 }
