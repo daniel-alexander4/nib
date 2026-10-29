@@ -91,6 +91,7 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	wms := map[int][]*model.Watermark{}
 	fits := map[int][]stampedWord{} // beside wms: each page's stamped words, in the order they are stamped
 	unfitted := 0
+	widths := newRuneWidths(fontName)
 	for _, w := range words {
 		if strings.TrimSpace(w.Text) == "" {
 			continue
@@ -98,7 +99,7 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 		// The size the word's ink fills its box at, to the nearest point — the fit carries the remainder. A word that
 		// cannot be fitted is sized to its box's height, with a small floor that keeps a degenerate box's text
 		// legible to extraction.
-		pts, fit, fitted := fitWord(fontName, w.Text, w.Rect)
+		pts, fit, fitted := fitWord(fontName, w.Text, w.Rect, widths)
 		// Anchor at the box's bottom-left, in points. No fillcolor/mode in the
 		// description string (the parser rejects mode 3) — RenderMode is set below.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.2f %.2f, rotation:0",
