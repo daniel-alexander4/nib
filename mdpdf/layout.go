@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 )
@@ -40,9 +41,53 @@ type style struct {
 // a Greek or CJK word would reserve twice the space it occupies.
 func (s style) width(text string) float64 {
 	if s.embedded {
-		return mustWidth(font.TextWidth(context.Background(), text, s.font, s.size))
+		return embeddedWidth(text, s.font, s.size)
 	}
 	return CoreWidth(text, s.font, s.size)
+}
+
+// runeAdvance remembers pdfcpu's advance, in glyph space, of each rune of each installed face. v0.16.2's
+// `font.CharWidth` clones the face's whole metrics (glyph widths and three maps) on EVERY call, and an embedded string is
+// measured rune by rune, so the Markdown converter paid that per letter — a 7 MB conversion went from 2m35s to over ten
+// minutes. An advance is an integer read from the installed face, so the sum over the cache is the sum pdfcpu takes and
+// the width is identical; `UserFontDir` is in the key because the face is read from there. Errors are never remembered.
+var runeAdvance = struct {
+	sync.RWMutex
+	m map[runeKey]int
+}{m: map[runeKey]int{}}
+
+// maxRuneAdvances bounds the memory: a rune the face does not map still answers (width of glyph 0), so text of
+// arbitrary code points would otherwise grow the table by one entry each. Past it a rune is looked up, never stored.
+const maxRuneAdvances = 1 << 16
+
+type runeKey struct {
+	dir, font string
+	r         rune
+}
+
+// embeddedWidth is `font.TextWidth` for an installed face with the per-rune lookups remembered.
+func embeddedWidth(text, fontName string, size int) float64 {
+	ctx := context.Background()
+	w := 0
+	for _, r := range text {
+		k := runeKey{font.UserFontDir, fontName, r}
+		runeAdvance.RLock()
+		a, ok := runeAdvance.m[k]
+		runeAdvance.RUnlock()
+		if !ok {
+			var err error
+			if a, err = font.CharWidth(ctx, fontName, r); err != nil {
+				return mustWidth(0, err)
+			}
+			runeAdvance.Lock()
+			if len(runeAdvance.m) < maxRuneAdvances {
+				runeAdvance.m[k] = a
+			}
+			runeAdvance.Unlock()
+		}
+		w += a
+	}
+	return font.UserSpaceUnitsFloat(float64(w), float64(size))
 }
 
 // CoreWidth is the width of text in points when set in a Base-14 CORE font at
