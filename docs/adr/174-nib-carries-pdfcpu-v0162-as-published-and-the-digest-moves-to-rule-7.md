@@ -26,6 +26,11 @@ no hash is asked for). A FINISHED rule-5/6 ceremony document therefore keeps its
 mirror can still be stopped and moved to `~/nib/ended/`. The goldens for the retired rules are deleted and only `-v7`
 is written (ADR-143 §3: a golden for a rule nothing computes pins nothing); the contract is held by
 `TestARecordUnderARetiredDigestRuleIsARecordButNotAHash`.
+**Declared gap:** `ReadMirror` applies the refusal to an UNSIGNED mirror only (a signed mirror's rule is never checked
+there), so a post-port machine holding a SIGNED rule-5/6 mirror is not stopped from minting the next hop locally;
+the post-port recipient refuses it (wire 18, `checkArrival` → `RequireComputableRule`), a pre-port recipient accepts it.
+Closing it means refusing a signed retired mirror in `ReadMirror`, which would also refuse the delivery round of a
+finished retired ceremony; that trade is not made here.
 **The flag day, declared:** a ceremony convened on a pre-port build cannot be continued on a post-port one, and a
 pre-port party and a post-port party cannot finish one together; it finishes on the build it began on. The
 release notes name that build (P03).
@@ -70,8 +75,11 @@ with it; nil asks pdfcpu as before. No state outlives the call, so no invalidati
 
 **7. Nothing in nib turns on pdfcpu's network code.** v0.16.2 carries `validate/link_http.go` and
 `pkg/pdfcpu/sign/revocation_http.go`, off by default (`ValidateLinks` false). `TestNibNeverTurnsOnPdfcpuNetworkCode` fails
-if any nib Go file sets `ValidateLinks` to anything but false or imports pdfcpu's `sign` package. This is the egress
-decision for the library: a document must not be able to make this machine fetch a URL it names.
+if any nib Go file (outside `third_party`, `web` and `dist`) sets `ValidateLinks` to anything but the literal `false` or
+imports pdfcpu's `sign` package, which stays COMPILED IN (`pkg/api` imports it) and is never switched on by a code
+path nib calls. It does not cover pdfcpu's image-box `src` fetch (`primitives/imageBox.go`, unchanged from v0.13.0),
+which nothing in nib reaches (no image box is emitted with a user `src`). A document must not be able to make this
+machine fetch a URL it names.
 
 **8. A restatement is re-read, not re-pinned** (D7). `restatements.tsv` is the inventory, its census test fails on a
 citation of the old version without a row, and `TestTheContentCostGateNamesThePdfcpuItRestates` and

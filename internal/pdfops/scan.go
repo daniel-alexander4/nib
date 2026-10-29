@@ -1316,7 +1316,9 @@ func removeAllAttachments(ctx *model.Context) error {
 	// **And every associated file** (P02.S06, D6). pdfcpu v0.16.2 writes the catalog's `/AF` and a structure
 	// element's, with the files they name, so a PDF/A-3 file listed in both places was written back in behind the
 	// removal. `/AF` is stripped wherever it sits, and the write is not refused for a page's.
-	dropAssociatedFileKeys(xt)
+	if err := dropAssociatedFileKeys(xt); err != nil {
+		return err
+	}
 	pdfread.ForgetAssociatedFiles(ctx)
 	return nil
 }
@@ -1324,10 +1326,14 @@ func removeAllAttachments(ctx *model.Context) error {
 // dropAssociatedFileKeys deletes the `/AF` key from every dictionary the document holds — the catalog, pages,
 // structure elements, annotations, form and image dictionaries, inline or indirect — and from nothing else. One
 // pass over the cross-reference table, descending only through direct objects (an indirect one is its own entry).
-func dropAssociatedFileKeys(xt *model.XRefTable) {
+// Direct nesting past maxAssociatedFileDepth is REFUSED, never skipped: a skip would leave an `/AF` in place while the
+// caller clears the read mark that makes the write refuse it, so the file the user removed would be written back.
+func dropAssociatedFileKeys(xt *model.XRefTable) error {
+	tooDeep := false
 	var strip func(o types.Object, depth int)
 	strip = func(o types.Object, depth int) {
-		if depth > 64 {
+		if depth > maxAssociatedFileDepth {
+			tooDeep = true
 			return
 		}
 		switch v := o.(type) {
@@ -1349,7 +1355,17 @@ func dropAssociatedFileKeys(xt *model.XRefTable) {
 			strip(e.Object, 0)
 		}
 	}
+	if tooDeep {
+		return errAssociatedFileTooDeep
+	}
+	return nil
 }
+
+// maxAssociatedFileDepth is how deep a chain of DIRECT dictionaries and arrays dropAssociatedFileKeys follows.
+const maxAssociatedFileDepth = 64
+
+// errAssociatedFileTooDeep is the removal's refusal for a document that nests direct objects past what it can search.
+var errAssociatedFileTooDeep = errors.New("pdfops: this document nests objects so deeply that every associated file in it cannot be found, so none were removed")
 
 // errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could
 // honestly hold.

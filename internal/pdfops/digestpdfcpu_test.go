@@ -43,6 +43,10 @@ func TestTheDigestRuleNamesThePdfcpuItWasMeasuredWith(t *testing.T) {
 			"re-measure the digest on the new pdfcpu, bump the rule if it moved (the comparison instrument is build/pdfcpudiff.sh), then move this table",
 			ContentDigestVersion, digestRulePdfcpu[ContentDigestVersion], pdfcpuPinIn(gomod))
 	}
+	// nib carries pdfcpu as published (ADR-174): a `replace` of it would let this guard agree with a fork.
+	if regexp.MustCompile(`(?m)^\s*(replace\s+)?github\.com/pdfcpu/pdfcpu\s+=>`).MatchString(gomod) {
+		t.Error("go.mod replaces github.com/pdfcpu/pdfcpu: the digest rule was measured against the published release, not a fork")
+	}
 	// The guard fires on each edit made alone.
 	bumped := strings.Replace(gomod, pdfcpuPinIn(gomod), "v0.99.0", 1)
 	if digestRuleAgrees(ContentDigestVersion, bumped) {

@@ -240,8 +240,9 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 }
 
 // CheckRecord is CheckDocument's first three questions and not its fourth: is there a record,
-// does its convener signature verify, and was it written under a digest rule this build can
-// compare against. It does NOT compare the document's hash.
+// does its convener signature verify, and was it written under a digest rule this build knows (the
+// current one, or a retired one, which is a record and not a hash it can recompute). It does NOT
+// compare the document's hash.
 //
 // # Why this split exists (P07.S02b)
 //
@@ -300,12 +301,13 @@ func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	return r, nil
 }
 
-// digestRuleSkew is the one door for D32's digest-rule skew: nil when r's DocHash was computed
-// under a rule this build can still compute (`pdfops.ContentDigestRuleReadable` — the current rule
-// and the one before it, ADR-080), else a skew error that is ErrDigestVersion to `errors.Is`. Every
-// site that compares a DocHash asks it FIRST (CheckRecord above, ReadMirror, DocumentHashFor), because
-// a comparison across rules produces a tampering sentence for a version difference — /pending 725's
-// bump to rule 4 would otherwise have reported every stored unsigned mirror as damaged.
+// digestRuleSkew is the one door for D32's RECORD-LEVEL digest-rule question: nil when r names the rule this
+// build computes (`pdfops.ContentDigestRuleReadable`) or one it retired (`ContentDigestRuleRetired`, a record
+// it can read but not recompute — D1, P02.S08), else a skew error that is ErrDigestVersion to `errors.Is`.
+// A site that is about to COMPARE or COMPUTE a DocHash asks `digestRuleComputable` below instead, FIRST
+// (DocumentHashFor, ReadMirror), because a comparison across rules produces a tampering sentence for a
+// version difference — /pending 725's bump to rule 4 would otherwise have reported every stored unsigned
+// mirror as damaged.
 func digestRuleSkew(r Record) error {
 	if pdfops.ContentDigestRuleReadable(r.DigestVersion) || pdfops.ContentDigestRuleRetired(r.DigestVersion) {
 		return nil

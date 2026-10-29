@@ -883,8 +883,9 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time, telling *session) e
 	// **So the wait says what it is**: `telling.checkingDocument()`, at the top of this function,
 	// covers this hash and the record check before it.
 	if !sign.HasSignatureBlob(pdf) {
-		// Under the rule the record names (ADR-080): `CheckRecord` above has already refused a rule
-		// this build cannot compute, so `herr` here is the document's, never a version skew.
+		// Under the rule the record names (ADR-080): `RequireComputableRule` above has already refused a
+		// rule this build cannot compute (`CheckRecord` accepts a retired one), so `herr` here is the
+		// document's, never a version skew.
 		got, herr := ceremony.DocumentHashFor(pdf, rec)
 		switch {
 		case herr != nil:
