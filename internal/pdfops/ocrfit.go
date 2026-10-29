@@ -78,10 +78,53 @@ func ocrFace(name string) *sfnt.Font {
 	return face
 }
 
+// runeWidths remembers pdfcpu's advance for each rune, and its descent for each size, of ONE font for the length of one call. v0.16.2's
+// `font.CharWidth` clones the font's whole metrics table on every call, and `wordInk` asks once per rune of every word:
+// 36% of a 600-word stamp (767 ms against 409 on the release before; `instruments/pdfcpu-upgrade/S07-cost.md`). The cache is made
+// by the call that stamps and dropped with it, so nothing outlives the font it was read from. A nil *runeWidths asks
+// pdfcpu every time, as before.
+type runeWidths struct {
+	font string
+	m    map[rune]int
+	d    map[int]float64 // descent by point size, which clones the table the same way
+}
+
+func newRuneWidths(font string) *runeWidths {
+	return &runeWidths{font: font, m: map[rune]int{}, d: map[int]float64{}}
+}
+
+func (c *runeWidths) descent(fontName string, pts int) (float64, error) {
+	if c == nil || c.font != fontName {
+		return pdffont.Descent(context.Background(), fontName, pts)
+	}
+	if d, ok := c.d[pts]; ok {
+		return d, nil
+	}
+	d, err := pdffont.Descent(context.Background(), fontName, pts)
+	if err == nil {
+		c.d[pts] = d
+	}
+	return d, err
+}
+
+func (c *runeWidths) width(fontName string, r rune) (int, error) {
+	if c == nil || c.font != fontName {
+		return pdffont.CharWidth(context.Background(), fontName, r)
+	}
+	if w, ok := c.m[r]; ok {
+		return w, nil
+	}
+	w, err := pdffont.CharWidth(context.Background(), fontName, r)
+	if err == nil {
+		c.m[r] = w // an error is not remembered: the word is not fitted and the next one asks again
+	}
+	return w, err
+}
+
 // wordInk measures text as face draws it, glyph after glyph and unshaped, in ems: how far it advances, and the
 // lowest and highest its ink reaches about the baseline. A rune the face has no glyph for is passed over, as pdfcpu
 // passes over it when it writes the run.
-func wordInk(fontName string, face *sfnt.Font, text string) (advance, bottom, top float64, ok bool) {
+func wordInk(fontName string, face *sfnt.Font, text string, widths *runeWidths) (advance, bottom, top float64, ok bool) {
 	if face == nil {
 		return 0, 0, 0, false
 	}
@@ -101,7 +144,7 @@ func wordInk(fontName string, face *sfnt.Font, text string) (advance, bottom, to
 		// The advance is pdfcpu's own figure for the glyph — the whole number of thousandths it writes into the
 		// embedded font's widths — because that is what a reader will add up. The face's exact advance differs by
 		// the rounding, which a wide box multiplies.
-		cw, cerr := pdffont.CharWidth(context.Background(), fontName, r)
+		cw, cerr := widths.width(fontName, r)
 		if cerr != nil {
 			return 0, 0, 0, false // pdfcpu before v0.16 panicked on a font it did not carry; a word nobody can measure is not fitted
 		}
@@ -115,10 +158,10 @@ func wordInk(fontName string, face *sfnt.Font, text string) (advance, bottom, to
 
 // fitWord is the size to stamp a word at and the fit that puts it on rect. A word that cannot be fitted — no ink in
 // its face, an empty box — comes back at its box's height and unfitted, which is how every word was stamped before.
-func fitWord(fontName, text string, rect [4]float64) (pts int, fit wordFit, fitted bool) {
+func fitWord(fontName, text string, rect [4]float64, widths *runeWidths) (pts int, fit wordFit, fitted bool) {
 	w, h := rect[2]-rect[0], rect[3]-rect[1]
 	pts = max(int(h), 4)
-	advance, bottom, top, ok := wordInk(fontName, ocrFace(fontName), text)
+	advance, bottom, top, ok := wordInk(fontName, ocrFace(fontName), text, widths)
 	if !ok || !(w > 0) || !(h > 0) {
 		return pts, asStamped, false
 	}
@@ -128,7 +171,7 @@ func fitWord(fontName, text string, rect [4]float64) (pts int, fit wordFit, fitt
 	}
 	pts = max(int(math.Round(em)), 4)
 	// pdfcpu sets the baseline this far above the form's origin (`model.CalcBoundingBox`), and the run at x = 0.
-	descent, derr := pdffont.Descent(context.Background(), fontName, pts)
+	descent, derr := widths.descent(fontName, pts)
 	if derr != nil {
 		return pts, asStamped, false
 	}

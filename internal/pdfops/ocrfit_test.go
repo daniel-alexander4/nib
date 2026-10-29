@@ -127,7 +127,7 @@ func TestAStampedWordSpansItsScannedBox(t *testing.T) {
 			if math.Abs(got.x0-w.Rect[0]) > tol || math.Abs(got.x1-w.Rect[2]) > tol {
 				t.Errorf("%s %q: the run spans %.2f..%.2f, its box %.2f..%.2f", lang, w.Text, got.x0, got.x1, w.Rect[0], w.Rect[2])
 			}
-			_, bottom, top, ok := wordInk(ocrFontFor(lang), face, w.Text)
+			_, bottom, top, ok := wordInk(ocrFontFor(lang), face, w.Text, nil)
 			if !ok {
 				t.Errorf("%s %q: the face draws no ink for the sample", lang, w.Text)
 				continue

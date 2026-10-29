@@ -266,7 +266,7 @@ func fittedInk(r textRun) (bottom, top float64, ok bool) {
 	if !isFace || r.rotated {
 		return 0, 0, false
 	}
-	_, b, t, ok := wordInk(name, ocrFace(name), r.text)
+	_, b, t, ok := wordInk(name, ocrFace(name), r.text, nil)
 	if !ok {
 		return 0, 0, false
 	}

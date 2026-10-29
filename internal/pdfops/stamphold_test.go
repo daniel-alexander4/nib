@@ -315,10 +315,8 @@ func TestAPageOfManyWordsIsNotDeflatedOncePerWord(t *testing.T) {
 // page, content held: 409 ms on the release before, 767 ms on v0.16.2. The cause is read from a CPU profile —
 // `font.CharWidth`, called per RUNE by `wordInk`, clones the whole metrics table on every call in v0.16.2
 // (`font/repository.go:230-243`, `cloneTTFLight`), 36% of the run. The floor is the old figure with 1.5x headroom for
-// a noisy machine, 600 ms; it is red on this tree until the width cache is built, and that cache is on the OCR
-// request path, so it waits for Dan's go (`instruments/pdfcpu-upgrade/S07-cost.md`).
+// a noisy machine, 600 ms; it is red without `runeWidths` (Dan's go, S07: a per-call cache; held 242 ms with it).
 func TestStampingSixHundredWordsIsNotSlowerThanItWas(t *testing.T) {
-	t.Skip("P02.S07: awaiting Dan's go on the per-fit width cache; red at 767 ms against the 600 ms floor (S07-cost.md)")
 	base := scannedPages(t, 1)
 	var words []Word
 	for i := 0; i < 600; i++ {
