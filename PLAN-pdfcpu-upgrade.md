@@ -332,7 +332,7 @@ the mitigation shown to Dan before it is built. "Or better" is replaced by the a
 
 **Width cache (Dan's go, 2026-10-29, option A via /discuss).** `runeWidths` (`ocrfit.go`) holds `font.CharWidth` per rune and `font.Descent` per size for one `StampTextLayer` call and is dropped with it; nil asks pdfcpu as before (the page-map reader's `fittedInk` keeps that). A CPU profile of the 600-word stamp puts `fitWord` at 21% before and 4% after. `TestStampingSixHundredWordsIsNotSlowerThanItWas` is un-skipped: green with the cache and red (best of 5 over 600 ms) with `var widths *runeWidths` in its place, both at load ~16; the prototype measured held 242 ms at load 5-6. **Declared:** no quiet-machine median was taken after the build (load never fell under 5 in 20 minutes); the `SplitRegions` 22 to 46 ms move did not reproduce in the prototype and is read as load noise, unresolved; `fittedInk` per run still clones per rune. Per-commit tier: `pdfops` and `pdfread` whole packages green (`-timeout 90m`); tiers 4/6 did not fire (`internal/pdfops` only).
 
-#### P02.S08 — Digest rule 7 (D1)
+#### P02.S08 — Digest rule 7 (D1) *(done 2026-10-29, branch pdfcpu-v016 bbde337f; unmerged)*
 Refs: D1.
 `ContentDigestVersion` 7; rules 5/6 retired via `digestSkew`; goldens regenerated
 under 7 only (`-v5`/`-v6` goldens never regenerated — they become the retired rules' record); new ADR.
@@ -351,6 +351,18 @@ record), the six test files naming `legacyContentDigestVersion` are listed (`dig
 separates "can compute" from "accept the record" (`ContentDigestRuleReadable`, `attachments.go:381-383`). (5) the "HEAD vs port tree" comparison
 from P01.S01 runs here, on a tree built in P02. (6) S08 follows the S03–S05 slices; its turns-green list includes the two ContentDigest
 byte-identical corpus tests. The new ADR also names the egress scan and the D1 / D6 pins.
+
+**Built (branch, no VERSION bump).** `ContentDigestVersion` 7 = rule 6's axes read by pdfcpu v0.16.x. `ContentDigestRuleReadable` is the current rule only;
+`ContentDigestRuleRetired` (5, 6) is accepted by every record-level question (`CheckRecord`, delivery, `ReadMirrorToEnd` for stop / close-out / an ended
+folder's read-back) and refused with the older-nib skew (wire 18) where a digest is computed (`DocumentHashFor`) or a ceremony is continued (`ReadMirror`, a
+live folder, `checkArrival` via `RequireComputableRule`, which also covers hop 2+ where no hash is asked for). Goldens: `-v5`/`-v6` deleted, `-v7` written;
+the retired contract is held by `TestARecordUnderARetiredDigestRuleIsARecordButNotAHash` (four mutations red). Gate: tier 4 PASS over both transports, tier 6
+PASS=31 FAIL=0; `-n 4` not run (relay and round untouched). Full suite fp 6b887a763f4b (S07+S08 tree, 45m44s, load 6-9): red only on
+`TestTheFreeReferencePassLetsPdfcpuSkipItsOwnRecursion` and three `internal/server` ceremony timing tests (`TestADeclinedSpokenCheckSpendsTheArm`, the two
+abandoned-connection tests), all four green alone on the same tree; the two recovered nil-pointer panics are the pre-existing ones. Recorded assumption
+(reversible): those four are load flakes, one more than S06's two.
+**Declared gaps:** pin 1 per-file causes; pin 2 fixtures and the N-process determinism run; `endCeremony` visible failure; the comparison instrument not re-run on
+the rule-7 tree; the dead rule-5 branch in `hashEffectivePage`; the ADR is written at the merge (S09 / P02 close).
 
 #### P02.S09 — Pins and docs
 Refs: D1, D7, D9.
