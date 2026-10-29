@@ -123,7 +123,7 @@ selftest() {
   echo "== a tree with one digest-affecting line changed =="
   changed="$(NIB_PDFCPUDIFF_KEEP=1 compare "$work/list.txt" "$a" "$b")" || { echo "$changed"; die "selftest: the mutated comparison failed"; }
   echo "$changed" | grep -q -- '--- 1 of 1 documents differ ---' || { echo "$changed"; die "selftest: the mutation went UNSEEN — the instrument is vacuous"; }
-  echo "$changed" | grep -q 'digest6=' || { echo "$changed"; die "selftest: the difference was not in the digest column"; }
+  echo "$changed" | grep -q 'digest\(6\|cur\)=' || { echo "$changed"; die "selftest: the difference was not in the digest column"; }
   echo "== no path, name or text of the document appears in anything kept =="
   local kept
   kept="$(echo "$changed" | sed -n 's/^rows kept in \([^ ]*\) .*/\1/p')"
