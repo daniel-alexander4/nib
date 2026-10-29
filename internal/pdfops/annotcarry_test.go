@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -32,13 +33,13 @@ type carriedNote struct {
 // notesOn reads every annotation off every page, with its rect and its comment.
 func notesOn(t *testing.T, pdf []byte) []carriedNote {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("reading back: %v", err)
 	}
 	var out []carriedNote
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+		d, _, _, perr := ctx.PageDict(context.Background(), p, false)
 		if perr != nil || d == nil {
 			t.Fatalf("page %d: %v", p, perr)
 		}
@@ -220,13 +221,13 @@ func TestACarriedNotesAnnotElementNamesTheAnnotationOnTheSheet(t *testing.T) {
 	}))
 	up := must(NUp(noted, 2, false))
 
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(up), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(up), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("reading back: %v", err)
 	}
 	onPage := map[int]int{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, _ := ctx.PageDict(p, false)
+		d, _, _, _ := ctx.PageDict(context.Background(), p, false)
 		arr, _ := ctx.DereferenceArray(d["Annots"])
 		for _, a := range arr {
 			if ir, ok := a.(types.IndirectRef); ok {
@@ -462,7 +463,7 @@ func composeFor(t *testing.T, pdf []byte, n int) []byte {
 		t.Fatalf("n-up config: %v", err)
 	}
 	var out bytes.Buffer
-	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
+	if err := api.NUp(context.Background(), bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
 		t.Fatalf("composing: %v", err)
 	}
 	raw, err := withoutUAClaim(out.Bytes())

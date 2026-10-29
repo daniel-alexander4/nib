@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -83,7 +84,7 @@ func TestAReflowLeavesEveryOtherLineAsItRead(t *testing.T) {
 				if !roundTripped {
 					roundTripped = true
 					var buf bytes.Buffer
-					if err := api.WriteContext(ctx, &buf); err != nil {
+					if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 						t.Fatal(err)
 					}
 					c2, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())

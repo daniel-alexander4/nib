@@ -6,6 +6,7 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -106,7 +107,7 @@ func imageToPage(p RasterPage) ([]byte, error) {
 		InpUnit: types.POINTS,
 	}
 	var out bytes.Buffer
-	if err := api.ImportImages(nil, &out, []io.Reader{bytes.NewReader(p.Image)}, imp, nil); err != nil {
+	if err := api.ImportImages(context.Background(), nil, &out, []io.Reader{bytes.NewReader(p.Image)}, imp, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -125,7 +126,7 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		return pdfcpu.RotatePages(ctx, sel, deg)
+		return pdfcpu.RotatePages(context.Background(), ctx, sel, deg)
 	})
 }
 
@@ -660,12 +661,15 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 				dropped++ // pdfcpu refuses a duplicate key, and a second entry under one key is unaddressable
 				continue
 			}
-			if aerr := ctx.AddAttachment(model.Attachment{Reader: bytes.NewReader(f.data), ID: f.key}, false); aerr != nil {
+			if aerr := ctx.AddAttachment(context.Background(), model.Attachment{Reader: bytes.NewReader(f.data), ID: f.key}, false); aerr != nil {
 				dropped++
 				continue
 			}
 			taken[f.key] = true
-			v, ok := ctx.Names["EmbeddedFiles"].Value(f.key)
+			v, ok, verr := ctx.Names["EmbeddedFiles"].Value(context.Background(), f.key)
+			if verr != nil {
+				return fmt.Errorf("attachment %q: looking it up: %w", f.key, verr)
+			}
 			if !ok {
 				return fmt.Errorf("attachment %q: added and not found", f.key)
 			}
@@ -724,7 +728,7 @@ func InsertBlank(pdf []byte, page int, before bool) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		return ctx.InsertBlankPages(sel, nil, before)
+		return ctx.InsertBlankPages(context.Background(), sel, nil, before)
 	})
 }
 
@@ -778,7 +782,7 @@ func DuplicatePage(pdf []byte, page int) (out []byte, filesDropped int, err erro
 // crisp vector text with no extra dependency.
 func CreateFromJSON(spec []byte) ([]byte, error) {
 	var out bytes.Buffer
-	if err := api.Create(nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
+	if err := api.Create(context.Background(), nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
 	// A spec may name an embedded face — `internal/p2p`'s readme and signature pages do, since
@@ -1204,7 +1208,7 @@ func nUpSeparated(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []
 		return nil, err
 	}
 	pdfread.PutBackValidatorLosses(ctx)
-	if err := pdfcpu.NUpFromPDF(ctx, pages, nup); err != nil {
+	if err := pdfcpu.NUpFromPDF(context.Background(), ctx, pages, nup); err != nil {
 		return nil, err
 	}
 	buf, err := pdfread.Write(ctx)
@@ -1609,7 +1613,7 @@ func cutSeparated(ctx *model.Context, page int, cut *model.Cut) (*model.Context,
 		return nil, err
 	}
 	pdfread.PutBackValidatorLosses(ctx)
-	return pdfcpu.CutPage(ctx, page, cut)
+	return pdfcpu.CutPage(context.Background(), ctx, page, cut)
 }
 
 // normalizePage flattens a single-page PDF's /Rotate into its content and
@@ -1663,7 +1667,7 @@ func cropToRects(normPage []byte, rects [][4]float64, pageW, pageH float64) ([]b
 		return nil, err
 	}
 	xt := ctx.XRefTable
-	src, _, attrs, err := ctx.PageDict(1, false)
+	src, _, attrs, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		return nil, err
 	}
@@ -2201,7 +2205,7 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 			if ftext == "" {
 				continue
 			}
-			wm, err := api.TextWatermark(ftext, desc, true, false, types.POINTS)
+			wm, err := api.TextWatermark(context.Background(), ftext, desc, true, false, types.POINTS, nil)
 			if err != nil {
 				return err
 			}
@@ -2214,7 +2218,7 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 			wms[page] = append(wms[page], wm)
 			fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
 		}
-		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(context.Background(), ctx, wms) })
 	})
 	if err != nil {
 		return nil, nil, err
@@ -2260,7 +2264,7 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 			scale = sy
 		}
 		desc := fmt.Sprintf("position:bl, offset:%.2f %.2f, scalefactor:%.5f abs, rotation:0", s.Rect[0], s.Rect[1], scale)
-		wm, err := api.ImageWatermarkForReader(bytes.NewReader(s.PNG), desc, true, false, types.POINTS)
+		wm, err := api.ImageWatermarkForReader(context.Background(), bytes.NewReader(s.PNG), desc, true, false, types.POINTS)
 		if err != nil {
 			return nil, err
 		}
@@ -2302,7 +2306,7 @@ func addWatermarksWith(pdf []byte, wms map[int][]*model.Watermark, around func(c
 		}
 		return around(ctx, func() error {
 			return stampInPlace(ctx, func() error {
-				return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+				return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(context.Background(), ctx, wms) })
 			})
 		})
 	})
@@ -2372,7 +2376,7 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 			name, st.Scale, st.Color, st.Opacity, st.Angle)
 		// Always drawn on top: a "behind" watermark is hidden by any page with an
 		// opaque background, inconsistently per page — opacity gives the subtle look.
-		wm, err := api.TextWatermark(wtext, desc, true, false, types.POINTS)
+		wm, err := api.TextWatermark(context.Background(), wtext, desc, true, false, types.POINTS, nil)
 		if err != nil {
 			return err
 		}
@@ -2380,7 +2384,7 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 		for p := 1; p <= ctx.PageCount; p++ {
 			every[p] = true
 		}
-		return pdfcpu.AddWatermarks(ctx, every, wm)
+		return pdfcpu.AddWatermarks(context.Background(), ctx, every, wm)
 	})
 }
 
@@ -2491,13 +2495,13 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 			if ltext == "" {
 				continue
 			}
-			wm, err := api.TextWatermark(ltext, desc, true, false, types.POINTS)
+			wm, err := api.TextWatermark(context.Background(), ltext, desc, true, false, types.POINTS, nil)
 			if err != nil {
 				return err
 			}
 			wms[i] = append(wms[i], wm)
 		}
-		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+		return contentHeldUnfiltered(ctx, wms, func() error { return pdfcpu.AddWatermarksSliceMap(context.Background(), ctx, wms) })
 	})
 }
 
@@ -2847,7 +2851,7 @@ func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
 	if err := pageInDocument(page, ctx.PageCount); err != nil {
 		return 0, 0, 0, 0, err
 	}
-	_, _, attrs, err := ctx.PageDict(page, false)
+	_, _, attrs, err := ctx.PageDict(context.Background(), page, false)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}

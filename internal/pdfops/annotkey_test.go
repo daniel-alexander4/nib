@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -30,7 +31,7 @@ func keyedFixture(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return mustMutate(t, src, func(ctx *model.Context) error {
-		pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+		pd, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -142,7 +143,7 @@ func TestNoOperationRenamesAnAnnotationItKeeps(t *testing.T) {
 func TestTooManyAnnotationsToKeyAreCounted(t *testing.T) {
 	const n = maxAnnotKeys + 5
 	big := mustMutate(t, labelReady(t, "# One\n\nText.\n"), func(ctx *model.Context) error {
-		pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+		pd, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}

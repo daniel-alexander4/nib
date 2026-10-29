@@ -3,6 +3,7 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -160,7 +161,7 @@ func TestConvertDocToPDFPrintsNonLatinMarkdown(t *testing.T) {
 			if err := Validate(out); err != nil {
 				t.Fatalf("the converted PDF does not validate: %v", err)
 			}
-			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 			if err != nil {
 				t.Fatalf("re-reading: %v", err)
 			}

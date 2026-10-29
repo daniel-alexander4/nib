@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -31,8 +32,8 @@ func TestInsertPDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseDims, _ := api.PageDims(bytes.NewReader(base), conf)
-	otherDims, _ := api.PageDims(bytes.NewReader(other), conf)
+	baseDims, _ := api.PageDims(context.Background(), bytes.NewReader(base), conf)
+	otherDims, _ := api.PageDims(context.Background(), bytes.NewReader(other), conf)
 
 	// Each case lists the result as {kind, idx}: kind 0 is a base page, 1 an inserted one.
 	b0, b1, b2, o0, o1 := [2]int{0, 0}, [2]int{0, 1}, [2]int{0, 2}, [2]int{1, 0}, [2]int{1, 1}
@@ -52,7 +53,7 @@ func TestInsertPDF(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		got, _ := api.PageDims(bytes.NewReader(out), conf)
+		got, _ := api.PageDims(context.Background(), bytes.NewReader(out), conf)
 		if len(got) != len(tc.want) {
 			t.Fatalf("%s: count = %d, want %d", tc.name, len(got), len(tc.want))
 		}
@@ -73,8 +74,8 @@ func TestInsertPDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ad, _ := api.PageDims(bytes.NewReader(after), conf)
-	pd, _ := api.PageDims(bytes.NewReader(appended), conf)
+	ad, _ := api.PageDims(context.Background(), bytes.NewReader(after), conf)
+	pd, _ := api.PageDims(context.Background(), bytes.NewReader(appended), conf)
 	if len(ad) != len(pd) {
 		t.Fatalf("after the last page has %d pages and Append %d", len(ad), len(pd))
 	}
@@ -118,7 +119,7 @@ func TestInsertBlankGoesOnTheSideAsked(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

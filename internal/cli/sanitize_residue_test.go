@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +27,7 @@ func TestSanitizeNeverExitsZeroOverARemainingOpenAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestSanitizeNeverExitsZeroOverARemainingOpenAction(t *testing.T) {
 		"Foo": types.IndirectRef{ObjectNumber: 99},
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	pdf := buf.Bytes()
@@ -60,7 +61,7 @@ func TestSanitizeNeverExitsZeroOverARemainingOpenAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rc.XRefTable.DeleteDictEntry(rroot, "OpenAction"); err == nil {
+	if err := rc.XRefTable.DeleteDictEntry(context.Background(), rroot, "OpenAction"); err == nil {
 		t.Fatal("setup: pdfcpu's DeleteDictEntry succeeded — the fixture no longer reaches the defect")
 	}
 	if _, ok := rroot.Find("OpenAction"); !ok {

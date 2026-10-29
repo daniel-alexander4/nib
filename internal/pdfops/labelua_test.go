@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -129,7 +130,7 @@ func TestLabelUARefusesEachMissingConditionByName(t *testing.T) {
 // are asked to display a title, and the title is empty.
 func TestLabelUARefusesAPacketWithAnEmptyTitle(t *testing.T) {
 	ready := labelReady(t, "# Notes\n\nA paragraph.\n")
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(ready), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(ready), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestLabelUARefusesAPacketWithAnEmptyTitle(t *testing.T) {
 	entry, _ := ctx.XRefTable.FindTableEntryForIndRef(&ir)
 	entry.Object = *sd
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LabelUA(buf.Bytes(), true); !errors.Is(err, ErrUANoTitle) {

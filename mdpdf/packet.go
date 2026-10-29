@@ -7,6 +7,7 @@ package mdpdf
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -95,7 +96,7 @@ func ImageToPDF(img []byte) (pdf []byte, err error) {
 	}
 	var out bytes.Buffer
 	// rs == nil starts a fresh single-image document.
-	if err := api.ImportImages(nil, &out, []io.Reader{bytes.NewReader(img)}, imp, model.NewDefaultConfiguration()); err != nil {
+	if err := api.ImportImages(context.Background(), nil, &out, []io.Reader{bytes.NewReader(img)}, imp, model.NewDefaultConfiguration()); err != nil {
 		return nil, fmt.Errorf("mdpdf: import image: %w", err)
 	}
 	return out.Bytes(), nil

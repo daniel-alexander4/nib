@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,13 +20,13 @@ import (
 // walk that never ran also says.
 func completeness(t *testing.T, pdf []byte) []structDefect {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -143,7 +144,7 @@ func TestACompletelyCarriedTreeHasNoDefects(t *testing.T) {
 			len(d), defectLines(d))
 	}
 	// The clause in its own right: the key is owned, and the owner is the XObject.
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -260,7 +261,7 @@ func TestAnElementNamingADeadPageIsADefect(t *testing.T) {
 // TestAFormDrawnTwiceUnderMarkedContentIsADefect — condition 4, on a hand-built shape.
 func TestAFormDrawnTwiceUnderMarkedContentIsADefect(t *testing.T) {
 	src := sharedFormFixture()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(src), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

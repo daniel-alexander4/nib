@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func craftOutlinePDF(t *testing.T, items []types.Dict, nested types.Dict) []byte
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func craftOutlinePDF(t *testing.T, items []types.Dict, nested types.Dict) []byte
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, pageRef, _, err := xt.PageDict(1, false)
+	_, pageRef, _, err := xt.PageDict(context.Background(), 1, false)
 	if err != nil || pageRef == nil {
 		t.Fatalf("page 1: %v", err)
 	}
@@ -87,7 +88,7 @@ func craftOutlinePDF(t *testing.T, items []types.Dict, nested types.Dict) []byte
 	}
 	root["Outlines"] = outRef
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -98,7 +99,7 @@ func craftOutlinePDF(t *testing.T, items []types.Dict, nested types.Dict) []byte
 // `/A` reaches through `/Next`, and how many `/GoTo` destinations resolve to a live page.
 func outlineFacts(t *testing.T, pdf []byte) (titles, actions []string, landed int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -107,7 +108,7 @@ func outlineFacts(t *testing.T, pdf []byte) (titles, actions []string, landed in
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, pageRef, _, err := xt.PageDict(1, false)
+	_, pageRef, _, err := xt.PageDict(context.Background(), 1, false)
 	if err != nil || pageRef == nil {
 		t.Fatalf("page 1 no longer resolves: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestStrippingAChainedActionKeepsThePageItsHeadPointedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	pdf := mustMutate(t, base, func(ctx *model.Context) error {
-		pd, ref, _, err := ctx.XRefTable.PageDict(1, false)
+		pd, ref, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -273,11 +274,11 @@ func TestStrippingAChainedActionKeepsThePageItsHeadPointedAt(t *testing.T) {
 	if _, acts := annotFacts(t, stripped); has(acts, "JavaScript") {
 		t.Errorf("the chained JavaScript action survives: %v", acts)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(stripped), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(stripped), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("the stripped document does not read: %v", err)
 	}
-	pd, _, _, err := ctx.XRefTable.PageDict(1, false)
+	pd, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 	if err != nil || pd == nil || pd["MediaBox"] == nil || pd["Contents"] == nil {
 		t.Errorf("page 1 did not survive the strip of an action whose head named it: dict %v, err %v", pd, err)
 	}

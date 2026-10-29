@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -94,6 +95,6 @@ func pageAt(ctx *model.Context, pages []pdfread.Page, n int) pdfread.Page {
 	if n >= 1 && n <= len(pages) {
 		return pages[n-1]
 	}
-	d, ref, attrs, err := ctx.PageDict(n, false)
+	d, ref, attrs, err := ctx.PageDict(context.Background(), n, false)
 	return pdfread.Page{Nr: n, Dict: d, Ref: ref, Attrs: attrs, Err: err}
 }

@@ -940,7 +940,7 @@ func pdfcpuRead(pdf []byte) (ctx *model.Context, err error) {
 	// only one that belongs here: the question is "can this be parsed at all", never "is it valid".
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
-	return api.ReadContext(bytes.NewReader(pdf), conf)
+	return api.ReadContext(context.Background(), bytes.NewReader(pdf), conf)
 }
 
 // scanForSignatureBlob answers the narrow question without a parser.

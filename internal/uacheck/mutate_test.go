@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -50,7 +51,7 @@ func committedProposal(t *testing.T, pdf []byte) []byte {
 // mutate reads pdf, applies fn, and writes it back — `writeMutated`'s shape, in this package.
 func mutate(t *testing.T, pdf []byte, fn func(*model.Context) error) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -58,7 +59,7 @@ func mutate(t *testing.T, pdf []byte, fn func(*model.Context) error) []byte {
 		t.Fatalf("mutate: %v", err)
 	}
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	return out.Bytes()
@@ -224,7 +225,7 @@ func defaultConfig(ctx *model.Context) (types.Dict, error) {
 // rawMutate is `mutate` for the helpers that cannot take a *testing.T because they are used as
 // values in a table.
 func rawMutate(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +233,7 @@ func rawMutate(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -256,7 +257,7 @@ func mustDefaultConfig(ctx *model.Context) types.Dict {
 // things at once.
 func docWithMetadataKey(t *testing.T, pdf []byte, key, value string) *Document {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -297,7 +298,7 @@ func withDisplayDocTitle(t *testing.T, pdf []byte, v bool) []byte {
 // another producer can arrive in that state — which is exactly the population a checker is for.
 func docWithViewerPref(t *testing.T, pdf []byte, key string, value types.Object) *Document {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -552,7 +553,7 @@ func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byt
 func addMediaClip(t *testing.T, pdf []byte, ct, alt string) []byte {
 	t.Helper()
 	return mutate(t, pdf, func(ctx *model.Context) error {
-		page, _, _, err := ctx.PageDict(1, false)
+		page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -623,7 +624,7 @@ func withoutTabs(t *testing.T, pdf []byte) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		dropped := 0
 		for p := 1; p <= ctx.PageCount; p++ {
-			page, _, _, err := ctx.PageDict(p, false)
+			page, _, _, err := ctx.PageDict(context.Background(), p, false)
 			if err != nil {
 				return err
 			}
@@ -656,7 +657,7 @@ func withoutTabs(t *testing.T, pdf []byte) []byte {
 func addAnnotation(t *testing.T, pdf []byte, subtype string, entries types.Dict, tag string) []byte {
 	t.Helper()
 	return mutate(t, pdf, func(ctx *model.Context) error {
-		page, _, _, err := ctx.PageDict(1, false)
+		page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -763,7 +764,7 @@ func annotMutation(t *testing.T, pdf []byte, kind string) []byte {
 	t.Helper()
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		for p := 1; p <= ctx.PageCount; p++ {
-			page, _, _, err := ctx.PageDict(p, false)
+			page, _, _, err := ctx.PageDict(context.Background(), p, false)
 			if err != nil {
 				return err
 			}
@@ -799,7 +800,7 @@ func annotMutation(t *testing.T, pdf []byte, kind string) []byte {
 
 func widgetMutation(t *testing.T, pdf []byte, kind string) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
-		page, _, _, err := ctx.PageDict(1, false)
+		page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -992,7 +993,7 @@ func markedFalse(t *testing.T, pdf []byte) []byte {
 // appearances.
 func pageContentEmptied(t *testing.T, pdf []byte) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
-		page, _, _, err := ctx.PageDict(1, false)
+		page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -1389,7 +1390,7 @@ func withBareFileSpec(t *testing.T, pdf []byte) []byte {
 		if err != nil {
 			return err
 		}
-		page, _, _, perr := ctx.PageDict(1, false)
+		page, _, _, perr := ctx.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			return perr
 		}
@@ -1483,7 +1484,7 @@ func withEncryption(t *testing.T, pdf []byte, perms model.PermissionFlags) []byt
 	conf := model.NewAESConfiguration("", "owner", 256)
 	conf.Permissions = perms
 	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &out, conf); err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
 	return out.Bytes()
@@ -1511,7 +1512,7 @@ func withReferenceXObject(t *testing.T, pdf []byte) []byte {
 		if err != nil {
 			return err
 		}
-		page, _, _, perr := ctx.PageDict(1, false)
+		page, _, _, perr := ctx.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			return perr
 		}
@@ -1572,7 +1573,7 @@ func withUndrawnReferenceXObject(t *testing.T, pdf []byte) []byte {
 		if rerr != nil {
 			return rerr
 		}
-		page, _, _, perr := ctx.PageDict(1, false)
+		page, _, _, perr := ctx.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			return perr
 		}
@@ -1601,7 +1602,7 @@ func withRefOnAppearance(t *testing.T, pdf []byte) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		touched := 0
 		for p := 1; ; p++ {
-			page, _, _, perr := ctx.PageDict(p, false)
+			page, _, _, perr := ctx.PageDict(context.Background(), p, false)
 			if perr != nil || page == nil {
 				break
 			}
@@ -1643,7 +1644,7 @@ func openEncrypted(t *testing.T, pdf []byte, password string) (*Document, string
 	t.Helper()
 	conf := model.NewDefaultConfiguration()
 	conf.UserPW, conf.OwnerPW = password, password
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), conf, nil)
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -1695,7 +1696,7 @@ func withFormulaParagraph(t *testing.T, pdf []byte, alt string) []byte {
 func withSheetFormFused(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	sheetForms := func(ctx *model.Context, p int) types.Dict {
-		page, _, _, err := ctx.PageDict(p, false)
+		page, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil || page == nil {
 			t.Fatalf("setup: sheet %d does not resolve: %v", p, err)
 		}

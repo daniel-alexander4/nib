@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"nib/internal/contentstream"
@@ -21,13 +22,13 @@ import (
 // pageStreams returns every page's decoded content stream from pdf.
 func pageStreams(t *testing.T, pdf []byte) [][]byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	var out [][]byte
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil || d == nil {
 			continue
 		}
@@ -179,11 +180,11 @@ func BenchmarkReadAPageForComparison(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(md), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(md), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			b.Fatal(rerr)
 		}
-		d, _, _, _ := ctx.PageDict(1, false)
+		d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 		if _, cerr := ctx.PageContent(d, 1); cerr != nil {
 			b.Fatal(cerr)
 		}

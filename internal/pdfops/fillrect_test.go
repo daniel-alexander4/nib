@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -38,7 +39,7 @@ func TestAFieldWhoseRectIsGivenTopFirstIsDrawnWhenFilled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pd, _, _, err := ctx.PageDict(1, false)
+	pd, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

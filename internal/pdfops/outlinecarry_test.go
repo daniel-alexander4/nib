@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"sort"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 func addBookmarks(t *testing.T, pdf []byte, bms []pdfcpu.Bookmark) []byte {
 	t.Helper()
 	var out bytes.Buffer
-	if err := api.AddBookmarks(bytes.NewReader(pdf), &out, bms, true, nil); err != nil {
+	if err := api.AddBookmarks(context.Background(), bytes.NewReader(pdf), &out, bms, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -501,7 +502,7 @@ func explicitDestBookmark(t *testing.T, pdf []byte, title string, page int) []by
 		if lerr != nil || last == nil {
 			t.Fatalf("the fixture's outline has no last item: %v", lerr)
 		}
-		pageRef, perr := ctx.PageDictIndRef(page)
+		pageRef, perr := ctx.PageDictIndRef(context.Background(), page)
 		if perr != nil {
 			return perr
 		}
@@ -541,7 +542,7 @@ func namedDestinations(t *testing.T, pages int, on map[string]int) []byte {
 		}
 		sort.Strings(names) // a map's order would build a different tree shape each run
 		for _, name := range names {
-			ref, perr := ctx.PageDictIndRef(on[name])
+			ref, perr := ctx.PageDictIndRef(context.Background(), on[name])
 			if perr != nil {
 				return perr
 			}
@@ -549,7 +550,7 @@ func namedDestinations(t *testing.T, pages int, on map[string]int) []byte {
 			if aerr != nil {
 				return aerr
 			}
-			if err := ctx.Names["Dests"].Add(ctx.XRefTable, name, *arr, nil, []string{"D", "Dest"}); err != nil {
+			if err := ctx.Names["Dests"].Add(context.Background(), ctx.XRefTable, name, *arr, nil, []string{"D", "Dest"}); err != nil {
 				return err
 			}
 		}
@@ -570,7 +571,7 @@ func destNames(t *testing.T, pdf []byte) []string {
 		return nil
 	}
 	var out []string
-	if err := node.Process(ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
+	if err := node.Process(context.Background(), ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
 		out = append(out, k)
 		return nil
 	}); err != nil {
@@ -616,7 +617,7 @@ func destLeafCount(t *testing.T, pdf []byte) int {
 func destPage(t *testing.T, pdf []byte, name string) int {
 	t.Helper()
 	ctx := readCtx(t, pdf)
-	arr, err := ctx.XRefTable.DereferenceDestArray(name)
+	arr, err := ctx.XRefTable.DereferenceDestArray(context.Background(), name)
 	if err != nil || len(arr) == 0 {
 		return 0
 	}
@@ -625,7 +626,7 @@ func destPage(t *testing.T, pdf []byte, name string) int {
 		return 0
 	}
 	for p := 1; p <= ctx.PageCount; p++ {
-		pr, perr := ctx.PageDictIndRef(p)
+		pr, perr := ctx.PageDictIndRef(context.Background(), p)
 		if perr == nil && pr.ObjectNumber.Value() == ref.ObjectNumber.Value() {
 			return p
 		}
@@ -833,11 +834,11 @@ func actionBookmarks(t *testing.T, pdf []byte) []byte {
 		if lerr != nil || last == nil {
 			t.Fatalf("the fixture's outline has no last item: %v", lerr)
 		}
-		page3, perr := ctx.PageDictIndRef(3)
+		page3, perr := ctx.PageDictIndRef(context.Background(), 3)
 		if perr != nil {
 			return perr
 		}
-		page2, perr := ctx.PageDictIndRef(2)
+		page2, perr := ctx.PageDictIndRef(context.Background(), 2)
 		if perr != nil {
 			return perr
 		}

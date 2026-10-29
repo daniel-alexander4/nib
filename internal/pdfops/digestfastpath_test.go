@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -37,7 +38,7 @@ import (
 // here because it is not a second CALLER of the rule: nothing in production reaches it, and its
 // whole purpose is to disagree if the real one changes behaviour.
 func referenceContentDigest(pdf []byte) (string, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -56,12 +57,12 @@ func referenceDigestBody(ctx *model.Context) (string, error) {
 	// did. It is here only to carry the page positions the rule hashes a reached page by.
 	sc := &streamMemo{met: map[int]bool{}, body: map[int]decodedStream{}, spent: streamMemoBudget + 1, pageAt: map[int]int{}}
 	for i := 1; i <= ctx.PageCount; i++ {
-		if ir, err := ctx.PageDictIndRef(i); err == nil && ir != nil {
+		if ir, err := ctx.PageDictIndRef(context.Background(), i); err == nil && ir != nil {
 			sc.pageAt[ir.ObjectNumber.Value()] = i
 		}
 	}
 	for i := 1; i <= ctx.PageCount; i++ {
-		d, _, attrs, err := ctx.PageDict(i, false)
+		d, _, attrs, err := ctx.PageDict(context.Background(), i, false)
 		if err != nil || d == nil {
 			return "", fmt.Errorf("page %d is unreadable: %w", i, err)
 		}
@@ -239,11 +240,11 @@ func TestSkippingPdfcpusOptimizeWOULDMoveTheDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := api.ValidateContext(ctx); err != nil {
+	if err := api.ValidateContext(context.Background(), ctx); err != nil {
 		t.Fatal(err)
 	}
 	withoutOptimize, err := digestReadContext(ctx, &digestStats{})
@@ -276,7 +277,7 @@ func TestTheDigestIsUnchangedByTheMemosBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

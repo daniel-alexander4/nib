@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -680,7 +681,7 @@ func (d *Document) hasInlineType3Font() bool {
 // `false` because nib stopped looking would turn "nib did not look" into "there is none" — the collapse
 // `hasInlineType3Font` refuses one function up, where a file that will not parse raw answers true.
 func (d *Document) scanInlineType3() bool {
-	ctx, err := api.ReadContext(bytes.NewReader(d.raw), checkerConfig())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(d.raw), checkerConfig())
 	if err != nil {
 		return true
 	}

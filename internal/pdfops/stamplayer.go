@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,7 +56,7 @@ var stampOCGNames = map[string]bool{"Watermark": true, "Background": true}
 // warning, and refusing to open a dialog because a probe failed would be worse than the
 // doubled stamp it is trying to prevent.
 func HasStampLayer(pdf []byte) (bool, error) {
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return false, err
 	}

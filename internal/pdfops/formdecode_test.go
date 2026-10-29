@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"fmt"
 	"nib/internal/pdfread"
 	"os"
@@ -56,7 +57,7 @@ func optimizedCtx(t *testing.T, pdf []byte) *model.Context {
 // pageOne is page 1's content and resources, as each walker is entered with them.
 func pageOne(t *testing.T, ctx *model.Context) ([]byte, types.Dict) {
 	t.Helper()
-	d, _, attrs, err := ctx.PageDict(1, false)
+	d, _, attrs, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil || d == nil {
 		t.Fatalf("page 1: %v", err)
 	}

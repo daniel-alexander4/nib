@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestAGraftedRowIsInsideTheHostsLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

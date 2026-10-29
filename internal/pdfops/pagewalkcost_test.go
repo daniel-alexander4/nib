@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestThePageWalkBudgetChargesEveryKid(t *testing.T) {
 		3: "[" + refs + "]",
 		4: "<< /Type /Pages /Kids 3 0 R /Count 1 >>",
 	})
-	ctx, err := api.ReadContext(bytes.NewReader(doc), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(doc), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func repeatedSlotDoc(k int) []byte {
 // linkObjects counts the link annotation objects a document holds.
 func linkObjects(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

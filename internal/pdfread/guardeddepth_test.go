@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -187,7 +188,7 @@ func TestASharedDictionaryOfGuardedEntriesIsOneNode(t *testing.T) {
 		{"8,000 forms naming their own /XObject dictionary", formsNamingTheirDictionary(8000)},
 		{"8,000 widgets sharing one /AP of 8,000 states", widgets(8000)},
 	} {
-		ctx, err := api.ReadContext(bytes.NewReader(c.pdf), model.NewDefaultConfiguration())
+		ctx, err := api.ReadContext(context.Background(), bytes.NewReader(c.pdf), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}

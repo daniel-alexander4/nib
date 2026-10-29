@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -67,7 +68,7 @@ func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
 		// pdfcpu draws a filled widget from its /Rect as written, so one given top corner first is drawn
 		// into a box of negative height, which no reader shows (/pending 894).
 		normalizeWidgetRects(ctx.XRefTable)
-		ok, pages, err := form.FillForm(ctx, form.FillDetails(&f, nil), f.Pages, form.JSON)
+		ok, pages, err := form.FillForm(context.Background(), ctx, form.FillDetails(&f, nil), f.Pages, form.JSON)
 		putBack()
 		if err != nil {
 			return err
@@ -76,7 +77,7 @@ func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
 			return api.ErrNoFormFieldsAffected
 		}
 		dropStaleWidgetValues(ctx.XRefTable, repeated)
-		_, _, err = create.UpdatePageTree(ctx, pages, nil)
+		_, _, err = create.UpdatePageTree(context.Background(), ctx, pages, nil)
 		return err
 	})
 }
@@ -421,7 +422,7 @@ func dropStaleWidgetValues(xt *model.XRefTable, before map[int]string) {
 // drawn (`build/formrt.sh`, /pending 894). Only an inverted /Rect is touched.
 func normalizeWidgetRects(xRefTable *model.XRefTable) {
 	for pg := 1; pg <= xRefTable.PageCount; pg++ {
-		pd, _, _, err := xRefTable.PageDict(pg, false)
+		pd, _, _, err := xRefTable.PageDict(context.Background(), pg, false)
 		if err != nil || pd == nil {
 			continue
 		}

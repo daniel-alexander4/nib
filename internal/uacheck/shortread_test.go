@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -204,7 +205,7 @@ func openMutated(t *testing.T, pdf []byte, mutate func(d *Document, page types.D
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	page, _, _, perr := d.Ctx.PageDict(1, false)
+	page, _, _, perr := d.Ctx.PageDict(context.Background(), 1, false)
 	if perr != nil || page == nil {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}
@@ -346,7 +347,7 @@ func TestPdfcpuGivesThePageItsInheritedResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	page, _, _, perr := d.Ctx.PageDict(1, false)
+	page, _, _, perr := d.Ctx.PageDict(context.Background(), 1, false)
 	if perr != nil || page == nil {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}

@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -193,7 +194,7 @@ func optimize(ctx *model.Context, strict bool) error {
 		defer balancePageTreeForPass(ctx)()
 	}
 	freeReferencePass(ctx)
-	return api.OptimizeContext(ctx)
+	return api.OptimizeContext(context.Background(), ctx)
 }
 
 // freeReferencePass is `fixFreeReferences`, a variable so a test can see that the pass runs it.

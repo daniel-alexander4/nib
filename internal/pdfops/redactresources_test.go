@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ const (
 // everyDecodedByte is the raw file followed by the decoded body of every stream object in it.
 func everyDecodedByte(t *testing.T, pdf []byte) []byte {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("the output does not read: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestRemovingAPageLeavesNothingOnlyItDrew(t *testing.T) {
 // names.
 func keptResources(t *testing.T, pdf []byte) map[string][]string {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

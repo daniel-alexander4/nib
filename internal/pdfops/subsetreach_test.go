@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -247,7 +248,7 @@ func TestASignatureInheritedDownAFieldDAGIsErasedByTheFieldWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), subsetConf())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), subsetConf(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}

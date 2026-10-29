@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func efStreams(t *testing.T, pdf []byte) []string {
 		return nil
 	}
 	var out []string
-	if err := tree.Process(ctx.XRefTable, func(xt *model.XRefTable, key string, v *types.Object) error {
+	if err := tree.Process(context.Background(), ctx.XRefTable, func(xt *model.XRefTable, key string, v *types.Object) error {
 		fs, err := xt.DereferenceDict(*v)
 		if err != nil {
 			return err

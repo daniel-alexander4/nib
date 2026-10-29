@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -104,7 +105,7 @@ func pageOneContent(t *testing.T, pdf []byte) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil || d == nil {
 		t.Fatalf("page 1: %v", err)
 	}

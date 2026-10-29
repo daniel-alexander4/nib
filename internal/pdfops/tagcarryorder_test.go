@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,13 +40,13 @@ func identicalPagesFixture(n int) []byte {
 // `1: Fm1=0 Fm2=1`. It is what the carry decides — which form anchors which source page.
 func formKeys(t *testing.T, pdf []byte) string {
 	t.Helper()
-	ctx, err := api.ReadAndValidate(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadAndValidate(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	var b strings.Builder
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+		d, _, _, perr := ctx.PageDict(context.Background(), p, false)
 		if perr != nil || d == nil {
 			t.Fatalf("page %d: %v", p, perr)
 		}

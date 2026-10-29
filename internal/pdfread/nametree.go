@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"slices"
@@ -313,7 +314,7 @@ func rememberNameTrees(ctx *model.Context, read map[string]nameTreeRead) {
 	for tree, r := range read {
 		kept := 0
 		if node := xt.Names[tree]; node != nil {
-			_ = node.Process(xt, func(*model.XRefTable, string, *types.Object) error {
+			_ = node.Process(context.Background(), xt, func(*model.XRefTable, string, *types.Object) error {
 				kept++
 				return nil
 			})
@@ -440,7 +441,7 @@ func shapeNameTrees(ctx *model.Context) {
 		}
 		var level []*model.Node
 		var leaf *model.Node
-		_ = root.Process(ctx.XRefTable, func(_ *model.XRefTable, k string, v *types.Object) error {
+		_ = root.Process(context.Background(), ctx.XRefTable, func(_ *model.XRefTable, k string, v *types.Object) error {
 			if leaf == nil || len(leaf.Names) == nameTreeFan {
 				leaf = &model.Node{Kmin: k}
 				level = append(level, leaf)

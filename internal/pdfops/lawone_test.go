@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -250,7 +251,7 @@ func TestLawOneHoldsOverRealDocuments(t *testing.T) {
 			c.docs++
 			done := map[int]bool{}
 			for p := 1; p <= ctx.PageCount; p++ {
-				d, _, attrs, err := ctx.PageDict(p, false)
+				d, _, attrs, err := ctx.PageDict(context.Background(), p, false)
 				if err != nil || d == nil {
 					continue
 				}
@@ -351,7 +352,7 @@ func noOpRewrite(t *testing.T, pdf []byte) (out []byte, rewritten, separated int
 		return nil, 0, 0, err
 	}
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil || d == nil {
 			continue
 		}
@@ -373,7 +374,7 @@ func noOpRewrite(t *testing.T, pdf []byte) (out []byte, rewritten, separated int
 		rewritten++
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		return nil, 0, 0, err
 	}
 	return buf.Bytes(), rewritten, separated, nil
@@ -387,7 +388,7 @@ func noOpRewrite(t *testing.T, pdf []byte) (out []byte, rewritten, separated int
 func annotsReachAPage(ctx *model.Context) bool {
 	pages := map[int]bool{}
 	for i := 1; i <= ctx.PageCount; i++ {
-		if ir, err := ctx.PageDictIndRef(i); err == nil && ir != nil {
+		if ir, err := ctx.PageDictIndRef(context.Background(), i); err == nil && ir != nil {
 			pages[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -431,7 +432,7 @@ func annotsReachAPage(ctx *model.Context) bool {
 		return false
 	}
 	for i := 1; i <= ctx.PageCount; i++ {
-		if d, _, _, err := ctx.PageDict(i, false); err == nil && d != nil && reach(d["Annots"], 0) {
+		if d, _, _, err := ctx.PageDict(context.Background(), i, false); err == nil && d != nil && reach(d["Annots"], 0) {
 			return true
 		}
 	}
@@ -503,8 +504,8 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 			}
 			reaches := annotsReachAPage(bctx)
 			for p := 1; p <= bctx.PageCount; p++ {
-				bd, _, _, _ := bctx.PageDict(p, false)
-				ad, _, _, _ := actx.PageDict(p, false)
+				bd, _, _, _ := bctx.PageDict(context.Background(), p, false)
+				ad, _, _, _ := actx.PageDict(context.Background(), p, false)
 				if bd == nil || ad == nil {
 					continue
 				}
@@ -589,7 +590,7 @@ func largestRealPage(tb testing.TB) (name string, src []byte) {
 			return nil
 		}
 		for i := 1; i <= ctx.PageCount; i++ {
-			pd, _, _, perr := ctx.PageDict(i, false)
+			pd, _, _, perr := ctx.PageDict(context.Background(), i, false)
 			if perr != nil || pd == nil {
 				continue
 			}

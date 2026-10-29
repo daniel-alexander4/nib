@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"strings"
@@ -37,7 +38,7 @@ func TestAuthoredMarkdownEmbedsEveryFontItDrawsWith(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConvertDocToPDF: %v", err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestTheCoreFacesAreStillTheFallbackAndStillFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConvertWithFonts: %v", err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestADegradedConversionSaysSo(t *testing.T) {
 		t.Errorf("the degrade was silent. Logged:\n%s", buf.String())
 	}
 	// And the degrade is real, not just announced: the document must actually name core fonts.
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("re-read: %v", rerr)
 	}

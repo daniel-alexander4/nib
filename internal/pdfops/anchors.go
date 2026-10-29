@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"math"
@@ -319,7 +320,7 @@ func destinationObjects(ctx *model.Context) []types.Object {
 		}
 	}
 	if node := xt.Names["Dests"]; node != nil {
-		_ = node.Process(xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
+		_ = node.Process(context.Background(), xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
 			dests = append(dests, *v)
 			return nil
 		})
@@ -363,8 +364,8 @@ func destinationArray(xt *model.XRefTable, o types.Object) (types.Array, bool) {
 	if err != nil || key == "" || xt.Names["Dests"] == nil {
 		return nil, false
 	}
-	v, ok := xt.Names["Dests"].Value(key)
-	if !ok {
+	v, ok, verr := xt.Names["Dests"].Value(context.Background(), key)
+	if verr != nil || !ok {
 		return nil, false
 	}
 	r, err = xt.Dereference(v)

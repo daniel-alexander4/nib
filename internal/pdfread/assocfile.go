@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"sync"
@@ -111,7 +112,7 @@ func writtenFileSpecs(ctx *model.Context) map[int]bool {
 	xt := ctx.XRefTable
 	out := map[int]bool{}
 	if tree := xt.Names["EmbeddedFiles"]; tree != nil {
-		_ = tree.Process(xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
+		_ = tree.Process(context.Background(), xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
 			if ref, ok := (*v).(types.IndirectRef); ok {
 				out[ref.ObjectNumber.Value()] = true
 			}

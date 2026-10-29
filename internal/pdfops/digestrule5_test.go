@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 		pn["MediaBox"] = types.NewNumberArray(0, 0, 612, 792)
 		pn["Rotate"] = types.Integer(0)
 		for p := 1; p <= ctx.PageCount; p++ {
-			d, _, _, err := ctx.PageDict(p, false)
+			d, _, _, err := ctx.PageDict(context.Background(), p, false)
 			if err != nil {
 				return err
 			}
@@ -101,7 +102,7 @@ func TestRuleFiveSeesWhatTheReaderSees(t *testing.T) {
 	}
 	onPage1 := func(fn func(d types.Dict)) func(*model.Context) error {
 		return func(ctx *model.Context) error {
-			d, _, _, err := ctx.PageDict(1, false)
+			d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 			if err != nil {
 				return err
 			}
@@ -193,7 +194,7 @@ func TestRuleFiveReadsADividedPageAsItsReaderDoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	fused := mustMutate(t, divided, func(ctx *model.Context) error {
-		d, _, _, err := ctx.PageDict(1, false)
+		d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -240,11 +241,11 @@ func TestRuleFiveDoesNotHashAReachedPagesEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	noted := mustMutate(t, two, func(ctx *model.Context) error {
-		ref, err := ctx.PageDictIndRef(1)
+		ref, err := ctx.PageDictIndRef(context.Background(), 1)
 		if err != nil {
 			return err
 		}
-		d, _, _, err := ctx.PageDict(1, false)
+		d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -254,7 +255,7 @@ func TestRuleFiveDoesNotHashAReachedPagesEncoding(t *testing.T) {
 	})
 	var filterBefore types.Object
 	reencoded := mustMutate(t, noted, func(ctx *model.Context) error {
-		d, _, _, err := ctx.PageDict(1, false)
+		d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}

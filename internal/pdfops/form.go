@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"nib/internal/pdfread"
@@ -165,7 +166,7 @@ func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.CREATE
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
-		if err := create.FromJSON(ctx, bytes.NewReader(b)); err != nil {
+		if err := create.FromJSON(context.Background(), ctx, bytes.NewReader(b)); err != nil {
 			return err
 		}
 		// `/Tabs /S` on every page that carries an annotation, so tab order follows the document's

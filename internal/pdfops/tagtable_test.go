@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -83,7 +84,7 @@ type tagFate struct {
 // claims through the other.
 func rawEncrypt(b []byte, pw string) ([]byte, error) {
 	var out bytes.Buffer
-	err := api.Encrypt(bytes.NewReader(b), &out, model.NewAESConfiguration(pw, pw, 256))
+	err := api.Encrypt(context.Background(), bytes.NewReader(b), &out, model.NewAESConfiguration(pw, pw, 256))
 	return out.Bytes(), err
 }
 
@@ -91,7 +92,7 @@ func rawDecrypt(b []byte, pw string) ([]byte, error) {
 	var out bytes.Buffer
 	conf := model.NewDefaultConfiguration()
 	conf.UserPW, conf.OwnerPW = pw, pw
-	err := api.Decrypt(bytes.NewReader(b), &out, conf)
+	err := api.Decrypt(context.Background(), bytes.NewReader(b), &out, conf)
 	return out.Bytes(), err
 }
 

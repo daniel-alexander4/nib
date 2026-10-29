@@ -1,6 +1,7 @@
 package pdfread_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ func samePages(t *testing.T, name string, ctx *model.Context) {
 	}
 	for i, g := range got {
 		p := i + 1
-		d, ref, attrs, err := ctx.PageDict(p, false)
+		d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 		if g.Nr != p {
 			t.Fatalf("%s: page %d reported as number %d", name, p, g.Nr)
 		}

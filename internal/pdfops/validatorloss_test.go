@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -53,7 +54,7 @@ func lostFontDoc(twin bool) []byte {
 // and never printed, since a rewrite renumbers them; a stream is its decoded-or-raw bytes' hash.
 func fontsAsWritten(t *testing.T, pdf []byte) []map[string]string {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("unvalidated read: %v", err)
 	}
@@ -271,7 +272,7 @@ func TestACutOrComposedPageKeepsTheFontTheValidatorTakes(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		ctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+		ctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatal(err)
 		}

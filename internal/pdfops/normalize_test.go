@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestNormalizePageSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dims, err := api.PageDims(bytes.NewReader(out), conf)
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(out), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestNormalizePageSizesUniform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dims, _ := api.PageDims(bytes.NewReader(out), conf)
+	dims, _ := api.PageDims(context.Background(), bytes.NewReader(out), conf)
 	for i, d := range dims {
 		if !dimsClose(d, types.Dim{Width: 612, Height: 792}) {
 			t.Errorf("page %d is %.1f×%.1f, want 612×792", i+1, d.Width, d.Height)

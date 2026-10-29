@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -166,7 +167,7 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, budget *int, fn 
 // read-only — it opens the document without validation (so it tolerates the
 // malformed files this is most useful on) and never writes anything back.
 func Scan(pdf []byte) (ScanReport, error) {
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return ScanReport{}, err
 	}

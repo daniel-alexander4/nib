@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -123,7 +124,7 @@ func TestAFlagsPastInt64IsZeroInEveryParse(t *testing.T) {
 	for _, flags := range []string{"/Flags 100000000000000000000.0", "/Flags 9223372036854775808"} {
 		pdf := ttDoc(flags, "/Encoding /WinAnsiEncoding", "(ABC) Tj", ttProgram(sub31))
 		docs = append(docs, pdf)
-		raw, err := api.ReadContext(bytes.NewReader(pdf), checkerConfig())
+		raw, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), checkerConfig())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -116,7 +117,7 @@ func craftPageFileAttachmentPDF(t *testing.T, name string, data []byte) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func craftPageFileAttachmentPDF(t *testing.T, name string, data []byte) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pd, _, _, err := ctx.PageDict(1, false)
+	pd, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func craftPageFileAttachmentPDF(t *testing.T, name string, data []byte) []byte {
 		"Rect":    types.NewNumberArray(100, 100, 120, 120),
 	}}
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -177,7 +178,7 @@ func TestPageFileAttachment(t *testing.T) {
 // rather than calling any pdfops accessor, so a broken accessor cannot make it agree.
 func docFacts(t *testing.T, pdf []byte) (outline, lang, attach bool) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}
@@ -461,7 +462,7 @@ func TestContentDigestIsStableAcrossARewriteAndSeesTheImage(t *testing.T) {
 	// And the corruption case, which the decode marker also covers.
 	swapped, err := writeMutated(base, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
-		d, _, _, perr := xt.PageDict(1, false)
+		d, _, _, perr := xt.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			return perr
 		}
@@ -523,11 +524,11 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 	// STIMULUS: the page really carries both resource kinds, or three of the axes below are
 	// mutating something that is not there and pass for the wrong reason.
 	func() {
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
-		d, _, _, perr := ctx.XRefTable.PageDict(1, false)
+		d, _, _, perr := ctx.XRefTable.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			t.Fatal(perr)
 		}
@@ -575,7 +576,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 			name: "/CropBox",
 			why:  "excises a paragraph from what every reader displays",
 			mut: func(ctx *model.Context) error {
-				d, _, _, err := ctx.XRefTable.PageDict(1, false)
+				d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 				if err != nil {
 					return err
 				}
@@ -587,7 +588,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 			name: "/Rotate",
 			why:  "turns the page ninety degrees",
 			mut: func(ctx *model.Context) error {
-				d, _, _, err := ctx.XRefTable.PageDict(1, false)
+				d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 				if err != nil {
 					return err
 				}
@@ -599,7 +600,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 			name: "the font's /BaseFont",
 			why:  "changes every glyph the page renders; \"Font\" was inert in resourceKinds",
 			mut: func(ctx *model.Context) error {
-				d, _, _, err := ctx.XRefTable.PageDict(1, false)
+				d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 				if err != nil {
 					return err
 				}
@@ -616,7 +617,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 			name: "a sticky-note annotation",
 			why:  "Nib's own AddNotes writes these, and they touch no content stream",
 			mut: func(ctx *model.Context) error {
-				d, _, _, err := ctx.XRefTable.PageDict(1, false)
+				d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 				if err != nil {
 					return err
 				}
@@ -649,7 +650,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 
 // onFirstXObject applies fn to the page's first XObject stream, in place.
 func onFirstXObject(ctx *model.Context, fn func(*types.StreamDict)) error {
-	d, _, _, err := ctx.XRefTable.PageDict(1, false)
+	d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 	if err != nil {
 		return err
 	}
@@ -716,11 +717,11 @@ func TestContentDigestSeesAPageLevelFont(t *testing.T) {
 		t.Fatal(err)
 	}
 	// STIMULUS: the font really is at PAGE level, not one form down.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, err := ctx.XRefTable.PageDict(1, false)
+	d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -736,7 +737,7 @@ func TestContentDigestSeesAPageLevelFont(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := writeMutated(pdf, func(c *model.Context) error {
-		pd, _, _, perr := c.XRefTable.PageDict(1, false)
+		pd, _, _, perr := c.XRefTable.PageDict(context.Background(), 1, false)
 		if perr != nil {
 			return perr
 		}

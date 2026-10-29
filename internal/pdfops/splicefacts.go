@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -114,7 +115,7 @@ func (f documentFacts) restore(ctx *model.Context) (filesWithheld bool) {
 	}
 	seen := map[int]bool{}
 	safe := true
-	if err := f.files.Process(xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
+	if err := f.files.Process(context.Background(), xt, func(_ *model.XRefTable, _ string, v *types.Object) error {
 		if reachesObject(xt, *v, dropped, seen, 0) {
 			safe = false
 		}

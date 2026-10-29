@@ -45,6 +45,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"nib/internal/pdfread"
@@ -152,7 +153,7 @@ func SetFlags(pdf, flagsJSON []byte) ([]byte, error) {
 	// `api.AddProperties` also validates keys and values for characters a PDF string cannot hold; the key
 	// is a constant and the value base64, so there is nothing for that check to find here.
 	res, err := rewriteWithConf(pdf, propertyConf(model.ADDPROPERTIES), func(ctx *model.Context) error {
-		return pdfcpu.PropertiesAdd(ctx, map[string]string{flagsKey: enc})
+		return pdfcpu.PropertiesAdd(context.Background(), ctx, map[string]string{flagsKey: enc})
 	})
 	if err != nil {
 		return nil, err
@@ -170,7 +171,7 @@ func ClearFlags(pdf []byte) ([]byte, error) {
 		return pdf, err
 	}
 	return rewriteWithConf(pdf, propertyConf(model.REMOVEPROPERTIES), func(ctx *model.Context) error {
-		ok, err := pdfcpu.PropertiesRemove(ctx, []string{flagsKey})
+		ok, err := pdfcpu.PropertiesRemove(context.Background(), ctx, []string{flagsKey})
 		if err != nil {
 			return err
 		}

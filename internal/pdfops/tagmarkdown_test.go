@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -243,7 +244,7 @@ func TestTaggingRefusesWhenTheStructureAndTheStREAMDisagree(t *testing.T) {
 	_, err = writeMutated(pdf, func(ctx *model.Context) error {
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+			if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 				live[ir.ObjectNumber.Value()] = true
 			}
 		}

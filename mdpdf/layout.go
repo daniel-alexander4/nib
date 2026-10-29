@@ -1,6 +1,8 @@
 package mdpdf
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
@@ -38,7 +40,7 @@ type style struct {
 // a Greek or CJK word would reserve twice the space it occupies.
 func (s style) width(text string) float64 {
 	if s.embedded {
-		return font.TextWidth(text, s.font, s.size)
+		return mustWidth(font.TextWidth(context.Background(), text, s.font, s.size))
 	}
 	return CoreWidth(text, s.font, s.size)
 }
@@ -59,7 +61,18 @@ func (s style) width(text string) float64 {
 // Core fonts only. An EMBEDDED font is measured by rune, and `style.width` keeps
 // that distinction; a caller with a fallback face wants that path, not this one.
 func CoreWidth(text, fontName string, size int) float64 {
-	return font.TextWidth(encodedWidth(text), fontName, size)
+	return mustWidth(font.TextWidth(context.Background(), encodedWidth(text), fontName, size))
+}
+
+// mustWidth is the door onto pdfcpu's measurement (ADR-009). v0.13 PANICKED on a font it did not carry ("user font not
+// loaded") and v0.16 answers an error; every caller of this package states the contract that the name is one it
+// installed or allowlisted, so an error here is that contract broken, and it is raised the way it always was —
+// loudly, never as a width of 0 that lets any number of lines fit (see LineHeight).
+func mustWidth(w float64, err error) float64 {
+	if err != nil {
+		panic(fmt.Errorf("mdpdf: measuring text: %w", err))
+	}
+	return w
 }
 
 // LineHeight is the baseline-to-baseline distance for text set in fontName at size pt — the height
@@ -78,7 +91,13 @@ func CoreWidth(text, fontName string, size int) float64 {
 // Nothing here can make an unlisted name safe, so the coercion belongs at the caller's door, not
 // behind a zero-check here that would only convert one wrong answer into another.
 func LineHeight(fontName string, size int) float64 {
-	return font.LineHeight(fontName, size)
+	h, err := font.LineHeight(context.Background(), fontName, size)
+	if err != nil {
+		// v0.13 answered a silent 0 for a font it did not carry and v0.16 answers an error. Zero stays the answer —
+		// this port changes no behaviour — and the comment above is why a caller must not hand this an unlisted name.
+		return 0
+	}
+	return h
 }
 
 // Wrap breaks text into lines no wider than maxW points when set in fontName at size pt, with

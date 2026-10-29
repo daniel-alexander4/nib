@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,9 +253,9 @@ func toUnicodeRewritten(t *testing.T, pdf []byte, dest bool) []byte {
 	t.Helper()
 	// Validated, as `ReadContextFile` does: an unvalidated context holds only what was dereferenced, and
 	// writing it back emits a two-kilobyte shell.
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err == nil {
-		err = api.ValidateContext(ctx)
+		err = api.ValidateContext(context.Background(), ctx)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +285,7 @@ func toUnicodeRewritten(t *testing.T, pdf []byte, dest bool) []byte {
 		t.Fatal("the conversion carries no bfchar CMap — the fixture does not carry the defect")
 	}
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()

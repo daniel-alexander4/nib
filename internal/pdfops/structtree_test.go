@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,13 +93,13 @@ func assembleFixture(objs map[int]string) []byte {
 // readTree is the test-side door into the model: read a document and parse its tree.
 func readTree(t *testing.T, pdf []byte) (*structTree, error) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -112,7 +113,7 @@ func readTree(t *testing.T, pdf []byte) (*structTree, error) {
 // that know nothing about `structElem` and could not inherit its mistakes.
 func countElementsIndependently(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,18 +232,18 @@ func TestAKidTheModelCannotClassifyIsRefused(t *testing.T) {
 
 	// The floor: the VALIDATING door must reject this, or the paragraph above is wrong and this
 	// test is reading a document nib would happily accept.
-	if _, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration()); err == nil {
+	if _, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil); err == nil {
 		t.Fatal("pdfcpu now ACCEPTS a /K entry of /Type /Bookmark — the model's refusal has become " +
 			"reachable through nib's normal door, which is a change worth knowing about")
 	}
 
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("even the non-validating read refused the fixture: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}

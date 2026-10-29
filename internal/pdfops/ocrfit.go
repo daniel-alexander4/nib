@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -100,7 +101,11 @@ func wordInk(fontName string, face *sfnt.Font, text string) (advance, bottom, to
 		// The advance is pdfcpu's own figure for the glyph — the whole number of thousandths it writes into the
 		// embedded font's widths — because that is what a reader will add up. The face's exact advance differs by
 		// the rounding, which a wide box multiplies.
-		advance += float64(pdffont.CharWidth(fontName, r)) / 1000
+		cw, cerr := pdffont.CharWidth(context.Background(), fontName, r)
+		if cerr != nil {
+			return 0, 0, 0, false // v0.13 panicked on a font it did not carry; a word nobody can measure is not fitted
+		}
+		advance += float64(cw) / 1000
 		if bounds.Max.Y > bounds.Min.Y { // sfnt's y runs down
 			bottom, top = math.Min(bottom, -float64(bounds.Max.Y)/64), math.Max(top, -float64(bounds.Min.Y)/64)
 		}
@@ -123,7 +128,11 @@ func fitWord(fontName, text string, rect [4]float64) (pts int, fit wordFit, fitt
 	}
 	pts = max(int(math.Round(em)), 4)
 	// pdfcpu sets the baseline this far above the form's origin (`model.CalcBoundingBox`), and the run at x = 0.
-	base := math.Ceil(pdffont.Descent(fontName, pts))
+	descent, derr := pdffont.Descent(context.Background(), fontName, pts)
+	if derr != nil {
+		return pts, asStamped, false
+	}
+	base := math.Ceil(descent)
 	fit.sy = em / float64(pts)
 	fit.sx = w / (advance * float64(pts))
 	fit.oy = -fit.sy * (base + bottom*float64(pts))

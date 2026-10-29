@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -91,9 +92,9 @@ func plainStamps(pdf []byte) ([]byte, error) {
 	wms := map[int][]*model.Watermark{}
 	for pg := 1; pg <= 2; pg++ {
 		for i := 0; i < 3; i++ {
-			wm, err := api.TextWatermark(fmt.Sprintf("stamp %d", i),
+			wm, err := api.TextWatermark(context.Background(), fmt.Sprintf("stamp %d", i),
 				fmt.Sprintf("fontname:Helvetica, points:12, scalefactor:1 abs, position:bl, offset:%d %d, rotation:0", 100+40*i, 300+20*i),
-				true, false, types.POINTS)
+				true, false, types.POINTS, nil)
 			if err != nil {
 				return nil, err
 			}

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"nib/internal/pdfread"
@@ -118,7 +119,7 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 			// unrepresentable run is skipped rather than failing the whole layer.
 			continue
 		}
-		wm, err := api.TextWatermark(text, desc, true, false, types.POINTS)
+		wm, err := api.TextWatermark(context.Background(), text, desc, true, false, types.POINTS, nil)
 		if err != nil {
 			return nil, err
 		}

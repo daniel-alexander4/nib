@@ -2,6 +2,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"nib/internal/scaling"
@@ -201,7 +202,7 @@ func TestTheReshapingIsGoneWhenThePassReturns(t *testing.T) {
 	if len(ctx.Table) == before || fmt.Sprint(d["Kids"]) == fmt.Sprint(kids) {
 		t.Fatal("setup: a 300-kid /Pages node was not reshaped")
 	}
-	if pd, _, _, err := ctx.PageDict(300, false); err != nil || pd == nil {
+	if pd, _, _, err := ctx.PageDict(context.Background(), 300, false); err != nil || pd == nil {
 		t.Fatalf("page 300 is not found through the reshaped tree: %v", err)
 	}
 	restore()

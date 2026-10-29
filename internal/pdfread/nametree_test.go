@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -20,7 +21,7 @@ import (
 // without the validator and without nib's own walk, so it measures what was written and not what a read made of it.
 func rawNameTree(t *testing.T, pdf []byte, kind string) (depth, names int) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func rawNameTree(t *testing.T, pdf []byte, kind string) (depth, names int) {
 func keptNames(ctx *model.Context, kind string) []string {
 	var keys []string
 	if n := ctx.Names[kind]; n != nil {
-		_ = n.Process(ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
+		_ = n.Process(context.Background(), ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
 			keys = append(keys, k)
 			return nil
 		})
@@ -144,7 +145,7 @@ func TestATreeTheValidatorDropsIsMarkedAndNotWritten(t *testing.T) {
 	}
 	// A loop is met once and no more: the walk reads the one name and says it cannot vouch for the tree.
 	loop := testpdf.NameTreeDoc(testpdf.NameTree{Kind: "EmbeddedFiles", Depth: 3, Loop: true})
-	raw, err := api.ReadContext(bytes.NewReader(loop), model.NewDefaultConfiguration())
+	raw, err := api.ReadContext(context.Background(), bytes.NewReader(loop), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestNoWriteNestsANameTreePastWhatAReaderFollows(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, k := range keys {
-				if err := ctx.AddAttachment(model.Attachment{Reader: strings.NewReader(k), ID: k}, false); err != nil {
+				if err := ctx.AddAttachment(context.Background(), model.Attachment{Reader: strings.NewReader(k), ID: k}, false); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -239,11 +240,11 @@ func TestNoWriteNestsANameTreePastWhatAReaderFollows(t *testing.T) {
 					total, order, depth, names, total, pdfread.MaxWrittenNameTreeDepth)
 			}
 			// Read again with pdfcpu's validator ALONE — an older nib, or pdfcpu — every name is there, in order.
-			plain, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+			plain, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := api.ValidateContext(plain); err != nil {
+			if err := api.ValidateContext(context.Background(), plain); err != nil {
 				t.Fatal(err)
 			}
 			if after := keptNames(plain, "EmbeddedFiles"); strings.Join(after, "\n") != strings.Join(before, "\n") {
