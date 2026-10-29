@@ -57,6 +57,10 @@ are now check boxes. ADR-172's pdf.js patch is kept (it is on the window side). 
 braces: with its push-button half off the form round-trip rows are identical on all 206 documents (v0.16.2 skips
 push buttons itself), and retiring it is a later change that supersedes this clause. A widget whose `/Parent` reaches
 nothing is carried by `unwalkableWidgets`, because v0.16.2 answers the whole export "corrupt field" where v0.13 skipped it.
+A Yes/No pair with no Radio flag is likewise ONE check box now, so every export (JSON, CSV, XFDF) reports it as
+ticked or not, `Yes` for either box, where v0.13's radio group named the state (a pair answered No exported `No`, now
+`Yes`): declared, found by the P02 close's tier 3, which is why `test/ui/checkpair.test.mjs` asks whether an answer is
+STORED rather than which. The file's `/V` is still the ticked box's state (ADR-172).
 
 **5. A file nib removes is removed from `/AF` too** (D6). v0.16.2 writes the catalog's `/AF` and the files it names.
 `removeAllAttachments` — the one door remove-files and sanitize reach — strips `/AF` from every dictionary
