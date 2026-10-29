@@ -141,7 +141,7 @@ func RefLoops() []RefLoop {
 		pair("GoTo3DView /TA through Link /A", "10 0 R", "12 0 R", func(x func(string) string) []byte {
 			return onePage("", "10 0 R", "", map[int]string{
 				10: "<< " + annot + "/Subtype /Link /A 11 0 R >>", 11: x("<< /S /GoTo3DView /TA @X /V /D >>"),
-				12: "<< " + annot + "/Subtype /Text >>",
+				12: "<< " + annot + "/Subtype /3D /3DD 13 0 R >>", 13: "<< /Type /3D /Subtype /U3D /Length 0 >>\nstream\n\nendstream",
 			})
 		}),
 		pair("markup /IRT", "/IRT 10 0 R", "", func(x func(string) string) []byte {
@@ -152,19 +152,19 @@ func RefLoops() []RefLoop {
 		pair("Screen /A", "10 0 R", "12 0 R", func(x func(string) string) []byte {
 			return onePage("", "10 0 R", "", map[int]string{
 				10: "<< " + annot + "/Subtype /Screen /A 11 0 R >>", 11: x("<< /S /GoTo3DView /TA @X /V /D >>"),
-				12: "<< " + annot + "/Subtype /Text >>",
+				12: "<< " + annot + "/Subtype /3D /3DD 13 0 R >>", 13: "<< /Type /3D /Subtype /U3D /Length 0 >>\nstream\n\nendstream",
 			})
 		}),
 		pair("Screen /AA", "10 0 R", "12 0 R", func(x func(string) string) []byte {
 			return onePage("", "10 0 R", "", map[int]string{
 				10: "<< " + annot + "/Subtype /Screen /AA << /E 11 0 R >> >>", 11: x("<< /S /GoTo3DView /TA @X /V /D >>"),
-				12: "<< " + annot + "/Subtype /Text >>",
+				12: "<< " + annot + "/Subtype /3D /3DD 13 0 R >>", 13: "<< /Type /3D /Subtype /U3D /Length 0 >>\nstream\n\nendstream",
 			})
 		}),
 		pair("selector rendition /R", "11 0 R", "12 0 R", func(x func(string) string) []byte {
 			return onePage("", "20 0 R", "/OpenAction 10 0 R", map[int]string{
 				20: "<< " + annot + "/Subtype /Screen >>", 10: "<< /S /Rendition /OP 0 /AN 20 0 R /R 11 0 R >>", 11: x("<< /Type /Rendition /S /SR /R [@X] >>"),
-				12: "<< /Type /Rendition /S /MR >>",
+				12: "<< /Type /Rendition /S /MR /P << /Type /MediaPlayParams /PL << /Type /MediaPlayers /MU [<< /Type /MediaPlayerInfo /PID << /Type /SoftwareIdentifier /U (x) >> >>] >> >> >>",
 			})
 		}),
 		pair("media clip section /D", "13 0 R", "14 0 R", func(x func(string) string) []byte {
@@ -213,7 +213,8 @@ var FanInEntries = map[string]string{
 	"shading Pattern /Shading":  "/Pattern << /P << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 1] /Function @F >> >> >>",
 	"Separation tint transform": "/ColorSpace << /CS [/Separation /S /DeviceGray @F] >>",
 	"DeviceN tint transform":    "/ColorSpace << /CS [/DeviceN [/A] /DeviceGray @F] >>",
-	"DeviceN /Process":          "/ColorSpace << /CS [/DeviceN [/A] /DeviceGray 21 0 R << /Process << /ColorSpace [/Separation /S /DeviceGray @F] /Components [/A] >> >>] >>",
+	// "DeviceN /Process" was an entry here: v0.16.2 allows only a device or CIE-based colour space as /Process's
+	// /ColorSpace (validate/colorspace.go), so the Separation this shape needs no longer reads at all and cannot be built.
 	// /pending 767: the transfer keys after /TR, and a shading pattern's own /ExtGState.
 	"ExtGState /TR2":             "/ExtGState << /G << /Type /ExtGState /TR2 @F >> >>",
 	"ExtGState /BG":              "/ExtGState << /G << /Type /ExtGState /BG @F >> >>",
@@ -294,7 +295,7 @@ func FanInShapes() []FanInShape {
 		build("Rendition action /R", func(_ int, o map[int]string) string {
 			o[20] = "<< " + annot + "/Subtype /Screen >>"
 			return "/Annots [20 0 R] /AA << /O << /S /Rendition /OP 0 /AN 20 0 R /R 30 0 R >> >>"
-		}, selector, "<< /Type /Rendition /S /MR >>"),
+		}, selector, "<< /Type /Rendition /S /MR /P << /Type /MediaPlayParams /PL << /Type /MediaPlayers /MU [<< /Type /MediaPlayerInfo /PID << /Type /SoftwareIdentifier /U (x) >> >>] >> >> >>"),
 	}
 }
 

@@ -173,7 +173,7 @@ func TestTheTolerantWalkAnswersWhatPageDictAnswersOnRandomTrees(t *testing.T) {
 	// The population, so a generator that drifted into producing only refusals cannot pass vacuously.
 	t.Logf("%d odd trees of 800; pages: %d answered (%d a repeat of an earlier page), %d errors, %d empty",
 		oddTrees, answered, duplicated, errored, empty)
-	// "empty" (a page with no dictionary and no error) was an answer v0.13's PageDict gave when the walk ran out of
+	// "empty" (a page with no dictionary and no error) was an answer pdfcpu before v0.16 PageDict gave when the walk ran out of
 	// tree; v0.16.2 answers ErrPageNotFound instead (model/xreftable.go:2562-2564), so it must now NEVER occur.
 	if empty != 0 {
 		t.Fatalf("%d pages came back with no dictionary and no error — pdfcpu answers ErrPageNotFound for those", empty)
@@ -255,7 +255,8 @@ func TestATolerantWalkIsLinear(t *testing.T) {
 				t.Fatalf("%s n=%d: %d pages", extra, n, len(got))
 			}
 			for _, g := range got {
-				if g.Err != nil {
+				// A page the tree does not hold is ErrPageNotFound in v0.16.2 (it was "nothing" in pdfcpu before v0.16).
+				if g.Err != nil && !errors.Is(g.Err, model.ErrPageNotFound) {
 					t.Fatalf("%s n=%d page %d: %v", extra, n, g.Nr, g.Err)
 				}
 			}
@@ -285,8 +286,8 @@ func TestATreeHostileToTheTolerantWalkIsRefusedWithinItsBudget(t *testing.T) {
 	for _, g := range got {
 		if errors.Is(g.Err, pdfread.ErrPageTreeTooIrregular) {
 			refused++
-		} else if g.Err != nil || g.Dict != nil {
-			t.Fatalf("page %d: %v / %v — pdfcpu answers every page of this tree with nothing", g.Nr, g.Err, g.Dict)
+		} else if !errors.Is(g.Err, model.ErrPageNotFound) || g.Dict != nil {
+			t.Fatalf("page %d: %v / %v — pdfcpu answers every page of this tree with ErrPageNotFound", g.Nr, g.Err, g.Dict)
 		}
 	}
 	t.Logf("%d steps, budget %d; %d of %d pages refused", steps, budget, refused, n)

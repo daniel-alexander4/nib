@@ -64,7 +64,7 @@ func CoreWidth(text, fontName string, size int) float64 {
 	return mustWidth(font.TextWidth(context.Background(), encodedWidth(text), fontName, size))
 }
 
-// mustWidth is the door onto pdfcpu's measurement (ADR-009). v0.13 PANICKED on a font it did not carry ("user font not
+// mustWidth is the door onto pdfcpu's measurement (ADR-009). pdfcpu before v0.16 PANICKED on a font it did not carry ("user font not
 // loaded") and v0.16 answers an error; every caller of this package states the contract that the name is one it
 // installed or allowlisted, so an error here is that contract broken, and it is raised the way it always was —
 // loudly, never as a width of 0 that lets any number of lines fit (see LineHeight).
@@ -93,7 +93,7 @@ func mustWidth(w float64, err error) float64 {
 func LineHeight(fontName string, size int) float64 {
 	h, err := font.LineHeight(context.Background(), fontName, size)
 	if err != nil {
-		// v0.13 answered a silent 0 for a font it did not carry and v0.16 answers an error. Zero stays the answer —
+		// pdfcpu before v0.16 answered a silent 0 for a font it did not carry and v0.16 answers an error. Zero stays the answer —
 		// this port changes no behaviour — and the comment above is why a caller must not hand this an unlisted name.
 		return 0
 	}

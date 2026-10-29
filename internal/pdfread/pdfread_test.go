@@ -125,8 +125,11 @@ func TestSharedReferencesAreRefusedOnlyPastThePathBudget(t *testing.T) {
 	if _, err := pdfread.Validated(testpdf.SharedPatterns(3), model.NewDefaultConfiguration()); err != nil {
 		t.Errorf("a pattern shared by two names three levels deep was refused: %v", err)
 	}
-	if _, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration()); err != nil {
-		t.Errorf("a name tree sharing its kids three levels deep was refused: %v", err)
+	// A name-tree node named twice is a hard error in v0.16.2 (validate/tree_traversal.go:55-67, "duplicate name tree
+	// node") and cheap to refuse (1 ms at 60 deep, measured), so sharing no longer READS and no longer multiplies.
+	if _, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration()); err == nil ||
+		!strings.Contains(err.Error(), "duplicate name tree node") {
+		t.Errorf("a name tree sharing its kids three levels deep: %v, want pdfcpu's duplicate-node refusal", err)
 	}
 	refusedAs(t, pdfread.ErrReferencePaths, "Validated over a name tree sharing its kids 30 deep", func() error {
 		_, err := pdfread.Validated(testpdf.SharedNameTree(30), model.NewDefaultConfiguration())
@@ -148,8 +151,14 @@ func TestSharedReferencesAreRefusedOnlyPastThePathBudget(t *testing.T) {
 func TestAReferenceChainDeeperThanTheBoundIsRefused(t *testing.T) {
 	// A chain is walked once by pdfcpu, so it is counted once: 5,000 links are 5,000 paths, not one set of paths per
 	// link (~12.5 million, which the count once charged and refused).
-	if _, err := pdfread.Validated(testpdf.ChainedPatterns(5000), model.NewDefaultConfiguration()); err != nil {
-		t.Errorf("a chain of 5000 patterns was refused: %v", err)
+	// v0.16.2 bounds a pattern chain at 100 levels itself (validate/pattern.go:211): 99 read, 101 are an error — pdfcpu's
+	// own, not the door's. The 5,000 and 9,000 cases below are the door's and pdfcpu's to refuse; what must hold is
+	// that neither crashes.
+	if _, err := pdfread.Validated(testpdf.ChainedPatterns(99), model.NewDefaultConfiguration()); err != nil {
+		t.Errorf("a chain of 99 patterns was refused: %v", err)
+	}
+	if _, err := pdfread.Validated(testpdf.ChainedPatterns(5000), model.NewDefaultConfiguration()); !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
+		t.Errorf("a chain of 5000 patterns: %v, want pdfcpu's recursion-depth error", err)
 	}
 	refusedAs(t, pdfread.ErrReferenceDepth, "Validated over a chain of 9000 patterns", func() error {
 		_, err := pdfread.Validated(testpdf.ChainedPatterns(9000), model.NewDefaultConfiguration())

@@ -89,7 +89,7 @@ func dropCIDSetsOf(ctx *model.Context, faces []string) {
 
 // restoreCIDSetsOf is the other half of dropCIDSetsOf, taken before a SECOND stamp. pdfcpu v0.16 rebuilds a face it finds in
 // the document by reading references out of its descriptor, and refuses one with no `/CIDSet` ("corrupt fontDict: missing
-// CIDSet reference"); v0.13 did not. A face nib itself wrote has none, because dropCIDSetsOf removed it (PDF/A-1 is the only
+// CIDSet reference"); pdfcpu before v0.16 did not. A face nib itself wrote has none, because dropCIDSetsOf removed it (PDF/A-1 is the only
 // profile that wants one, and a stale one is a clause violation). So the stream is put back, empty, on exactly nib's own
 // faces — pdfcpu overwrites its content as it adds the glyphs — and dropCIDSetsOf removes it again after the stamp.
 // A descriptor that is not one of `faces` (none named: not a registered user font), or has no embedded TrueType program,
