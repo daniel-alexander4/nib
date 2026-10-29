@@ -37,3 +37,38 @@ func TestAnAssociatedFileTooDeepToFindIsRefusedNotSkipped(t *testing.T) {
 			maxAssociatedFileDepth, err)
 	}
 }
+
+// TestAnAssociatedFileIsStrippedFromEveryContainerItCanSitIn — P02 close, redproof survivors 1 and 2: no fixture put an
+// `/AF` inside a direct array or inside a stream's own dictionary, so neither descent arm of dropAssociatedFileKeys was
+// ever exercised (each could be replaced by a no-op and every test stayed green).
+func TestAnAssociatedFileIsStrippedFromEveryContainerItCanSitIn(t *testing.T) {
+	inArray := types.Dict{"AF": types.Array{}}
+	inStream := types.Dict{"AF": types.Array{}}
+	xt := &model.XRefTable{Table: map[int]*model.XRefTableEntry{
+		1: {Object: types.Dict{"K": types.Array{inArray}}},
+		2: {Object: types.StreamDict{Dict: inStream}},
+	}}
+	if err := dropAssociatedFileKeys(xt); err != nil {
+		t.Fatal(err)
+	}
+	if _, still := inArray["AF"]; still {
+		t.Error("an /AF inside a direct array was left in the document")
+	}
+	if _, still := inStream["AF"]; still {
+		t.Error("an /AF inside a stream's own dictionary was left in the document")
+	}
+}
+
+// TestTheRetiredRulesAreExactlyTheOnesBelowTheCurrentRule — P02 close, redproof survivor 10. A bound written `<=` would
+// call the CURRENT rule retired, and ReadMirrorToEnd would then skip the DocHash comparison for every current mirror.
+func TestTheRetiredRulesAreExactlyTheOnesBelowTheCurrentRule(t *testing.T) {
+	cur := ContentDigestVersion
+	for v, want := range map[int]bool{4: false, 5: true, cur - 1: true, cur: false, cur + 1: false} {
+		if got := ContentDigestRuleRetired(v); got != want {
+			t.Errorf("ContentDigestRuleRetired(%d) = %v, want %v (current rule %d)", v, got, want, cur)
+		}
+	}
+	if !ContentDigestRuleReadable(cur) || ContentDigestRuleReadable(cur-1) {
+		t.Errorf("only rule %d is readable", cur)
+	}
+}
