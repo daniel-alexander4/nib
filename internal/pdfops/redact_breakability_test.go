@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"fmt"
 	"io"
 	"testing"
@@ -22,11 +23,11 @@ func contentContains(t *testing.T, pdf []byte, pages, needle string) bool {
 	if pages != "" {
 		sel = []string{pages}
 	}
-	// pdfcpu v0.13 ExtractContent hands each page's decoded content stream to a
-	// callback; accumulate them all and scan the lot for the needle.
+	// pdfcpu's ExtractContent hands each page's content stream to a
+	// callback (pkg/api/extract.go:567-611, v0.16.2; its decoding is unchecked here); accumulate them all and scan the lot for the needle.
 	var buf bytes.Buffer
 	digest := func(r io.Reader, _ int) error { _, err := io.Copy(&buf, r); return err }
-	if err := api.ExtractContent(bytes.NewReader(pdf), sel, digest, model.NewDefaultConfiguration()); err != nil {
+	if err := api.ExtractContent(context.Background(), bytes.NewReader(pdf), sel, digest, model.NewDefaultConfiguration()); err != nil {
 		t.Fatalf("extract content: %v", err)
 	}
 	return bytes.Contains(buf.Bytes(), []byte(needle))

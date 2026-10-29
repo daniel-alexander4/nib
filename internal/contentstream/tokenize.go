@@ -334,9 +334,9 @@ func (s *imageScanner) asciiEncodedImageEnd(dictFrom, idAt, data int) (int, bool
 // `\n EI ` and ending the image early.
 //
 // **What could NOT be established, declared rather than guessed.** ISO 32000-2 adds `/L` to the inline
-// image dictionary and nothing in this tree states which bytes it counts: pdfcpu v0.13.0 does not
-// implement the key at all — `model/parseContent.go`'s `lookupEI` scans for `EI` exactly as the rule below
-// does — and no copy of the specification is in the repo. The reading taken is the one that makes the key
+// image dictionary and nothing in this tree states which bytes it counts: pdfcpu v0.16.2 TRUSTS the key (v0.13.0 did not
+// implement it): `model/parseContent.go:329-332` reads `/L`, then `lookupEI` (:218-221) → `lookupLengthEI` (:200-215) jumps to
+// start+length and demands `EI` there, else the stream is corrupt; with no `/L` it scans as the rule below — and no copy of the specification is in the repo. The reading taken is the one that makes the key
 // useful: the length of the image DATA, counted from the first payload byte, which is the byte after the
 // single whitespace following `ID`. If that reading is wrong the corroboration simply fails and nothing
 // changes, and that is what made it safe to take a reading at all.

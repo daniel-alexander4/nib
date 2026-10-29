@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -95,7 +96,7 @@ var catalogAllowlist = map[string]bool{
 // subset nib performs emits a `pdfaid` by either route. What would be carried is therefore the
 // apparatus of a claim the output does not make — and in the measured population that is not a
 // figure of speech: **26 of 26 entries are `/S /GTS_PDFA1`**, the subtype whose entire meaning is
-// "this is the output intent PDF/A requires" (`pdfa.go:253`). Writing it onto a document whose
+// "this is the output intent PDF/A requires" (nib's own `pdfa.go`; pdfcpu v0.16.2 has no PDF/A path). Writing it onto a document whose
 // `pdfaid` this operation just removed is ADR-032's rule one key over — an identification carried
 // without the verification behind it.
 //
@@ -105,7 +106,7 @@ var catalogAllowlist = map[string]bool{
 // `StripActive` has ever looked inside one; carrying the array whole would widen a surface nib's own
 // scanner does not inspect, which is `outlinecarry.go`'s argument for dropping `/A`. And it costs
 // nothing a user can act on: the door that wants an output intent makes its own
-// (`injectPDFAMarkers`, `pdfa.go:261`), from a vendored sRGB profile, on the way to a claim it also
+// (nib's own PDF/A door, `pdfa.go`), from a vendored sRGB profile, on the way to a claim it also
 // writes.
 //
 // **What would reverse this**, stated so the next reader does not have to re-derive it: a subset
@@ -1040,7 +1041,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 		return nil
 	}
 	var doomed []string
-	if err := node.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+	if err := node.Process(context.Background(), xt, func(_ *model.XRefTable, k string, v *types.Object) error {
 		if !destNamesAKeptPage(xt, *v, keptPages) {
 			doomed = append(doomed, k)
 		}
@@ -1074,7 +1075,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 		// Freeing was never needed here: this file turns on pdfcpu writing by REACHABILITY, which is
 		// why `unlinkDroppedPages` unlinks rather than deletes and why the allowlist drops catalog
 		// keys rather than their objects. An unreferenced destination array is not written.
-		if _, _, err := node.Remove(nil, k); err != nil {
+		if _, _, err := node.Remove(context.Background(), nil, k); err != nil {
 			return err
 		}
 	}
@@ -1082,7 +1083,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 	// compared the number removed against the number left — equal whenever exactly half the
 	// destinations pointed at dropped pages, so a two-destination document that lost one lost the
 	// whole tree.
-	left, err := node.KeyList()
+	left, err := node.KeyList(context.Background())
 	if err != nil {
 		return err
 	}

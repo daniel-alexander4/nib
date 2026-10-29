@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -184,7 +185,7 @@ func TestParagraphCountsMatchTheHandCheckedCorpus(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(c.pdf), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(c.pdf), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}

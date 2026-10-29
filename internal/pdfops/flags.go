@@ -45,6 +45,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"nib/internal/pdfread"
@@ -81,7 +82,7 @@ func FlagsJSON(pdf []byte) ([]byte, error) {
 // "dynamic"), from the ONE read. The server asks both of every document it answers for, and the second is a
 // reading the door takes before validation on a read it is already making (ADR-145) — never a parse of its own.
 func FlagsAndXFA(pdf []byte) (flags []byte, xfa string, err error) {
-	// `api.Properties` restated over the read door (pkg/api/property.go:29, v0.13.0: `LISTPROPERTIES`, then the
+	// `api.Properties` restated over the read door (pkg/api/property.go:33-48, v0.16.2: `LISTPROPERTIES`, `ReadValidateAndOptimize`, then the
 	// context's properties), because the server runs this on every document it answers for: the reader door that
 	// once stood in front of the wrapper parsed each file twice (measured +30-85% here on 100 KB-6 MB producer
 	// files), where the door checks for reference loops on the read it already makes (`/pending 675`, `/pending 764`).
@@ -152,7 +153,7 @@ func SetFlags(pdf, flagsJSON []byte) ([]byte, error) {
 	// `api.AddProperties` also validates keys and values for characters a PDF string cannot hold; the key
 	// is a constant and the value base64, so there is nothing for that check to find here.
 	res, err := rewriteWithConf(pdf, propertyConf(model.ADDPROPERTIES), func(ctx *model.Context) error {
-		return pdfcpu.PropertiesAdd(ctx, map[string]string{flagsKey: enc})
+		return pdfcpu.PropertiesAdd(context.Background(), ctx, map[string]string{flagsKey: enc})
 	})
 	if err != nil {
 		return nil, err
@@ -170,7 +171,7 @@ func ClearFlags(pdf []byte) ([]byte, error) {
 		return pdf, err
 	}
 	return rewriteWithConf(pdf, propertyConf(model.REMOVEPROPERTIES), func(ctx *model.Context) error {
-		ok, err := pdfcpu.PropertiesRemove(ctx, []string{flagsKey})
+		ok, err := pdfcpu.PropertiesRemove(context.Background(), ctx, []string{flagsKey})
 		if err != nil {
 			return err
 		}

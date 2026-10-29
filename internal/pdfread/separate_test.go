@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"runtime"
 	"testing"
 
@@ -36,7 +37,7 @@ func TestSeparateContentsMakesPdfcpusJoinTheDoors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			page, _, _, err := ctx.PageDict(1, false)
+			page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,14 +108,14 @@ func TestARepeatedStreamIsDecodedOnce(t *testing.T) {
 		// Written and read back, so the stream is undecoded as a parsed file's is: an in-memory stream already
 		// carries its content and would decode for free.
 		var buf bytes.Buffer
-		if err := api.WriteContext(ctx, &buf); err != nil {
+		if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 			t.Fatal(err)
 		}
 		read, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatal(err)
 		}
-		readPage, _, _, err := read.PageDict(1, false)
+		readPage, _, _, err := read.PageDict(context.Background(), 1, false)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,7 +73,7 @@ func associatedFilesShape(version string, listed bool, where string) []byte {
 // object in the file, or "no key".
 func associatedFiles(t *testing.T, pdf []byte) (catalog, page, elem string) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}
@@ -113,8 +114,8 @@ func associatedFiles(t *testing.T, pdf []byte) (catalog, page, elem string) {
 // TestWhatARewriteDoesToAnAssociatedFile — `/pending 655`, MEASURED on a document that already carries `/AF`.
 //
 // pdfcpu's writer serialises the catalog and each page dictionary whole and then writes what a FIXED LIST of
-// their keys reaches (`write.go:276-322`, `writePages.go:75-102`, v0.13.0). `/AF` is on neither list, so the key
-// is written and the object it names is not. The validator and the optimize pass are not the cause — the objects
+// their keys reaches. On v0.16.2 the catalog's list names `/AF` (`write.go:382`) and the page's does not
+// (`writePages.go:78-110`), so a page's key is written and the object it names is not (measured below). The validator and the optimize pass are not the cause — the objects
 // are in the context after `pdfread.ReadOptimized`, and pdfcpu's own unvalidated read followed by its write loses
 // them the same way — so there is nothing for `pdfread.Write` to put back as it does a font (ADR-129): it refuses
 // the write instead (`pdfread.ErrAssociatedFileLost`), and this test holds both the refusal and the measurement
@@ -132,32 +133,39 @@ func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 		t.Fatalf("setup: the fixture reads as %q, want %q", got, whole)
 	}
 	// Named by /AF alone, on the catalog or on a page: the write is refused, by name, whatever the operation.
-	for _, where := range []string{"catalog page", "catalog", "page"} {
+	for _, where := range []string{"catalog page", "page"} {
 		if _, err := noop(associatedFilesShape("1.7", false, where)); !errors.Is(err, pdfread.ErrAssociatedFileLost) {
 			t.Errorf("/AF on the %s naming a file nothing else reaches: error %v, want the associated-file refusal", where, err)
 		}
+	}
+	// The catalog's alone is no longer refused (P02.S06): pdfcpu v0.16.2 writes it, with the file it names.
+	out, err := noop(associatedFilesShape("1.7", false, "catalog"))
+	if err != nil {
+		t.Errorf("/AF on the catalog alone: %v, want it written (the writer carries the catalog's)", err)
+	} else if got, want := facts(out), "catalog: CATALOG-BYTES; page: no key; element: ELEM-BYTES"; got != want {
+		t.Errorf("/AF on the catalog alone, rewritten: %q, want %q", got, want)
 	}
 	if _, err := Rotate(src, []string{"1"}, 90); !errors.Is(err, pdfread.ErrAssociatedFileLost) {
 		t.Errorf("a page of such a document rotated: error %v, want the associated-file refusal", err)
 	}
 
 	// THE MEASUREMENT the refusal rests on, taken past the refusal: pdfcpu's own read and write.
-	// A structure element's file is carried (the structure tree is written by walking it), the catalog's and the
-	// page's are lost, and each of those keys is left naming nothing.
+	// A structure element's file is carried (the structure tree is written by walking it), and so is the catalog's
+	// since v0.16.2 writes that key; the page's is lost, and its key is left naming nothing.
 	ctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var raw bytes.Buffer
-	if err := api.WriteContext(ctx, &raw); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &raw); err != nil {
 		t.Fatal(err)
 	}
-	out := raw.Bytes()
-	if got, want := facts(out), "catalog: dangling; page: dangling; element: ELEM-BYTES"; got != want {
+	out = raw.Bytes()
+	if got, want := facts(out), "catalog: CATALOG-BYTES; page: dangling; element: ELEM-BYTES"; got != want {
 		t.Errorf("pdfcpu's writer on such a document: %q, measured %q — if the files are now carried, "+
 			"pdfcpu's writer has changed and pdfread.Write's refusal is out of date", got, want)
 	}
-	for _, lost := range []string{"CATALOG-BYTES", "PAGE-BYTES", "catalog.csv", "page.csv"} {
+	for _, lost := range []string{"PAGE-BYTES", "page.csv"} {
 		if bytes.Contains(out, []byte(lost)) {
 			t.Errorf("%q is in the output's uncompressed bytes, measured absent", lost)
 		}
@@ -192,7 +200,7 @@ func TestWhatARewriteDoesToAnAssociatedFile(t *testing.T) {
 	}
 
 	// A PDF 2.0 document with /AF on its catalog is refused at the read, by name, so nothing rewrites it.
-	if _, err := noop(associatedFilesPDF("2.0", false)); err == nil || !strings.Contains(err.Error(), `"AF" not supported`) {
+	if _, err := noop(associatedFilesPDF("2.0", false)); err == nil || !strings.Contains(err.Error(), `PDF 2.0 associated files not supported`) {
 		t.Errorf("a PDF 2.0 document with a catalog /AF: error %v, measured pdfcpu's refusal", err)
 	}
 }

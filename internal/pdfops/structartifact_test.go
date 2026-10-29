@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ import (
 
 func parsed(t *testing.T, pdf []byte) *model.Context {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestArtifactingAnElementTakesItOutOfTheTreeAndLeavesItsContent(t *testing.T
 		t.Fatal(err)
 	}
 	arrays, _ := parentTreeEntries(ctx, otree)
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	key := d["StructParents"].(types.Integer).Value()
 	for _, m := range mcids {
 		if slots := arrays[key]; m < len(slots) && slots[m] != 0 {

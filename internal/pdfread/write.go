@@ -2,6 +2,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"runtime"
 	"sync"
@@ -15,7 +16,7 @@ import (
 // The one door to pdfcpu's writer, and what it puts back first — ADR-129, `/pending 842`.
 //
 // pdfcpu's relaxed validator does not only judge a document, it CHANGES it: a font it cannot validate is not
-// refused, it is taken out of the `/Font` dictionary that names it (`validate/font.go` `fixFontObjNr`, v0.13.0 —
+// refused, it is taken out of the `/Font` dictionary that names it (`validate/font.go` `fixFontObjNr`, v0.16.2 :1441, called at :1548 in relaxed mode; the `:` cites below are from the older tree, unchecked —
 // the entry is set to nil, or pointed at another font of the same `/BaseFont` where the dictionary holds one).
 // The fonts it does this to: a Type 0 font whose descendant fails validation (`:756-760`), a font written
 // directly in the dictionary, and a reference to an object that is not a font dictionary (`:1114`, `:1132`).
@@ -67,7 +68,7 @@ func Write(ctx *model.Context) ([]byte, error) {
 	PutBackValidatorLosses(ctx)
 	shapeNameTrees(ctx)
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -246,7 +247,7 @@ func rememberValidatorLosses(ctx *model.Context, pdf []byte) {
 	if len(suspects) == 0 {
 		return
 	}
-	written, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	written, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return
 	}

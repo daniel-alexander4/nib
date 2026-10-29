@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -93,9 +94,9 @@ func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 
 // treeFiles is the name-tree half of embeddedFiles, and it is nib's ONLY listing of that tree: pdfcpu's
 // `ListAttachments` (and every pdfcpu reader built on the same `fileSpecStreamDictInfo` — `ExtractAttachments`,
-// `SearchEmbeddedFilesNameTreeNodeByContent`, `pdfcpu.Info`) nil-dereferences on a filespec with no /EF, which
-// is an ordinary reference to an EXTERNAL file and legal under ISO 32000-1 §7.11.3 (`model/attach.go:155`,
-// measured). `TestNothingAsksPdfcpuWhatIsAttached` holds every other site off those readers.
+// `SearchEmbeddedFilesNameTreeNodeByContent`, `pdfcpu.Info`) FAILS the whole list on a filespec with no /EF (v0.13 nil-dereferenced; v0.16.2 returns "missing embedded file stream", `model/attach.go:197-199`),
+// which is an ordinary reference to an EXTERNAL file and legal under ISO 32000-1 §7.11.3.
+// `TestNothingAsksPdfcpuWhatIsAttached` holds every other site off those readers.
 func treeFiles(xt *model.XRefTable) ([]embeddedFile, error) {
 	entries, err := treeEntries(xt)
 	if err != nil {
@@ -298,7 +299,7 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 				return fmt.Errorf("an attachment named %q already exists", name)
 			}
 		}
-		return ctx.AddAttachment(model.Attachment{Reader: bytes.NewReader(data), ID: name}, false)
+		return ctx.AddAttachment(context.Background(), model.Attachment{Reader: bytes.NewReader(data), ID: name}, false)
 	})
 }
 
@@ -367,19 +368,28 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // (read plus walk) moved by at most +2%. The most the resource walk grew in bytes hashed was +9.5%, on a
 // 67-page InDesign report with 12 colour profiles and shadings to decode — see ADR-143 for the table and for
 // what the machine's load did to the timings.
-const ContentDigestVersion = 6
-
-// legacyContentDigestVersion is the one earlier rule this build still computes (ADR-080).
 //
-// One, not every rule ever shipped: each bump retires the oldest readable rule (ADR-080, ADR-143), so a
-// record under rule 4 or earlier is a skew — reported as "started with an older Nib", never as a changed
-// document (`ceremony.digestRuleSkew`).
-const legacyContentDigestVersion = 5
+// **Rule 7 is rule 6's axes read by pdfcpu v0.16.x** (D1, P02.S08): every resource kind of a page's effective
+// resources, from the dictionary. The number moved because the digest is taken over pdfcpu's post-validation,
+// post-optimize graph (`ReadOptimized`), and v0.16.2 reads 24 of 2,326 real documents to a different graph. Rules 5
+// and 6 are RETIRED: a record under either is accepted by every record-level question (`ContentDigestRuleRetired`)
+// and refused wherever a digest would be computed (`ContentDigestRuleReadable`).
+const ContentDigestVersion = 7
 
-// ContentDigestRuleReadable reports whether this build can compute ContentDigest under rule v — the
-// current rule or the retained legacy one. A record naming any other rule is a version skew (D32).
+// ContentDigestRuleReadable reports whether this build can compute ContentDigest under rule v: the current rule
+// only, since rules 5 and 6 were retired together at the pdfcpu v0.16.2 bump (D1). The rule number is bound into the
+// digest, so a retired rule is not computable by any code that keeps its axes. A record naming any other rule is a
+// version skew (D32), and `ceremony.digestRuleComputable` is the one door that says so where a digest is needed.
 func ContentDigestRuleReadable(v int) bool {
-	return v == ContentDigestVersion || v == legacyContentDigestVersion
+	return v == ContentDigestVersion
+}
+
+// ContentDigestRuleRetired reports a rule this build once computed and no longer does — 5 and 6. A RECORD under one is
+// still a record: its identity, roster, signatures, completeness, stop, close-out and read-back do not need the digest,
+// so `ceremony.digestRuleSkew` accepts it. Rule 4 and earlier were retired before the record format carried them in
+// any live ceremony and stay a skew everywhere, as before.
+func ContentDigestRuleRetired(v int) bool {
+	return v >= 5 && v < ContentDigestVersion
 }
 
 // ErrDigestRuleUnknown is ContentDigestAt's refusal of a rule this build does not compute.
@@ -535,11 +545,10 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	return digestRule(ctx, sc, st, ContentDigestVersion)
 }
 
-// digestRule is the digest under rule `version` — ContentDigestVersion or legacyContentDigestVersion, which
-// its callers have already checked. **Rule 5's arm is rule 5 byte for byte** (ADR-080): the external and
-// generated goldens are pinned under both rules, because a record written under rule 5 is checked by this
-// arm for as long as rule 5 is readable. The two rules differ in ONE place — which kinds of a page's
-// effective resources are followed (hashEffectivePage).
+// digestRule is the digest under rule `version`, which its callers have already checked is readable
+// (ContentDigestRuleReadable: the current rule only since rule 7, D1 / P02.S08). The `version >= 6` argument to
+// hashEffectivePage is therefore always true; its `everyKind == false` arm is rule 5's and is dead code kept for a
+// later cleanup (ADR-174 Consequences), not a rule this build computes.
 func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int) (string, error) {
 	h := sha256.New()
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first
@@ -585,7 +594,7 @@ func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int
 			if i-1 < len(answers) {
 				d, err = answers[i-1].Dict, answers[i-1].Err
 			} else {
-				d, _, attrs, err = ctx.PageDict(i, false)
+				d, _, attrs, err = ctx.PageDict(context.Background(), i, false)
 			}
 			if err != nil {
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
@@ -1036,7 +1045,7 @@ func nameTreeEntries(xt *model.XRefTable, tree string) ([]embeddedEntry, error) 
 	}
 	var entries []embeddedEntry
 	if root := xt.Names[tree]; root != nil {
-		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+		_ = root.Process(context.Background(), xt, func(_ *model.XRefTable, k string, v *types.Object) error {
 			entries = append(entries, embeddedEntry{key: k, fs: *v})
 			return nil
 		})
@@ -1338,7 +1347,7 @@ var resourceKinds = []string{"Font", "XObject"}
 // # And "Font" was inert
 //
 // `DereferenceStreamDict` type-asserts `types.StreamDict` and errors otherwise (verified in
-// pdfcpu v0.13.0 model/xreftable.go:989). A page `/Font` entry is a font DICTIONARY; the font
+// pdfcpu v0.16.2 model/xreftable.go:1196-1204 and :1218-1220). A page `/Font` entry is a font DICTIONARY; the font
 // program is a stream several levels below, under `/FontDescriptor /FontFile2`. So the old
 // loop `continue`d on every font on every page while the doc claimed fonts were folded in —
 // leaving `/BaseFont`, `/Encoding`, `/Differences` and the embedded program all free to change

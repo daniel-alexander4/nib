@@ -277,19 +277,17 @@ func generatedDigestCorpus(t *testing.T) []struct {
 
 // digestRules is every rule this build computes, with the golden-file suffix it is pinned under (ADR-080).
 //
-// **Rule 5's goldens are the files rule 5 shipped with, unregenerated.** That is the whole of the claim that a
-// record written under rule 5 is still checked by rule 5: if the legacy arm moved one byte, these rows would say
-// so. They are never to be regenerated — a rule-5 row that has to move is a rule-5 record that would read as
-// tampering. (Rule 4's goldens, the unsuffixed files, were removed when rule 4 was retired — ADR-143; a golden for a
-// rule nothing computes pins nothing.)
+// **Only the computable rule is pinned** (ADR-143 §3: a golden for a rule nothing computes pins nothing). Rules 5 and 6
+// were retired together at the pdfcpu v0.16.2 bump (D1, P02.S08) and their `-v5` / `-v6` files were deleted with them;
+// git history is their record. A retired rule's RECORD is still accepted by the record-level questions
+// (`ContentDigestRuleRetired`), and that is held by `internal/ceremony`'s tests, not by a golden.
 //
 // The suffix is the rule's own number, so a retired rule's file cannot be mistaken for a readable one's.
 var digestRules = []struct {
 	rule   int
 	suffix string
 }{
-	{legacyContentDigestVersion, "-v5"},
-	{ContentDigestVersion, "-v6"},
+	{ContentDigestVersion, "-v7"},
 }
 
 // TestEveryReadableRuleIsPinnedUnderItsOwnNumber holds the table above to the two constants: a bump that moved

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -114,7 +115,7 @@ func truthCorpus(t *testing.T) []runCorpusDoc {
 // stripStructTree removes the tree and the claim, leaving the page content exactly as it was.
 func stripStructTree(t *testing.T, pdf []byte) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func stripStructTree(t *testing.T, pdf []byte) []byte {
 	delete(cat, "StructTreeRoot")
 	delete(cat, "MarkInfo")
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -145,14 +146,14 @@ func isHeadingRole(role string) bool {
 // so truth and inference read the same text by construction.
 func readTruth(t *testing.T, pdf []byte) []truthBlock {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	live, pageNr := map[int]bool{}, map[int]int{}
 	textAt := map[[2]int]string{}
 	for pg := 1; pg <= ctx.PageCount; pg++ {
-		ir, ierr := ctx.PageDictIndRef(pg)
+		ir, ierr := ctx.PageDictIndRef(context.Background(), pg)
 		if ierr != nil || ir == nil {
 			t.Fatalf("page %d has no reference: %v", pg, ierr)
 		}
@@ -223,7 +224,7 @@ func readTruth(t *testing.T, pdf []byte) []truthBlock {
 // from, and the floor the proposer must beat on headings.
 func layoutBlocks(t *testing.T, pdf []byte) []truthBlock {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +356,7 @@ func TestTheTruthCorpusScoresTheMetricAtItsBounds(t *testing.T) {
 			t.Fatalf("%s: the truth reads %d block(s) with %d heading(s); the source states %v", doc.name, len(truth), headings, shapes[doc.name])
 		}
 		stripped := stripStructTree(t, doc.pdf)
-		sctx, err := api.ReadValidateAndOptimize(bytes.NewReader(stripped), model.NewDefaultConfiguration())
+		sctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(stripped), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

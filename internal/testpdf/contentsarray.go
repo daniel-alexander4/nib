@@ -2,6 +2,7 @@ package testpdf
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 
@@ -39,7 +40,7 @@ func SplitContents(s string, shape JoinShape) (pdf, meant []byte, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	page, _, _, err := ctx.PageDict(1, false)
+	page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		return nil, nil, err
 	}

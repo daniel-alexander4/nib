@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,13 +20,13 @@ import (
 // pageClaims is each page's /StructParents, -1 where it has none.
 func pageClaims(t *testing.T, pdf []byte) []int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := make([]int, ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+		d, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -40,7 +41,7 @@ func pageClaims(t *testing.T, pdf []byte) []int {
 // structRoot reads the output's /StructTreeRoot, or nil.
 func structRoot(t *testing.T, pdf []byte) (*model.XRefTable, types.Dict) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestAMergeOfTaggedDocumentsGraftsEachTree(t *testing.T) {
 			}
 			// Every top-level element's parent is THE root. A grafted one left naming the second
 			// document's own root walks a reader up into a tree the catalog no longer holds.
-			ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+			ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

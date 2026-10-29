@@ -3,6 +3,7 @@ package uacheck
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -55,7 +56,7 @@ func byteStripped(t *testing.T, pdf []byte, key, with string, want int) []byte {
 // compared with veraPDF.
 func rowHeaders(t *testing.T, pdf []byte) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,7 +56,7 @@ var stampOCGNames = map[string]bool{"Watermark": true, "Background": true}
 // warning, and refusing to open a dialog because a probe failed would be worse than the
 // doubled stamp it is trying to prevent.
 func HasStampLayer(pdf []byte) (bool, error) {
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return false, err
 	}
@@ -108,11 +109,11 @@ var ErrStampTextUnrepresentable = errors.New("this text cannot be stamped as wri
 // stampText prepares user text for pdfcpu's watermark engine — the ONE place that
 // decision is made, because it was made three different ways in four call sites.
 //
-// # What pdfcpu does with a %, measured against v0.13.0
+// # What pdfcpu does with a %, read in v0.16.2 (`pkg/pdfcpu/format/format.go:30-80`, called at `stamp.go:54`)
 //
 //	"CONFIDENTIAL 100%" -> "CONFIDENTIAL 100"   the % is silently DROPPED
 //	"50%P"              -> "503"                %P is the page count
-//	"%v"                -> "v0.13.0 dev"        the LIBRARY VERSION, in the document
+//	"%v"                -> "v0.16.2"            the LIBRARY VERSION, in the document
 //	"%"                 -> ""                   empty, and pdfcpu then computes a nil
 //	                                            bounding box and panics
 //

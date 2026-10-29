@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -98,7 +99,7 @@ func subsetFixtureObjects() map[int]string {
 func livePages(ctx *model.Context) map[int]bool {
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -109,13 +110,13 @@ func livePages(ctx *model.Context) map[int]bool {
 // defects of its tree, and any page object the page tree no longer lists.
 func carryOf(t *testing.T, pdf []byte) (verdict string, defects []structDefect, orphans []int, elems int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("the output could not be read back: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -199,11 +200,11 @@ func TestASubsetCarriesTheStructureOfThePagesItKeeps(t *testing.T) {
 // pageText returns one page's decoded content stream, for asserting which source page landed where.
 func pageText(t *testing.T, pdf []byte, page int) string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	d, _, _, perr := ctx.PageDict(page, false)
+	d, _, _, perr := ctx.PageDict(context.Background(), page, false)
 	if perr != nil || d == nil {
 		t.Fatalf("page %d does not resolve: %v", page, perr)
 	}
@@ -391,13 +392,13 @@ func TestAnOBJROnADroppedPageGoesAndOneOnAKeptPageStays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -611,7 +612,7 @@ func TestACarriedTreeDropsAnIDTreeThatWouldReanchorARemovedElement(t *testing.T)
 		t.Fatalf("the carry was refused (%+v). This reads as a setup failure and is more likely a "+
 			"REGRESSION: `subsetCarrying` turns any completeness defect into a refusal", s)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -741,7 +742,7 @@ func TestACarriedSubsetPRESERVESDisplayDocTitleAndNothingElse(t *testing.T) {
 			t.Errorf("%s: the carry was refused, so /ViewerPreferences is not being graded", c.name)
 			continue
 		}
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			t.Errorf("%s: %v", c.name, rerr)
 			continue
@@ -795,7 +796,7 @@ func TestACarriedSubsetKeepsItsThreeTitlePlacesInAgreement(t *testing.T) {
 	if !inspectTags(out).tree {
 		t.Fatal("the carry was refused, so there is no title floor to grade")
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -837,13 +838,13 @@ func TestACarriedSubsetRenumbersItsParentTreeKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -1034,7 +1035,7 @@ func TestTheCarryIsSkippedEntirelyForAnUntaggedDocument(t *testing.T) {
 // catalogKeys renders a document's catalog key set, sorted, for comparing two doors' output.
 func catalogKeys(t *testing.T, pdf []byte) string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -1262,7 +1263,7 @@ func TestTheClaimantWalksAgreeOnWhoOwnsAKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			t.Fatalf("%s: %v", name, rerr)
 		}
@@ -1328,7 +1329,7 @@ func TestACarriedTreeKeepsItsRoleMap(t *testing.T) {
 // roleMapOf reads a document's `/StructTreeRoot /RoleMap`, by parsing.
 func roleMapOf(t *testing.T, pdf []byte) map[string]string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -1387,7 +1388,7 @@ func TestTheOrphanPageConditionDECIDESTheGate(t *testing.T) {
 	}
 	objs[7] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 8 0 R >>"
 	orphaned := assembleFixture(objs)
-	octx, oerr := api.ReadValidateAndOptimize(bytes.NewReader(orphaned), model.NewDefaultConfiguration())
+	octx, oerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(orphaned), model.NewDefaultConfiguration(), nil)
 	if oerr != nil {
 		t.Fatal(oerr)
 	}
@@ -1411,8 +1412,8 @@ func TestPDFCPURefusesATypelessPageNode(t *testing.T) {
 	objs := subsetFixtureObjects()
 	objs[9] = "<< /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> " +
 		"/Contents 10 0 R /StructParents 3 >>" // page 4, with no /Type
-	_, err := api.ReadValidateAndOptimize(bytes.NewReader(assembleFixture(objs)),
-		model.NewDefaultConfiguration())
+	_, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(assembleFixture(objs)),
+		model.NewDefaultConfiguration(), nil)
 	if err == nil {
 		t.Error("pdfcpu now accepts a page-tree node with no /Type. `orphanPageObjects` tests " +
 			"`/Type /Page` alone on the strength of that refusal, so such a page would now be a " +
@@ -1542,7 +1543,7 @@ func TestAGROUPINGFormElementWithNoPageSurvivesIfItsAnnotationDoes(t *testing.T)
 	if !inspectTags(out).tree {
 		t.Fatal("the carry was refused, so the element below is not being graded")
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -1592,7 +1593,7 @@ func TestADuplicatedChildElementNamesTheCOPYSParent(t *testing.T) {
 	if !inspectTags(out).tree {
 		t.Fatal("the carry was refused, so no copy exists to grade")
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -1656,11 +1657,11 @@ func TestAClaimOnAMissingRowIsDELETEDFromTheClaimant(t *testing.T) {
 	if !inspectTags(out).tree {
 		t.Fatal("the carry was refused, so there is no claim to have disposed of")
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	d, _, _, perr := ctx.PageDict(1, false)
+	d, _, _, perr := ctx.PageDict(context.Background(), 1, false)
 	if perr != nil || d == nil {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}
@@ -1699,7 +1700,7 @@ func TestTheClaimantWalksAgreeAboutAFormXObjectDrawnOnTwoPages(t *testing.T) {
 		35: "<< /Type /StructElem /S /Figure /P 30 0 R /Pg 3 0 R /Alt (a line) >>",
 		39: "<< /Nums [0 [31 0 R] 1 [33 0 R] 4 35 0 R] >>",
 	})
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(src), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("setup: %v", rerr)
 	}

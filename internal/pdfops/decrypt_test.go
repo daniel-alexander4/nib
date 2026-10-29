@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 func encryptPDF(t *testing.T, pdf []byte, userPW, ownerPW string) []byte {
 	t.Helper()
 	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &out, model.NewAESConfiguration(userPW, ownerPW, 256)); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &out, model.NewAESConfiguration(userPW, ownerPW, 256)); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()

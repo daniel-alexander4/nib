@@ -1761,7 +1761,7 @@ func (s *Server) endCeremony(cer *ceremonyID, state string) {
 	if v == nil {
 		return
 	}
-	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	rec, _, err := ceremony.ReadMirrorToEnd(defaultOutputDir(), cer.inv.ID, time.Now())
 	if err != nil {
 		return // no verified record here: nothing to bind an attestation to
 	}
@@ -1873,7 +1873,9 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 		}
 		return nil
 	}
-	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
+	// ReadMirrorToEnd, not ReadMirror: receiving an end state ENDS the ceremony, and a mirror written under a retired
+	// digest rule (D1, P02.S08) is a record here, never a skew (TestTheEndStateGateReadsTheMirrorToEnd).
+	rec, _, err := ceremony.ReadMirrorToEnd(defaultOutputDir(), cer.inv.ID, time.Now())
 	if err != nil {
 		return fmt.Errorf("this machine cannot check that end state against its own record: %w", err)
 	}

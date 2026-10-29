@@ -12,7 +12,7 @@ import (
 // operation — rotate, optimize, export, fill — for one of these, and all five open and draw in a viewer.
 //
 //   - **An entry of a page's `/Annots` with no `/Subtype`** ("dict=annotDict required entry=Subtype missing",
-//     `validate/annotation.go:1516`, v0.13.0). Four documents, all written by one real-estate forms engine, each
+//     `validate/annotation.go:1811-1812`, v0.16.2). Four documents, all written by one real-estate forms engine, each
 //     holding stamp-like annotations of exactly `/AP /F /NM /P /Rect`. The entry is left out of the array the
 //     validator walks and put back where it stood. A form field's widget is NOT set aside: the validator gives one
 //     its `/Subtype /Widget` itself when it reaches it through the form (`validate/form.go:427`).
@@ -21,9 +21,9 @@ import (
 //     is optional and nothing in nib reads it; the key is taken off and put back.
 //   - **A Text annotation's `/State` and `/StateModel` that are not a pair pdfcpu knows** ("dict=Text entry=StateModel
 //     invalid dict entry", `validateAnnotationDictText`, `validate/annotation.go:214-249`) — /pending 899. pdfcpu
-//     v0.13 accepts only the models `Marked` and `Review` with their own states; Acrobat writes `MigrationStatus` /
-//     `MigrationNone` on a migrated comment. One real document of 2,326 (a reviewed school handout, its sticky
-//     notes); v0.16 reads it. Nothing in nib reads either key, and the
+//     v0.13 refused every model but `Marked` and `Review`; v0.16.2 refuses only in strict mode or on an empty model or
+//     state (`validateTextAnnotationState`, annotation.go:211-224), so a relaxed read now accepts Acrobat's `MigrationStatus` /
+//     `MigrationNone` (one real document of 2,326, a reviewed school handout) and the set-aside is kept, unmeasured. Nothing in nib reads either key, and the
 //     validator reads them only to refuse, so every Text annotation's pair is taken off and put back — the one
 //     exception to "only what the validator refuses", because a pair it accepts is one it does nothing with.
 //

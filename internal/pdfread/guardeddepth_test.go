@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -108,8 +109,14 @@ func formsNamingTheirDictionary(n int) []byte {
 // wherever pdfcpu enters it.
 func TestAComponentIsChargedByItsGuardedTargetsAndItsUnguardedPath(t *testing.T) {
 	conf := model.NewDefaultConfiguration()
-	if _, err := pdfread.Validated(formsNamingTheirDictionary(2000), conf); err != nil {
-		t.Fatalf("2,000 forms naming their own dictionary, 2,000 levels at most, were refused: %v", err)
+	// v0.16.2 caps the resource graph at 100 levels itself (validate/page.go:106, model.CheckRecursionDepth) and answers an
+	// error where pdfcpu before v0.16 read this file: the door's charge no longer decides the 2,000-form case — pdfcpu's own bound does,
+	// and what matters here is that it is an ERROR and not the crash the door exists to prevent.
+	if _, err := pdfread.Validated(formsNamingTheirDictionary(2000), conf); !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
+		t.Fatalf("2,000 forms naming their own dictionary: %v, want pdfcpu's recursion-depth error (limit 100)", err)
+	}
+	if _, err := pdfread.Validated(formsNamingTheirDictionary(90), conf); err != nil {
+		t.Fatalf("90 forms naming their own dictionary, inside pdfcpu's bound, were refused: %v", err)
 	}
 	if _, err := pdfread.Validated(formChain(9000, 10), conf); !errors.Is(err, pdfread.ErrReferenceDepth) {
 		t.Fatalf("a ring of 9,000 forms, 9,000 levels deep: %v, want ErrReferenceDepth", err)
@@ -147,13 +154,16 @@ func TestAnUnguardedPathIsWalkedOncePerGuardedTarget(t *testing.T) {
 	if err := read(130, 130); !errors.Is(err, pdfread.ErrReferenceDepth) {
 		t.Fatalf("130 forms re-walking their pattern chain once per form, ~8,500 levels: %v, want ErrReferenceDepth", err)
 	}
-	if err := read(60, 60); err != nil {
-		t.Fatalf("control: 60 forms, ~1,800 levels, did not read: %v", err)
+	// v0.16.2 tracks the pattern and form ancestors (validate/pattern.go:177) and answers a cycle where pdfcpu before v0.16 walked the
+	// chain: these controls are no longer READS. What they still show is that the door did not refuse them (pdfcpu did,
+	// in its own words) — the over-refusal this pair of controls guards against.
+	if err := read(60, 60); err == nil || errors.Is(err, pdfread.ErrReferenceDepth) {
+		t.Fatalf("control: 60 forms, ~1,800 levels: %v, want pdfcpu's own refusal, not the door's", err)
 	}
 	// g counts what a GUARDED edge enters: closed by one form reference, 200 pattern links are entered once, 200
 	// levels (charged 2 × 200). Counting every target as guarded charges 201 × 200 and refuses it.
-	if err := read(200, 1); err != nil {
-		t.Fatalf("control: a 200-link pattern ring closed by one form, 200 levels, did not read: %v", err)
+	if err := read(200, 1); errors.Is(err, pdfread.ErrReferenceDepth) {
+		t.Fatalf("control: a 200-link pattern ring closed by one form, 200 levels, was refused by the door: %v", err)
 	}
 }
 
@@ -187,7 +197,7 @@ func TestASharedDictionaryOfGuardedEntriesIsOneNode(t *testing.T) {
 		{"8,000 forms naming their own /XObject dictionary", formsNamingTheirDictionary(8000)},
 		{"8,000 widgets sharing one /AP of 8,000 states", widgets(8000)},
 	} {
-		ctx, err := api.ReadContext(bytes.NewReader(c.pdf), model.NewDefaultConfiguration())
+		ctx, err := api.ReadContext(context.Background(), bytes.NewReader(c.pdf), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -204,7 +214,7 @@ func TestASharedDictionaryOfGuardedEntriesIsOneNode(t *testing.T) {
 // no level. Counted as one, a chain of 3,000 forms each reaching the next through an indirect `/Resources` and an
 // indirect `/XObject` would be 9,000 levels and refused; it is 3,000.
 func TestAnIndirectResourceDictionaryIsNoLevel(t *testing.T) {
-	const links = 3000
+	const links = 30 // v0.16.2 refuses a resource graph past 100 levels (validate/page.go:106); the point is unchanged below it
 	objs := map[int]string{
 		1: "<< /Type /Catalog /Pages 2 0 R >>",
 		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -222,6 +232,6 @@ func TestAnIndirectResourceDictionaryIsNoLevel(t *testing.T) {
 		objs[form] = fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] %s/Length 1 >>\nstream\nq\nendstream", next)
 	}
 	if _, err := pdfread.Validated(testpdf.Assemble(objs), model.NewDefaultConfiguration()); err != nil {
-		t.Fatalf("a chain of 3,000 forms through indirect resource dictionaries, 3,000 levels: %v", err)
+		t.Fatalf("a chain of 30 forms through indirect resource dictionaries, 30 levels: %v", err)
 	}
 }

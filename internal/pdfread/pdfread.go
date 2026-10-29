@@ -29,6 +29,7 @@ package pdfread
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 
@@ -38,7 +39,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// Validated is `api.ReadAndValidate` (pkg/api/api.go:171, v0.13.0) with the reference door between
+// Validated is `api.ReadAndValidate` (pkg/api/api.go:236-286, v0.16.2, `readAndValidate`; compared only as far as :276) with the reference door between
 // the read and the validation. Everything after the check is pdfcpu's own sequence, restated because the
 // check must sit inside it.
 func Validated(pdf []byte, conf *model.Configuration) (*model.Context, error) {
@@ -51,7 +52,7 @@ func Validated(pdf []byte, conf *model.Configuration) (*model.Context, error) {
 // context every reader sees afterwards is the document as parsed (`ReadOptimizedOrRefuseSettingAside`).
 func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context) (restore func())) (ctx *model.Context, err error) {
 	defer fault.Catch(&err)
-	if ctx, err = api.ReadContext(bytes.NewReader(pdf), conf); err != nil {
+	if ctx, err = api.ReadContext(context.Background(), bytes.NewReader(pdf), conf); err != nil {
 		return nil, err
 	}
 	if err := refuseUnboundedReferences(ctx); err != nil {
@@ -69,11 +70,13 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 	xfa := xfaIn(ctx)
 	// And each catalog name tree is walked HERE, and one nested deeper than the validator follows is made flat
 	// for it: the validator drops such a tree and says nothing (`nametree.go`, ADR-164).
-	trees := settleNameTrees(ctx)
+	trees, putTrees := settleNameTrees(ctx)
+	// An EmbeddedFiles entry naming an EXTERNAL file is legal; the validator now refuses it (`setAsideExternalFiles`).
+	putExternal := setAsideExternalFiles(ctx)
 	// And the structure tree's `/IDTree`, whose `/Limits` the validator empties past that depth (`/pending 883`).
 	settleIDTree(ctx)
 	// What the validator CHANGES rather than refuses is remembered, for the write to put back (`write.go`, ADR-129).
-	err = api.ValidateContext(ctx)
+	err = nameValidatorRefusal(api.ValidateContext(context.Background(), ctx))
 	if err == nil {
 		rememberValidatorLosses(ctx, pdf)
 		rememberAssociatedFiles(ctx)
@@ -81,6 +84,8 @@ func validated(pdf []byte, conf *model.Configuration, aside func(*model.Context)
 		rememberNameTrees(ctx, trees)
 	}
 	putBack()
+	putExternal()
+	putTrees()
 	putAnnots()
 	putPacket()
 	restore()
@@ -111,7 +116,7 @@ const MaxPacketBytes = 20 << 20
 // MaxPacketBytes, and returns what puts it back (`/pending 795`).
 //
 // pdfcpu's validator inflates the catalog packet whole and parses it as XML to learn a title and an author
-// (`validate/metaData.go:79` and `:88`, `catalogMetaData`, v0.13.0) — with no limit but pdfcpu's own 512 MiB decode
+// (`validate/metaData.go:109` and `:119`, `catalogMetaData` at :89, v0.16.2) — with no limit but pdfcpu's own 512 MiB decode
 // ceiling, and before any of nib's code has the context. Measured on a one-page file whose packet is flate over
 // spaces, every read through this door: 1 / 20 / 64 / 200 MiB of packet allocated 6 / 128 / 384 / 1,024 MiB and
 // took 0.04 / 0.46 / 1.4 / 7.2 s, from a file of 1 / 20 / 64 / 199 KB. With the packet set aside the last two read
@@ -156,7 +161,7 @@ func setAsideOversizedPacket(ctx *model.Context) (restore func()) {
 // puts the dictionary back as it was parsed (/pending 696).
 //
 // pdfcpu decodes a name's `#xx` escapes when it parses it, so the information dictionary's keys are already decoded;
-// its validator then decodes each custom key AGAIN (`validate/info.go` `handleProperties`, v0.13.0) to fill
+// its validator then decodes each custom key AGAIN (`validate/info.go` `handleProperties`, :141 in v0.16.2) to fill
 // `ctx.Properties`. A key whose decoded name holds a `#` — Acrobat PDFMaker writes SharePoint columns such as
 // `/Document#20#23`, "Document #" — failed the whole read ("not enough characters after #", or "encoding/hex: invalid
 // byte" for "Tags (option #1)"), and one that merely looked escaped ("A#41") was recorded as "AA". Encoding the key

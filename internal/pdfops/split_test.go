@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"testing"
 
@@ -28,7 +29,7 @@ func sizedPDF(t *testing.T, n int, w, h float64) []byte {
 
 func dims(t *testing.T, pdf []byte) []types.Dim {
 	t.Helper()
-	d, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	d, err := api.PageDims(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

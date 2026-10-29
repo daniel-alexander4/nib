@@ -3,6 +3,7 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"hash/crc32"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestSetLang(t *testing.T) {
 		t.Fatalf("SetLang: %v", err)
 	}
 	// The /Lang must survive a validating re-read (every later op reads this way).
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -145,7 +146,7 @@ func odtDocument(t *testing.T, automaticStyles, body string, pictures ...odtPict
 
 func catalogLang(t *testing.T, pdf []byte) string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}

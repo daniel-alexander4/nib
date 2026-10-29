@@ -1,7 +1,10 @@
 package mdpdf
 
 import (
+	"context"
+	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 )
@@ -38,9 +41,53 @@ type style struct {
 // a Greek or CJK word would reserve twice the space it occupies.
 func (s style) width(text string) float64 {
 	if s.embedded {
-		return font.TextWidth(text, s.font, s.size)
+		return embeddedWidth(text, s.font, s.size)
 	}
 	return CoreWidth(text, s.font, s.size)
+}
+
+// runeAdvance remembers pdfcpu's advance, in glyph space, of each rune of each installed face. v0.16.2's
+// `font.CharWidth` clones the face's whole metrics (glyph widths and three maps) on EVERY call, and an embedded string is
+// measured rune by rune, so the Markdown converter paid that per letter — a 7 MB conversion went from 2m35s to over ten
+// minutes. An advance is an integer read from the installed face, so the sum over the cache is the sum pdfcpu takes and
+// the width is identical; `UserFontDir` is in the key because the face is read from there. Errors are never remembered.
+var runeAdvance = struct {
+	sync.RWMutex
+	m map[runeKey]int
+}{m: map[runeKey]int{}}
+
+// maxRuneAdvances bounds the memory: a rune the face does not map still answers (width of glyph 0), so text of
+// arbitrary code points would otherwise grow the table by one entry each. Past it a rune is looked up, never stored.
+const maxRuneAdvances = 1 << 16
+
+type runeKey struct {
+	dir, font string
+	r         rune
+}
+
+// embeddedWidth is `font.TextWidth` for an installed face with the per-rune lookups remembered.
+func embeddedWidth(text, fontName string, size int) float64 {
+	ctx := context.Background()
+	w := 0
+	for _, r := range text {
+		k := runeKey{font.UserFontDir, fontName, r}
+		runeAdvance.RLock()
+		a, ok := runeAdvance.m[k]
+		runeAdvance.RUnlock()
+		if !ok {
+			var err error
+			if a, err = font.CharWidth(ctx, fontName, r); err != nil {
+				return mustWidth(0, err)
+			}
+			runeAdvance.Lock()
+			if len(runeAdvance.m) < maxRuneAdvances {
+				runeAdvance.m[k] = a
+			}
+			runeAdvance.Unlock()
+		}
+		w += a
+	}
+	return font.UserSpaceUnitsFloat(float64(w), float64(size))
 }
 
 // CoreWidth is the width of text in points when set in a Base-14 CORE font at
@@ -59,7 +106,18 @@ func (s style) width(text string) float64 {
 // Core fonts only. An EMBEDDED font is measured by rune, and `style.width` keeps
 // that distinction; a caller with a fallback face wants that path, not this one.
 func CoreWidth(text, fontName string, size int) float64 {
-	return font.TextWidth(encodedWidth(text), fontName, size)
+	return mustWidth(font.TextWidth(context.Background(), encodedWidth(text), fontName, size))
+}
+
+// mustWidth is the door onto pdfcpu's measurement (ADR-009). pdfcpu before v0.16 PANICKED on a font it did not carry ("user font not
+// loaded") and v0.16 answers an error; every caller of this package states the contract that the name is one it
+// installed or allowlisted, so an error here is that contract broken, and it is raised the way it always was —
+// loudly, never as a width of 0 that lets any number of lines fit (see LineHeight).
+func mustWidth(w float64, err error) float64 {
+	if err != nil {
+		panic(fmt.Errorf("mdpdf: measuring text: %w", err))
+	}
+	return w
 }
 
 // LineHeight is the baseline-to-baseline distance for text set in fontName at size pt — the height
@@ -78,7 +136,13 @@ func CoreWidth(text, fontName string, size int) float64 {
 // Nothing here can make an unlisted name safe, so the coercion belongs at the caller's door, not
 // behind a zero-check here that would only convert one wrong answer into another.
 func LineHeight(fontName string, size int) float64 {
-	return font.LineHeight(fontName, size)
+	h, err := font.LineHeight(context.Background(), fontName, size)
+	if err != nil {
+		// pdfcpu before v0.16 answered a silent 0 for a font it did not carry and v0.16 answers an error. Zero stays the answer —
+		// this port changes no behaviour — and the comment above is why a caller must not hand this an unlisted name.
+		return 0
+	}
+	return h
 }
 
 // Wrap breaks text into lines no wider than maxW points when set in fontName at size pt, with

@@ -360,7 +360,7 @@ func (d *Document) walkAppearances() {
 				if serr != nil {
 					// An /AP entry that is not a stream is an appearance nib did not read (`/pending 507`).
 					// `sd == nil` with no error is NOT this: the entry resolves to null, so there is no
-					// appearance to walk. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
+					// appearance to walk. Measured against pdfcpu v0.13.0 (not re-measured on v0.16.2, whose `DereferenceStreamDict` still errs on a non-stream, `model/xreftable.go:1218-1220`), `open`'s validator refuses every
 					// non-stream /AP entry ahead of the rules, on every annotation subtype tried
 					// ("DereferenceStreamDict: wrong type"), so nothing reaches this today.
 					d.appearanceUnread(fmt.Sprintf("page %d annotation %d's /AP /%s entry is not a stream nib can "+

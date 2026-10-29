@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"nib/mdpdf"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 // pdfops.nonEmbeddedFonts, which is unexported; both read the produced document rather than a list.
 func nonEmbedded(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestNibsOwnPagesEmbedTheirFonts(t *testing.T) {
 // cidSets counts FontDescriptors carrying a /CIDSet.
 func cidSets(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}

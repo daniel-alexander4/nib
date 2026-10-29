@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -72,7 +73,7 @@ func openActionDestPage(t *testing.T, ctx *model.Context, o types.Object) int {
 		return 0
 	}
 	for i := 1; ; i++ {
-		p, perr := ctx.PageDictIndRef(i)
+		p, perr := ctx.PageDictIndRef(context.Background(), i)
 		if perr != nil || p == nil {
 			return 0
 		}
@@ -93,7 +94,7 @@ func openActionDestPage(t *testing.T, ctx *model.Context, o types.Object) int {
 func TestASubsetCarriesAnOpenActionThatStillReachesAPage(t *testing.T) {
 	destTo := func(page int) func(*model.Context) (types.Object, error) {
 		return func(ctx *model.Context) (types.Object, error) {
-			ir, err := ctx.PageDictIndRef(page)
+			ir, err := ctx.PageDictIndRef(context.Background(), page)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +139,7 @@ func TestASubsetCarriesAnOpenActionThatStillReachesAPage(t *testing.T) {
 
 	t.Run("a GoTo action becomes a plain destination", func(t *testing.T) {
 		src := openActionFixture(t, func(ctx *model.Context) (types.Object, error) {
-			ir, err := ctx.PageDictIndRef(3)
+			ir, err := ctx.PageDictIndRef(context.Background(), 3)
 			if err != nil {
 				return nil, err
 			}
@@ -227,7 +228,7 @@ func TestScanCallsAnOpenActionAnActionOnlyWhenItIsOne(t *testing.T) {
 	}
 
 	dest := openActionFixture(t, func(ctx *model.Context) (types.Object, error) {
-		ir, err := ctx.PageDictIndRef(2)
+		ir, err := ctx.PageDictIndRef(context.Background(), 2)
 		if err != nil {
 			return nil, err
 		}

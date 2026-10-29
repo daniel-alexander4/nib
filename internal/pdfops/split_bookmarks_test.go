@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func bookmarkedPDF(t *testing.T, pages int, bms []pdfcpu.Bookmark) []byte {
 	t.Helper()
 	base := sizedPDF(t, pages, 120, 160)
 	var out bytes.Buffer
-	if err := api.AddBookmarks(bytes.NewReader(base), &out, bms, true, nil); err != nil {
+	if err := api.AddBookmarks(context.Background(), bytes.NewReader(base), &out, bms, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()

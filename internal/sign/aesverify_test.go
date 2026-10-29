@@ -2,6 +2,7 @@ package sign
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -65,7 +66,7 @@ func encryptedThenSigned(t *testing.T, c aesCase, id identity, signerName string
 	}
 
 	// The file key and the field's place, as pdfcpu reads them back.
-	ctx, err := api.ReadContext(bytes.NewReader(enc), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(enc), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: pdfcpu cannot read its own encrypted fixture: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestAFortyBitRC4DocumentsStreamsAreRead(t *testing.T) {
 	conf := model.NewRC4Configuration("", "owner", 40)
 	conf.Cmd = model.ENCRYPT
 	var enc bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(base), &enc, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(base), &enc, conf); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	r, err := dpdf.NewReader(bytes.NewReader(enc.Bytes()), int64(enc.Len()))

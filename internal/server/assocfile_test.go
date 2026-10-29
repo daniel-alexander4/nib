@@ -10,17 +10,17 @@ import (
 	"nib/internal/testpdf"
 )
 
-// TestAnAssociatedFileRefusalIsA422NamingItsCause walks `/pending 655` to the route: a document whose catalog
-// `/AF` names a file nothing else reaches is refused by the write door, and each mutation route answers that as
+// TestAnAssociatedFileRefusalIsA422NamingItsCause walks `/pending 655` to the route: a document whose page's
+// `/AF` names a file nothing else reaches (the catalog's is written by pdfcpu v0.16.2 and no longer refused; P02.S06) is refused by the write door, and each mutation route answers that as
 // 422 with cause `associated-file` and the sentence — not as the 400 or 500 its own handler gives a failure.
 func TestAnAssociatedFileRefusalIsA422NamingItsCause(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)
 	openByPath(t, ts.URL, c, csrf, path)
 	doc := testpdf.Assemble(map[int]string{
-		1: "<< /Type /Catalog /Pages 2 0 R /AF [5 0 R] >>",
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
 		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /AF [5 0 R] >>",
 		5: "<< /Type /Filespec /F (a.csv) /UF (a.csv) /AFRelationship /Source /EF << /F 6 0 R >> >>",
 		6: "<< /Type /EmbeddedFile /Length 5 >>\nstream\nBYTES\nendstream",
 	})

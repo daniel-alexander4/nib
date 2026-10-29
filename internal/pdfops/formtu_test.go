@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,7 +24,7 @@ import (
 // documents, and only one of them is what the code intends.
 func fieldTUs(t *testing.T, pdf []byte) map[string]string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -81,13 +82,13 @@ func fieldTUs(t *testing.T, pdf []byte) map[string]string {
 // pageTabs returns each page's /Tabs value, "" where the key is absent.
 func pageTabs(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	out := make([]string, 0, ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil || d == nil {
 			out = append(out, "?")
 			continue

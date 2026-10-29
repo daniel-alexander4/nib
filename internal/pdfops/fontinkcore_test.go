@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -70,7 +71,11 @@ func TestPrintInAnUnembeddedStandardFontIsBoxedToTheTopOfAdobesBoxForIt(t *testi
 			map[int]string{6: "<< /Type /FontDescriptor /FontName /ArialMT /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 >>"},
 			"Helvetica"},
 	} {
-		want := font.BoundingBox(c.core).UR.Y / 1000
+		bb, berr := font.BoundingBox(context.Background(), c.core)
+		if berr != nil {
+			t.Fatalf("%s: %v", c.core, berr)
+		}
+		want := bb.UR.Y / 1000
 		if !(want > 0.7 && want < ascentEm) {
 			t.Fatalf("%s: pdfcpu's box for %s tops out at %v — not a bound that tightens anything", c.name, c.core, want)
 		}
@@ -133,7 +138,7 @@ func TestEveryStandardFontAliasNamesAFontPdfcpuHasABoxFor(t *testing.T) {
 			t.Errorf("%s maps to %q, which is not a standard text font", name, core)
 			continue
 		}
-		if box := font.BoundingBox(core); box == nil || !(box.UR.Y > 700 && box.UR.Y < 1000) {
+		if box, _ := font.BoundingBox(context.Background(), core); box == nil || !(box.UR.Y > 700 && box.UR.Y < 1000) {
 			t.Errorf("%s: pdfcpu's box for %s is %v", name, core, box)
 		}
 	}

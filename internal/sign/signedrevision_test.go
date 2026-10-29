@@ -2,6 +2,7 @@ package sign
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -81,7 +82,7 @@ func revisionShapes(t *testing.T) []revisionShape {
 	spoof := signAs(t, sA, b, "stranger")
 	appended := synthRevision(t, sA, []sobj{{num: 900, body: "<< /Foo 1 >>"}}, root)
 	var resaved bytes.Buffer
-	if err := api.Optimize(bytes.NewReader(sA), &resaved, nil); err != nil {
+	if err := api.Optimize(context.Background(), bytes.NewReader(sA), &resaved, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	corrupted := append([]byte(nil), sA...)

@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"nib/internal/pdfread"
 	"strings"
@@ -123,16 +125,17 @@ func TestAPageOperationOnHostileFormsFinishesAndKeepsEveryForm(t *testing.T) {
 		forms  int
 		within int // seconds
 	}{
-		// Measured unbounded: 90 s. Bounded: ~16 ms.
-		{"a chain of 400 forms of one length", formChain(400), 401, 20},
+		// Measured unbounded: 90 s. Bounded: ~16 ms. 99 forms is as deep as pdfcpu v0.16.2 reads (its cap is 100
+		// levels, `model/recursion.go:118`) and is still past the optimize budget.
+		{"a chain of 99 forms of one length", formChain(99), 100, 20},
 		// Measured unbounded: doubling per level, 318 ms at 18. Bounded: ~80 ms.
 		{"thirty levels of forms sharing their resources", formDiamonds(30), 60, 20},
 		// Measured unbounded: twenty took 2.0 s, forty did not finish in four minutes. Bounded: ~16 ms.
 		{"forty forms naming their own dictionary", formsNamingTheirDictionary(40), 40, 20},
 		// The estimate's own cost, so the tightest deadline: charging only the entries entered let it run past
 		// a minute here, and charging each examined entry without the visited list it scans ~10 s. Bounded:
-		// ~1 s.
-		{"two thousand forms naming their own dictionary", formsNamingTheirDictionary(2000), 2000, 8},
+		// ~1 s. Ninety-nine levels is what v0.16.2 reads of it; two thousand are refused below.
+		{"ninety-nine forms naming their own dictionary", formsNamingTheirDictionary(99), 99, 8},
 	}
 	for _, c := range cases {
 		// Stimulus first: the fixture really carries the forms it is named for.
@@ -152,11 +155,31 @@ func TestAPageOperationOnHostileFormsFinishesAndKeepsEveryForm(t *testing.T) {
 	}
 }
 
+// TestFormsNestedPastPdfcpusCapAreANamedRefusal — D4, P02.S04. v0.13 read a chain of 400 forms and the budget
+// existed to survive it; v0.16.2 refuses nesting past 100 levels (`model/recursion.go:118`, limit 100 at `model/configuration.go:538`). The refusal is
+// adopted, and it is NAMED: `pdfread.ErrNestedTooDeep`, with pdfcpu's words behind it, never a bare validator
+// string. A page operation, Optimize and a read all answer it, and none takes long.
+func TestFormsNestedPastPdfcpusCapAreANamedRefusal(t *testing.T) {
+	for name, pdf := range map[string][]byte{
+		"a chain of 400 forms":                           formChain(400),
+		"two thousand forms naming their own dictionary": formsNamingTheirDictionary(2000),
+	} {
+		var err error
+		finishesWithin(t, 20, "RemovePages over "+name, func() { _, err = RemovePages(pdf, []string{"2"}) })
+		if !errors.Is(err, pdfread.ErrNestedTooDeep) || !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
+			t.Errorf("RemovePages over %s: %v — want pdfread.ErrNestedTooDeep over pdfcpu's own error", name, err)
+		}
+		if !strings.Contains(fmt.Sprint(err), "more levels deep") {
+			t.Errorf("RemovePages over %s: %q does not say what is wrong in nib's words", name, err)
+		}
+	}
+}
+
 func TestOptimizeRefusesADocumentItsPassCannotAfford(t *testing.T) {
 	var err error
-	finishesWithin(t, 20, "Optimize over a chain of 400 forms", func() { _, err = Optimize(formChain(400)) })
+	finishesWithin(t, 20, "Optimize over a chain of 99 forms", func() { _, err = Optimize(formChain(99)) })
 	if err == nil || !strings.Contains(err.Error(), "will not optimize") {
-		t.Fatalf("Optimize over a chain of 400 forms returned %v, want a refusal — a skipped pass there "+
+		t.Fatalf("Optimize over a chain of 99 forms returned %v, want a refusal — a skipped pass there "+
 			"reports success for a file it never optimised", err)
 	}
 }
@@ -180,7 +203,7 @@ func inheriting(pdf []byte, own string) []byte {
 		}
 	}
 	var b bytes.Buffer
-	if err := api.WriteContext(ctx, &b); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &b); err != nil {
 		panic(err)
 	}
 	return b.Bytes()
@@ -261,11 +284,11 @@ func TestAnOrdinaryDocumentIsStillOptimized(t *testing.T) {
 // pass) was still running at 30 s. Each now reads through `pdfread` (`apiread.go`), so the pass is skipped past the
 // budget — or, for image extraction, refused.
 func TestEveryOperationOverAnApiReadFinishesOnHostileForms(t *testing.T) {
-	pdf := formChain(400)
+	pdf := formChain(99)
 	conf := model.NewAESConfiguration("pw", "pw", 256)
 	conf.Optimize = false // the fixture's own encryption must not run the unbudgeted pass this test is about
 	var enc bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &enc, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &enc, conf); err != nil {
 		t.Fatalf("setup: encrypting the fixture: %v", err)
 	}
 	png := onePixelPNG()
@@ -298,7 +321,7 @@ func TestEveryOperationOverAnApiReadFinishesOnHostileForms(t *testing.T) {
 	for _, op := range ops {
 		var err error
 		st := time.Now()
-		finishesWithin(t, 20, op.name+" over a chain of 400 forms", func() { err = op.run() })
+		finishesWithin(t, 20, op.name+" over a chain of 99 forms", func() { err = op.run() })
 		// What each answers is its own business (the chain has no fields, outline or images); that it ANSWERS is
 		// this test's. The answer is logged so a changed one is visible.
 		t.Logf("%s: %v (%v)", op.name, err, time.Since(st).Round(time.Millisecond))
@@ -322,8 +345,8 @@ func TestEveryOperationOverAnApiReadFinishesOnHostileForms(t *testing.T) {
 				continue
 			}
 		}
-		if got := formObjects(t, out); got < 401 { // a watermark adds its own form
-			t.Errorf("%s over the chain wrote %d form XObjects, want all 401 kept", name, got)
+		if got := formObjects(t, out); got < 100 { // a watermark adds its own form
+			t.Errorf("%s over the chain wrote %d form XObjects, want all 100 kept", name, got)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -31,7 +32,10 @@ func mediaActionDoc(catalog, page, annots string, extra map[int]string) []byte {
 // not written, so a marker still present is something the removal left reachable.
 var (
 	screenAnnot = "<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] /P 3 0 R /T (SCREENMARK) >>"
-	rendition   = "<< /Type /Rendition /S /MR /N (RENDITIONMARK) >>"
+	// /P because v0.16.2 requires a media rendition to carry play parameters or a clip (`validate/media.go:1135`); the
+	// release before did not, and a rendition with neither is not a document the spec allows.
+	rendition = "<< /Type /Rendition /S /MR /N (RENDITIONMARK) /P << /Type /MediaPlayParams /PL << /Type /MediaPlayers " +
+		"/MU [<< /Type /MediaPlayerInfo /PID << /Type /SoftwareIdentifier /U (x) >> >>] >> >> >>"
 	soundStream = "<< /Type /Sound /R 8000 /Mark (SOUNDMARK) /Length 2 >>\nstream\n\x00\x00\nendstream"
 )
 
@@ -101,7 +105,7 @@ var mediaActionCases = map[string]struct {
 // object, not along the roads the removal walks, so a holder the removal forgot is still seen.
 func eachObjectIn(t *testing.T, pdf []byte, fn func(types.Object)) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}

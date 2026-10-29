@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -320,7 +321,7 @@ func TestAnImageOnlyPageReturnsNoRunsAndSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	read := func(pdf []byte) pageRuns {
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
@@ -376,11 +377,11 @@ func TestTheRunReaderIsContained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(md), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(md), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, attrs, err := ctx.PageDict(1, false)
+	d, _, attrs, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +407,7 @@ func TestTheRunReaderIsContained(t *testing.T) {
 // the generated corpus draws is decoded and measured from the document, and the corpus draws some.
 func TestRunsOverTheCorpusAreDecodedAndMeasured(t *testing.T) {
 	for _, doc := range runCorpus(t) {
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(doc.pdf), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(doc.pdf), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatalf("%s: %v", doc.name, err)
 		}

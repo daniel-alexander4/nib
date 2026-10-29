@@ -2,6 +2,7 @@ package sign
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -96,7 +97,7 @@ func TestVerifyAfterDecryptStaysSigned(t *testing.T) {
 	conf.UserPW = "secret"
 	conf.OwnerPW = "secret"
 	var enc bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(signed), &enc, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(signed), &enc, conf); err != nil {
 		t.Fatal(err)
 	}
 

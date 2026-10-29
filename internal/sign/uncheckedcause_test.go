@@ -2,6 +2,7 @@ package sign
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -20,7 +21,7 @@ func encryptedForOwner(t *testing.T, pdf []byte, bits int) []byte {
 	conf := model.NewAESConfiguration("", "owner", bits)
 	conf.Cmd = model.ENCRYPT
 	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(pdf), &out, conf); err != nil {
 		t.Fatalf("setup: could not encrypt the fixture: %v", err)
 	}
 	return out.Bytes()
@@ -36,7 +37,7 @@ func TestAnEncryptedSignedDocumentIsNotCalledModified(t *testing.T) {
 	conf := model.NewRC4Configuration("", "owner", 128)
 	conf.Cmd = model.ENCRYPT
 	var out bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(signed), &out, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(signed), &out, conf); err != nil {
 		t.Fatalf("setup: could not encrypt the fixture: %v", err)
 	}
 	enc := out.Bytes()

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -326,7 +327,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 				// The pages draw a rectangle and name no font: roadDoc's font dictionary is one pdfcpu's
 				// strict mode refuses for itself, and this test's question is the action.
 				objs := map[int]string{
-					2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+					2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] /Resources << >> >>", // /Resources: v0.16.2 strict mode requires it
 					5: stream("0 0 10 10 re f"),
 					6: stream("0 0 10 10 re f"),
 				}
@@ -356,7 +357,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 				// at all: measured, a `/Hide` with no `/T` validates relaxed and is refused strict.
 				strict := model.NewDefaultConfiguration()
 				strict.ValidationMode = model.ValidationStrict
-				if verr := api.Validate(bytes.NewReader(out), strict); verr != nil {
+				if verr := api.Validate(context.Background(), bytes.NewReader(out), strict, nil); verr != nil {
 					t.Errorf("pdfcpu's validator refuses the output: %v", verr)
 				}
 				act := derefDict(ctx.XRefTable, pages[0][0]["A"])
@@ -375,7 +376,7 @@ func TestAnActionThatLosesItsTargetIsRemovedWholeOrLeftValid(t *testing.T) {
 // object in a compressed object stream is seen as well as one written plainly.
 func eachParsedObject(t *testing.T, pdf []byte, fn func(xt *model.XRefTable, o types.Object)) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("the output does not read: %v", err)
 	}
@@ -469,7 +470,7 @@ func actionChain(a types.Object) []string {
 func coDoc() []byte {
 	return assembleFixture(map[int]string{
 		1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 9 0 R] /CO [6 0 R 9 0 R] /DA (/Helv 0 Tf 0 g) >> >>",
-		2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+		2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] /Resources << >> >>", // /Resources: v0.16.2 strict mode requires it
 		3: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [7 0 R] >>",
 		4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [8 0 R 9 0 R] >>",
 		5: stream("0 0 10 10 re f"),

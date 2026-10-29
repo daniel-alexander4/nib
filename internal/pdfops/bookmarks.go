@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
@@ -77,7 +78,7 @@ func SetOutline(pdf []byte, items []OutlineItem) ([]byte, error) {
 		conf := model.NewDefaultConfiguration()
 		conf.Cmd = model.REMOVEBOOKMARKS
 		out, err := rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
-			ok, err := pdfcpu.RemoveBookmarks(ctx)
+			ok, err := pdfcpu.RemoveBookmarks(context.Background(), ctx)
 			if err != nil {
 				return err
 			}
@@ -96,7 +97,7 @@ func SetOutline(pdf []byte, items []OutlineItem) ([]byte, error) {
 	conf.Cmd = model.ADDBOOKMARKS
 	bms := buildBookmarkTree(items)
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
-		return pdfcpu.AddBookmarks(ctx, bms, true)
+		return pdfcpu.AddBookmarks(context.Background(), ctx, bms, true)
 	})
 }
 

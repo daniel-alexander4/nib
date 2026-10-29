@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func withoutCryptFilterLength(t *testing.T, header string) []byte {
 	conf := model.NewAESConfiguration("", "owner", 128)
 	conf.Cmd = model.ENCRYPT
 	var enc bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(base), &enc, conf); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(base), &enc, conf); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	b := enc.Bytes()

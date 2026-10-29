@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -69,6 +70,9 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 						"rewrite (%s), so this stamp is set in Base-14 core fonts and will not embed them", face, why)
 					emb = false
 				}
+			}
+			if emb {
+				restoreCIDSetsOf(ctx, faces)
 			}
 			if err := func() (err error) {
 				defer fault.Catch(&err)
@@ -147,10 +151,8 @@ func fontNotNibs(ctx *model.Context, name string, d types.Dict) string {
 	if err != nil {
 		return "its ToUnicode map is not in the form pdfcpu reads"
 	}
-	font.UserFontMetricsLock.RLock()
-	ttf, ok := font.UserFontMetrics[name]
-	font.UserFontMetricsLock.RUnlock()
-	if !ok {
+	ttf, ok, uerr := font.UserFont(context.Background(), name)
+	if uerr != nil || !ok {
 		return "nib's face is not loaded"
 	}
 	for gid, r := range pairs {

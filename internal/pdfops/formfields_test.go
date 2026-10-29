@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -52,7 +53,7 @@ func signatureOnlyForm() []byte {
 }
 
 func TestTheFieldsOfAFormAreToldByWhetherTheyAreOnAPage(t *testing.T) {
-	ctx, err := api.ReadContext(bytes.NewReader(formWithFieldsOffPage(true)), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(formWithFieldsOffPage(true)), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestADocumentWithNoFormFieldsSaysSo(t *testing.T) {
 // fieldsOf is formFields over pdf, read without validation.
 func fieldsOf(t *testing.T, pdf []byte) ([]formField, error) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func TestRemovingFormEntriesOnNoPageLeavesTheFormOnThePagesAsItWas(t *testing.T)
 	}
 	// What was removed is not in the file at all — asked of every object the file holds, read through the
 	// parser: a search of the bytes says nothing about a file whose objects are in compressed streams.
-	ctx0, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx0, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestRemovingFormEntriesOnNoPageLeavesTheFormOnThePagesAsItWas(t *testing.T)
 	if after := exportedValues(t, out); after != before || !strings.Contains(before, "onpage=kept") {
 		t.Errorf("the form on the page does not export as it did:\nbefore %s\nafter  %s", before, after)
 	}
-	ctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

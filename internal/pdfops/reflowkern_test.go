@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"path/filepath"
 	"strings"
@@ -298,12 +299,12 @@ func TestATypedWordBorrowsKerningOverTheCorpus(t *testing.T) {
 				if out.content == nil {
 					continue
 				}
-				d, _, _, _ := c2.PageDict(p, false)
+				d, _, _, _ := c2.PageDict(context.Background(), p, false)
 				if err := setPageContent(c2, d, out.content); err != nil {
 					t.Fatal(err)
 				}
 				var buf bytes.Buffer
-				if err := api.WriteContext(c2, &buf); err != nil {
+				if err := api.WriteContext(context.Background(), c2, &buf); err != nil {
 					t.Fatal(err)
 				}
 				c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())

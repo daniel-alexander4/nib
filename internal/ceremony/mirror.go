@@ -313,7 +313,23 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	if err != nil {
 		return Record{}, nil, err
 	}
-	return readMirrorAt(dir, id, now)
+	return readMirrorAt(dir, id, now, false)
+}
+
+// ReadMirrorToEnd is ReadMirror for the operations that END or READ BACK a ceremony: stop, the close-out, the end-state
+// attestation. A mirror written under a retired digest rule (5 or 6) is read — its stored bytes are still checked
+// against the checksum beside them, which is what detects a damaged copy — but its document is not compared with the
+// record's DocHash, because this build cannot compute that rule (D1, P02.S08). Every operation that would CONTINUE the
+// ceremony stays on ReadMirror and is refused with the skew — for an UNSIGNED mirror only: a signed mirror's rule is
+// not checked here at all (its signatures, not DocHash, bind the parties), so continuing a signed ceremony of a
+// retired rule is refused where its document ARRIVES (checkArrival → RequireComputableRule), not on the sending
+// side. That is a declared gap of ADR-174 §1.
+func ReadMirrorToEnd(root, id string, now time.Time) (Record, []byte, error) {
+	dir, err := MirrorDir(root, id)
+	if err != nil {
+		return Record{}, nil, err
+	}
+	return readMirrorAt(dir, id, now, true)
 }
 
 // ReadMirrorFor reads this machine's stored copy of the proceeding `named` describes — the live folder first, then
@@ -348,7 +364,9 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 	var unknown error
 	different, empty := false, false
 	for i, dir := range dirs {
-		r, pdf, rerr := readMirrorAt(dir, named.ID, now)
+		// Only an ENDED folder is read to end (D1, P02.S08): a live one can still be continued, so a retired digest rule
+		// there is the older-nib skew and the copy route says so.
+		r, pdf, rerr := readMirrorAt(dir, named.ID, now, i > 0)
 		if errors.Is(rerr, fs.ErrNotExist) {
 			continue
 		}
@@ -384,7 +402,7 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 }
 
 // readMirrorAt is ReadMirror's body over a resolved folder — the live one or the ended one.
-func readMirrorAt(dir, id string, now time.Time) (Record, []byte, error) {
+func readMirrorAt(dir, id string, now time.Time, toEnd bool) (Record, []byte, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
 		return Record{}, nil, err
@@ -489,8 +507,18 @@ func readMirrorAt(dir, id string, now time.Time) (Record, []byte, error) {
 	if len(pdf) > 0 && !sign.HasSignatureBlob(pdf) {
 		// The rule before the number (D32, /pending 725): a record written under another
 		// content-digest rule is a version skew, never a damaged copy.
-		if err := digestRuleSkew(r); err != nil {
+		// Reading to END a ceremony asks the record-level question (a retired rule is a record); anything that
+		// would CONTINUE it asks the computing one (a retired rule is the skew, wire code 18).
+		skew := digestRuleComputable
+		if toEnd {
+			skew = digestRuleSkew
+		}
+		if err := skew(r); err != nil {
 			return r, nil, err
+		}
+		if toEnd && pdfops.ContentDigestRuleRetired(r.DigestVersion) {
+			// A retired rule cannot be recomputed here; the checksum above has already caught a damaged copy.
+			return r, pdf, nil
 		}
 		got, herr := DocumentHashFor(pdf, r)
 		if errors.Is(herr, pdfops.ErrPageTreeAmbiguous) {

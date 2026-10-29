@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestCombineMergesInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dims, err := api.PageDims(bytes.NewReader(out), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,13 +39,13 @@ func TestANullParentTreeSlotUnderAClaimedMCIDIsADefect(t *testing.T) {
 
 func checkTree(t *testing.T, pdf []byte) (*structTree, []structDefect) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -245,11 +246,11 @@ func TestAddingToAPageWithNoStructParentsCreatesTheKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("re-read: %v", rerr)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	if d == nil {
 		t.Fatal("no page")
 	}
@@ -269,7 +270,7 @@ func writeMutatedTree(t *testing.T, pdf []byte, f func(*model.Context, *structTr
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+			if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 				live[ir.ObjectNumber.Value()] = true
 			}
 		}
@@ -304,13 +305,13 @@ func TestAGapInTheParentTreeArrayIsFilledNotAppended(t *testing.T) {
 		t.Fatalf("setParentTreeSlot: %v", err)
 	}
 
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("re-read: %v", rerr)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}

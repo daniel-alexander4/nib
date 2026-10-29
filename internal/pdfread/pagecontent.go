@@ -13,7 +13,7 @@ import (
 // PageContent is a page's content, decoded — pdfcpu's `PageContent` with the streams of a `/Contents` ARRAY
 // joined at token boundaries (ADR-056, `PLAN-text-reflow.md` P05.S01).
 //
-// **Why not pdfcpu's own.** `XRefTable.PageContent` (model/xreftable.go:1882, v0.13.0) appends an array's
+// **Why not pdfcpu's own.** `XRefTable.PageContent` (model/xreftable.go:2184, v0.16.2, appends at :2196-2220) appends an array's
 // decoded streams with nothing between them. ISO 32000-1 §7.8.2 lets a stream end on ANY token boundary, so a
 // page whose first stream ends `(A) Tj` and whose second begins `ET` reads as the one operator `TjET` — the text
 // is not shown and the text object never closes — and a first stream ending inside a `%` comment comments out

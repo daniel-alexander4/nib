@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"runtime"
 	"strings"
@@ -33,7 +34,7 @@ func namedRepeatedly(t *testing.T, size, n int) (*model.Context, types.Dict) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, _, _, err := ctx.PageDict(1, false)
+	page, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

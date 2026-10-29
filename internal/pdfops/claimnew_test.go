@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"nib/mdpdf"
@@ -177,7 +178,7 @@ func TestADoorAddingToATreeNeverRaisesItsTier(t *testing.T) {
 func withUnmarkedPath(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
-		d, _, _, err := ctx.PageDict(1, false)
+		d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 		if err != nil {
 			return err
 		}
@@ -281,7 +282,7 @@ func TestACommitRefusesTextInsideAFormEvenWhenNotProposed(t *testing.T) {
 	}
 	bare, err := writeMutated(stamped, func(ctx *model.Context) error {
 		for pg := 1; pg <= ctx.PageCount; pg++ {
-			d, _, _, derr := ctx.PageDict(pg, false)
+			d, _, _, derr := ctx.PageDict(context.Background(), pg, false)
 			if derr != nil {
 				return derr
 			}

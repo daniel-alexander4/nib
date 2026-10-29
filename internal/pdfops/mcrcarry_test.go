@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -97,7 +98,7 @@ func TestACarriedNUpReadsItsOwnText(t *testing.T) {
 	}
 	// **`fate` alone would pass on the source returned unchanged** — the fixture is already
 	// `carried`, so that check grades the tree and not the composition. Assert the n-up HAPPENED.
-	nctx, nerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	nctx, nerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if nerr != nil {
 		t.Fatalf("read: %v", nerr)
 	}
@@ -203,7 +204,7 @@ func TestOnlyAnMCRCarriesAStmKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NUp: %v", err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("read: %v", rerr)
 	}
@@ -265,14 +266,14 @@ func TestTheCarryWritesMCRKidsNamingTheForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NUp: %v", err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("read: %v", rerr)
 	}
 	forms := map[int]bool{}
 	seen := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+		d, _, _, perr := ctx.PageDict(context.Background(), p, false)
 		if perr != nil || d == nil {
 			continue
 		}
@@ -357,7 +358,7 @@ func pageAndFormFixture() []byte {
 // because the first version of this test ran on a fixture whose page drew no text at all and its
 // page-stream arm was therefore dead while the comment claimed otherwise.
 func TestARunKnowsWhichStreamItWasReadFrom(t *testing.T) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pageAndFormFixture()), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pageAndFormFixture()), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestASequenceOpenedOnThePageKeepsThePagesStream(t *testing.T) {
 		11: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 200 20] "+
 			"/Resources << /Font << /F1 5 0 R >> >> /Length %d >>\nstream\n%s\nendstream", len(form), form),
 	})
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -756,7 +757,7 @@ func TestAKidNamingAnUnreachedStreamFallsBackToThePage(t *testing.T) {
 	if named != 1 {
 		t.Fatalf("setup: %d kid(s) name a stream, want 1 — the fallback has no subject", named)
 	}
-	ctx, cerr := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, cerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if cerr != nil {
 		t.Fatalf("read: %v", cerr)
 	}
@@ -891,7 +892,7 @@ func TestTheCarryRepointsAnOBJRAndLeavesItNoStm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NUp: %v", err)
 	}
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatalf("read: %v", rerr)
 	}

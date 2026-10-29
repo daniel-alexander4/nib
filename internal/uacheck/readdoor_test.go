@@ -68,17 +68,17 @@ func formChainDoc(depth int) []byte {
 // rules were measured against. It reads with the pass OFF now, so there is nothing to afford and nothing to
 // refuse: the document is checked.
 func TestTheCheckerReadsWhereTheOptimizePassIsUnaffordable(t *testing.T) {
-	pdf := formChainDoc(400)
+	pdf := formChainDoc(99)
 	// Stimulus first: the document is past the budget the door applies.
 	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if why := pdfread.Unaffordable(ctx); why == "" {
-		t.Fatal("setup: a chain of 400 forms is within the optimize budget — the fixture exercises nothing")
+		t.Fatal("setup: a chain of 99 forms is within the optimize budget — the fixture exercises nothing")
 	}
-	if err := checkWithin(t, 20, "a chain of 400 forms", pdf); err != nil {
-		t.Errorf("Check over a chain of 400 forms returned %v — the checker does not run the optimize pass, so "+
+	if err := checkWithin(t, 20, "a chain of 99 forms", pdf); err != nil {
+		t.Errorf("Check over a chain of 99 forms returned %v — the checker does not run the optimize pass, so "+
 			"a document that pass cannot afford is still one it reads", err)
 	}
 	// And a short chain is checked as before.

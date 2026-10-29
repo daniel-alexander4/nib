@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,13 +38,13 @@ type widgetLinkage struct {
 
 func widgetLinkages(t *testing.T, pdf []byte) []widgetLinkage {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -66,7 +67,7 @@ func widgetLinkages(t *testing.T, pdf []byte) []widgetLinkage {
 
 	var out []widgetLinkage
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil || d == nil {
 			continue
 		}
@@ -205,11 +206,11 @@ func TestAKeyIsNeverHandedOutTwice(t *testing.T) {
 	}
 	// The floor: the page's own key must still be there, or the collision happened and this test
 	// would pass on a document where the page lost its structure.
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	d, _, _, _ := ctx.PageDict(1, false)
+	d, _, _, _ := ctx.PageDict(context.Background(), 1, false)
 	sp, hasPageKey := d["StructParents"].(types.Integer)
 	if !hasPageKey {
 		t.Fatal("the page lost its /StructParents while the form was being described")
@@ -230,7 +231,7 @@ func TestAKeyIsNeverHandedOutTwice(t *testing.T) {
 // parentTreeNextKeyOf reads `/StructTreeRoot /ParentTreeNextKey`, or -1 when absent.
 func parentTreeNextKeyOf(t *testing.T, pdf []byte) (nextKey, maxKey int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

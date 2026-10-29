@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -192,7 +193,7 @@ func TestTheSourceKeyDoesNotBreakTheDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, rerr := api.ReadValidateAndOptimize(bytes.NewReader(tagged), model.NewDefaultConfiguration()); rerr != nil {
+	if _, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(tagged), model.NewDefaultConfiguration(), nil); rerr != nil {
 		t.Fatalf("a document carrying the source key does not validate: %v", rerr)
 	}
 	if _, defects := checkTree(t, tagged); len(defects) > 0 {

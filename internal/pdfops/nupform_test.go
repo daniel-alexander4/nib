@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"testing"
 )
 
@@ -73,7 +74,7 @@ func formShape(t *testing.T, pdf []byte) (fields, widgets int) {
 		fields = len(derefArray(xt, form["Fields"]))
 	}
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+		d, _, _, perr := ctx.PageDict(context.Background(), p, false)
 		if perr != nil || d == nil {
 			continue
 		}

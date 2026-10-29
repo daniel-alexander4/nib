@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -32,7 +33,7 @@ type residueSite struct {
 
 func residuePage(t *testing.T, xt *model.XRefTable) types.Dict {
 	t.Helper()
-	pd, _, _, err := xt.PageDict(1, false)
+	pd, _, _, err := xt.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func plantResidue(t *testing.T, site residueSite) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(base), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(base), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func plantResidue(t *testing.T, site residueSite) []byte {
 	}
 	site.plant(t, ctx.XRefTable, root)
 	var out bytes.Buffer
-	if err := api.WriteContext(ctx, &out); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -123,7 +124,7 @@ func assertOldPathKeepsKey(t *testing.T, pdf []byte, site residueSite) {
 	if _, ok := d.Find(site.key); !ok {
 		t.Fatalf("setup: /%s is not in the input at %s", site.key, site.name)
 	}
-	if err := ctx.XRefTable.DeleteDictEntry(d, site.key); err == nil {
+	if err := ctx.XRefTable.DeleteDictEntry(context.Background(), d, site.key); err == nil {
 		t.Fatalf("setup: pdfcpu's DeleteDictEntry succeeded at %s — the fixture no longer reaches the defect", site.name)
 	}
 	if _, ok := d.Find(site.key); !ok {

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -104,7 +105,7 @@ func pageOneContent(t *testing.T, pdf []byte) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil || d == nil {
 		t.Fatalf("page 1: %v", err)
 	}
@@ -116,9 +117,11 @@ func pageOneContent(t *testing.T, pdf []byte) []byte {
 }
 
 func TestRuleSixFollowsEveryKindOfResourceAPageBinds(t *testing.T) {
-	if legacyContentDigestVersion != 5 || ContentDigestVersion != 6 {
-		t.Fatalf("these rows pin rule 5 blind and rule 6 seeing; this build computes rules %d and %d, so the rows "+
-			"need re-reading against the rules they name", legacyContentDigestVersion, ContentDigestVersion)
+	// Rule 5 is retired (D1, P02.S08): its blind half cannot be asserted because nothing computes it. These rows keep
+	// the SEEING half, under the rule this build computes, which is rule 6's axes read by pdfcpu v0.16.x.
+	if ContentDigestVersion != 7 {
+		t.Fatalf("these rows pin the every-kind axes under rule 7; this build computes rule %d, so the rows need "+
+			"re-reading against the rule they name", ContentDigestVersion)
 	}
 	for _, inherited := range []bool{false, true} {
 		where := "on the page"
@@ -145,14 +148,9 @@ func TestRuleSixFollowsEveryKindOfResourceAPageBinds(t *testing.T) {
 					t.Fatal("setup: the page content moved, so this pair differs in more than the resource")
 				}
 				after := digestsUnder(t, changed)
-				if after[0] != before[0] {
-					t.Errorf("rule 5 MOVED over a change to %s, and it was measured not to — either the row changes "+
-						"something rule 5 already covered (so it proves nothing about rule 6), or the legacy arm is "+
-						"no longer rule 5", row.name)
-				}
-				if after[1] == before[1] {
-					t.Errorf("rule 6 is unchanged over a change to %s (%s) — %s, with the content stream "+
-						"byte-identical", row.name, where, row.draws)
+				if after[0] == before[0] {
+					t.Errorf("rule %d is unchanged over a change to %s (%s) — %s, with the content stream "+
+						"byte-identical", ContentDigestVersion, row.name, where, row.draws)
 				}
 			})
 		}
@@ -183,11 +181,8 @@ func TestRuleSixTakesItsKindsFromTheDictionary(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, b := digestsUnder(t, variant(at, c.a)), digestsUnder(t, variant(at, c.b))
-			if a[0] != b[0] {
-				t.Errorf("rule 5 tells the pair apart, so the legacy arm is no longer rule 5")
-			}
-			if (a[1] != b[1]) != c.seen {
-				t.Errorf("rule 6 tells the pair apart: %v, want %v", a[1] != b[1], c.seen)
+			if (a[0] != b[0]) != c.seen {
+				t.Errorf("rule %d tells the pair apart: %v, want %v", ContentDigestVersion, a[0] != b[0], c.seen)
 			}
 		})
 	}

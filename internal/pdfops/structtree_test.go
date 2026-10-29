@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/pdfread"
 	"nib/internal/scaling"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -92,13 +95,13 @@ func assembleFixture(objs map[int]string) []byte {
 // readTree is the test-side door into the model: read a document and parse its tree.
 func readTree(t *testing.T, pdf []byte) (*structTree, error) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -112,7 +115,7 @@ func readTree(t *testing.T, pdf []byte) (*structTree, error) {
 // that know nothing about `structElem` and could not inherit its mistakes.
 func countElementsIndependently(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,20 +232,22 @@ func TestInspectTagsAgreesWithTheModelOnEveryFixture(t *testing.T) {
 func TestAKidTheModelCannotClassifyIsRefused(t *testing.T) {
 	pdf := unrepresentableKidFixture()
 
-	// The floor: the VALIDATING door must reject this, or the paragraph above is wrong and this
-	// test is reading a document nib would happily accept.
-	if _, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration()); err == nil {
-		t.Fatal("pdfcpu now ACCEPTS a /K entry of /Type /Bookmark — the model's refusal has become " +
-			"reachable through nib's normal door, which is a change worth knowing about")
+	// **The floor moved.** pdfcpu v0.13.0 refused this document ("invalid dictType Bookmark"), so the model's refusal
+	// was unreachable through nib's normal door. v0.16.2's relaxed validator ACCEPTS it (`validate/structTree.go:693-698`:
+	// `handleInvalidStructTreeObject` returns nil outside strict mode), so the refusal is now the ONLY thing standing
+	// between a /Bookmark kid and a model that describes fewer children than the document has. Assert it through the
+	// normal door, then drive the same refusal without validation as before.
+	if _, nerr := readTree(t, pdf); nerr == nil || !strings.Contains(nerr.Error(), "Bookmark") {
+		t.Fatalf("through the validating door the model answered %v, want a refusal naming Bookmark", nerr)
 	}
 
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("even the non-validating read refused the fixture: %v", err)
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
@@ -443,16 +448,33 @@ func TestACyclicTreeIsRefusedRatherThanFollowedForever(t *testing.T) {
 	done := make(chan struct{})
 	var tree *structTree
 	var err error
+	// The validating door refuses a cyclic tree by name now (`ErrStructureTreeCycle`, `model/recursion.go:78`); the
+	// model's own bound is driven on the unvalidated read, as the Bookmark test drives its refusal.
+	if _, rerr := pdfread.Validated(pdf, model.NewDefaultConfiguration()); !errors.Is(rerr, pdfread.ErrReferenceCycle) ||
+		!errors.Is(rerr, model.ErrStructureTreeCycle) {
+		t.Errorf("the validating door answered %v, want the named loop (pdfread.ErrReferenceCycle)", rerr)
+	}
 	go func() {
 		defer close(done)
-		tree, err = readTree(t, pdf)
+		ctx, rerr := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		if rerr != nil {
+			err = rerr
+			return
+		}
+		live := map[int]bool{}
+		for p := 1; p <= ctx.PageCount; p++ {
+			if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
+				live[ir.ObjectNumber.Value()] = true
+			}
+		}
+		tree, err = readStructTree(ctx, live)
 	}()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("reading a cyclic structure tree did not terminate in 10s")
 	}
-	if err == nil && tree.elements() > 2 {
+	if err == nil && tree != nil && tree.elements() > 2 {
 		t.Errorf("a two-element cycle produced %d elements — the walk went round at least once",
 			tree.elements())
 	}

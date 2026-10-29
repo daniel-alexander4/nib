@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -149,7 +150,7 @@ func TestTheInsertDoorsTakeASide(t *testing.T) {
 	}
 	widths := func(pdf []byte) []float64 {
 		t.Helper()
-		dims, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		dims, err := api.PageDims(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,13 +162,13 @@ func TestTheInsertDoorsTakeASide(t *testing.T) {
 	}
 	blankAt := func(pdf []byte) []int {
 		t.Helper()
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var at []int
 		for pg := 1; pg <= ctx.PageCount; pg++ {
-			d, _, _, err := ctx.PageDict(pg, false)
+			d, _, _, err := ctx.PageDict(context.Background(), pg, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,7 +280,7 @@ func TestCropUpdatesDocument(t *testing.T) {
 	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
 	got, _ := io.ReadAll(pdfResp.Body)
 	pdfResp.Body.Close()
-	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(got), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func TestDuplicateUpdatesDocument(t *testing.T) {
 	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
 	got, _ := io.ReadAll(pdfResp.Body)
 	pdfResp.Body.Close()
-	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(got), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +380,7 @@ func TestInsertPDFUpdatesDocument(t *testing.T) {
 	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
 	got, _ := io.ReadAll(pdfResp.Body)
 	pdfResp.Body.Close()
-	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(got), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +428,7 @@ func TestPageReorderUpdatesDocument(t *testing.T) {
 	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
 	got, _ := io.ReadAll(pdfResp.Body)
 	pdfResp.Body.Close()
-	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(got), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

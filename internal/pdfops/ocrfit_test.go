@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"math"
 	"os"
@@ -126,7 +127,7 @@ func TestAStampedWordSpansItsScannedBox(t *testing.T) {
 			if math.Abs(got.x0-w.Rect[0]) > tol || math.Abs(got.x1-w.Rect[2]) > tol {
 				t.Errorf("%s %q: the run spans %.2f..%.2f, its box %.2f..%.2f", lang, w.Text, got.x0, got.x1, w.Rect[0], w.Rect[2])
 			}
-			_, bottom, top, ok := wordInk(ocrFontFor(lang), face, w.Text)
+			_, bottom, top, ok := wordInk(ocrFontFor(lang), face, w.Text, nil)
 			if !ok {
 				t.Errorf("%s %q: the face draws no ink for the sample", lang, w.Text)
 				continue
@@ -421,10 +422,12 @@ func TestARightToLeftWordIsSetWhereItsLettersAre(t *testing.T) {
 				}
 				face, total := ocrFontFor(lang), 0.0
 				for _, r := range w.Text {
-					total += float64(pdffont.CharWidth(face, r))
+					cw, _ := pdffont.CharWidth(context.Background(), face, r)
+					total += float64(cw)
 				}
 				for i, c := range tx.Chars {
-					want := float64(pdffont.CharWidth(face, []rune(c)[0])) / total * (w.Rect[2] - w.Rect[0])
+					cw0, _ := pdffont.CharWidth(context.Background(), face, []rune(c)[0])
+					want := float64(cw0) / total * (w.Rect[2] - w.Rect[0])
 					if got := (tx.Cuts[i] - tx.Cuts[i+1]) * pm.Width; math.Abs(got-want) > 0.05 {
 						t.Errorf("%s %s %q: letter %d (%q) is %.2fpt wide leftward from its cut, want %.2f", lang, stamp.name, w.Text, i, c, got, want)
 					}
