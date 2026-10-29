@@ -904,6 +904,18 @@ function showVersionBadge(version) {
   els.updatePill.hidden = false;
 }
 
+// ceremonyUpdateWarning is the sentence for an update that strands a ceremony that has not ended
+// (ADR-175), or '' when none is. The server sends `openCeremonies` only where the update crosses the
+// digest flag day (ADR-174 §1), so this never says it of an update that does not. A count, no ids.
+function ceremonyUpdateWarning(d) {
+  const n = Number(d.openCeremonies) || 0;
+  if (n < 1) return '';
+  const what = n === 1 ? 'A ceremony on this computer has not ended' : `${n} ceremonies on this computer have not ended`;
+  return `${what}. Nib v${d.latest} checks documents in a way v${d.current} does not accept, so neither version can finish a ceremony `
+    + `the other began. Finish ${n === 1 ? 'it' : 'them'} on v${d.current} before installing v${d.latest}: downloading does not `
+    + `replace v${d.current}, installing does.`;
+}
+
 // startDownload downloads the offered release and says where it is going (ADR-039, ADR-102).
 //
 // **It used to be `location.assign(d.downloadUrl)`** — the BROWSER fetched the asset, so Nib never
@@ -919,18 +931,6 @@ function showVersionBadge(version) {
 //
 // The no-asset case is unchanged: no build matches this OS/arch, so there is nothing to download
 // and the release page opens in a tab.
-// ceremonyUpdateWarning is the sentence for an update that strands a ceremony that has not ended
-// (ADR-175), or '' when none is. The server sends `openCeremonies` only where the update crosses the
-// digest flag day (ADR-174 §1), so this never says it of an update that does not. A count, no ids.
-function ceremonyUpdateWarning(d) {
-  const n = Number(d.openCeremonies) || 0;
-  if (n < 1) return '';
-  const what = n === 1 ? 'A ceremony on this computer has not ended' : `${n} ceremonies on this computer have not ended`;
-  return `${what}. Nib v${d.latest} checks documents in a way v${d.current} does not accept, so neither version can finish a ceremony `
-    + `the other began. Finish ${n === 1 ? 'it' : 'them'} on v${d.current} before installing v${d.latest}: downloading does not `
-    + `replace v${d.current}, installing does.`;
-}
-
 async function startDownload(d) {
   if (!d.downloadUrl) {
     window.open(d.url, '_blank', 'noopener');
