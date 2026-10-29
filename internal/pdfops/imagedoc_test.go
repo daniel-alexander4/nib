@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -115,18 +116,18 @@ func jpegWithOrientation(t *testing.T, w, h, n int) []byte {
 // pageBox reads the one page's MediaBox and its /Rotate.
 func pageBox(t *testing.T, pdf []byte) (w, h float64, rotate int) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if ctx.PageCount != 1 {
 		t.Fatalf("the document has %d pages, want 1", ctx.PageCount)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil || d == nil {
 		t.Fatalf("page dict: %v", err)
 	}
-	box, err := ctx.PageDims()
+	box, err := ctx.PageDims(context.Background())
 	if err != nil || len(box) != 1 {
 		t.Fatalf("page dims: %v", err)
 	}
@@ -270,11 +271,11 @@ func TestAnOpenedImageIsAPageOfInk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _, _, err := ctx.PageDict(1, false)
+	d, _, _, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil || d == nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func TestAnOpenedImageIsTitledFromItsFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +514,7 @@ func TestRedactingAnOpenedImageDESTROYSThePixelsUnderTheMark(t *testing.T) {
 // pixels survive anywhere in the file.
 func embeddedImageHasRed(t *testing.T, pdf []byte, r uint8) bool {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

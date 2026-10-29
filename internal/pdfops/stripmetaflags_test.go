@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ import (
 // decoded, so text hidden inside it is seen.
 func infoFacts(t *testing.T, pdf []byte) (keys []string, text string) {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestStrippingMetadataKeepsTheSigningFlagsAndNothingElse(t *testing.T) {
 func TestStrippingMetadataInventsNoFlags(t *testing.T) {
 	src := craftMetadataPDF(t)
 	notFlags, err := rewriteWithConf(src, propertyConf(model.ADDPROPERTIES), func(ctx *model.Context) error {
-		return pdfcpu.PropertiesAdd(ctx, map[string]string{flagsKey: base64.StdEncoding.EncodeToString([]byte(`{"author":"Ada Lovelace"}`))})
+		return pdfcpu.PropertiesAdd(context.Background(), ctx, map[string]string{flagsKey: base64.StdEncoding.EncodeToString([]byte(`{"author":"Ada Lovelace"}`))})
 	})
 	if err != nil {
 		t.Fatal(err)

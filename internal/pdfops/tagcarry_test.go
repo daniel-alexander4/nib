@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -47,13 +48,13 @@ func repeatedPagesFixture() []byte {
 // marked content are painted more than once.
 func distinctForms(t *testing.T, pdf []byte) (forms, shared int) {
 	t.Helper()
-	ctx, err := api.ReadAndValidate(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadAndValidate(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	seen := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+		d, _, _, perr := ctx.PageDict(context.Background(), p, false)
 		if perr != nil || d == nil {
 			continue
 		}

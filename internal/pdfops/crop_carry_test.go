@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"math"
@@ -20,13 +21,13 @@ import (
 // pageAttrs reads every page's effective box attributes, inheritance resolved.
 func pageAttrs(t *testing.T, pdf []byte) []*model.InheritedPageAttrs {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("the output could not be read back: %v", err)
 	}
 	out := make([]*model.InheritedPageAttrs, 0, ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
-		_, _, attrs, err := ctx.PageDict(p, false)
+		_, _, attrs, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,14 +39,14 @@ func pageAttrs(t *testing.T, pdf []byte) []*model.InheritedPageAttrs {
 // pageAnnotRects is every annotation's `/Rect` per page, in page order.
 func pageAnnotRects(t *testing.T, pdf []byte) [][]string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	xt := ctx.XRefTable
 	out := make([][]string, ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+		d, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,13 +62,13 @@ func pageAnnotRects(t *testing.T, pdf []byte) [][]string {
 // pageKeys is each page dictionary's key set, sorted, with the four boxes a crop writes left out.
 func pageKeys(t *testing.T, pdf []byte) []string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := make([]string, ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+		d, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatal(err)
 		}

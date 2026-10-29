@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -19,7 +20,7 @@ import (
 // cannot see that.
 func readingOrderPages(t *testing.T, pdf []byte) []int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func readingOrderPages(t *testing.T, pdf []byte) []int {
 	}
 	pageNr := map[int]int{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, err := ctx.PageDictIndRef(p); err == nil && ir != nil {
+		if ir, err := ctx.PageDictIndRef(context.Background(), p); err == nil && ir != nil {
 			pageNr[ir.ObjectNumber.Value()] = p
 		}
 	}
@@ -131,7 +132,7 @@ func TestInsertingATaggedDocumentGraftsItWhereItIsRead(t *testing.T) {
 	assertInsertedAt(t, out, 3, 3)
 
 	// Every element at the /Document's level names the /Document as its parent — the grafted one too.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestSplittingAPageKeepsTheRestOfTheDocumentsTree(t *testing.T) {
 
 func readLangOf(t *testing.T, pdf []byte) string {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,14 +316,14 @@ func TestInsertingBeforeTheLastPage(t *testing.T) {
 // so it starts at its LOWEST page, not its first kid's; and a `/Pg` is inherited from the NEAREST
 // element that states one, so a kid's own `/Pg` beats its parent's.
 func TestFirstPageIsTheLowestPageAndTheNearestPgWins(t *testing.T) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(subsetFixture()), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(subsetFixture()), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pageNr := map[int]int{}
 	refs := map[int]types.IndirectRef{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		ir, err := ctx.PageDictIndRef(p)
+		ir, err := ctx.PageDictIndRef(context.Background(), p)
 		if err != nil || ir == nil {
 			t.Fatal(err)
 		}

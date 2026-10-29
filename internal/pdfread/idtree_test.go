@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -249,7 +250,7 @@ func TestADeepIDTreeKeepsItsLimits(t *testing.T) {
 		for _, depth := range []int{0, 2, 99, 100, 101, 150} {
 			pdf, n := idTreeDoc(depth, split)
 			tag := fmt.Sprintf("split=%v depth=%d", split, depth)
-			raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+			raw, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 			if err != nil {
 				t.Fatalf("%s: setup: %v", tag, err)
 			}
@@ -272,7 +273,7 @@ func TestADeepIDTreeKeepsItsLimits(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s %s: write: %v", tag, door, err)
 				}
-				back, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+				back, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 				if err != nil {
 					t.Fatalf("%s %s: the output does not read: %v", tag, door, err)
 				}

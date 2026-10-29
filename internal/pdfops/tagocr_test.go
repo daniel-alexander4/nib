@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/png"
 	"os"
@@ -47,11 +48,11 @@ func ocrWords() []Word {
 
 func pageStream(t *testing.T, pdf []byte, page int) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	d, _, _, derr := ctx.PageDict(page, false)
+	d, _, _, derr := ctx.PageDict(context.Background(), page, false)
 	if derr != nil || d == nil {
 		t.Fatalf("page %d: %v", page, derr)
 	}
@@ -107,7 +108,7 @@ func TestNoWordOfTheTextLayerIsMarkedAsSomethingToSKIP(t *testing.T) {
 // ocrRunsOf reads page 1's runs by text.
 func ocrRunsOf(t *testing.T, pdf []byte) map[string]textRun {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func defectKeys(defects []structDefect) string {
 
 func hasStructTree(t *testing.T, pdf []byte) bool {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestAnAppearanceStreamsClaimIsSeenByTheGate(t *testing.T) {
 			"/Resources << /Font << /F1 5 0 R >> >> /Length %d >>\nstream\n%s\nendstream", len(ap), ap),
 		12: "<< /Type /Annot /Subtype /Stamp /Rect [72 300 272 320] /Contents (a stamp) /AP << /N 11 0 R >> >>",
 	})
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

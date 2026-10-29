@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,13 +15,13 @@ import (
 // pageContentsOf returns every page's decoded content stream.
 func pageContentsOf(t *testing.T, pdf []byte) [][]byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out [][]byte
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, _, _, derr := ctx.PageDict(context.Background(), p, false)
 		if derr != nil {
 			t.Fatal(derr)
 		}

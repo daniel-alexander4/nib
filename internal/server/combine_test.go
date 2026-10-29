@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"math"
@@ -57,7 +58,7 @@ func TestCombineCreatesDocument(t *testing.T) {
 	pdfResp, _ := c.Get(ts.URL + "/api/pdf")
 	got, _ := io.ReadAll(pdfResp.Body)
 	pdfResp.Body.Close()
-	dims, err := api.PageDims(bytes.NewReader(got), model.NewDefaultConfiguration())
+	dims, err := api.PageDims(context.Background(), bytes.NewReader(got), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

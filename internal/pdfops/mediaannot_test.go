@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -201,7 +202,7 @@ func TestAMediaAnnotationInASharedAnnotsArrayIsRemovedFromEveryPage(t *testing.T
 // pages still hold `12 0 R`: a removal that filtered a copy of the referenced array and dropped it would pass every
 // tier-level test above, because validation had already inlined the array.
 func TestTheMediaDoorRewritesAnAnnotsArrayNamedByReference(t *testing.T) {
-	ctx, err := api.ReadContext(bytes.NewReader(sharedMediaDoc()), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(sharedMediaDoc()), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

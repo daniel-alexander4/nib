@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -187,7 +188,7 @@ func shortStamp(t *testing.T, pdf []byte, words []Word) []byte {
 	for _, w := range words {
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.2f %.2f, rotation:0",
 			ocrFont, int(w.Rect[3]-w.Rect[1]), w.Rect[0], w.Rect[1])
-		wm, err := api.TextWatermark(w.Text, desc, true, false, types.POINTS)
+		wm, err := api.TextWatermark(context.Background(), w.Text, desc, true, false, types.POINTS, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -350,7 +351,7 @@ func TestOnlyNibsOwnLayerIsEverTakenOut(t *testing.T) {
 
 	// A text watermark set invisibly in a face Nib does not stamp a layer in: the stamp's shape, somebody's content.
 	model.NewDefaultConfiguration()
-	wm, err := api.TextWatermark("Hidden", "fontname:Helvetica, points:12, scalefactor:1 abs, position:bl, offset:72 500, rotation:0", true, false, types.POINTS)
+	wm, err := api.TextWatermark(context.Background(), "Hidden", "fontname:Helvetica, points:12, scalefactor:1 abs, position:bl, offset:72 500, rotation:0", true, false, types.POINTS, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

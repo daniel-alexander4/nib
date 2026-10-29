@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -15,10 +16,19 @@ import (
 // slideshowPDF holds an alternate presentation (ISO 32000-1 §13.5): a slideshow in the catalog's
 // /Names /AlternatePresentations tree, whose /Resources name a script stream. Nothing else in the file is active.
 //
-// spec writes /Resources as Table 273 has it, a name tree (a dictionary). pdfcpu's validator wants an ARRAY there
-// (`validate/nameTree.go:467`, v0.13.0: "really an array of (string,indRef) pairs") and refuses the dictionary, so
-// the two shapes reach different doors.
-func slideshowPDF(spec bool) []byte {
+// spec writes /Resources as Table 273 has it, a name tree (a dictionary). pdfcpu's validator wanted an ARRAY there
+// (`validate/nameTree.go:467`, v0.13.0: "really an array of (string,indRef) pairs") and refused the dictionary; v0.16.2
+// reads the dictionary (`validate/nameTree.go:824-860`) and takes the flat array only in relaxed mode, but asks each
+// resource for a /Type (`nameTree.go:729`). So the spec's shape is refused when its script stream names no /Type, as
+// here, and read when it does (slideshowPDFTyped); the flat array skips a resource with none (`:770-773`).
+func slideshowPDF(spec bool) []byte { return slideshowPDFWith(spec, "<< /Length 17 >>") }
+
+// slideshowPDFTyped is the spec's shape with a script stream that names a /Type, which v0.16.2's validator reads.
+func slideshowPDFTyped() []byte {
+	return slideshowPDFWith(true, "<< /Type /SlideShowScript /Length 17 >>")
+}
+
+func slideshowPDFWith(spec bool, script string) []byte {
 	resources := "[(main.js) 11 0 R]"
 	if spec {
 		resources = "<< /Names [(main.js) 11 0 R] >>"
@@ -29,7 +39,7 @@ func slideshowPDF(spec bool) []byte {
 		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> >>",
 		4:  "<< /Length 0 >>\nstream\n\nendstream",
 		10: "<< /Type /SlideShow /Subtype /Embedded /Resources " + resources + " /StartResource (main.js) >>",
-		11: "<< /Length 17 >>\nstream\nSLIDESHOW-SCRIPT;\nendstream",
+		11: script + "\nstream\nSLIDESHOW-SCRIPT;\nendstream",
 	})
 }
 
@@ -72,10 +82,10 @@ func TestASlideshowIsSeenAndStripped(t *testing.T) {
 		t.Error("the slideshow's script is still in the file")
 	}
 
-	// The spec's shape is refused by every validating read, so no rewrite reaches it: StripActive refuses the
-	// document, by name, and never returns one it calls stripped.
+	// The spec's shape with a script that names no /Type is refused by every validating read, so no rewrite
+	// reaches it: StripActive refuses the document, by name, and never returns one it calls stripped.
 	spec := slideshowPDF(true)
-	const refusal = "slideShowDict entry=Resources invalid type types.Dict"
+	const refusal = "slideShowResource required entry=Type missing"
 	for name, read := range map[string]func() error{
 		"pdfread.Validated": func() error { _, err := pdfread.Validated(spec, model.NewDefaultConfiguration()); return err },
 		"pdfread.ReadOptimized": func() error {
@@ -91,8 +101,18 @@ func TestASlideshowIsSeenAndStripped(t *testing.T) {
 			t.Errorf("%s on the spec's shape: error %v, want the validator's refusal %q", name, err, refusal)
 		}
 	}
-	if _, err := api.ReadContext(bytes.NewReader(spec), model.NewDefaultConfiguration()); err != nil {
+	if _, err := api.ReadContext(context.Background(), bytes.NewReader(spec), model.NewDefaultConfiguration()); err != nil {
 		t.Errorf("the unvalidated read Scan uses refused the spec's shape: %v", err)
+	}
+
+	// v0.16.2 reads the spec's own shape when the script names a /Type, so a rewrite reaches it and StripActive
+	// takes it out (the release before refused every such document).
+	typed, err := StripActive(slideshowPDFTyped())
+	if err != nil {
+		t.Fatalf("StripActive on the spec's shape with a typed script: %v", err)
+	}
+	if reported(typed) || strings.Contains(string(typed), "SLIDESHOW-SCRIPT") {
+		t.Error("the spec-shaped slideshow survives StripActive")
 	}
 
 	// Remove files and media is the gentle tier — it leaves active code — so the slideshow stays and its own

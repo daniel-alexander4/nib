@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func widthXRef(t *testing.T) *model.XRefTable {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +267,7 @@ func TestTheWidthCensusOverTheCorpus(t *testing.T) {
 
 	counts := map[widthSource]int{}
 	for _, doc := range corpus {
-		ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(doc.pdf), model.NewDefaultConfiguration())
+		ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(doc.pdf), model.NewDefaultConfiguration(), nil)
 		if rerr != nil {
 			t.Fatalf("%s: %v", doc.name, rerr)
 		}

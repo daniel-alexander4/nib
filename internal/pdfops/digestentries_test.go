@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"testing"
 
 	"nib/internal/pdfread"
@@ -38,8 +39,8 @@ func withAttachments(t *testing.T, files [][2]string, rename map[string]string) 
 			}
 		}
 		for key, name := range rename {
-			v, ok := ctx.Names["EmbeddedFiles"].Value(key)
-			if !ok {
+			v, ok, verr := ctx.Names["EmbeddedFiles"].Value(context.Background(), key)
+			if verr != nil || !ok {
 				t.Fatalf("setup: no name-tree entry %q", key)
 			}
 			fs, err := ctx.DereferenceDict(v)

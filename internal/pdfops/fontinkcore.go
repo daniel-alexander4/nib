@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -106,8 +107,8 @@ func coreFontTop(xt *model.XRefTable, d types.Dict) (top float64, ok bool) {
 			}
 		}
 	}
-	box := font.BoundingBox(core)
-	if box == nil || box.UR.Y <= 0 {
+	box, berr := font.BoundingBox(context.Background(), core)
+	if berr != nil || box == nil || box.UR.Y <= 0 {
 		return 0, false
 	}
 	return box.UR.Y / 1000, true

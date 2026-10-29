@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"nib/internal/pdfread"
@@ -64,8 +65,8 @@ func withTip(spec map[string]any, label string) map[string]any {
 func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 	// **Base-14 Helvetica on purpose, and it costs PDF/UA 7.21.4.1** (`/pending 479`). The obvious
 	// fix — the embedded face `AuthoredTextFaces` gives every other authoring door — breaks FILLING:
-	// pdfcpu v0.13.0 writes a filled value as one-byte text against the Identity-H font
-	// (`model.PrepBytes` skips the glyph encoding for a form's own fill font), so "Zoë Ñúñez"
+	// pdfcpu wrote (measured v0.13.0) a filled value as one-byte text against the Identity-H font
+	// (`model.PrepBytes` skips the glyph encoding for a form's own fill font; still so on v0.16.2, `model/text.go:275-277`), so "Zoë Ñúñez"
 	// renders as a missing-glyph box, and v0.15.0 refuses the fill outright. Both server fill doors
 	// (CSV, XFDF) would ship that on every form nib authors, and their tests read the value back
 	// rather than the appearance, so they stay green over it.
@@ -165,7 +166,7 @@ func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.CREATE
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
-		if err := create.FromJSON(ctx, bytes.NewReader(b)); err != nil {
+		if err := create.FromJSON(context.Background(), ctx, bytes.NewReader(b)); err != nil {
 			return err
 		}
 		// `/Tabs /S` on every page that carries an annotation, so tab order follows the document's

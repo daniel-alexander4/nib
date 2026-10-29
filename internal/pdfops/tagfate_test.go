@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -129,7 +130,7 @@ func TestAnUntaggedDocumentIsUNCHANGEDByTheCarry(t *testing.T) {
 		t.Fatal(cerr)
 	}
 	var raw bytes.Buffer
-	if e := api.NUp(bytes.NewReader(src), &raw, nil, nil, nupConf, conf); e != nil {
+	if e := api.NUp(context.Background(), bytes.NewReader(src), &raw, nil, nil, nupConf, conf); e != nil {
 		t.Fatal(e)
 	}
 	if _, ok := carryTagsThroughNUp(src, raw.Bytes()); ok {
@@ -236,7 +237,7 @@ func TestAPageWithABOGUSStructParentsCountsAsUndescribed(t *testing.T) {
 		t.Fatal(err)
 	}
 	both, err := writeMutated(appended, func(ctx *model.Context) error {
-		d, _, _, err := ctx.PageDict(2, false)
+		d, _, _, err := ctx.PageDict(context.Background(), 2, false)
 		if err != nil {
 			return err
 		}

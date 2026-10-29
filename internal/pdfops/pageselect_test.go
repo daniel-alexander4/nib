@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -21,7 +22,7 @@ import (
 // fails here rather than three assertions later.
 func readCtx(t *testing.T, pdf []byte) *model.Context {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
@@ -33,7 +34,7 @@ func pageObjNrs(t *testing.T, ctx *model.Context) []int {
 	t.Helper()
 	var out []int
 	for p := 1; p <= ctx.PageCount; p++ {
-		ir, err := ctx.PageDictIndRef(p)
+		ir, err := ctx.PageDictIndRef(context.Background(), p)
 		if err != nil || ir == nil {
 			t.Fatalf("page %d has no reference: %v", p, err)
 		}
@@ -87,7 +88,7 @@ func nestedInheritingFixture(t *testing.T) []byte {
 	// The stimulus floor: the fixture must actually inherit, or every assertion below passes for
 	// the fixture's reason instead of the code's.
 	ctx := readCtx(t, out)
-	d, _, inh, err := ctx.PageDict(2, false)
+	d, _, inh, err := ctx.PageDict(context.Background(), 2, false)
 	if err != nil {
 		t.Fatalf("nested fixture page 2: %v", err)
 	}
@@ -129,7 +130,7 @@ func destFixtureNaming(t *testing.T, pages []string, destPages ...int) []byte {
 		}
 		var names types.Array
 		for _, p := range destPages {
-			ir, perr := ctx.PageDictIndRef(p)
+			ir, perr := ctx.PageDictIndRef(context.Background(), p)
 			if perr != nil {
 				return perr
 			}
@@ -172,7 +173,7 @@ func destKeys(t *testing.T, ctx *model.Context) []string {
 		return nil
 	}
 	var keys []string
-	if err := node.Process(ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
+	if err := node.Process(context.Background(), ctx.XRefTable, func(_ *model.XRefTable, k string, _ *types.Object) error {
 		keys = append(keys, k)
 		return nil
 	}); err != nil {
@@ -195,7 +196,7 @@ func TestCollectEmitsTheExactOrderAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 	conf := model.NewDefaultConfiguration()
-	baseDims, err := api.PageDims(bytes.NewReader(base), conf)
+	baseDims, err := api.PageDims(context.Background(), bytes.NewReader(base), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestCollectEmitsTheExactOrderAsked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := api.PageDims(bytes.NewReader(out), conf)
+	got, err := api.PageDims(context.Background(), bytes.NewReader(out), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func TestANestedPageTreeKeepsWhatItInherited(t *testing.T) {
 	before := readCtx(t, src)
 	var wantCrop []float64
 	for p := 1; p <= before.PageCount; p++ {
-		_, _, inh, err := before.PageDict(p, false)
+		_, _, inh, err := before.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,7 +249,7 @@ func TestANestedPageTreeKeepsWhatItInherited(t *testing.T) {
 		t.Fatalf("page count = %d, want 2", after.PageCount)
 	}
 	for i, srcPage := range []int{3, 1} {
-		_, _, inh, derr := after.PageDict(i+1, false)
+		_, _, inh, derr := after.PageDict(context.Background(), i+1, false)
 		if derr != nil {
 			t.Fatal(derr)
 		}
@@ -290,7 +291,7 @@ func contentFingerprints(t *testing.T, pdf []byte) []string {
 	ctx := readCtx(t, pdf)
 	var out []string
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+		d, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil {
 			t.Fatalf("page %d: %v", p, err)
 		}
@@ -424,7 +425,7 @@ func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 // oracle above and reachable from nowhere else.
 func oldCollectOrder(pdf []byte, order []string) ([]byte, error) {
 	var out bytes.Buffer
-	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
+	if err := api.Collect(context.Background(), bytes.NewReader(pdf), &out, order, nil); err != nil {
 		return nil, err
 	}
 	return carryLang(pdf, out.Bytes())
@@ -434,7 +435,7 @@ func oldCollect(pdf []byte) ([]byte, error) { return oldCollectOrder(pdf, []stri
 
 func oldRemovePages(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer
-	if err := api.RemovePages(bytes.NewReader(pdf), &out, []string{"2"}, nil); err != nil {
+	if err := api.RemovePages(context.Background(), bytes.NewReader(pdf), &out, []string{"2"}, nil); err != nil {
 		return nil, err
 	}
 	return carryLang(pdf, out.Bytes())
@@ -456,7 +457,7 @@ func formOnPagesFixture(t *testing.T) []byte {
 		}
 		var fields types.Array
 		for _, page := range []int{2, 3} {
-			pageRef, perr := ctx.PageDictIndRef(page)
+			pageRef, perr := ctx.PageDictIndRef(context.Background(), page)
 			if perr != nil {
 				return perr
 			}
@@ -611,7 +612,7 @@ func richFixture(t *testing.T) []byte {
 				"OFF":  types.Array{*ocgRef},
 			},
 		}
-		first, perr := ctx.PageDictIndRef(1)
+		first, perr := ctx.PageDictIndRef(context.Background(), 1)
 		if perr != nil {
 			return perr
 		}
@@ -666,7 +667,7 @@ func TestANamedDestinationToADroppedPageDoesNotSurvive(t *testing.T) {
 	if node == nil {
 		t.Fatal("the whole /Dests tree went, not just the dropped page's destination")
 	}
-	if err := node.Process(ctx.XRefTable, func(xt *model.XRefTable, k string, v *types.Object) error {
+	if err := node.Process(context.Background(), ctx.XRefTable, func(xt *model.XRefTable, k string, v *types.Object) error {
 		if !destNamesAKeptPage(xt, *v, live) {
 			t.Errorf("destination %q does not resolve to a page of the output", k)
 		}
@@ -898,7 +899,7 @@ func TestASubsetErasesASignatureWhoseWidgetIsOnAKeptPage(t *testing.T) {
 		}
 		fr := fields[0].(types.IndirectRef)
 		fd := derefDict(ctx.XRefTable, fr)
-		pageRef, perr := ctx.PageDictIndRef(1)
+		pageRef, perr := ctx.PageDictIndRef(context.Background(), 1)
 		if perr != nil {
 			return perr
 		}
@@ -956,7 +957,7 @@ func TestASubsetErasesASignatureWhoseWidgetIsOnAKeptPage(t *testing.T) {
 
 func mustPageRef(t *testing.T, ctx *model.Context, page int) types.IndirectRef {
 	t.Helper()
-	ref, err := ctx.PageDictIndRef(page)
+	ref, err := ctx.PageDictIndRef(context.Background(), page)
 	if err != nil || ref == nil {
 		t.Fatalf("page %d has no reference: %v", page, err)
 	}
@@ -1087,7 +1088,7 @@ func TestAKeptFieldDoesNotKeepAWidgetOnADroppedPage(t *testing.T) {
 		}
 		var kids types.Array
 		for _, page := range []int{1, 2} {
-			pageRef, perr := ctx.PageDictIndRef(page)
+			pageRef, perr := ctx.PageDictIndRef(context.Background(), page)
 			if perr != nil {
 				return perr
 			}
@@ -1173,11 +1174,11 @@ func TestALinkToADroppedPageIsUnlinked(t *testing.T) {
 		t.Fatal(err)
 	}
 	src, err = writeMutated(src, func(ctx *model.Context) error {
-		target, perr := ctx.PageDictIndRef(3)
+		target, perr := ctx.PageDictIndRef(context.Background(), 3)
 		if perr != nil {
 			return perr
 		}
-		first, perr := ctx.PageDictIndRef(1)
+		first, perr := ctx.PageDictIndRef(context.Background(), 1)
 		if perr != nil {
 			return perr
 		}
@@ -1272,7 +1273,7 @@ func TestADuplicatedPageGetsItsOwnAnnotations(t *testing.T) {
 		t.Fatal(err)
 	}
 	src, err = writeMutated(src, func(ctx *model.Context) error {
-		pageRef, perr := ctx.PageDictIndRef(2)
+		pageRef, perr := ctx.PageDictIndRef(context.Background(), 2)
 		if perr != nil {
 			return perr
 		}
@@ -1396,7 +1397,7 @@ func TestAPagesOwnValueBeatsWhatItWouldInherit(t *testing.T) {
 	src := nestedInheritingFixture(t)
 	src, err := writeMutated(src, func(ctx *model.Context) error {
 		// Page 3 keeps its own rotation, against the 90 its parent supplies.
-		ref, perr := ctx.PageDictIndRef(3)
+		ref, perr := ctx.PageDictIndRef(context.Background(), 3)
 		if perr != nil {
 			return perr
 		}
@@ -1407,7 +1408,7 @@ func TestAPagesOwnValueBeatsWhatItWouldInherit(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := readCtx(t, src)
-	if _, _, inh, derr := before.PageDict(3, false); derr != nil || inh.Rotate != 180 {
+	if _, _, inh, derr := before.PageDict(context.Background(), 3, false); derr != nil || inh.Rotate != 180 {
 		t.Fatalf("setup: page 3's own /Rotate does not win (rotate=%v err=%v)", inh, derr)
 	}
 	out, err := Collect(src, []string{"3", "2"})
@@ -1415,14 +1416,14 @@ func TestAPagesOwnValueBeatsWhatItWouldInherit(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := readCtx(t, out)
-	_, _, own, err := ctx.PageDict(1, false)
+	_, _, own, err := ctx.PageDict(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if own.Rotate != 180 {
 		t.Errorf("the page's own /Rotate became %d, want 180 — its parent's 90 overrode it", own.Rotate)
 	}
-	_, _, sibling, err := ctx.PageDict(2, false)
+	_, _, sibling, err := ctx.PageDict(context.Background(), 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1467,7 +1468,7 @@ func TestASubsetErasesASignatureSplitFromItsWidget(t *testing.T) {
 		}
 		fr := fields[0].(types.IndirectRef)
 		fd := derefDict(ctx.XRefTable, fr)
-		pageRef, perr := ctx.PageDictIndRef(1)
+		pageRef, perr := ctx.PageDictIndRef(context.Background(), 1)
 		if perr != nil {
 			return perr
 		}

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -154,7 +155,7 @@ func TestTheProposalClearsItsFloorsOnTheTruthCorpus(t *testing.T) {
 	for _, doc := range corpus {
 		truth := readTruth(t, doc.pdf)
 		stripped := stripStructTree(t, doc.pdf)
-		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(stripped), model.NewDefaultConfiguration())
+		ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(stripped), model.NewDefaultConfiguration(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

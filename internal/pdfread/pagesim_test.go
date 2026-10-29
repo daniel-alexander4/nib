@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -31,7 +32,7 @@ func sameAsPageDict(t *testing.T, name string, ctx *model.Context, got []pdfread
 	}
 	for i, g := range got {
 		p := i + 1
-		d, ref, attrs, err := ctx.PageDict(p, false)
+		d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 		switch {
 		case g.Nr != p:
 			t.Fatalf("%s: page %d reported as number %d", name, p, g.Nr)
@@ -55,7 +56,7 @@ func readUnvalidated(t *testing.T, b []byte, mode int) *model.Context {
 	t.Helper()
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = mode
-	ctx, err := api.ReadContext(bytes.NewReader(b), conf)
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(b), conf)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -90,13 +91,15 @@ func TestTheTolerantWalkAnswersWhatPageDictAnswersOnOddLeaves(t *testing.T) {
 	// A leaf's non-negative count changes nothing pdfcpu decides, so the one walk keeps it.
 	oneWalk := map[string]bool{"a leaf counting 7": true}
 	cases := map[string][]byte{
-		"a leaf counting -1":              flatWith(40, "/Count -1", 17),
-		"a leaf counting -3":              flatWith(40, "/Count -3", 17),
-		"the last leaf counting -1":       flatWith(40, "/Count -1", 39),
-		"a leaf with empty kids":          flatWith(40, "/Kids [] /MediaBox [0 0 1 1]", 17),
-		"two leaves, -1 and empty kids":   flatWith(40, "/Count -1", 5),
-		"every leaf counting -1":          flatWith(40, "/Count -1", seq(40)...),
-		"every leaf with empty kids":      flatWith(40, "/Kids [] /Rotate 270", seq(40)...),
+		"a leaf counting -1":            flatWith(40, "/Count -1", 17),
+		"a leaf counting -3":            flatWith(40, "/Count -3", 17),
+		"the last leaf counting -1":     flatWith(40, "/Count -1", 39),
+		"a leaf with empty kids":        flatWith(40, "/Kids [] /MediaBox [0 0 1 1]", 17),
+		"two leaves, -1 and empty kids": flatWith(40, "/Count -1", 5),
+		"every leaf counting -1":        flatWith(40, "/Count -1", seq(40)...),
+		// v0.16 reads a repeated /Rotate as a duplicate key and refuses the file (a new refusal kind, P02.S04): this leaf
+		// no longer repeats the one flatWith writes.
+		"every leaf with empty kids":      flatWith(40, "/Kids []", seq(40)...),
 		"a leaf whose kids name a leaf":   flatWith(40, "/Kids [5 0 R]", 17),
 		"a leaf counting 7":               flatWith(40, "/Count 7", 3),
 		"a leaf whose kids name the root": flatWith(40, "/Kids [2 0 R]", 30),
@@ -170,7 +173,12 @@ func TestTheTolerantWalkAnswersWhatPageDictAnswersOnRandomTrees(t *testing.T) {
 	// The population, so a generator that drifted into producing only refusals cannot pass vacuously.
 	t.Logf("%d odd trees of 800; pages: %d answered (%d a repeat of an earlier page), %d errors, %d empty",
 		oddTrees, answered, duplicated, errored, empty)
-	if oddTrees < 200 || answered < 500 || duplicated == 0 || errored == 0 || empty == 0 {
+	// "empty" (a page with no dictionary and no error) was an answer pdfcpu before v0.16 PageDict gave when the walk ran out of
+	// tree; v0.16.2 answers ErrPageNotFound instead (model/xreftable.go:2562-2564), so it must now NEVER occur.
+	if empty != 0 {
+		t.Fatalf("%d pages came back with no dictionary and no error — pdfcpu answers ErrPageNotFound for those", empty)
+	}
+	if oddTrees < 200 || answered < 500 || duplicated == 0 || errored == 0 {
 		t.Fatalf("the random trees no longer reach every kind of answer")
 	}
 }
@@ -247,7 +255,8 @@ func TestATolerantWalkIsLinear(t *testing.T) {
 				t.Fatalf("%s n=%d: %d pages", extra, n, len(got))
 			}
 			for _, g := range got {
-				if g.Err != nil {
+				// A page the tree does not hold is ErrPageNotFound in v0.16.2 (it was "nothing" in pdfcpu before v0.16).
+				if g.Err != nil && !errors.Is(g.Err, model.ErrPageNotFound) {
 					t.Fatalf("%s n=%d page %d: %v", extra, n, g.Nr, g.Err)
 				}
 			}
@@ -277,8 +286,8 @@ func TestATreeHostileToTheTolerantWalkIsRefusedWithinItsBudget(t *testing.T) {
 	for _, g := range got {
 		if errors.Is(g.Err, pdfread.ErrPageTreeTooIrregular) {
 			refused++
-		} else if g.Err != nil || g.Dict != nil {
-			t.Fatalf("page %d: %v / %v — pdfcpu answers every page of this tree with nothing", g.Nr, g.Err, g.Dict)
+		} else if !errors.Is(g.Err, model.ErrPageNotFound) || g.Dict != nil {
+			t.Fatalf("page %d: %v / %v — pdfcpu answers every page of this tree with ErrPageNotFound", g.Nr, g.Err, g.Dict)
 		}
 	}
 	t.Logf("%d steps, budget %d; %d of %d pages refused", steps, budget, refused, n)

@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -140,7 +141,7 @@ func fileIsThere(path string) bool {
 // withoutFormFields writes ctx with every widget annotation and the form itself removed.
 func withoutFormFields(ctx *model.Context) ([]byte, error) {
 	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+		d, _, _, err := ctx.PageDict(context.Background(), p, false)
 		if err != nil || d == nil {
 			continue
 		}
@@ -165,7 +166,7 @@ func withoutFormFields(ctx *model.Context) ([]byte, error) {
 		root.Delete("AcroForm")
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

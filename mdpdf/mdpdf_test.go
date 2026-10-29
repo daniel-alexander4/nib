@@ -2,6 +2,7 @@ package mdpdf
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -58,7 +59,7 @@ func embeddedFaces(t *testing.T, pdf []byte) []string {
 	// ReadValidateAndOptimize, not ReadContext: the plain reader leaves font dictionaries
 	// unresolved, so the walk below finds ZERO fonts in a document that certainly has one
 	// — measured, on a core-font render. Optimizing is what populates them.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-reading the PDF: %v", err)
 	}
@@ -96,7 +97,7 @@ func render(t *testing.T, md string) []byte {
 	if !bytes.HasPrefix(pdf, []byte("%PDF")) {
 		t.Fatal("output is not a PDF")
 	}
-	if err := api.Validate(bytes.NewReader(pdf), model.NewDefaultConfiguration()); err != nil {
+	if err := api.Validate(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil); err != nil {
 		t.Fatalf("invalid PDF: %v", err)
 	}
 	return pdf
@@ -104,7 +105,7 @@ func render(t *testing.T, md string) []byte {
 
 func pageCount(t *testing.T, pdf []byte) int {
 	t.Helper()
-	n, err := api.PageCount(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	n, err := api.PageCount(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("page count: %v", err)
 	}
@@ -778,11 +779,11 @@ func TestCarryingStructureChangesNoDRAWNByte(t *testing.T) {
 // none of the trailer's randomness.
 func drawnBytes(t *testing.T, pdf []byte, page int) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	d, _, _, derr := ctx.PageDict(page, false)
+	d, _, _, derr := ctx.PageDict(context.Background(), page, false)
 	if derr != nil || d == nil {
 		t.Fatalf("page %d: %v", page, derr)
 	}

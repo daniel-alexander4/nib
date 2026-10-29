@@ -18,7 +18,7 @@ import (
 //
 // # What pdfcpu does to a turned page
 //
-// To stamp a page with a `/Rotate`, pdfcpu (v0.13.0, `stamp.go` `addPageWatermark`) "internalizes" the
+// To stamp a page with a `/Rotate`, pdfcpu (v0.16.2, `stamp.go` `addPageWatermark` -> `normalizePageWatermark`, :1996-2016; content prefix :1725, :1751) "internalizes" the
 // rotation: it deletes `/Rotate`, sets `/MediaBox` and `/CropBox` to the visible box with its sides swapped,
 // and prefixes the page's first content stream with ` q ` and the matrix `model.ContentBytesForPageRotation`
 // writes. That matrix turns the page about the ORIGIN and shifts it by the box's width or height — right

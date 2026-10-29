@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ const commitFixtureMarkdown = "# A committed document\n\n" +
 
 func proposeFor(t *testing.T, pdf []byte) proposal {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestACommittedProposalReadsBackAsItsOwnTruth(t *testing.T) {
 	// The tree's element types, counted from the fixture. The block comparison above cannot see a
 	// list label folded into its body — label and body read back as the same text either way — so the
 	// types are asserted directly. mdpdf draws each bullet as its own run, so each label is its own Lbl.
-	tctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	tctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestACommittedProposalReadsBackAsItsOwnTruth(t *testing.T) {
 	// Nothing on the committed page is left neither tagged nor an artifact: every run is under an MCID,
 	// or under /Artifact and so reads mcid -1 — and there is at least one of each only if the grouping
 	// dropped something, so the count asserted is the tagged one.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestTheCommitRefusesWhatItCannotDescribeHonestly(t *testing.T) {
 	// form XObject, and the commit must refuse to describe the `Do` in its place.
 	bare, err := writeMutated(stamped, func(ctx *model.Context) error {
 		for pg := 1; pg <= ctx.PageCount; pg++ {
-			d, _, _, derr := ctx.PageDict(pg, false)
+			d, _, _, derr := ctx.PageDict(context.Background(), pg, false)
 			if derr != nil {
 				return derr
 			}

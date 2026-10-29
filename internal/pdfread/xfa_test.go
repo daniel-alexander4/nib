@@ -3,6 +3,7 @@ package pdfread_test
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,7 +58,7 @@ const (
 // catalogOf reads pdf WITHOUT validation and returns its catalog and form as written.
 func catalogOf(t *testing.T, pdf []byte) (root, form types.Dict) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

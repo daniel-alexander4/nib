@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -121,14 +122,14 @@ func TestAnInsertOrASplitKeepsTheDocumentsOwnFacts(t *testing.T) {
 // reaches the page is not carried at all.
 func TestASpliceWritesNoPageThroughAFileThatReachesIt(t *testing.T) {
 	host, err := writeMutated(spliceHost(t), func(ctx *model.Context) error {
-		pref, perr := ctx.PageDictIndRef(2)
+		pref, perr := ctx.PageDictIndRef(context.Background(), 2)
 		if perr != nil {
 			return perr
 		}
 		// And an `/Info` entry that does the same, so each guard is the only thing between its own
 		// reference and the page.
 		derefDict(ctx.XRefTable, *ctx.Info)["NibProbe"] = types.Array{*pref}
-		return ctx.Names["EmbeddedFiles"].Process(ctx.XRefTable, func(xt *model.XRefTable, _ string, v *types.Object) error {
+		return ctx.Names["EmbeddedFiles"].Process(context.Background(), ctx.XRefTable, func(xt *model.XRefTable, _ string, v *types.Object) error {
 			fs := derefDict(xt, *v)
 			fs["NibProbe"] = *pref
 			return nil

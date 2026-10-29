@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -32,7 +33,7 @@ import (
 // # Why this does not break PDF/A
 //
 // `/CIDSet` is **required for subset fonts by PDF/A-1 only**; PDF/A-2 dropped it. Nib targets
-// **PDF/A-2b** — `pdfa.go:49` writes `<pdfaid:part>2</pdfaid:part>` and the veraPDF tests assert
+// **PDF/A-2b** — nib's own `xmpPDFA2B` (`pdfa.go`; pdfcpu v0.16.2 has no PDF/A path) writes `<pdfaid:part>2</pdfaid:part>` and the veraPDF tests assert
 // the `2b` flavour — and the Ghostscript path rebuilds font descriptors itself. Checked, not
 // assumed: `TestDroppingCIDSetsKeepsPDFAConformance`.
 //
@@ -86,6 +87,72 @@ func dropCIDSetsOf(ctx *model.Context, faces []string) {
 	}
 }
 
+// restoreCIDSetsOf is the other half of dropCIDSetsOf, taken before a SECOND stamp. pdfcpu v0.16 rebuilds a face it finds in
+// the document by reading references out of its descriptor, and refuses one with no `/CIDSet` ("corrupt fontDict: missing
+// CIDSet reference"); pdfcpu before v0.16 did not. A face nib itself wrote has none, because dropCIDSetsOf removed it (PDF/A-1 is the only
+// profile that wants one, and a stale one is a clause violation). So the stream is put back, empty, on exactly nib's own
+// faces — pdfcpu overwrites its content as it adds the glyphs — and dropCIDSetsOf removes it again after the stamp.
+// A descriptor that is not one of `faces` (none named: not a registered user font), or has no embedded TrueType program,
+// is left alone.
+func restoreCIDSetsOf(ctx *model.Context, faces []string) (restored []types.Dict) {
+	only := map[string]bool{}
+	for _, f := range faces {
+		only[f] = true
+	}
+	for _, e := range ctx.XRefTable.Table {
+		if e == nil || e.Object == nil {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok {
+			continue
+		}
+		if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
+			continue
+		}
+		if _, has := d["CIDSet"]; has || d["FontFile2"] == nil {
+			continue
+		}
+		name, _ := d["FontName"].(types.Name)
+		base := string(name)
+		if i := strings.IndexByte(base, '+'); i == 6 {
+			base = base[i+1:]
+		}
+		if len(only) > 0 && !only[base] {
+			continue
+		}
+		// With no faces named (the OCR and plain-stamp door, which does not know which faces a document already
+		// carries) the test is pdfcpu's own: a face it has registered as a user font is the one it will rebuild.
+		if len(only) == 0 {
+			if is, _ := font.IsUserFont(context.Background(), base); !is {
+				continue
+			}
+		}
+		sd, err := ctx.XRefTable.NewStreamDictForBuf([]byte{0})
+		if err != nil {
+			continue
+		}
+		if err := sd.Encode(); err != nil {
+			continue
+		}
+		if ir, err := ctx.XRefTable.IndRefForNewObject(*sd); err == nil && ir != nil {
+			d["CIDSet"] = *ir
+			restored = append(restored, d)
+		}
+	}
+	return restored
+}
+
+// dropRestoredCIDSets takes the `/CIDSet` back off exactly the descriptors restoreCIDSetsOf gave one. The doors that
+// name no faces (plain image and text-layer stamps, OCR) cannot use dropCIDSetsOf for this: with no faces named it
+// removes the stream from EVERY descriptor, the user's own fonts included. Left in place, the empty stream the restore
+// wrote claims a font program with no glyphs (PDF/UA 7.21.4.2 t2 — `TestNoOperationAddsAUA1ClauseItsInputDidNotFail`).
+func dropRestoredCIDSets(restored []types.Dict) {
+	for _, d := range restored {
+		delete(d, "CIDSet")
+	}
+}
+
 // specNamesAUserFont reports whether a pdfcpu "create" spec mentions any font pdfcpu has registered
 // as a user font — which is the only way its output can contain an embedded CID font, and therefore
 // the only way it can contain a `/CIDSet`.
@@ -112,7 +179,7 @@ func specNamesAUserFont(spec []byte) bool {
 		}
 		switch x := n.(type) {
 		case string:
-			if font.IsUserFont(x) {
+			if is, _ := font.IsUserFont(context.Background(), x); is {
 				found = true
 			}
 		case []any:

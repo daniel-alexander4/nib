@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"slices"
@@ -17,7 +18,7 @@ import (
 // ADR-164, `/pending 880`.
 //
 // pdfcpu's relaxed validator walks each tree under the catalog's `/Names` by recursion and gives up on a kid more
-// than `MaxRecursionDepth` (100) nodes down (`validate/nameTree.go:707`, v0.13.0). It does not refuse the
+// than `MaxRecursionDepth` (100) nodes down (`validate/nameTree.go:707`, v0.13.0; v0.16.2 refuses the document instead — `fatalTreeError`, tree_traversal.go:76-78, returned at nameTree.go:1237-1240 — so the rest of this paragraph is v0.13.0's and the walk below is what still reads such a tree). It did not refuse the
 // document: the error is swallowed where the kid was asked for (`:750-756`, `continue`), the upper bound the
 // failed call returned — the empty string — is written over the parent's (`:750`, and into the file's own
 // `/Limits` by `:688-690`), and a tree whose bound is empty is not kept (`validate/xReftable.go:325`). The
@@ -130,6 +131,14 @@ type nameTreePair struct {
 //
 // `ctx.Dereference` and a type assertion, never a typed dereference: this runs before the validator (ADR-116).
 func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, depth int, whole bool) {
+	pairs, depth, whole, _ = walkNameTreeShared(ctx, root)
+	return pairs, depth, whole
+}
+
+// walkNameTreeShared is walkNameTree that also says whether a node was reached twice, a loop in `/Kids` or a kid
+// two parents share: the shape pdfcpu v0.16.2's validator refuses the whole document over (`ErrNameTreeCycle`,
+// `ErrNameTreeDuplicate`, `model/recursion.go:58-62`).
+func walkNameTreeShared(ctx *model.Context, root types.Dict) (pairs []nameTreePair, depth int, whole, shared bool) {
 	type frame struct {
 		d     types.Dict
 		depth int
@@ -161,7 +170,7 @@ func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, de
 				if ref, isRef := kids[i].(types.IndirectRef); isRef {
 					n := ref.ObjectNumber.Value()
 					if seen[n] {
-						whole = false
+						whole, shared = false, true
 						continue
 					}
 					seen[n] = true
@@ -187,43 +196,55 @@ func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, de
 				continue
 			}
 			if len(pairs) >= maxNameTreeNames {
-				return pairs, depth, false
+				return pairs, depth, false, shared
 			}
 			pairs = append(pairs, nameTreePair{*s, names[i], names[i+1]})
 		}
 	}
-	return pairs, depth, whole
+	return pairs, depth, whole, shared
 }
 
 // nameTreeRead is what nib's own walk made of one catalog name tree before validation.
 type nameTreeRead struct {
 	names  int  // names the walk counted
 	capped bool // the walk stopped at maxNameTreeNames, so names is not the tree's count
+	// aside is set when the tree was taken out of the validator's sight (settleNameTrees): the validator now refuses
+	// the whole DOCUMENT over a looped, shared or over-deep tree, so it never sees one, and the tree is unread.
+	aside bool
 }
 
 // settleNameTrees walks every catalog name tree of ctx BEFORE validation and returns what it counted, by tree. A
 // tree read whole that nests deeper than pdfcpu's validator follows is rewritten flat into its own root dictionary
 // — every key and value as the file wrote them, in key order — so the validator reads all of it.
 //
+// A tree the validator would refuse the whole document over — a node reached twice, or nested past the limit with
+// something the walk could not vouch for (`validate/tree_traversal.go:76`, v0.16.2: fatal even in relaxed mode, where
+// the release before dropped the tree and read on) — is taken out of the catalog's `/Names` for the validation and
+// put back by the returned function, and recorded as `aside`: it is unread, so every reader answers `ErrNameTreeUnread`
+// and the write refuses, exactly as for a tree the validator dropped (ADR-164, ADR-171). The walk that decides this is
+// iterative and visited-set bounded, which is what a carry of a hostile shape needs (D4 pin 3).
+//
 // Nothing is returned for a document with no `/Names`, which is most documents: the read pays one catalog lookup.
-func settleNameTrees(ctx *model.Context) map[string]nameTreeRead {
+func settleNameTrees(ctx *model.Context) (map[string]nameTreeRead, func()) {
+	noop := func() {}
 	if ctx == nil || ctx.XRefTable == nil {
-		return nil
+		return nil, noop
 	}
 	root, err := ctx.XRefTable.Catalog()
 	if err != nil || root == nil {
-		return nil
+		return nil, noop
 	}
 	o, err := ctx.Dereference(root["Names"])
 	if err != nil {
-		return nil
+		return nil, noop
 	}
 	names, ok := o.(types.Dict)
 	if !ok || len(names) == 0 {
-		return nil
+		return nil, noop
 	}
 	limit := ctx.XRefTable.MaxRecursionDepth()
 	out := map[string]nameTreeRead{}
+	var put []func()
 	for _, tree := range catalogNameTrees {
 		to, err := ctx.Dereference(names[tree])
 		if err != nil {
@@ -233,14 +254,25 @@ func settleNameTrees(ctx *model.Context) map[string]nameTreeRead {
 		if !ok || len(td) == 0 {
 			continue
 		}
-		pairs, depth, whole := walkNameTree(ctx, td)
-		out[tree] = nameTreeRead{names: len(pairs), capped: len(pairs) >= maxNameTreeNames && !whole}
+		pairs, depth, whole, shared := walkNameTreeShared(ctx, td)
+		r := nameTreeRead{names: len(pairs), capped: len(pairs) >= maxNameTreeNames && !whole}
+		if shared || (!whole && depth > limit) {
+			r.aside = true
+			orig := names[tree]
+			delete(names, tree)
+			put = append(put, func() { names[tree] = orig })
+		}
+		out[tree] = r
 		if !whole || depth <= limit {
 			continue
 		}
 		flattenNameTree(td, pairs)
 	}
-	return out
+	return out, func() {
+		for _, p := range put {
+			p()
+		}
+	}
 }
 
 // flattenNameTree rewrites the tree under root as one leaf: every pair in key order in the root's own `/Names`,
@@ -313,12 +345,12 @@ func rememberNameTrees(ctx *model.Context, read map[string]nameTreeRead) {
 	for tree, r := range read {
 		kept := 0
 		if node := xt.Names[tree]; node != nil {
-			_ = node.Process(xt, func(*model.XRefTable, string, *types.Object) error {
+			_ = node.Process(context.Background(), xt, func(*model.XRefTable, string, *types.Object) error {
 				kept++
 				return nil
 			})
 		}
-		if r.capped || kept < r.names {
+		if r.aside || r.capped || kept < r.names {
 			if lost == nil {
 				lost = map[string]bool{}
 			}
@@ -440,7 +472,7 @@ func shapeNameTrees(ctx *model.Context) {
 		}
 		var level []*model.Node
 		var leaf *model.Node
-		_ = root.Process(ctx.XRefTable, func(_ *model.XRefTable, k string, v *types.Object) error {
+		_ = root.Process(context.Background(), ctx.XRefTable, func(_ *model.XRefTable, k string, v *types.Object) error {
 			if leaf == nil || len(leaf.Names) == nameTreeFan {
 				leaf = &model.Node{Kmin: k}
 				level = append(level, leaf)
@@ -462,5 +494,67 @@ func shapeNameTrees(ctx *model.Context) {
 		}
 		root.Kids, root.Names = level, nil
 		root.Kmin, root.Kmax = level[0].Kmin, level[len(level)-1].Kmax
+	}
+}
+
+// setAsideExternalFiles gives each filespec of the catalog's `/EmbeddedFiles` tree that names an EXTERNAL file — a
+// dictionary with no `/EF` — an empty one for the validator, and returns what takes it off again (P02.S04, D4).
+//
+// pdfcpu v0.16.2 refuses a whole document over such an entry ("EmbeddedFiles name tree value: expected matching
+// embedded file stream", `validate/nameTree.go:612`) where v0.13.0 read it; an external reference is legal under
+// ISO 32000-1 §7.11.3 and is not an embedded file at all. The relaxed validator accepts an EMPTY `/EF`
+// (`isEmptyEmbeddedFileSpecification`, `nameTree.go:639`), so the entry is made to look like one for the read and is
+// put back as the file wrote it: nothing nib writes or lists changes, and nib's own listing (`treeFiles`) never asked
+// pdfcpu what was attached. The walk is `walkNameTree`'s, iterative and visited-set bounded, and a tree it could not
+// read whole is left alone (it is already `settleNameTrees`' to set aside).
+func setAsideExternalFiles(ctx *model.Context) func() {
+	noop := func() {}
+	if ctx == nil || ctx.XRefTable == nil {
+		return noop
+	}
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return noop
+	}
+	o, err := ctx.Dereference(root["Names"])
+	if err != nil {
+		return noop
+	}
+	names, ok := o.(types.Dict)
+	if !ok {
+		return noop
+	}
+	to, err := ctx.Dereference(names["EmbeddedFiles"])
+	if err != nil {
+		return noop
+	}
+	td, ok := to.(types.Dict)
+	if !ok || len(td) == 0 {
+		return noop
+	}
+	pairs, _, whole := walkNameTree(ctx, td)
+	if !whole {
+		return noop
+	}
+	var given []types.Dict
+	for _, p := range pairs {
+		v, err := ctx.Dereference(p.v)
+		if err != nil {
+			continue
+		}
+		d, ok := v.(types.Dict)
+		if !ok {
+			continue
+		}
+		if _, has := d["EF"]; has {
+			continue
+		}
+		d["EF"] = types.Dict{}
+		given = append(given, d)
+	}
+	return func() {
+		for _, d := range given {
+			delete(d, "EF")
+		}
 	}
 }

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ func protectedP(t *testing.T, pdf []byte, pw string) int {
 	t.Helper()
 	conf := model.NewDefaultConfiguration()
 	conf.UserPW, conf.OwnerPW = pw, pw
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), conf)
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), conf)
 	if err != nil {
 		t.Fatalf("the protected copy did not open with its password: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestProtectionControlsOpeningAndNothingElse(t *testing.T) {
 	src := threePagePDF(t)
 	// Stimulus first: pdfcpu's own AES default is the restrictive one this fix replaces.
 	var dflt bytes.Buffer
-	if err := api.Encrypt(bytes.NewReader(src), &dflt, model.NewAESConfiguration("pw", "pw", 256)); err != nil {
+	if err := api.Encrypt(context.Background(), bytes.NewReader(src), &dflt, model.NewAESConfiguration("pw", "pw", 256)); err != nil {
 		t.Fatal(err)
 	}
 	if p := protectedP(t, dflt.Bytes(), "pw"); p&(1<<9) != 0 {
@@ -99,7 +100,7 @@ func TestProtectionDoesNotReadTheUsersPdfcpuConfig(t *testing.T) {
 	}
 	conf := model.NewDefaultConfiguration()
 	conf.UserPW, conf.OwnerPW = "pw", "pw"
-	ctx, err := api.ReadContext(bytes.NewReader(enc), conf)
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(enc), conf)
 	if err != nil {
 		t.Fatal(err)
 	}

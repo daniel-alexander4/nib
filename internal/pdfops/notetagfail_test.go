@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -13,13 +14,13 @@ import (
 // annotElementPages returns, in /StructTreeRoot /K order, the page number each /Annot element's OBJR names.
 func annotElementPages(t *testing.T, pdf []byte) []int {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pageOf := map[int]int{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			pageOf[ir.ObjectNumber.Value()] = p
 		}
 	}
@@ -90,7 +91,7 @@ func TestNotesAreDescribedInPageOrder(t *testing.T) {
 // TestANoteOnATreeNibCannotModelStillBakes — the review finding: a tree nib's parser refuses used to fail
 // AddNotes, which failed the bake and aborted the user's save. The note must land, undescribed.
 func TestANoteOnATreeNibCannotModelStillBakes(t *testing.T) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(taggedFixture()), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(taggedFixture()), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,12 +109,12 @@ func TestANoteOnATreeNibCannotModelStillBakes(t *testing.T) {
 	// fallback.)
 	root["K"] = types.Array{types.Dict{"K": types.Integer(0)}}
 	var buf bytes.Buffer
-	if err := api.WriteContext(ctx, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), ctx, &buf); err != nil {
 		t.Fatal(err)
 	}
 	broken := buf.Bytes()
 	// Stimulus before response: nib really cannot model this tree, or "still bakes" proves nothing.
-	check, err := api.ReadValidateAndOptimize(bytes.NewReader(broken), model.NewDefaultConfiguration())
+	check, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(broken), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

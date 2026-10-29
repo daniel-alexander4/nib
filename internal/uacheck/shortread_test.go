@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -193,7 +194,7 @@ func TestARoleMapChainIsFollowedToItsEndAndVeraPDFSaysSo(t *testing.T) {
 // openMutated opens pdf and hands the page dictionary to mutate before any rule reads it.
 //
 // The three reads below cannot be reached through a file: pdfcpu's own validator refuses the document
-// first, measured against v0.13.0 on every shape tried (a `/Annots` that is a name, an integer, a
+// first, measured against v0.13.0 (not re-measured on v0.16.2) on every shape tried (a `/Annots` that is a name, an integer, a
 // dictionary or an indirect reference to either; an `/AP` entry that is a dictionary, direct or indirect,
 // on a Widget, a Square, a Link and an unknown subtype). That is a fact about the DEPENDENCY, not about
 // nib, and `annots, _ :=` rested on it while saying so nowhere. So the state is made in memory, where
@@ -204,7 +205,7 @@ func openMutated(t *testing.T, pdf []byte, mutate func(d *Document, page types.D
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	page, _, _, perr := d.Ctx.PageDict(1, false)
+	page, _, _, perr := d.Ctx.PageDict(context.Background(), 1, false)
 	if perr != nil || page == nil {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}
@@ -346,7 +347,7 @@ func TestPdfcpuGivesThePageItsInheritedResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	page, _, _, perr := d.Ctx.PageDict(1, false)
+	page, _, _, perr := d.Ctx.PageDict(context.Background(), 1, false)
 	if perr != nil || page == nil {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}

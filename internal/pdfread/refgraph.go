@@ -12,7 +12,7 @@ import (
 
 // The reference door — `/pending 764`, ADR-069.
 //
-// pdfcpu v0.13.0's validator recurses through a document's references, and on most chains it remembers nothing it
+// pdfcpu's validator (traced on v0.13.0; v0.16.2 added visit sets and depth checks to the name, number and page trees — tree_traversal.go, xreftable.go:2619 — and the rest is NOT re-traced here) recurses through a document's references, and on most chains it remembers nothing it
 // has visited. Where it does not, three shapes are hostile, and `refuseUnboundedReferences` refuses each before the
 // validator runs:
 //
@@ -191,7 +191,6 @@ func tooManyPaths(paths, budget uint64) error {
 // The validator decodes nearly all of them anyway, so this moves that work ahead of the door rather than adding it.
 // One that will not decode stays as it is: it names nothing to pdfcpu either, which reports it on reaching it.
 func resolveCompressed(ctx *model.Context) {
-	cur := ctx.CurObj
 	for nr, e := range ctx.Table {
 		if e == nil || e.Free {
 			continue
@@ -204,7 +203,8 @@ func resolveCompressed(ctx *model.Context) {
 			_, _ = ctx.Dereference(*types.NewIndirectRef(nr, gen))
 		}
 	}
-	ctx.CurObj = cur
+	// pdfcpu before v0.16 recorded the last dereferenced object in ctx.CurObj, which this pass saved and put back; v0.16 has no such
+	// field, so there is nothing to put back (a D7 restatement, P02.S03a).
 }
 
 // pathBudget is `basePaths` plus `pathsPerObject` for each LIVE object in ctx — one that is not free and holds an

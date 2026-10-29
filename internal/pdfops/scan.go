@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -166,7 +167,7 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, budget *int, fn 
 // read-only — it opens the document without validation (so it tolerates the
 // malformed files this is most useful on) and never writes anything back.
 func Scan(pdf []byte) (ScanReport, error) {
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return ScanReport{}, err
 	}
@@ -214,6 +215,13 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := names.Find("EmbeddedFiles"); ok {
 			add("attachment", "medium", "Embedded files attached to the document", 0)
 		}
+	}
+	// Associated files (ISO 32000-2 §14.13, P02.S06): a file the catalog's /AF names need not be in the name tree,
+	// and pdfcpu v0.16.2 writes it. Reported as an attachment, which StripActive and Remove files both remove.
+	if _, ok := root.Find("AF"); ok {
+		add("attachment", "medium", "Associated files attached to the document", 0)
+	}
+	if names := derefDict(xt, root["Names"]); names != nil {
 		// The document's named media clips (`/pending 824`): media no annotation need name. See removeMedia.
 		if _, ok := names.Find("Renditions"); ok {
 			add("media", "medium", "Media clips the document can play (renditions)", 0)
@@ -333,6 +341,9 @@ func Scan(pdf []byte) (ScanReport, error) {
 	if err := eachPage(xt, root, func(page types.Dict, nr int) {
 		if _, ok := page.Find("AA"); ok {
 			add("additionalActions", "medium", "Page additional actions (run on open or close)", nr)
+		}
+		if _, ok := page.Find("AF"); ok {
+			add("attachment", "medium", "Associated files attached to a page", nr)
 		}
 	}); err != nil {
 		return ScanReport{}, err
@@ -583,10 +594,10 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// A tree nib could not read whole is removed all the same — the validator took it out of the context and
 		// the write leaves it out — so the write is not refused for it (`pdfread/nametree.go`, ADR-164).
 		pdfread.ForgetNameTree(xt, "JavaScript")
-		// A slideshow, and its parsed copy for the same reason (`/pending 864`). Only the shape pdfcpu's
-		// validator accepts gets this far — /Resources as an array; the name tree ISO 32000-1 Table 273 gives
-		// is refused at the read (`validate/nameTree.go:467`, v0.13.0), so such a document is refused whole
-		// and never returned as stripped (`TestASlideshowIsSeenAndStripped`).
+		// A slideshow, and its parsed copy for the same reason (`/pending 864`). v0.13.0 took /Resources as an
+		// array only; the name tree ISO 32000-1 Table 273 gives was refused (`validate/nameTree.go:467`, v0.13.0)
+		// and v0.16.2 reads it when each script names a /Type (`nameTree.go:729`); a document it still refuses is
+		// refused whole, never returned as stripped (`TestASlideshowIsSeenAndStripped`).
 		if names := derefDict(xt, root["Names"]); names != nil {
 			dropKey(xt, names, "AlternatePresentations")
 		}
@@ -720,8 +731,8 @@ var mediaAnnots = map[string]mediaAnnot{
 }
 
 // removeMediaAnnots takes every mediaAnnots subtype out of every page's /Annots array — nib's own removal, not
-// pdfcpu's `RemoveAnnotations`, for two reasons read in pdfcpu v0.13.0: its type table (`model.AnnotTypes`) has no
-// `RichMedia`, so the name is taken as an annotation ID and removes nothing; and it works off `ctx.PageAnnots`, which
+// pdfcpu's `RemoveAnnotations`, for two reasons read in pdfcpu v0.13.0 (the first re-checked: v0.16.2's `model.AnnotTypes`, `model/annotation.go:82`, still has no
+// `RichMedia`; the second, on `ctx.PageAnnots`, is not): its type table has no `RichMedia`, so the name is taken as an annotation ID and removes nothing; and it works off `ctx.PageAnnots`, which
 // holds only annotations reached by indirect reference, so a DIRECT media annotation dict survived both tiers. The
 // annotation is unlinked rather than freed: `DeleteObject` follows every key, `/P` included, which names the page.
 // An object nothing names any longer is not written.
@@ -1288,8 +1299,7 @@ func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Contex
 //
 // **It does not ask pdfcpu what is attached first** (`/pending 812`). It used to call `ListAttachments` and read
 // any error as "nothing attached", so a tree pdfcpu could not list stayed and the removal succeeded; and a
-// filespec with no /EF — an ordinary reference to an EXTERNAL file, legal under §7.11.3 — does not error there
-// but nil-dereferences (`attach.go:155`, measured), so the removal panicked instead. Removing the files is the
+// filespec with no /EF — an ordinary reference to an EXTERNAL file, legal under §7.11.3 — errors there on v0.16.2 (`model/attach.go:197-199`; v0.13 nil-dereferenced, `attach.go:155`), so the removal failed or panicked instead. Removing the files is the
 // remit, parsing them is not: the key goes whatever the tree holds.
 func removeAllAttachments(ctx *model.Context) error {
 	xt := ctx.XRefTable
@@ -1303,8 +1313,59 @@ func removeAllAttachments(ctx *model.Context) error {
 	delete(xt.Names, "EmbeddedFiles")
 	// Files in a tree nib could not read whole go too, and the write is not refused for them (ADR-164).
 	pdfread.ForgetNameTree(xt, "EmbeddedFiles")
+	// **And every associated file** (P02.S06, D6). pdfcpu v0.16.2 writes the catalog's `/AF` and a structure
+	// element's, with the files they name, so a PDF/A-3 file listed in both places was written back in behind the
+	// removal. `/AF` is stripped wherever it sits, and the write is not refused for a page's.
+	if err := dropAssociatedFileKeys(xt); err != nil {
+		return err
+	}
+	pdfread.ForgetAssociatedFiles(ctx)
 	return nil
 }
+
+// dropAssociatedFileKeys deletes the `/AF` key from every dictionary the document holds — the catalog, pages,
+// structure elements, annotations, form and image dictionaries, inline or indirect — and from nothing else. One
+// pass over the cross-reference table, descending only through direct objects (an indirect one is its own entry).
+// Direct nesting past maxAssociatedFileDepth is REFUSED, never skipped: a skip would leave an `/AF` in place while the
+// caller clears the read mark that makes the write refuse it, so the file the user removed would be written back.
+func dropAssociatedFileKeys(xt *model.XRefTable) error {
+	tooDeep := false
+	var strip func(o types.Object, depth int)
+	strip = func(o types.Object, depth int) {
+		if depth > maxAssociatedFileDepth {
+			tooDeep = true
+			return
+		}
+		switch v := o.(type) {
+		case types.Dict:
+			delete(v, "AF")
+			for _, c := range v {
+				strip(c, depth+1)
+			}
+		case types.StreamDict:
+			strip(v.Dict, depth+1)
+		case types.Array:
+			for _, c := range v {
+				strip(c, depth+1)
+			}
+		}
+	}
+	for _, e := range xt.Table {
+		if e != nil && !e.Free {
+			strip(e.Object, 0)
+		}
+	}
+	if tooDeep {
+		return errAssociatedFileTooDeep
+	}
+	return nil
+}
+
+// maxAssociatedFileDepth is how deep a chain of DIRECT dictionaries and arrays dropAssociatedFileKeys follows.
+const maxAssociatedFileDepth = 64
+
+// errAssociatedFileTooDeep is the removal's refusal for a document that nests direct objects past what it can search.
+var errAssociatedFileTooDeep = errors.New("pdfops: this document nests objects so deeply that every associated file in it cannot be found, so none were removed")
 
 // errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could
 // honestly hold.

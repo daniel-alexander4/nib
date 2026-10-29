@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -39,7 +40,7 @@ func TestConvertPDFAGhostscript(t *testing.T) {
 	}
 
 	// Font now embedded, and an OutputIntent is present (gs needs the def.ps for it).
-	info, err := api.PDFInfo(bytes.NewReader(out), "", nil, true, model.NewDefaultConfiguration())
+	info, err := api.PDFInfo(context.Background(), bytes.NewReader(out), "", nil, true, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestConvertPDFAGhostscript(t *testing.T) {
 	if !embedded {
 		t.Error("Ghostscript should have embedded the font")
 	}
-	ctx, err := api.ReadContext(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

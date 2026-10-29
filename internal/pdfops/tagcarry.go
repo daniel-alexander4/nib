@@ -366,7 +366,7 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// walk is depth-bounded** (/pending 643). An indirect `/K` array used to be walked before the check, so an
 	// array naming itself recursed until Go's stack limit — fatal, not a panic — and pdfcpu's own structure
 	// validation marks each indirect kid valid before recursing into it and skips it on a revisit
-	// (validate/structTree.go:139-151, v0.13.0), so it admits the loop rather than refusing it. The bound is the package's structure bound (`maxStructDepth`); past it the carry is abandoned, as for
+	// (validate/structTree.go:139-151, v0.13.0), so it admitted the loop rather than refusing it (v0.16.2 refuses an ancestor cycle through an indirect reference, `model/recursion.go:235-237`; the bound stays nib's own). The bound is the package's structure bound (`maxStructDepth`); past it the carry is abandoned, as for
 	// any tree it cannot anchor. Keying arrays too means two elements sharing one `/K` array object walk it
 	// once, which is safe: the rewrite below is collected per element and is idempotent.
 	var walk func(o types.Object, inherited *placement, depth int) bool

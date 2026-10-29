@@ -310,12 +310,27 @@ func open(pdf []byte) (*Document, error) {
 	// which is most — while this hook was already looking at the context that still held it. Only the catalog's own
 	// entry is read: looking an object up before the validation can exempt it from it (`fontsTheValidatorLoses`).
 	var form types.Object
-	ctx, err := pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, func(parsed *model.Context) func() {
-		if root, rerr := parsed.XRefTable.Catalog(); rerr == nil && root != nil {
-			form = root["AcroForm"]
-		}
-		return setAsideForValidator(parsed)
-	})
+	read := func(withoutTree bool) (*model.Context, error) {
+		return pdfread.ReadOptimizedOrRefuseSettingAside(pdf, conf, func(parsed *model.Context) func() {
+			if root, rerr := parsed.XRefTable.Catalog(); rerr == nil && root != nil {
+				form = root["AcroForm"]
+			}
+			putBack := setAsideForValidator(parsed)
+			if withoutTree {
+				putTree := setAsideStructureTree(parsed)
+				return func() { putTree(); putBack() }
+			}
+			return putBack
+		})
+	}
+	ctx, err := read(false)
+	// pdfcpu v0.16.2 refuses the whole document over a structure tree that loops or names an element twice
+	// (`ErrStructureTreeCycle`, `ErrStructureTreeDuplicate`, and the parent tree's number-tree twins); the checker
+	// reads that tree itself and reports such a defect as a finding (7.4.4 t1 "lists itself", cannot-check), so it is
+	// read again with the tree out of the validator's sight (P02.S04, D4: carry — nothing here is written out).
+	if err != nil && structureTreeRefusal(err) {
+		ctx, err = read(true)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
@@ -476,3 +491,32 @@ func (p *population) again(err, what string) (bool, string) {
 // finish marks the build returned. Called on RETURN only — never deferred, since a deferred call runs while a panic
 // unwinds too. A return that records an error need not call it: the error is already what `again` answers.
 func (p *population) finish() { p.finished = true }
+
+// contextInt and contextNameIs are the door's two reads for the code that runs BEFORE a Document exists (the
+// set-aside for the validator, which holds only the pdfcpu context): a value is resolved through
+// `ctx.Dereference` and then read, so an indirect one is read as what it names.
+func contextInt(ctx *model.Context, o types.Object) (int, bool) {
+	r, err := ctx.Dereference(o)
+	if err != nil {
+		return 0, false
+	}
+	i, ok := r.(types.Integer)
+	return int(i), ok
+}
+
+func contextNameIs(ctx *model.Context, o types.Object, want ...string) bool {
+	r, err := ctx.Dereference(o)
+	if err != nil {
+		return false
+	}
+	n, ok := r.(types.Name)
+	if !ok {
+		return false
+	}
+	for _, w := range want {
+		if string(n) == w {
+			return true
+		}
+	}
+	return false
+}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -37,7 +38,7 @@ func workingDocLang(t *testing.T, c *http.Client, url string) string {
 	}
 	defer resp.Body.Close()
 	pdf, _ := io.ReadAll(resp.Body)
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("the working document does not read back (%d bytes): %v", len(pdf), err)
 	}

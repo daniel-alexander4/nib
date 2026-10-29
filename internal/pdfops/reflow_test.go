@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -291,12 +292,12 @@ func resetLines(t *testing.T, pdf []byte, l pageLayout, p, pi int, edit string) 
 	if out.content == nil {
 		return nil, out.cause
 	}
-	d, _, _, _ := c2.PageDict(p, false)
+	d, _, _, _ := c2.PageDict(context.Background(), p, false)
 	if err := setPageContent(c2, d, out.content); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := api.WriteContext(c2, &buf); err != nil {
+	if err := api.WriteContext(context.Background(), c2, &buf); err != nil {
 		t.Fatal(err)
 	}
 	c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())

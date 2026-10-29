@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -258,12 +259,12 @@ func TestStylesOverTheCorpus(t *testing.T) {
 					still[out.cause]++
 					continue
 				}
-				d, _, _, _ := c2.PageDict(p, false)
+				d, _, _, _ := c2.PageDict(context.Background(), p, false)
 				if err := setPageContent(c2, d, out.content); err != nil {
 					t.Fatal(err)
 				}
 				var buf bytes.Buffer
-				if err := api.WriteContext(c2, &buf); err != nil {
+				if err := api.WriteContext(context.Background(), c2, &buf); err != nil {
 					t.Fatal(err)
 				}
 				c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())

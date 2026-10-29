@@ -205,7 +205,7 @@ func TestTheAnnotationRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 		// --- the population --------------------------------------------------------------------
 		{"an annotation written inline in /Annots", annotFixture{elem: annotTag,
 			annots: "[<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] /Contents (a) /StructParent 1 >>]"}, Pass, Pass},
-		// pdfcpu REMOVES a dangling reference from the array before any rule sees it (measured, v0.13.0),
+		// pdfcpu REMOVES a dangling reference from the array before any rule sees it (measured on v0.13.0, not re-measured on v0.16.2),
 		// so this row measures nib's answer over a page that then has no annotations — not the door's
 		// own "a non-dict entry is not a subject" branch, which nib's reader cannot reach.
 		{"a dangling reference in /Annots", annotFixture{annots: "[99 0 R]"}, NotApplicable, NotApplicable},
@@ -773,6 +773,10 @@ func TestTheMediaClipRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 		// is the row that says `hasCorrectAlt` is a shape test and not "there is a description".
 		{"an empty /Alt array", clipFixture("/Alt []", ct), Pass, Pass},
 		{"no /CT", clipFixture("/Alt [() (a clip)]", ""), Fail, Pass},
+		// pdfcpu v0.16.2 refuses a malformed /Alt array (`validate/array_cardinality.go:58`), so the checker takes it out
+		// of the validator's sight and grades the document as written (`entriesTheValidatorRefuses`). Measured with
+		// veraPDF 1.30.2 on exactly this fixture (2026-10-27): 7.18.6.2 test 2 fails, test 1 does not.
+		{"a non-string /Alt entry", clipFixture("/Alt [() /aname]", ct), Pass, Fail},
 	} {
 		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != tc.t1 {
 			t.Errorf("%s: 7.18.6.2 t1 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t1)
@@ -781,14 +785,13 @@ func TestTheMediaClipRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 			t.Errorf("%s: 7.18.6.2 t2 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t2)
 		}
 	}
-	// Three shapes veraPDF grades and nib's reader refuses, each with the refusal pdfcpu actually prints —
+	// Two shapes veraPDF grades and nib's reader refuses, each with the refusal pdfcpu actually prints —
 	// recorded so that a bump which starts accepting them turns this row red rather than reintroducing a
-	// divergence silently. **Read, not assumed**: the three errors name three different entries.
+	// divergence silently. **Read, not assumed**: the two errors name two different entries.
 	for _, tc := range []struct {
 		name, want string
 		pdf        []byte
 	}{
-		{"a non-string /Alt entry", "validateStringArrayEntry: invalid type at index 1", clipFixture("/Alt [() /aname]", ct)},
 		{"an /Alt that is not an array", "entry=Alt invalid type", clipFixture("/Alt (a clip)", ct)},
 		{"a name-typed /CT", "entry=CT invalid type", clipFixture("/Alt [() (a clip)]", "/CT /audio ")},
 	} {
@@ -1200,7 +1203,7 @@ func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.
 //     DEFINITE branch and reports "the /StructParent names no element", a Fail over a tree nib never
 //     finished reading. `elementForMCID` separates the two for its own array read; this walk did not.
 //
-// **Neither shape can be reached through a file**, measured against pdfcpu v0.13.0: a `/Fields` or a
+// **Neither shape can be reached through a file**, measured against pdfcpu v0.13.0 (not re-measured on v0.16.2): a `/Fields` or a
 // `/Nums` that is present and is not an array is refused by its validator first
 // (`dereferenceArray: wrong type types.Dict`), before any rule runs. That is a fact about the
 // DEPENDENCY, not about nib — the same footing `openMutated` already states — so the state is made in

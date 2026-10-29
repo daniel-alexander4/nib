@@ -2,6 +2,7 @@ package pdfread_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -24,7 +25,7 @@ import (
 // chainFrom follows `/UseCMap` references from nr in the RAW read — the stimulus, read without the door.
 func chainFrom(t *testing.T, pdf []byte, nr, steps int) []int {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: the unvalidated read failed: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestAUseCMapLoopIsRefusedBeforeTheValidator(t *testing.T) {
 		if got := chainFrom(t, c.PDF, 20, len(c.Loop)-1); fmt.Sprint(got) != fmt.Sprint(c.Loop) {
 			t.Fatalf("setup: %s's /UseCMap chain from 20 is %v, want %v", name, got, c.Loop)
 		}
-		raw, err := api.ReadContext(bytes.NewReader(c.PDF), model.NewDefaultConfiguration())
+		raw, err := api.ReadContext(context.Background(), bytes.NewReader(c.PDF), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("setup: %s — the unvalidated read failed: %v", name, err)
 		}
@@ -106,7 +107,7 @@ func TestEveryUnguardedReferenceLoopIsRefusedBeforeTheValidator(t *testing.T) {
 		}
 		// The walk first, on the unvalidated read: a door missing this edge fails here, and the loop is never handed
 		// to the validator that would kill the binary.
-		raw, err := api.ReadContext(bytes.NewReader(c.Loop), model.NewDefaultConfiguration())
+		raw, err := api.ReadContext(context.Background(), bytes.NewReader(c.Loop), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatalf("setup: %s — the unvalidated read failed: %v", c.Edge, err)
 		}
@@ -124,8 +125,15 @@ func TestSharedReferencesAreRefusedOnlyPastThePathBudget(t *testing.T) {
 	if _, err := pdfread.Validated(testpdf.SharedPatterns(3), model.NewDefaultConfiguration()); err != nil {
 		t.Errorf("a pattern shared by two names three levels deep was refused: %v", err)
 	}
-	if _, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration()); err != nil {
-		t.Errorf("a name tree sharing its kids three levels deep was refused: %v", err)
+	// A name-tree node named twice is a hard error in v0.16.2 (validate/tree_traversal.go:55-67, "duplicate name tree
+	// node") and cheap to refuse (1 ms at 60 deep, measured), so sharing no longer multiplies. nib CARRIES it
+	// (settleNameTrees, D4): the tree is kept out of the validator's sight, the document reads, and the tree is
+	// UNREAD — every reader says so and the write refuses (ADR-164).
+	ctx, err := pdfread.Validated(testpdf.SharedNameTree(3), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Errorf("a name tree sharing its kids three levels deep was refused: %v, want it read and marked unread", err)
+	} else if len(pdfread.UnreadNameTrees(ctx.XRefTable)) == 0 {
+		t.Error("a name tree sharing its kids three levels deep read, and no tree is marked unread — it would be called empty")
 	}
 	refusedAs(t, pdfread.ErrReferencePaths, "Validated over a name tree sharing its kids 30 deep", func() error {
 		_, err := pdfread.Validated(testpdf.SharedNameTree(30), model.NewDefaultConfiguration())
@@ -147,8 +155,14 @@ func TestSharedReferencesAreRefusedOnlyPastThePathBudget(t *testing.T) {
 func TestAReferenceChainDeeperThanTheBoundIsRefused(t *testing.T) {
 	// A chain is walked once by pdfcpu, so it is counted once: 5,000 links are 5,000 paths, not one set of paths per
 	// link (~12.5 million, which the count once charged and refused).
-	if _, err := pdfread.Validated(testpdf.ChainedPatterns(5000), model.NewDefaultConfiguration()); err != nil {
-		t.Errorf("a chain of 5000 patterns was refused: %v", err)
+	// v0.16.2 bounds a pattern chain at 100 levels itself (validate/pattern.go:211): 99 read, 101 are an error — pdfcpu's
+	// own, not the door's. The 5,000 and 9,000 cases below are the door's and pdfcpu's to refuse; what must hold is
+	// that neither crashes.
+	if _, err := pdfread.Validated(testpdf.ChainedPatterns(99), model.NewDefaultConfiguration()); err != nil {
+		t.Errorf("a chain of 99 patterns was refused: %v", err)
+	}
+	if _, err := pdfread.Validated(testpdf.ChainedPatterns(5000), model.NewDefaultConfiguration()); !errors.Is(err, model.ErrMaxRecursionDepthExceeded) {
+		t.Errorf("a chain of 5000 patterns: %v, want pdfcpu's recursion-depth error", err)
 	}
 	refusedAs(t, pdfread.ErrReferenceDepth, "Validated over a chain of 9000 patterns", func() error {
 		_, err := pdfread.Validated(testpdf.ChainedPatterns(9000), model.NewDefaultConfiguration())
@@ -216,7 +230,7 @@ func sparseDoc(nr int) []byte {
 // phase-close review): its slots were sized by the largest number, so a 400-byte file naming object 2^25 cost 6.1 GB.
 func TestTheReferenceWalkIsSizedByObjectsNotByTheirNumbers(t *testing.T) {
 	pdf := sparseDoc(1 << 20)
-	raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	raw, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatalf("setup: the sparse document does not read: %v", err)
 	}
@@ -333,11 +347,11 @@ func freeEntriesDoc(n int) []byte {
 // 3-object document from 262,208 paths to 16,262,208 — 62×, measured).
 func TestFreeXrefEntriesDoNotRaiseThePathBudget(t *testing.T) {
 	conf := model.NewDefaultConfiguration()
-	plain, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(0)), conf)
+	plain, err := api.ReadContext(context.Background(), bytes.NewReader(freeEntriesDoc(0)), conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	padded, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(100000)), conf)
+	padded, err := api.ReadContext(context.Background(), bytes.NewReader(freeEntriesDoc(100000)), conf)
 	if err != nil {
 		t.Fatal(err)
 	}

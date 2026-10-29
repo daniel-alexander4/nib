@@ -79,7 +79,7 @@ type structKid struct {
 	// reference"* — a direct stream there is a document nib does not guess at.
 	//
 	// The generation is not kept, and need not be: pdfcpu's `FindTableEntry` takes a generation and
-	// ignores it, resolving by object number alone (v0.13.0, `model/xreftable.go`), so a reference
+	// ignores it, resolving by object number alone (v0.16.2, `model/xreftable.go:391-396`), so a reference
 	// rebuilt at generation 0 reaches the same object (/pending 644 #3, measured).
 	stm int
 	// stmMalformed is a `/Stm` that is PRESENT and is not an indirect reference. stm is 0 for it, which

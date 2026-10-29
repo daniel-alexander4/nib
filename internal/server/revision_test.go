@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -90,7 +91,7 @@ func TestTheRouteReturnsTheSignedVersionOrNamesWhyNot(t *testing.T) {
 	}
 	redefined := appendRevision(t, sA, map[int]string{vnum: "<< /Foo 2 >>"})
 	var resaved bytes.Buffer
-	if err := api.Optimize(bytes.NewReader(sA), &resaved, nil); err != nil {
+	if err := api.Optimize(context.Background(), bytes.NewReader(sA), &resaved, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	unreadable := append(append([]byte(nil), sA...), "\nstartxref\n99999999\n%%EOF\n"...)

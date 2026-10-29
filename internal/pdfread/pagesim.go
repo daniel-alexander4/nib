@@ -1,6 +1,7 @@
 package pdfread
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -15,8 +16,8 @@ import (
 // ONE attacker-written key reached it — a leaf's `/Count -1` or `/Kids []` — and 20,000 minimal pages (~1.2 MB) took
 // 1m40-2m at every `Pages()` call (Scan, Inspect, uacheck, ceremony hashing), against 34 ms for the clean tree.
 //
-// `simulatePages` replays pdfcpu's own per-page algorithm (`processPageTreeForPageDictDepth`, model/xreftable.go
-// v0.13.0) for every page, and shares the work between consecutive pages instead of re-walking from the root:
+// `simulatePages` replays pdfcpu's own per-page algorithm (`processPageTreeForPageDictDepth`, model/xreftable.go:2458
+// v0.16.2; written against v0.13.0, not re-compared) for every page, and shares the work between consecutive pages instead of re-walking from the root:
 //
 //   - The walk for page P consults P at exactly two kinds of decision — a node's `/Count` skip (`p + Count < P`) and
 //     a leaf's descent (`p == P`). Everything else (types, dereferences, attributes, the visit set) is a function of
@@ -264,7 +265,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 	rootRef, err := xt.Pages()
 	if err != nil || rootRef == nil {
 		for p := 1; p <= n; p++ { // every call fails at the root, at no cost
-			d, ref, attrs, err := ctx.PageDict(p, false)
+			d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 			out = append(out, Page{Nr: p, Dict: d, Ref: ref, Attrs: attrs, Err: err})
 		}
 		return out, n
@@ -307,7 +308,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 				break
 			}
 			s.steps += p // PageDict walks from the root; charge it
-			d, ref, attrs, err := ctx.PageDict(p, false)
+			d, ref, attrs, err := ctx.PageDict(context.Background(), p, false)
 			if err == nil { // the replay and pdfcpu parted: pdfcpu's answer stands
 				pg = Page{Nr: p, Dict: d, Ref: ref, Attrs: attrs}
 				break
@@ -316,7 +317,7 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 		default:
 			attrs, ok := o.attrs.resolve(xt)
 			if !ok { // apply admitted every rectangle, so this is unreachable; pdfcpu's answer stands
-				d, ref, a, err := ctx.PageDict(p, false)
+				d, ref, a, err := ctx.PageDict(context.Background(), p, false)
 				pg = Page{Nr: p, Dict: d, Ref: ref, Attrs: a, Err: err}
 				break
 			}
@@ -324,6 +325,12 @@ func simulatePages(ctx *model.Context) (out []Page, steps int) {
 			if o.ref != nil {
 				r := *o.ref
 				pg.Ref = &r
+			}
+			if o.dict == nil {
+				// The walk ran out of tree without reaching the page. pdfcpu before v0.16 PageDict answered (nil dict, attrs, nil error)
+				// for it; v0.16.2 answers ErrPageNotFound and no attributes (model/xreftable.go:2562-2564), so a page
+				// the tree does not hold is an error here too (P02.S03a).
+				pg.Err, pg.Attrs, pg.ResourcePath = model.ErrPageNotFound, nil, nil
 			}
 		}
 		out = append(out, pg)

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -47,7 +48,7 @@ func formDoc(drShared bool) []byte {
 // acroForm returns the output's /AcroForm, read the way nib reads it.
 func acroForm(t *testing.T, pdf []byte) (*model.XRefTable, types.Dict) {
 	t.Helper()
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

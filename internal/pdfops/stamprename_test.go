@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"os"
@@ -56,7 +57,7 @@ func upstreamStampFaces() []string {
 // office suite writes, and the thing pdfcpu would have rewritten.
 func simpleFaceProgram(t *testing.T, pdf []byte) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestAStampOnAnOfficeDocumentEmbedsItsFace(t *testing.T) {
 
 	// Stimulus floor: this document really does carry a font that, under upstream's name, nib would
 	// have had to refuse. Without it the assertions below pass on a document with nothing to collide.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(src), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("re-read/validate: %v", err)
 	}

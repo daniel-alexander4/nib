@@ -343,7 +343,7 @@ func mightCloseOut(st ceremony.Stored, now time.Time) bool {
 // readMirrorForCloseOut is the sweep's read of a stored ceremony — a variable so a test can count
 // which ceremonies had their document opened, the one observable of a change whose whole point is
 // that nothing else differs.
-var readMirrorForCloseOut = ceremony.ReadMirror
+var readMirrorForCloseOut = ceremony.ReadMirrorToEnd
 
 // roundIsFinished answers whether the delivery round is done with this ceremony, on THIS machine.
 //

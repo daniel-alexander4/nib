@@ -183,6 +183,13 @@ func diffRowFor(idx int, ln string, explain *os.File) string {
 	} else {
 		cols = append(cols, "digest6=rule6-not-computed")
 	}
+	// digest under the tree's OWN current rule: between trees on different rules it differs for every document and says
+	// nothing, but it is what the selftest's planted change moves once rule 6 is no longer computed (P02, ADR-174).
+	if d, derr := ContentDigest(pdf); derr != nil {
+		cols = append(cols, "digestcur="+diffClass(derr, explain, idx))
+	} else {
+		cols = append(cols, "digestcur="+d[:min(12, len(d))])
+	}
 	// signature verdict
 	st := sign.Verify(pdf)
 	cols = append(cols, fmt.Sprintf("verify=%v|%d|%v|%v|%d|%d|%v", st.State, len(st.Signers), st.AddedAfter,
@@ -250,5 +257,29 @@ func diffRowFor(idx int, ln string, explain *os.File) string {
 		}
 		cols = append(cols, "maphash="+hex.EncodeToString(h.Sum(nil))[:12])
 	}
+	// live objects no path reaches in what sanitize, extract and split WRITE (P02 close): an orphan a rewrite keeps is
+	// invisible to every digest, so the count of each output is a column. An operation that refuses is its class.
+	unreach := func(out []byte, err error) string {
+		if err != nil {
+			return diffClass(err, explain, idx)
+		}
+		c, rerr := pdfread.ReadOptimized(out, model.NewDefaultConfiguration())
+		if rerr != nil || c == nil {
+			return "unread"
+		}
+		return fmt.Sprint(diffUnreachable(c.XRefTable))
+	}
+	ops := []string{}
+	ops = append(ops, "active:"+unreach(StripActive(pdf)))
+	ops = append(ops, "meta:"+unreach(StripMetadata(pdf)))
+	ops = append(ops, "extract:"+unreach(Collect(pdf, []string{"1"})))
+	if parts, perr := SplitBySpans(pdf, []string{"1", "2-"}, "p"); perr != nil {
+		ops = append(ops, "split:"+diffClass(perr, explain, idx))
+	} else {
+		for i, pt := range parts {
+			ops = append(ops, fmt.Sprintf("split%d:%s", i, unreach(pt.Data, nil)))
+		}
+	}
+	cols = append(cols, "opsunreach="+strings.Join(ops, ","))
 	return strings.Join(cols, "\t")
 }

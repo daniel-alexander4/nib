@@ -71,7 +71,7 @@ func (s *Server) handleCeremonyStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := vaultFrom(r)
-	rec, pdf, err := ceremony.ReadMirror(defaultOutputDir(), req.Ceremony, time.Now())
+	rec, pdf, err := ceremony.ReadMirrorToEnd(defaultOutputDir(), req.Ceremony, time.Now())
 	if err != nil {
 		httpError(w, http.StatusConflict,
 			"this ceremony could not be read on this machine: "+err.Error())

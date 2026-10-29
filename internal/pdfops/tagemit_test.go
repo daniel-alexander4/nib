@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"nib/mdpdf"
 	"regexp"
 	"testing"
@@ -20,11 +21,11 @@ import (
 // pageContentOf returns one page's decoded content stream.
 func pageContentOf(t *testing.T, pdf []byte, pageNr int) []byte {
 	t.Helper()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration(), nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	d, _, _, derr := ctx.PageDict(pageNr, false)
+	d, _, _, derr := ctx.PageDict(context.Background(), pageNr, false)
 	if derr != nil || d == nil {
 		t.Fatalf("page %d: %v", pageNr, derr)
 	}
@@ -188,7 +189,7 @@ func TestAlreadyMarkedIsDecidedByTOKENS(t *testing.T) {
 // the root: each element must name exactly the element, or the root, whose `/K` holds it.
 func TestEveryCommittedElementNamesTheParentThatHoldsIt(t *testing.T) {
 	_, out := committedP4(t)
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), model.NewDefaultConfiguration(), nil)
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -199,7 +200,7 @@ func TestEveryCommittedElementNamesTheParentThatHoldsIt(t *testing.T) {
 	}
 	live := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := ctx.PageDictIndRef(context.Background(), p); e == nil && ir != nil {
 			live[ir.ObjectNumber.Value()] = true
 		}
 	}
