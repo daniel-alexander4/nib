@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -29,6 +30,17 @@ type formField struct {
 	flags  int    // /Ff, its own or the nearest ancestor's
 	onPage bool   // some page's /Annots names one of its widgets
 	value  bool   // it, or the nearest ancestor that says, holds a /V that is not empty and not /Off
+
+	name    string        // the fully qualified name: the /T of it and of each ancestor that has one, joined with "."
+	tooltip string        // its own /TU, "" where it has none
+	widgets []fieldWidget // where it is drawn, in the order the tree names its widgets; empty exactly when onPage is false
+}
+
+// fieldWidget is one place a field is drawn: the 1-based page that names the widget, and its /Rect in that page's
+// own user space, normalized to [llx lly urx ury] — raw, so a caller applies the page's /Rotate and boxes itself.
+type fieldWidget struct {
+	page int
+	rect [4]float64
 }
 
 // pushButton reports a button that only does something — it holds no value (ISO 32000-1 Table 226, bit 17).
@@ -70,11 +82,13 @@ func formFields(xt *model.XRefTable) ([]formField, error) {
 	if af == nil {
 		return nil, nil
 	}
-	onPage := map[int]bool{}
-	if err := eachPageAnnots(xt, root, func(_ types.Dict, raw types.Object, _ int) {
+	onPage := map[int]int{} // object number of a widget a page names → that page (the first, where several do)
+	if err := eachPageAnnots(xt, root, func(_ types.Dict, raw types.Object, nr int) {
 		for _, a := range derefArray(xt, raw) {
 			if ir, ok := a.(types.IndirectRef); ok {
-				onPage[ir.ObjectNumber.Value()] = true
+				if _, seen := onPage[ir.ObjectNumber.Value()]; !seen {
+					onPage[ir.ObjectNumber.Value()] = nr
+				}
 			}
 		}
 	}); err != nil {
@@ -123,18 +137,68 @@ func formFields(xt *model.XRefTable) ([]formField, error) {
 		default:
 			f.value = true // a stream (rich text) or anything else that is there
 		}
+		f.name = qualifiedName(xt, d)
+		f.tooltip = textEntry(xt, d, "TU")
 		// Its widgets: the node itself where field and widget are one dictionary, else its kids.
-		if ir, ok := o.(types.IndirectRef); ok && onPage[ir.ObjectNumber.Value()] {
-			f.onPage = true
-		}
-		for _, k := range kids {
-			if ir, ok := k.(types.IndirectRef); ok && onPage[ir.ObjectNumber.Value()] {
-				f.onPage = true
+		if ir, ok := o.(types.IndirectRef); ok {
+			if pg, on := onPage[ir.ObjectNumber.Value()]; on {
+				f.widgets = append(f.widgets, fieldWidget{pg, widgetRect(xt, d)})
 			}
 		}
+		for _, k := range kids {
+			if ir, ok := k.(types.IndirectRef); ok {
+				if pg, on := onPage[ir.ObjectNumber.Value()]; on {
+					f.widgets = append(f.widgets, fieldWidget{pg, widgetRect(xt, derefDict(xt, k))})
+				}
+			}
+		}
+		f.onPage = len(f.widgets) > 0
 		out = append(out, f)
 	})
 	return out, nil
+}
+
+// qualifiedName is the name a fill matches a field by: the /T of d and of each ancestor that has a non-empty one,
+// outermost first, joined with "." — pdfcpu's own (`form.fullyQualifiedFieldNameDepth`), which the export emits and
+// the fill reads back. Bounded as the tree walk is: a /Parent chain is the file's to write.
+func qualifiedName(xt *model.XRefTable, d types.Dict) string {
+	var parts []string
+	for hop := 0; hop < 50 && d != nil; hop++ {
+		if t := textEntry(xt, d, "T"); t != "" {
+			parts = append([]string{t}, parts...)
+		}
+		d = derefDict(xt, d["Parent"])
+	}
+	return strings.Join(parts, ".")
+}
+
+// textEntry is d[key] read as a PDF text string (PDFDocEncoding or UTF-16), "" where absent or not one.
+func textEntry(xt *model.XRefTable, d types.Dict, key string) string {
+	if d == nil || d[key] == nil {
+		return ""
+	}
+	s, err := xt.DereferenceStringOrHexLiteral(d[key], model.V10, nil)
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// widgetRect is d's /Rect as [llx lly urx ury], whichever corners the file gave first; zero where it is not four numbers.
+func widgetRect(xt *model.XRefTable, d types.Dict) (r [4]float64) {
+	a := derefArray(xt, d["Rect"])
+	if len(a) != 4 {
+		return r
+	}
+	var c [4]float64
+	for i, o := range a {
+		v, ok := pdfNumber(xt, o)
+		if !ok {
+			return r
+		}
+		c[i] = v
+	}
+	return [4]float64{min(c[0], c[2]), min(c[1], c[3]), max(c[0], c[2]), max(c[1], c[3])}
 }
 
 // resolved is o dereferenced, or nil where it does not resolve.

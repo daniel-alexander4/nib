@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/png"
@@ -620,6 +621,50 @@ func TestExtractReachesEachFileByItsID(t *testing.T) {
 	if listing, code := captureStdout(t, func() int { return cmdAttachments([]string{in}) }); code != 0 ||
 		!strings.Contains(listing, "[id: k2]") {
 		t.Errorf("the listing does not show the id --extract needs: %q", listing)
+	}
+}
+
+// TestFields lists a form's fields, checks the JSON carries the name, type, page and rectangle `nib fill` and a
+// caller need, that no value is printed, and that a listed name is one a fill takes.
+func TestFields(t *testing.T) {
+	dir := t.TempDir()
+	formPath := fillTestForm(t, dir)
+
+	out, code := captureStdout(t, func() int { return cmdFields([]string{formPath, "--json"}) })
+	if code != 0 {
+		t.Fatalf("fields --json exit = %d (out %q)", code, out)
+	}
+	var got []pdfops.FormFieldInfo
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("fields --json is not JSON: %v\n%s", err, out)
+	}
+	if len(got) != 1 || got[0].Name != "fullName" || got[0].Type != "text" || !got[0].Fillable || !got[0].OnPage ||
+		len(got[0].Widgets) != 1 || got[0].Widgets[0].Page != 1 || got[0].Widgets[0].Rect[0] != 50 || got[0].Widgets[0].Rect[1] != 50 || got[0].Widgets[0].Rect[2] != 250 || got[0].Widgets[0].Rect[3] <= 50 {
+		t.Fatalf("fields --json = %+v", got)
+	}
+
+	// The name it lists is the name a fill takes, and the listing after the fill shows no value.
+	jsonPath := filepath.Join(dir, "d.json")
+	if err := os.WriteFile(jsonPath, []byte(`{"forms":[{"textfield":[{"name":"`+got[0].Name+`","value":"Jane Typed"}]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	filled := filepath.Join(dir, "filled.pdf")
+	if c := cmdFill([]string{formPath, "--data", jsonPath, "-o", filled}); c != 0 {
+		t.Fatalf("fill by a listed name exit = %d", c)
+	}
+	after, code := captureStdout(t, func() int { return cmdFields([]string{filled, "--json"}) })
+	if code != 0 || strings.Contains(after, "Jane Typed") {
+		t.Fatalf("fields of a filled form: code=%d, and it must not carry the value: %s", code, after)
+	}
+
+	if text, code := captureStdout(t, func() int { return cmdFields([]string{formPath}) }); code != 0 || !strings.Contains(text, "fullName\ttext\tp 1\t-") {
+		t.Errorf("fields text = %q (code %d)", text, code)
+	}
+
+	// A document with no form lists nothing and exits 0.
+	plain := writePDF(t, dir, "plain.pdf", "x")
+	if out, code := captureStdout(t, func() int { return cmdFields([]string{plain, "--json"}) }); code != 0 || strings.TrimSpace(out) != "[]" {
+		t.Errorf("fields --json on a form-less PDF = %q (code %d), want []", out, code)
 	}
 }
 

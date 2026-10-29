@@ -124,6 +124,7 @@ var commands = map[string]func([]string) int{
 	"pagelabels":  cmdPagelabels,
 	"fill":        cmdFill,
 	"export-xfdf": cmdExportXFDF,
+	"fields":      cmdFields,
 	"pdfa":        cmdPDFA,
 	"ua":          cmdUA,
 	"tag":         cmdTag,
@@ -172,6 +173,7 @@ These subcommands run headlessly, without a browser:
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
   nib fill IN --data D            fill a form from JSON/XFDF (-o OUT), or mail-merge a CSV (--out-dir DIR)
   nib export-xfdf IN -o OUT        export a form's field data as XFDF (Acrobat/Foxit interchange)
+  nib fields IN [--json]          list a form's fields: name, type, tooltip, page, rectangle (no values)
   nib attachments IN [--json]     list embedded files (--extract ID|NAME / --add FILE)
   nib outline IN [--json]         list the document's bookmark outline
   nib discover [--seconds N]      report what link-local peer discovery can see here
