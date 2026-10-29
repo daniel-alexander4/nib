@@ -66,7 +66,9 @@ func TestSplitRegionsReadsThePageOnce(t *testing.T) {
 	// One read of this page allocates ~5 MB (measured: a read per region added 78 MB over 15 regions), and the
 	// fifteen regions past the first cost ~14 MB when the page is read once, whatever the image's size; the old
 	// one-at-a-time merge cost ~120 MB on a page a tenth this size. Eight reads' worth separates them.
-	if marginal := alloc16 - alloc1; marginal > uint64(8*len(src)) {
+	// Signed: the first call carries a one-time cost of its own, so the sixteen-region run can allocate LESS than the
+	// one-region run, and an unsigned difference wrapped to 1.8e19 and failed a correct run (P02.S05 gate, 2 of 6).
+	if marginal := int64(alloc16) - int64(alloc1); marginal > int64(8*len(src)) {
 		t.Errorf("15 more regions allocated %d B over one region's %d B, on a %d B page — the page is read once per region", marginal, alloc1, len(src))
 	}
 }
