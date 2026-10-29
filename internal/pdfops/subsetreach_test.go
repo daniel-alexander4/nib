@@ -2,14 +2,15 @@ package pdfops
 
 import (
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfread"
 )
 
 // `/pending 709` — the P08 phase-close review's page-selection findings (R2-3..R2-13): what a kept
@@ -244,25 +245,11 @@ func fieldDAGSigAtTheTop(k, levels int) []byte {
 // find this signature, so a regression in it goes red here, which it could not in
 // TestASignatureAtTheEndOfAFieldDAGIsStillErased.
 func TestASignatureInheritedDownAFieldDAGIsErasedByTheFieldWalk(t *testing.T) {
-	out, err := RemovePages(fieldDAGSigAtTheTop(4, 12), []string{"2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, rerr := api.ReadValidateAndOptimize(context.Background(), bytes.NewReader(out), subsetConf(), nil)
-	if rerr != nil {
-		t.Fatal(rerr)
-	}
-	root, _ := ctx.XRefTable.Catalog()
-	if form := derefDict(ctx.XRefTable, root["AcroForm"]); form != nil {
-		eachFormField(ctx.XRefTable, form, func(_ types.Object, d types.Dict) {
-			if nameVal(d, "FT") == "Sig" {
-				t.Error("a signature field whose /FT is inherited from a field of a 12-level field DAG " +
-					"survived a page operation")
-			}
-		})
-	}
-	if pages := keptAnnots(t, out); len(pages) != 1 || len(pages[0]) != 0 {
-		t.Errorf("the signature's widget is still on the kept page: %v", pages)
+	// pdfcpu v0.16.2 refuses a field named twice before the walk runs (see TestASignatureAtTheEndOfAFieldDAGIsStillErased),
+	// so a page operation over this document is the named refusal and erases nothing it was not asked to.
+	_, err := RemovePages(fieldDAGSigAtTheTop(4, 12), []string{"2"})
+	if !errors.Is(err, pdfread.ErrNodeNamedTwice) {
+		t.Fatalf("a page operation over a 12-level field DAG with an inherited /FT: %v — want pdfread.ErrNodeNamedTwice", err)
 	}
 }
 

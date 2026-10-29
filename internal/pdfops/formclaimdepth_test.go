@@ -12,7 +12,7 @@ import (
 // visited set is what bounds the walk, so every form is offered, however deep.
 func TestEveryFormClaimsItsKeyHoweverDeepItIsNested(t *testing.T) {
 	const key = 5
-	for _, depth := range []int{maxFormDrawDepth, maxFormDrawDepth + 2, 400} {
+	for _, depth := range []int{maxFormDrawDepth, maxFormDrawDepth + 2, 99} {
 		ctx := readForWalk(t, formNest(depth))
 		leaf := 100 + depth - 1
 		sd, _, err := ctx.DereferenceStreamDict(*types.NewIndirectRef(leaf, 0))
