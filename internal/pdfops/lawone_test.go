@@ -484,10 +484,6 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 		docs, pages, held, reaching, repaired := 0, 0, 0, 0, 0
 		for _, doc := range corp.docs {
 			before, err := ContentDigest(doc.pdf)
-			beforeLegacy, errLegacy := ContentDigestAt(doc.pdf, legacyContentDigestVersion)
-			if err == nil {
-				err = errLegacy
-			}
 			if err != nil {
 				t.Logf("%s / %s: no digest (%v)", corp.name, doc.name, err)
 				continue
@@ -525,10 +521,6 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 				continue
 			}
 			after, err := ContentDigest(out)
-			afterLegacy, errLegacy := ContentDigestAt(out, legacyContentDigestVersion)
-			if err == nil {
-				err = errLegacy
-			}
 			if err != nil {
 				t.Errorf("%s / %s: the rewritten document has no digest: %v", corp.name, doc.name, err)
 				continue
@@ -543,11 +535,10 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 			if separated > 0 {
 				repaired++
 			}
-			if after != before || afterLegacy != beforeLegacy {
-				t.Errorf("%s / %s: a no-op walk of %d page(s) moved ContentDigest — rule %d %s → %s, rule %d %s → %s "+
+			if after != before {
+				t.Errorf("%s / %s: a no-op walk of %d page(s) moved ContentDigest — rule %d %s → %s "+
 					"(annotations reach a page: %v; fused joins repaired: %d)", corp.name, doc.name, rewritten,
-					ContentDigestVersion, before, after, legacyContentDigestVersion, beforeLegacy, afterLegacy,
-					reaches, separated)
+					ContentDigestVersion, before, after, reaches, separated)
 			} else {
 				held++
 			}
@@ -562,9 +553,9 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 		if held == 0 {
 			t.Errorf("%s: no document held its digest — the law was never asserted", corp.name)
 		}
-		t.Logf("%s: %d documents, %d pages rewritten through setPageContent; rules %d and %d held on %d, of which %d "+
+		t.Logf("%s: %d documents, %d pages rewritten through setPageContent; rule %d held on %d, of which %d "+
 			"have annotations reaching a page (/pending 720) and %d a repaired join (/pending 718)",
-			corp.name, docs, pages, legacyContentDigestVersion, ContentDigestVersion, held, reaching, repaired)
+			corp.name, docs, pages, ContentDigestVersion, held, reaching, repaired)
 	}
 	if len(absent) > 0 {
 		t.Logf("NOTE (a narrower population, not a pass over it): %s", strings.Join(absent, "; "))

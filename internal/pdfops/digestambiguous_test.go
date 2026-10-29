@@ -129,9 +129,6 @@ func TestContentDigestHashesAMalformedTreeTheTwoReadingsAgreeOn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ContentDigest refused a tree both readings order the same way: %v", err)
 			}
-			if _, err := ContentDigestAt(pdf, legacyContentDigestVersion); err != nil {
-				t.Fatalf("rule %d refused a tree rule %d hashed: %v", legacyContentDigestVersion, ContentDigestVersion, err)
-			}
 			// The reference walk is the current rule's body, so the value it pins is the current rule's.
 			if want, err := referenceContentDigest(pdf); err != nil || reportDigest(pdf) != want {
 				t.Errorf("digest %s, reference walk %s (%v) — the value moved", short16(reportDigest(pdf)), short16(want), err)

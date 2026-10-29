@@ -772,6 +772,13 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time, telling *session) e
 	if err != nil {
 		return fmt.Errorf("this document's ceremony record could not be checked: %w", err)
 	}
+	// **A ceremony begun under a retired digest rule is not continued on this build** (D1, P02.S08). The record check
+	// above accepts one, since a finished ceremony's roster verdict does not need the digest; the hash below runs on
+	// hop 1 only; so without this line hop 2 of a rule-6 ceremony would be signed on a build that cannot compute its
+	// digest. First, so the answer is the version difference and not whatever else the old record fails to match.
+	if err := ceremony.RequireComputableRule(rec); err != nil {
+		return err
+	}
 	// **The signing party's OWN deadline check, with the convener bypassed (P08.S04a, D28).**
 	//
 	// Until this line the only `Expires`-vs-`now` comparison a signer ran was `Record.Verify`'s

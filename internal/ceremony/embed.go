@@ -135,7 +135,7 @@ func DocumentHash(pdf []byte) (string, error) {
 //
 // A rule this build does not compute is ErrDigestVersion (digestRuleSkew), never a number.
 func DocumentHashFor(pdf []byte, r Record) (string, error) {
-	if err := digestRuleSkew(r); err != nil {
+	if err := digestRuleComputable(r); err != nil {
 		return "", err
 	}
 	return pdfops.ContentDigestAt(pdf, r.DigestVersion)
@@ -307,11 +307,27 @@ func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 // a comparison across rules produces a tampering sentence for a version difference — /pending 725's
 // bump to rule 4 would otherwise have reported every stored unsigned mirror as damaged.
 func digestRuleSkew(r Record) error {
+	if pdfops.ContentDigestRuleReadable(r.DigestVersion) || pdfops.ContentDigestRuleRetired(r.DigestVersion) {
+		return nil
+	}
+	return digestSkew{rule: r.DigestVersion}
+}
+
+// digestRuleComputable is the door for a site that is about to COMPUTE a digest from document bytes
+// (`DocumentHashFor`, and `readMirrorAt` for a mirror it is not reading to end): nil only for the current rule. A
+// retired rule is the skew "older-nib" (wire code 18), never a mismatch, because rules 5 and 6 are not computable by
+// this build (D1, P02.S08). `digestRuleSkew` above is the record-level question and accepts a retired rule.
+func digestRuleComputable(r Record) error {
 	if pdfops.ContentDigestRuleReadable(r.DigestVersion) {
 		return nil
 	}
 	return digestSkew{rule: r.DigestVersion}
 }
+
+// RequireComputableRule is digestRuleComputable for a caller outside the package that CONTINUES a ceremony without
+// necessarily computing a digest: the arrival gate checks the hash on hop 1 only, and a retired rule's record
+// (CheckRecord accepts it) must not be signed further on hop 2 or later because no hash was asked for (D1, P02.S08).
+func RequireComputableRule(r Record) error { return digestRuleComputable(r) }
 
 // digestSkew is the skew, with its DIRECTION (ADR-143, /pending 691).
 //
