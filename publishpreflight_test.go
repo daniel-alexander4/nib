@@ -327,6 +327,37 @@ esac
 		}
 	}
 
+	// A version with a hand-written note is published with it, and one without keeps the one-line default
+	// (ADR-175: the flag-day sentence has to reach the release page, not only the update popup).
+	for _, c := range []struct {
+		name, want string
+		write      bool
+	}{
+		{"no note file", "--notes Nib 1.2.3", false},
+		{"a note file", "--notes-file docs/release-notes/1.2.3.md", true},
+	} {
+		set(map[string]string{"latest": older})
+		os.RemoveAll(filepath.Join(dir, "docs"))
+		if c.write {
+			if err := os.MkdirAll(filepath.Join(dir, "docs", "release-notes"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "docs", "release-notes", "1.2.3.md"), []byte("flag day\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command(bash, script, "1.2.3", "main", "asset.bin")
+		cmd.Dir, cmd.Env = dir, append(hermetic, "GH_STATE="+state, "PATH="+stubs)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", c.name, err, out)
+		}
+		logb, _ := os.ReadFile(filepath.Join(state, "log"))
+		if !strings.Contains(string(logb), "release create "+tag) || !strings.Contains(string(logb), c.want) {
+			t.Errorf("%s: gh was not asked to create the release with %q:\n%s", c.name, c.want, logb)
+		}
+	}
+	os.RemoveAll(filepath.Join(dir, "docs"))
+
 	// The door: build.sh reaches gh's release commands only through this script, and prints no
 	// "published" of its own — its own intent is exactly what the old last line reported.
 	b, err := os.ReadFile("build.sh")

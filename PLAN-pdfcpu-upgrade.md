@@ -397,6 +397,8 @@ release cannot be pulled (`versionLess` offers nothing older): the answer is a f
 party cannot finish one ceremony together; the pre-port side sees a dial refusal naming no cause (the post-port side sees `older-nib`). "or convene it
 again" is dropped from the sentence for a document that already carries a signature.
 
+**P03 pre-publish — built 2026-10-29, v2.4.0 (Dan: "build the popup warning then publish"; ADR-175, /pending 921).** The update check counts the ceremonies that have not ended (`openCeremonies`, one count with `hasLiveCeremony`) and sends it only across the flag day (`crossesCeremonyFlagDay`, below 2.3.0 to at or above); the download popup and the pill say it and ask nothing (ADR-102); `docs/release-notes/2.4.0.md` carries the flag-day sentence, the build to finish on and the dropped "convene again" for a signed document, and `build/publish-release.sh` publishes a version's notes file. Tests red under six single-condition mutants (the gate, its upper bound, the count, the hidden toggle, the singular, the pill text) and under the notes-file branch dropped. **Found while building it, and the plan's pin was wrong about it:** the warning lives in the build that is RUNNING, so it never reaches a machine crossing 2.3.0 from 2.2.x — the only machines the flag day strands (the last release published is v2.2.0). For this crossing the release page is the only channel; the popup is for the next boundary (ADR-175 "Declared").
+
 
 ---
 

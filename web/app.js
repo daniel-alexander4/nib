@@ -143,7 +143,7 @@ const els = {
   encryptPw2: $('encryptPw2'), encryptGo: $('encryptGo'), encryptCancel: $('encryptCancel'), encryptError: $('encryptError'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
-  downloadModal: $('downloadModal'), dlWhat: $('dlWhat'), dlWhere: $('dlWhere'),
+  downloadModal: $('downloadModal'), dlWhat: $('dlWhat'), dlCeremonies: $('dlCeremonies'), dlWhere: $('dlWhere'),
   dlProgress: $('dlProgress'), dlError: $('dlError'), dlCancel: $('dlCancel'),
   dlReveal: $('dlReveal'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
@@ -919,12 +919,26 @@ function showVersionBadge(version) {
 //
 // The no-asset case is unchanged: no build matches this OS/arch, so there is nothing to download
 // and the release page opens in a tab.
+// ceremonyUpdateWarning is the sentence for an update that strands a ceremony that has not ended
+// (ADR-175), or '' when none is. The server sends `openCeremonies` only where the update crosses the
+// digest flag day (ADR-174 §1), so this never says it of an update that does not. A count, no ids.
+function ceremonyUpdateWarning(d) {
+  const n = Number(d.openCeremonies) || 0;
+  if (n < 1) return '';
+  const what = n === 1 ? 'A ceremony on this computer has not ended' : `${n} ceremonies on this computer have not ended`;
+  return `${what}. Nib v${d.latest} checks documents in a way v${d.current} does not accept, so neither version can finish a ceremony `
+    + `the other began. Finish ${n === 1 ? 'it' : 'them'} on v${d.current} before installing v${d.latest}: downloading does not `
+    + `replace v${d.current}, installing does.`;
+}
+
 async function startDownload(d) {
   if (!d.downloadUrl) {
     window.open(d.url, '_blank', 'noopener');
     return;
   }
   els.dlWhat.textContent = `Nib v${d.latest} for this computer. You have v${d.current}.`;
+  els.dlCeremonies.textContent = ceremonyUpdateWarning(d);
+  els.dlCeremonies.hidden = !els.dlCeremonies.textContent;
   els.dlWhere.textContent = '';
   els.dlProgress.textContent = 'Starting…';
   dlShownText = 'Starting…';
@@ -1036,7 +1050,8 @@ async function runUpdateCheck(auto) {
   // version. Same reason the up-to-date and unknown states show it too.
   els.updatePill.classList.remove('current', 'latest', 'unknown');
   els.updateGet.textContent = `v${d.current}`;
-  describeButton(els.updateGet, `Nib v${d.latest} is available — you have v${d.current}. Click to download`);
+  describeButton(els.updateGet, `Nib v${d.latest} is available — you have v${d.current}. Click to download`
+    + (ceremonyUpdateWarning(d) ? ` — ${ceremonyUpdateWarning(d)}` : ''));
   els.updatePill.hidden = false;
   // **The dialog replaces the confirm() for this path (ADR-039).** v1.95.0 chose a native
   // `confirm()` on the rule that custom modals are for structured input only — and a yes/no was all

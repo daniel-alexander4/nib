@@ -123,7 +123,9 @@ fi
 # leave the page saying Nib has quit and closed — each its own boot, because quitting is for the page's whole life.
 # 112 since v2.2.0 (saveas.test.mjs): Save As offers the file's own name and writes an unchanged document as it
 # arrived — its own boot, because its open route answers a pathless or flagged document on request.
-Nib_expect_files=112
+# 113 since v2.4.0 (updateceremonies.test.mjs): the download popup says how many ceremonies an update that crosses the digest
+# flag day strands (ADR-175).
+Nib_expect_files=113
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

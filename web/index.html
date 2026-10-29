@@ -2072,6 +2072,9 @@
     <div class="sigcard">
       <h3>Nib update</h3>
       <p id="dlWhat" class="libhint"></p>
+      <!-- ADR-175: said only when this update strands a ceremony that has not ended. It informs and asks
+           nothing — the download has already started (ADR-102) and replaces nothing. -->
+      <p id="dlCeremonies" class="cerwarn" role="status" hidden></p>
       <!-- "Downloading to <folder>" — written once per download, when the server has said where. -->
       <p id="dlWhere" role="status" aria-live="polite"></p>
       <!-- role="status" + aria-live="polite", and the client dedupes on rendered text before
