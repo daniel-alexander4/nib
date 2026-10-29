@@ -300,30 +300,8 @@ const maxStandInWidths = 1 << 16
 // indirect reference not (its target is a starting point of its own), nesting bounded by maxAsideNesting.
 func entriesTheValidatorRefuses(ctx *model.Context) []asideEntry {
 	var found []asideEntry
-	intOf := func(o types.Object) (int, bool) {
-		r, err := ctx.Dereference(o)
-		if err != nil {
-			return 0, false
-		}
-		i, ok := r.(types.Integer)
-		return int(i), ok
-	}
-	nameIs := func(o types.Object, want ...string) bool {
-		r, err := ctx.Dereference(o)
-		if err != nil {
-			return false
-		}
-		n, ok := r.(types.Name)
-		if !ok {
-			return false
-		}
-		for _, w := range want {
-			if string(n) == w {
-				return true
-			}
-		}
-		return false
-	}
+	intOf := func(o types.Object) (int, bool) { return contextInt(ctx, o) }
+	nameIs := func(o types.Object, want ...string) bool { return contextNameIs(ctx, o, want...) }
 	check := func(v types.Dict) {
 		// Simple fonts.
 		if nameIs(v["Type"], "Font") && nameIs(v["Subtype"], "TrueType", "Type1", "MMType1") {

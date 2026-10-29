@@ -491,3 +491,32 @@ func (p *population) again(err, what string) (bool, string) {
 // finish marks the build returned. Called on RETURN only — never deferred, since a deferred call runs while a panic
 // unwinds too. A return that records an error need not call it: the error is already what `again` answers.
 func (p *population) finish() { p.finished = true }
+
+// contextInt and contextNameIs are the door's two reads for the code that runs BEFORE a Document exists (the
+// set-aside for the validator, which holds only the pdfcpu context): a value is resolved through
+// `ctx.Dereference` and then read, so an indirect one is read as what it names.
+func contextInt(ctx *model.Context, o types.Object) (int, bool) {
+	r, err := ctx.Dereference(o)
+	if err != nil {
+		return 0, false
+	}
+	i, ok := r.(types.Integer)
+	return int(i), ok
+}
+
+func contextNameIs(ctx *model.Context, o types.Object, want ...string) bool {
+	r, err := ctx.Dereference(o)
+	if err != nil {
+		return false
+	}
+	n, ok := r.(types.Name)
+	if !ok {
+		return false
+	}
+	for _, w := range want {
+		if string(n) == w {
+			return true
+		}
+	}
+	return false
+}
