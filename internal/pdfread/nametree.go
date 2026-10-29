@@ -131,6 +131,14 @@ type nameTreePair struct {
 //
 // `ctx.Dereference` and a type assertion, never a typed dereference: this runs before the validator (ADR-116).
 func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, depth int, whole bool) {
+	pairs, depth, whole, _ = walkNameTreeShared(ctx, root)
+	return pairs, depth, whole
+}
+
+// walkNameTreeShared is walkNameTree that also says whether a node was reached twice, a loop in `/Kids` or a kid
+// two parents share: the shape pdfcpu v0.16.2's validator refuses the whole document over (`ErrNameTreeCycle`,
+// `ErrNameTreeDuplicate`, `model/recursion.go:58-62`).
+func walkNameTreeShared(ctx *model.Context, root types.Dict) (pairs []nameTreePair, depth int, whole, shared bool) {
 	type frame struct {
 		d     types.Dict
 		depth int
@@ -162,7 +170,7 @@ func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, de
 				if ref, isRef := kids[i].(types.IndirectRef); isRef {
 					n := ref.ObjectNumber.Value()
 					if seen[n] {
-						whole = false
+						whole, shared = false, true
 						continue
 					}
 					seen[n] = true
@@ -188,43 +196,55 @@ func walkNameTree(ctx *model.Context, root types.Dict) (pairs []nameTreePair, de
 				continue
 			}
 			if len(pairs) >= maxNameTreeNames {
-				return pairs, depth, false
+				return pairs, depth, false, shared
 			}
 			pairs = append(pairs, nameTreePair{*s, names[i], names[i+1]})
 		}
 	}
-	return pairs, depth, whole
+	return pairs, depth, whole, shared
 }
 
 // nameTreeRead is what nib's own walk made of one catalog name tree before validation.
 type nameTreeRead struct {
 	names  int  // names the walk counted
 	capped bool // the walk stopped at maxNameTreeNames, so names is not the tree's count
+	// aside is set when the tree was taken out of the validator's sight (settleNameTrees): the validator now refuses
+	// the whole DOCUMENT over a looped, shared or over-deep tree, so it never sees one, and the tree is unread.
+	aside bool
 }
 
 // settleNameTrees walks every catalog name tree of ctx BEFORE validation and returns what it counted, by tree. A
 // tree read whole that nests deeper than pdfcpu's validator follows is rewritten flat into its own root dictionary
 // — every key and value as the file wrote them, in key order — so the validator reads all of it.
 //
+// A tree the validator would refuse the whole document over — a node reached twice, or nested past the limit with
+// something the walk could not vouch for (`validate/tree_traversal.go:76`, v0.16.2: fatal even in relaxed mode, where
+// the release before dropped the tree and read on) — is taken out of the catalog's `/Names` for the validation and
+// put back by the returned function, and recorded as `aside`: it is unread, so every reader answers `ErrNameTreeUnread`
+// and the write refuses, exactly as for a tree the validator dropped (ADR-164, ADR-171). The walk that decides this is
+// iterative and visited-set bounded, which is what a carry of a hostile shape needs (D4 pin 3).
+//
 // Nothing is returned for a document with no `/Names`, which is most documents: the read pays one catalog lookup.
-func settleNameTrees(ctx *model.Context) map[string]nameTreeRead {
+func settleNameTrees(ctx *model.Context) (map[string]nameTreeRead, func()) {
+	noop := func() {}
 	if ctx == nil || ctx.XRefTable == nil {
-		return nil
+		return nil, noop
 	}
 	root, err := ctx.XRefTable.Catalog()
 	if err != nil || root == nil {
-		return nil
+		return nil, noop
 	}
 	o, err := ctx.Dereference(root["Names"])
 	if err != nil {
-		return nil
+		return nil, noop
 	}
 	names, ok := o.(types.Dict)
 	if !ok || len(names) == 0 {
-		return nil
+		return nil, noop
 	}
 	limit := ctx.XRefTable.MaxRecursionDepth()
 	out := map[string]nameTreeRead{}
+	var put []func()
 	for _, tree := range catalogNameTrees {
 		to, err := ctx.Dereference(names[tree])
 		if err != nil {
@@ -234,14 +254,25 @@ func settleNameTrees(ctx *model.Context) map[string]nameTreeRead {
 		if !ok || len(td) == 0 {
 			continue
 		}
-		pairs, depth, whole := walkNameTree(ctx, td)
-		out[tree] = nameTreeRead{names: len(pairs), capped: len(pairs) >= maxNameTreeNames && !whole}
+		pairs, depth, whole, shared := walkNameTreeShared(ctx, td)
+		r := nameTreeRead{names: len(pairs), capped: len(pairs) >= maxNameTreeNames && !whole}
+		if shared || (!whole && depth > limit) {
+			r.aside = true
+			orig := names[tree]
+			delete(names, tree)
+			put = append(put, func() { names[tree] = orig })
+		}
+		out[tree] = r
 		if !whole || depth <= limit {
 			continue
 		}
 		flattenNameTree(td, pairs)
 	}
-	return out
+	return out, func() {
+		for _, p := range put {
+			p()
+		}
+	}
 }
 
 // flattenNameTree rewrites the tree under root as one leaf: every pair in key order in the root's own `/Names`,
@@ -319,7 +350,7 @@ func rememberNameTrees(ctx *model.Context, read map[string]nameTreeRead) {
 				return nil
 			})
 		}
-		if r.capped || kept < r.names {
+		if r.aside || r.capped || kept < r.names {
 			if lost == nil {
 				lost = map[string]bool{}
 			}
