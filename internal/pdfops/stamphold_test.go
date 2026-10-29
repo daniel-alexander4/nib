@@ -210,7 +210,8 @@ func TestStampingWithTheContentHeldWritesWhatPdfcpusOwnStampWrites(t *testing.T)
 					t.Fatalf("held: tagged %v, %v; as pdfcpu stamps it: tagged %v, %v", tagged, err, dTagged, derr)
 				}
 				if err != nil {
-					if fmt.Sprint(err) != fmt.Sprint(derr) {
+					// v0.16 wraps the refusal in where it happened ("page 1, watermark 0: update contents: …"); the REASON is the tail.
+					if !strings.HasSuffix(fmt.Sprint(derr), fmt.Sprint(err)) {
 						t.Errorf("refused with %q held, and %q as pdfcpu stamps it", err, derr)
 					}
 					sawRefused = true

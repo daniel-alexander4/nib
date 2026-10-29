@@ -1,6 +1,7 @@
 package pdfread_test
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,12 +15,16 @@ import (
 	"nib/internal/testpdf"
 )
 
-// pdfcpuFixFree is pdfcpu's own, unexported `fixReferencesToFreeObjects` (optimize.go:1526, v0.13.0) — the recursive
-// pass `pdfread.fixFreeReferences` restates. Reached by name so the two can be run side by side on one document; a
-// pdfcpu that renames it fails this file's link, which is the moment to re-read the pass.
+// pdfcpuFixFree is pdfcpu's own, unexported `fixReferencesToFreeObjects` (optimize.go:1722, v0.16.2) — the recursive
+// pass `pdfread.fixFreeReferences` restates. Reached by name so the two can be run side by side on one document.
+//
+// **A renamed function fails this file's link; a CHANGED SIGNATURE does not** — a linkname declaration is not checked
+// against its target's type, so the v0.13 one-parameter form linked against v0.16's `(c context.Context, ctx
+// *model.Context)` and read a `*model.Context` as an interface (a nil dereference inside pdfcpu, no link error).
+// The parameters below are v0.16.2's, read at optimize.go:1722; a bump re-reads them (P02.S03a).
 //
 //go:linkname pdfcpuFixFree github.com/pdfcpu/pdfcpu/pkg/pdfcpu.fixReferencesToFreeObjects
-func pdfcpuFixFree(ctx *model.Context) error
+func pdfcpuFixFree(c context.Context, ctx *model.Context) error
 
 // contextState is everything the free-reference pass can change, written deterministically: every table entry in
 // number order with each reference by its number, the pass's cache, and the null object it allocated.
@@ -97,7 +102,7 @@ func bothPasses(t *testing.T, pdf []byte) (theirs, ours string, rewrote bool) {
 		return ctx
 	}
 	a, b := read(), read()
-	if err := pdfcpuFixFree(a); err != nil {
+	if err := pdfcpuFixFree(context.Background(), a); err != nil {
 		t.Fatalf("pdfcpu's pass: %v", err)
 	}
 	pdfread.FixFreeReferences(b)
