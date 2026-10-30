@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
-	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -33,9 +32,10 @@ import (
 //     14, 318 ms at 18 — doubling per level; twenty forms whose direct `/Resources` all name one shared
 //     `/XObject` dictionary 2.0 s from 5.9 KB, and forty did not finish in four minutes.
 //
-// And two shapes it does not survive at all, which `Unaffordable` names the same way (`/pending 867`): a loop under a
-// font or an image it could merge into another (`duplicateLoop` — a fatal stack overflow), and an XObject whose
-// `/Subtype` is a reference (a nil dereference).
+// (A loop under a font or an image it could merge, and an XObject whose `/Subtype` is a reference, were refused here
+// too — `/pending 867` — because v0.13.0's duplicate walk marked nothing and its pass dereferenced a nil. v0.16.2 marks
+// each object before it descends and stops at `MaxRecursionDepth` (optimize.go:1167), and asks no `/Subtype` of a
+// duplicate candidate; both were measured to read, 2026-10-30, and the refusals are gone: ADR-177.)
 //
 // **Past either budget the pass is SKIPPED, never interrupted** — pdfcpu takes no context and a goroutine
 // abandoned mid-pass keeps burning and mutating the context. What the pass buys is deduplication (equal
@@ -189,10 +189,6 @@ func optimize(ctx *model.Context, strict bool) error {
 		rememberOptimizeSkipped(ctx)
 		return nil
 	}
-	if ctx.Conf != nil && ctx.Conf.OptimizeResourceDicts {
-		// The step walks the page tree from its root once per page (`pagebalance.go`, `/pending 825`).
-		defer balancePageTreeForPass(ctx)()
-	}
 	freeReferencePass(ctx)
 	return api.OptimizeContext(context.Background(), ctx)
 }
@@ -314,15 +310,6 @@ func Unaffordable(ctx *model.Context) string {
 				"walks every one", maxOptimizeWalk)
 		}
 	}
-	if e.unnamed != 0 {
-		// pdfcpu's relaxed validator reads `/Subtype 5 0 R` through its reference and passes it; the pass then asks the
-		// dictionary for a NAME and dereferences the nil it gets (`*sd.Subtype()`, optimize.go:697 and :801, v0.13.0; no such call in v0.16.2's optimize.go — grepped, not re-run) —
-		// a runtime panic, which `fault.Catch` hands on (it holds pdfcpu's own `fault.Fail` and nothing else). Two SHA-1
-		// collision PDFs in the Go module cache are written that way — sha1cd's shattered-1.pdf and -2.pdf, the 2 of
-		// its 1,577 PDFs that panicked (/pending 867).
-		return fmt.Sprintf("the /Subtype of its XObject in object %d is not written as a name in the object itself, "+
-			"and the optimizer fails on that", e.unnamed)
-	}
 	units := e.compareUnits()
 	if e.tooDeep {
 		return fmt.Sprintf("its form XObjects reach a chain of objects more than %d deep, and the optimizer "+
@@ -332,183 +319,7 @@ func Unaffordable(ctx *model.Context) string {
 		return fmt.Sprintf("comparing its form XObjects for duplicates would take more than %d steps "+
 			"(forms of one length that differ deep inside their resources)", maxOptimizeCompare)
 	}
-	if why := duplicateLoop(ctx); why != "" {
-		return why
-	}
 	return contentUnaffordable(ctx, pages)
-}
-
-// duplicateLoop says why pdfcpu's pass would never leave a loop under a font or an image, or "" — /pending 867.
-//
-// For every font or image the pass finds equal to one it has already registered, it marks everything the duplicate
-// names (`calcRedundantObjects` → `traverseObjectGraphAndMarkDuplicates` → `traverse`, optimize.go:1019-1108, v0.13.0; v0.16.2: :1254, :1195, :1181)
-// and that walk remembered nothing (v0.16.2 stops it at depth 100, :1167 — the refusal below is kept, unmeasured there): a loop under ANY key — one the validator never reads will do — recurses until Go's
-// stack limit, which is fatal and which no recover holds (measured in a throwaway process: two equal fonts naming
-// `10 0 obj [10 0 R]` under /Foo). The door's depth pass bounds chains, not loops, and it must not refuse loops: a
-// Type 3 font that names itself in its own `/Resources /Font` is a real document.
-//
-// So the pass is unaffordable only where that walk could START above a loop: a font or image that reaches one AND
-// that pdfcpu could find equal to another. "Could" is `dupPrint`, which errs towards equal.
-func duplicateLoop(ctx *model.Context) string {
-	looping := loopingFontsAndImages(ctx)
-	if len(looping) == 0 {
-		return ""
-	}
-	type kind struct {
-		font bool
-		h    uint64
-	}
-	p := &dupPrinter{ctx: ctx, memo: map[[2]int]dupPrint{}, raw: map[int]uint64{}}
-	prints := map[int]dupPrint{}
-	same, wild, all := map[kind]int{}, map[bool]int{}, map[bool]int{}
-	for nr, e := range ctx.Table {
-		if e == nil || e.Free || !fontOrImage(e.Object) {
-			continue
-		}
-		font := isFont(e.Object)
-		fp := p.of(nr, font)
-		prints[nr] = fp
-		all[font]++
-		if fp.wild {
-			wild[font]++
-		} else {
-			same[kind{font, fp.h}]++
-		}
-	}
-	sort.Ints(looping)
-	for _, nr := range looping {
-		font, fp := isFont(ctx.Table[nr].Object), prints[nr]
-		if fp.wild && all[font] > 1 || !fp.wild && (wild[font] > 0 || same[kind{font, fp.h}] > 1) {
-			what := "image"
-			if font {
-				what = "font"
-			}
-			return fmt.Sprintf("the %s in object %d names objects that lead back to themselves, another %s in the "+
-				"document could be its duplicate, and the optimizer follows a duplicate's references without end",
-				what, nr, what)
-		}
-	}
-	return ""
-}
-
-// isFont reports whether o is what pdfcpu's pass compares as a font (the other kind `fontOrImage` passes is an image).
-func isFont(o types.Object) bool {
-	switch o := o.(type) {
-	case types.Dict:
-		return nameOf(o, "Type") == "Font"
-	case types.StreamDict:
-		return nameOf(o.Dict, "Type") == "Font"
-	}
-	return false
-}
-
-// dupPrintDepth is how many containers deep `dupPrint` reads. Two fonts that differ at all differ within their own
-// entries, their widths, their descriptor or their glyph procedures; two that agree this far are taken for equal.
-const dupPrintDepth = 4
-
-// dupPrint is a fingerprint two objects share whenever pdfcpu's `model.EqualObjects` (model/equal.go:57, v0.16.2; lines below are from v0.13.0 and unchecked)
-// could call them equal — the comparison that makes one font or image the duplicate of another (optimize.go:291, :544, v0.16.2).
-// It restates that comparison to `dupPrintDepth`, and what it cannot restate it leaves out of the hash:
-//
-//   - a reference is read through, so a value and a reference to an equal value print alike;
-//   - a `/BaseFont`, `/FontName` or `/Name` that is a name prints without its subset prefix (equal.go:153-181, 196-209);
-//   - a stream prints its dictionary and its bytes (equal.go:136-151);
-//   - **a null equals anything**: `if o1 == nil { return o2 != nil, nil }` (equal.go:81-83) — so an object holding a
-//     null, a free or a missing object within the depth is `wild`, and is taken for the equal of every other.
-type dupPrint struct {
-	h    uint64
-	wild bool
-}
-
-type dupPrinter struct {
-	ctx  *model.Context
-	memo map[[2]int]dupPrint // by object number and remaining depth
-	raw  map[int]uint64      // a stream's bytes, hashed once
-}
-
-// of is the fingerprint of the font or image in object nr. A font is compared as its dictionary whatever holds it.
-func (p *dupPrinter) of(nr int, font bool) dupPrint {
-	if font {
-		if sd, ok := p.ctx.Table[nr].Object.(types.StreamDict); ok {
-			return p.print(sd.Dict, dupPrintDepth)
-		}
-	}
-	return p.print(*types.NewIndirectRef(nr, 0), dupPrintDepth)
-}
-
-func (p *dupPrinter) print(o types.Object, depth int) dupPrint {
-	h := fnv.New64a()
-	switch v := o.(type) {
-	case nil:
-		return dupPrint{wild: true}
-	case types.IndirectRef:
-		nr := v.ObjectNumber.Value()
-		if fp, ok := p.memo[[2]int{nr, depth}]; ok {
-			return fp
-		}
-		fp := dupPrint{wild: true}
-		if d, err := p.ctx.Dereference(v); err == nil && d != nil {
-			if _, again := d.(types.IndirectRef); !again {
-				fp = p.print(d, depth)
-				if sd, stream := d.(types.StreamDict); stream && !fp.wild {
-					raw, ok := p.raw[nr]
-					if !ok {
-						hr := fnv.New64a()
-						hr.Write(sd.Raw)
-						raw = hr.Sum64()
-						p.raw[nr] = raw
-					}
-					fmt.Fprintf(h, "%x raw %x", fp.h, raw)
-					fp.h = h.Sum64()
-				}
-			}
-		}
-		p.memo[[2]int{nr, depth}] = fp
-		return fp
-	case types.StreamDict:
-		return p.print(v.Dict, depth)
-	case types.Dict:
-		if depth == 0 {
-			return dupPrint{}
-		}
-		fmt.Fprintf(h, "dict %d", len(v))
-		for _, k := range sortedKeys(v) {
-			if k == "BaseFont" || k == "FontName" || k == "Name" {
-				if d, err := p.ctx.Dereference(v[k]); err == nil {
-					if n, ok := d.(types.Name); ok {
-						s := n.Value()
-						if i := strings.Index(s, "+"); i > 0 {
-							s = s[i+1:]
-						}
-						fmt.Fprintf(h, " /%s fontname %q", k, s)
-						continue
-					}
-				}
-			}
-			c := p.print(v[k], depth-1)
-			if c.wild {
-				return c
-			}
-			fmt.Fprintf(h, " /%s %x", k, c.h)
-		}
-	case types.Array:
-		if depth == 0 {
-			return dupPrint{}
-		}
-		fmt.Fprintf(h, "array %d", len(v))
-		for _, el := range v {
-			c := p.print(el, depth-1)
-			if c.wild {
-				return c
-			}
-			fmt.Fprintf(h, " %x", c.h)
-		}
-	case types.Name, types.StringLiteral, types.HexLiteral, types.Integer, types.Float, types.Boolean:
-		fmt.Fprintf(h, "%T %v", v, v)
-	default:
-		fmt.Fprintf(h, "%T", v) // pdfcpu's comparison returns an error for any other type, and the pass ends
-	}
-	return dupPrint{h: h.Sum64()}
 }
 
 // optimizeEstimate is the state of one estimate.
@@ -520,9 +331,6 @@ type optimizeEstimate struct {
 	// depth is `shape`'s current recursion depth; tooDeep is set once it passed maxShapeDepth, and refuses.
 	depth   int
 	tooDeep bool
-	// unnamed is the first XObject the walk reached whose `/Subtype` is not a name written in its own dictionary
-	// (0: none) — `Unaffordable` says what pdfcpu does with one.
-	unnamed int
 }
 
 // walk mirrors pdfcpu's `optimizeResources` over one resource dictionary (optimize.go:866): indirect XObjects,
@@ -605,9 +413,6 @@ func (e *optimizeEstimate) form(ir types.IndirectRef, vis []int) bool {
 		return true
 	}
 	st := sd.Dict.NameEntry("Subtype")
-	if st == nil && e.unnamed == 0 {
-		e.unnamed = ir.ObjectNumber.Value()
-	}
 	if st == nil || *st != "Form" {
 		return true
 	}
