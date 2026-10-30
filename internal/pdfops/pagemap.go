@@ -92,6 +92,11 @@ type PageMap struct {
 	Widgets []MapWidget `json:"widgets"`
 	// NoText is a page that sets no text at all: a scan, or text drawn as outlines.
 	NoText bool `json:"noText"`
+	// Unread is how many glyphs on the page the map could not give a character: drawn, advanced past and boxed by
+	// their run, but with no text the document lets nib read (a symbolic font with no map, a glyph name the list does
+	// not carry — ADR-176). Zero means every glyph on the page has its text; above zero, the Text below is not all
+	// the page prints, and a caller that needs all of it must not take "no run here" for "nothing printed here".
+	Unread int `json:"unread,omitempty"`
 }
 
 // ruleMax is the thickest a painted piece may be, in points, and still be a ruled line and not a box.
@@ -106,16 +111,29 @@ func MapPage(pdf []byte, page int) (PageMap, error) {
 	if err := pageInDocument(page, ctx.PageCount); err != nil {
 		return PageMap{}, err
 	}
-	pg := pageAt(ctx, nil, page)
-	pr, err := readPageShapes(ctx, pg)
+	return mapPageIn(ctx, pageAt(ctx, nil, page))
+}
+
+// mapPageIn maps pg of the validated ctx — the whole of `MapPage` once the document is open, so a caller that maps
+// every page (`DocumentText`) validates once and not once a page (a call costs 4.8-6.4 s on a 126-page file, nearly all
+// of it the validation: /pending 918). shared is that loop's one walk budget (`readPageRuns`' rule, /pending 715).
+func mapPageIn(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (PageMap, error) {
+	pr, err := readPageShapes(ctx, pg, shared...)
 	if err != nil {
 		return PageMap{}, err
 	}
 	sp := newDisplaySpace(pg)
-	m := PageMap{Page: page, Width: sp.w, Height: sp.h, NoText: pr.noText, Text: []MapText{}, Shapes: []MapShape{}, Widgets: []MapWidget{}}
+	m := PageMap{Page: pg.Nr, Width: sp.w, Height: sp.h, NoText: pr.noText, Text: []MapText{}, Shapes: []MapShape{}, Widgets: []MapWidget{}}
 	for _, r := range pr.runs {
 		if t, ok := mapText(sp, r); ok {
 			m.Text = append(m.Text, t)
+		}
+		if !r.decoded && sp.rect(runBox(r)).onPage() {
+			for _, g := range r.glyphs {
+				if !g.decoded {
+					m.Unread++
+				}
+			}
 		}
 	}
 	overBudget := paintedOverBudget

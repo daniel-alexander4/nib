@@ -1823,3 +1823,95 @@ func TestNibUAStatesTheAgreementFigure(t *testing.T) {
 	}
 	t.Errorf("nib ua's notes %q do not carry the agreement sentence %q", notes, want)
 }
+
+// TestInfoAndText — `nib info` and `nib text` (/pending 924, 925): the geometry and the printed text of every page, as
+// JSON and as lines, read through `pdfops.ListPages` and `pdfops.DocumentText`.
+func TestInfoAndText(t *testing.T) {
+	dir := t.TempDir()
+	pdf := writePDF(t, dir, "hello.pdf", "Hello nib")
+
+	out, code := captureStdout(t, func() int { return cmdInfo([]string{pdf, "--json"}) })
+	var pages []pdfops.PageInfo
+	if code != 0 || json.Unmarshal([]byte(out), &pages) != nil || len(pages) != 1 || pages[0].Page != 1 || pages[0].Width <= 0 || pages[0].Height <= 0 {
+		t.Fatalf("info --json = %q (code %d)", out, code)
+	}
+	if text, code := captureStdout(t, func() int { return cmdInfo([]string{pdf}) }); code != 0 || !strings.HasPrefix(text, "1\t") || !strings.Contains(text, "rotate 0") {
+		t.Errorf("info text = %q (code %d)", text, code)
+	}
+
+	out, code = captureStdout(t, func() int { return cmdText([]string{pdf, "--json"}) })
+	var text []pdfops.PageText
+	if code != 0 || json.Unmarshal([]byte(out), &text) != nil || len(text) != 1 || text[0].Page != 1 || len(text[0].Runs) == 0 {
+		t.Fatalf("text --json = %q (code %d)", out, code)
+	}
+	var joined string
+	for _, r := range text[0].Runs {
+		joined += r.Text
+		if r.Rect[2] <= r.Rect[0] || r.Rect[3] <= r.Rect[1] || r.Size <= 0 {
+			t.Errorf("a run with no extent: %+v", r)
+		}
+	}
+	if !strings.Contains(joined, "Hello nib") {
+		t.Errorf("text --json reads %q, want it to hold \"Hello nib\"", joined)
+	}
+	if lines, code := captureStdout(t, func() int { return cmdText([]string{pdf}) }); code != 0 || !strings.HasPrefix(lines, "1\t") || !strings.Contains(lines, "Hello nib") || strings.Count(lines, "\t") < 6 {
+		t.Errorf("text lines = %q (code %d)", lines, code)
+	}
+
+	// A document nothing can read is an error, not an empty listing.
+	bad := filepath.Join(dir, "bad.pdf")
+	if err := os.WriteFile(bad, []byte("not a pdf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() int{"info": func() int { return cmdInfo([]string{bad}) }, "text": func() int { return cmdText([]string{bad}) }} {
+		if _, code := captureStdout(t, run); code == 0 {
+			t.Errorf("%s of a file that is not a PDF exited 0", name)
+		}
+	}
+}
+
+// TestTextSaysWhenAPageHoldsTextItCannotRead — a page whose text the document lets nib read only in part is named on
+// stderr, so an empty or short listing is never taken for the whole of the page (ADR-176, /pending 918).
+func TestTextSaysWhenAPageHoldsTextItCannotRead(t *testing.T) {
+	widths := " /FirstChar 32 /LastChar 126 /Widths [" + strings.Repeat("600 ", 95) + "]"
+	pdf := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		4: "<< /Length 38 >>\nstream\nBT /F1 20 Tf 72 700 Td (ABA) Tj ET\n\nendstream",
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+X /Encoding << /Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [66 /g123] >>" + widths + " >>",
+	})
+	path := filepath.Join(t.TempDir(), "unread.pdf")
+	if err := os.WriteFile(path, pdf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out string
+	var code int
+	errText := captureStderr(t, func() { out, code = captureStdout(t, func() int { return cmdText([]string{path}) }) })
+	if code != 0 || !strings.Contains(out, "AA") {
+		t.Fatalf("text = %q (code %d), want the readable part AA", out, code)
+	}
+	if !strings.Contains(errText, "page 1: 1 glyphs could not be read") {
+		t.Errorf("stderr = %q, want it to name page 1 and one unread glyph", errText)
+	}
+}
+
+// TestTextNamesAPageThatSetsNoText — a blank or scanned page is not an error and not silence: stderr says it sets no text.
+func TestTextNamesAPageThatSetsNoText(t *testing.T) {
+	pdf := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+		4: "<< /Length 4 >>\nstream\nq Q\n\nendstream",
+	})
+	path := filepath.Join(t.TempDir(), "blank.pdf")
+	if err := os.WriteFile(path, pdf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out string
+	var code int
+	errText := captureStderr(t, func() { out, code = captureStdout(t, func() int { return cmdText([]string{path}) }) })
+	if code != 0 || strings.TrimSpace(out) != "" || !strings.Contains(errText, "page 1: it sets no text") {
+		t.Errorf("blank page: code %d, stdout %q, stderr %q", code, out, errText)
+	}
+}

@@ -36,7 +36,7 @@ import (
 //
 // **A depth is not a loop.** `EqualObjects` cuts a loop at a pair it has met. v0.13.0's `traverse` cut nothing, so a
 // ring it entered it never left (`duplicateLoop`, /pending 867); v0.16.2's marks an object before it descends and stops
-// at depth 100 (optimize.go:1167), so a ring is neither refused here nor kept from the pass: ADR-177.
+// at depth 100 (optimize.go:1167), so a ring is neither refused here nor kept from the pass: ADR-178.
 
 // maxObjectLevels is the most levels pdfcpu may recurse through the references under a font or an image. Measured on
 // the one all-reference walk that could be run alone (the free-reference pass, stack capped at 64 MiB): a chain of

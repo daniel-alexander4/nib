@@ -1,4 +1,4 @@
-# ADR-176 — a check box with several on-states is exported and filled by name
+# ADR-177 — a check box with several on-states is exported and filled by name
 
 **Status:** accepted
 **Date:** 2026-10-30

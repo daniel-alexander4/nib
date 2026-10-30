@@ -1,4 +1,4 @@
-# ADR-177 — pdfcpu v0.16.2 guards its duplicate walk, so nib no longer refuses on its behalf
+# ADR-178 — pdfcpu v0.16.2 guards its duplicate walk, so nib no longer refuses on its behalf
 
 **Status:** accepted
 **Date:** 2026-10-30
