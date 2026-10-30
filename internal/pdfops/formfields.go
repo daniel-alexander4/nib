@@ -283,14 +283,8 @@ func pushButtonsAside(xt *model.XRefTable) (putBack func()) {
 		if len(kept) == len(was) {
 			return
 		}
-		// The array is the page's own, or an object the page names: written where it lives.
-		if ir, ok := raw.(types.IndirectRef); ok {
-			if e, found := xt.FindTableEntryForIndRef(&ir); found && e != nil {
-				e.Object = kept
-				undo = append(undo, func() { e.Object = was })
-				return
-			}
-		}
+		// The validator reads an /Annots named by reference into the page itself (measured:
+		// TestPushButtonsAsideLeavesThePagesAsItFoundThem, indirect case), so the array is always the page's own.
 		page["Annots"] = kept
 		undo = append(undo, func() { page["Annots"] = was })
 	})
