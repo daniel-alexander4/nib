@@ -2,6 +2,9 @@ package pdfops
 
 import (
 	"errors"
+	"nib/internal/pdfread"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -324,6 +327,39 @@ func pushButtonsAside(xt *model.XRefTable) (putBack func()) {
 // set aside with the push buttons and put back with them, so it is written as it was found. The walk is bounded
 // as `formFields`' is: a `/Parent` chain is the file's to write.
 func unwalkableWidgets(xt *model.XRefTable, root types.Dict, aside map[int]bool) {
+	eachUnwalkableWidget(xt, root, func(ir types.IndirectRef, _ string) { aside[ir.ObjectNumber.Value()] = true })
+}
+
+// UnfillableFields names the fields a fill cannot reach because their widget's `/Parent` chain ends in nothing
+// (/pending 919 F14): the fill sets such a widget aside (`unwalkableWidgets`), so a value the data gives one is
+// dropped with no error — as v0.13.0 dropped it. The name is the `/T` partials from the break down to the widget,
+// which is the most of it the file still holds; sorted, each once.
+func UnfillableFields(pdf []byte) ([]string, error) {
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.EXPORTFORMFIELDS
+	ctx, err := pdfread.ReadOptimized(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil || root == nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var names []string
+	eachUnwalkableWidget(ctx.XRefTable, root, func(_ types.IndirectRef, name string) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	})
+	sort.Strings(names)
+	return names, nil
+}
+
+// eachUnwalkableWidget calls fn for every page annotation whose `/Parent` chain reaches an empty or unresolvable
+// dictionary, with the dotted name its reachable `/T` partials make (empty when none has one).
+func eachUnwalkableWidget(xt *model.XRefTable, root types.Dict, fn func(ir types.IndirectRef, name string)) {
 	_ = eachPageAnnots(xt, root, func(_ types.Dict, raw types.Object, _ int) {
 		for _, a := range derefArray(xt, raw) {
 			ir, ok := a.(types.IndirectRef)
@@ -331,14 +367,19 @@ func unwalkableWidgets(xt *model.XRefTable, root types.Dict, aside map[int]bool)
 				continue
 			}
 			cur := derefDict(xt, ir)
+			var partials []string // widget first, then each ancestor
 			for hop := 0; hop < 50 && cur != nil; hop++ {
+				if t := textEntry(xt, cur, "T"); t != "" {
+					partials = append(partials, t)
+				}
 				p, has := cur["Parent"]
 				if !has {
 					break
 				}
 				pd := derefDict(xt, p)
 				if len(pd) == 0 {
-					aside[ir.ObjectNumber.Value()] = true
+					slices.Reverse(partials)
+					fn(ir, strings.Join(partials, "."))
 					break
 				}
 				cur = pd
