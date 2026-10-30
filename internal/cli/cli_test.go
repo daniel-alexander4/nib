@@ -1915,3 +1915,55 @@ func TestTextNamesAPageThatSetsNoText(t *testing.T) {
 		t.Errorf("blank page: code %d, stdout %q, stderr %q", code, out, errText)
 	}
 }
+
+// TestFillAndFieldsSayWhichFieldsCannotBeFilled — /pending 919 F14. A widget whose /Parent leads nowhere is set aside
+// by the fill, which drops a value given to it without an error; `nib fill` and `nib fields` say so on stderr (the
+// listing and the filled PDF keep stdout), and a form with no such widget prints nothing extra.
+func TestFillAndFieldsSayWhichFieldsCannotBeFilled(t *testing.T) {
+	dir := t.TempDir()
+	form := func(orphan bool) string {
+		objs := map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 10 Tf 0 g) >> >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R] >>",
+			5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			6: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (before) /DA (/Helv 10 Tf 0 g) /Rect [10 10 150 30] /P 3 0 R >>",
+		}
+		name := "clean.pdf"
+		if orphan {
+			objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R 9 0 R] >>"
+			objs[9] = "<< /Type /Annot /Subtype /Widget /FT /Tx /T (orphan) /Parent 99 0 R /Rect [10 40 70 60] /P 3 0 R >>"
+			name = "orphan.pdf"
+		}
+		p := filepath.Join(dir, name)
+		mustWrite(t, p, testpdf.Assemble(objs))
+		return p
+	}
+	data := filepath.Join(dir, "d.json")
+	mustWrite(t, data, []byte(`{"header":{"version":"pdfcpu v0.16.2","source":"x"},"forms":[{"textfield":[{"name":"name","value":"after"}]}]}`))
+	const said = "cannot be filled"
+	for _, c := range []struct {
+		name string
+		args []string
+		run  func([]string) int
+	}{
+		{"fill", nil, cmdFill},
+		{"fields", nil, cmdFields},
+	} {
+		for _, orphan := range []bool{true, false} {
+			in := form(orphan)
+			args := []string{in}
+			if c.name == "fill" {
+				args = []string{in, "--data", data, "-o", filepath.Join(dir, "out.pdf")}
+			}
+			var code int
+			stderr := captureStderr(t, func() { code = c.run(args) })
+			if code != 0 {
+				t.Fatalf("%s (orphan=%v) exited %d: %s", c.name, orphan, code, stderr)
+			}
+			if got := strings.Contains(stderr, said); got != orphan || (orphan && !strings.Contains(stderr, "1 field(s)") || orphan && !strings.Contains(stderr, "orphan")) {
+				t.Errorf("%s (orphan=%v): stderr %q; the note should appear exactly when a widget is orphaned", c.name, orphan, stderr)
+			}
+		}
+	}
+}

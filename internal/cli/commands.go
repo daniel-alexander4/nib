@@ -962,6 +962,18 @@ func cmdPagelabels(args []string) int {
 	})
 }
 
+// noteUnfillable says, on stderr, which fields of pdf a fill cannot reach (/pending 919 F14): their widget's
+// /Parent chain ends in nothing, pdfcpu cannot name them, and a value the data gives one is dropped without an
+// error. It never fails the command - a form that cannot be read is the caller's own error to report.
+func noteUnfillable(pdf []byte) {
+	names, err := pdfops.UnfillableFields(pdf)
+	if err != nil || len(names) == 0 {
+		return
+	}
+	errf("%d field(s) cannot be filled, whatever the data says: their /Parent leads nowhere (%s)",
+		len(names), strings.Join(names, ", "))
+}
+
 // cmdFill fills a PDF form from data — a single record (JSON → one PDF, -o OUT,
 // pipeable) or a CSV mail-merge (one filled PDF per row → --out-dir). The data
 // format is chosen by the --data file's extension. Filling removes any existing
@@ -1005,6 +1017,7 @@ func cmdFill(args []string) int {
 			errf("%v", err)
 			return 1
 		}
+		noteUnfillable(pdf)
 		parts, err := pdfops.FillFormCSV(pdf, data, nameCol)
 		if err != nil {
 			errf("%v", err)
@@ -1027,9 +1040,9 @@ func cmdFill(args []string) int {
 		errf("--name-col is only for a CSV mail-merge")
 		return 1
 	}
-	fillFn := func(b []byte) ([]byte, error) { return pdfops.FillFormJSON(b, data) }
+	fillFn := func(b []byte) ([]byte, error) { noteUnfillable(b); return pdfops.FillFormJSON(b, data) }
 	if strings.EqualFold(filepath.Ext(dataPath), ".xfdf") {
-		fillFn = func(b []byte) ([]byte, error) { return pdfops.FillFormXFDF(b, data) }
+		fillFn = func(b []byte) ([]byte, error) { noteUnfillable(b); return pdfops.FillFormXFDF(b, data) }
 	}
 	in, code := singleInput(fs, out)
 	if code != 0 {
@@ -1220,6 +1233,7 @@ func cmdFields(args []string) int {
 		errf("%v", err)
 		return 1
 	}
+	noteUnfillable(pdf) // stderr, so the listing on stdout keeps its shape
 	if asJSON {
 		b, _ := json.Marshal(fields)
 		fmt.Println(string(b))
