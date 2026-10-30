@@ -296,11 +296,18 @@ func TestASimpleFontIsDecodedOnlyThroughTheTableItNames(t *testing.T) {
 			t.Errorf("%s: code %#x → %q (%v), want %q (%v)", c.name, c.code, got, ok, c.want, c.ok)
 		}
 	}
-	// A /Differences dictionary is not an absent /Encoding, though `NameEntry` reads both as nil.
+	// A /Differences dictionary is not an absent /Encoding, though `NameEntry` reads both as nil. Its names are read through
+	// Adobe's glyph list (ADR-176): code 'a' renamed /B is "B", and a name the list does not carry is no text.
 	diff := font("Helvetica", "")
-	diff["Encoding"] = types.Dict{"Type": types.Name("Encoding"), "Differences": types.Array{types.Integer(97), types.Name("B")}}
-	if got, ok := loadRunFont(widthXRef(t), diff).textFor([]byte{'a'}); ok {
-		t.Errorf("a font with /Differences decoded 'a' as %q — its glyphs are renamed, and this reader has no table for the names", got)
+	diff["Encoding"] = types.Dict{"Type": types.Name("Encoding"), "Differences": types.Array{types.Integer(97), types.Name("B"), types.Name("g123")}}
+	for _, c := range []struct {
+		code byte
+		want string
+		ok   bool
+	}{{'a', "B", true}, {'b', "", false}} {
+		if got, ok := loadRunFont(widthXRef(t), diff).textFor([]byte{c.code}); got != c.want || ok != c.ok {
+			t.Errorf("a /Differences font decoded %q as %q (%v), want %q (%v)", c.code, got, ok, c.want, c.ok)
+		}
 	}
 }
 
