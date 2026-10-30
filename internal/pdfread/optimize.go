@@ -190,7 +190,9 @@ func optimize(ctx *model.Context, strict bool) error {
 		return nil
 	}
 	freeReferencePass(ctx)
-	return api.OptimizeContext(context.Background(), ctx)
+	// The pass bounds its own walk (`MaxRecursionDepth`) and answers by error: said in nib's sentence, as the
+	// validation's is (F12, refusal.go), with pdfcpu's words behind it.
+	return nameValidatorRefusal(api.OptimizeContext(context.Background(), ctx))
 }
 
 // freeReferencePass is `fixFreeReferences`, a variable so a test can see that the pass runs it.

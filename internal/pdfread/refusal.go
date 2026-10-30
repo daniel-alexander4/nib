@@ -41,8 +41,18 @@ type refusal struct {
 	named, cause error
 }
 
-func (e refusal) Error() string   { return e.named.Error() + " (" + e.cause.Error() + ")" }
+func (e refusal) Error() string   { return e.named.Error() + " (" + elide(e.cause.Error()) + ")" }
 func (e refusal) Unwrap() []error { return []error{e.named, e.cause} }
+
+// elide keeps the head and the tail of a long cause. pdfcpu names every level it walked, so a depth refusal is
+// a hundred "traverse … obj#N" hops (7 KB measured) ahead of the sentence that says why; the tail is that sentence.
+func elide(s string) string {
+	const head, tail = 120, 200
+	if len(s) <= head+tail+len(" … ") {
+		return s
+	}
+	return s[:head] + " … " + s[len(s)-tail:]
+}
 
 // nameValidatorRefusal puts nib's sentence in front of a bounded-walk error from the validator and leaves every
 // other error as it was.
