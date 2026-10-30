@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"nib/internal/pdfread"
 	"nib/internal/testpdf"
@@ -310,13 +309,14 @@ func TestAPageOfManyWordsIsNotDeflatedOncePerWord(t *testing.T) {
 	}
 }
 
-// TestStampingSixHundredWordsIsNotSlowerThanItWas is the wall-clock floor D8's pin asks for (P02.S07): `TextWidth`
-// had none. Measured medians of 7 on one machine under a load average of 6-8 (NOT quiet), 600 words on one scanned
-// page, content held: 409 ms on the release before, 767 ms on v0.16.2. The cause is read from a CPU profile —
-// `font.CharWidth`, called per RUNE by `wordInk`, clones the whole metrics table on every call in v0.16.2
-// (`font/repository.go:230-243`, `cloneTTFLight`), 36% of the run. The floor is the old figure with 1.5x headroom for
-// a noisy machine, 600 ms; it is red without `runeWidths` (Dan's go, S07: a per-call cache; held 242 ms with it).
-func TestStampingSixHundredWordsIsNotSlowerThanItWas(t *testing.T) {
+// TestStampingSixHundredWordsDoesNotCloneTheFontPerRune is the guard D8's pin asked for (P02.S07) on what the stamp
+// ALLOCATES, not on how long it takes (/pending 920 F15: the wall-clock floor of 600 ms failed on the unmodified base
+// under a load average of 14, so it measured the machine). Cause, read from a CPU profile: `font.CharWidth`, called per
+// RUNE by `wordInk`, clones the whole metrics table on every call in v0.16.2 (`font/repository.go:230-243`,
+// `cloneTTFLight`) — 36% of the run (409 ms on the release before, 767 ms on v0.16.2, 242 ms with `runeWidths`).
+// Measured, 600 words on one scanned page, content held: 94 MB with the per-call cache and 216 MB without. The floor
+// sits between, at 150 MB; it is red without `runeWidths`.
+func TestStampingSixHundredWordsDoesNotCloneTheFontPerRune(t *testing.T) {
 	base := scannedPages(t, 1)
 	var words []Word
 	for i := 0; i < 600; i++ {
@@ -328,16 +328,12 @@ func TestStampingSixHundredWordsIsNotSlowerThanItWas(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	stamp()
-	best := time.Hour
-	for i := 0; i < 5; i++ {
-		t0 := time.Now()
-		stamp()
-		if d := time.Since(t0); d < best {
-			best = d
-		}
+	stamp() // the fonts and the face are read once, outside the measurement
+	got := allocated(stamp)
+	if got < 1<<20 {
+		t.Fatalf("stimulus: stamping 600 words allocated %d B — the measurement reads nothing", got)
 	}
-	if best > 600*time.Millisecond {
-		t.Errorf("stamping 600 words took %v at best of 5; the floor is 600 ms (the release before: 409 ms median)", best)
+	if got > 150<<20 {
+		t.Errorf("stamping 600 words allocated %d MB; the floor is 150 MB (94 MB with a per-call cache of pdfcpu's advances, 216 MB without)", got>>20)
 	}
 }

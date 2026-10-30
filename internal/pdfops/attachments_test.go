@@ -598,7 +598,7 @@ func TestContentDigestMovesOnEveryAxisAReaderCanSee(t *testing.T) {
 		},
 		{
 			name: "the font's /BaseFont",
-			why:  "changes every glyph the page renders; \"Font\" was inert in resourceKinds",
+			why:  "changes every glyph the page renders; \"Font\" was inert in rule 5's resourceKinds",
 			mut: func(ctx *model.Context) error {
 				d, _, _, err := ctx.XRefTable.PageDict(context.Background(), 1, false)
 				if err != nil {
@@ -708,9 +708,9 @@ func findFontDict(xt *model.XRefTable, res types.Dict, depth int) types.Dict {
 //
 // `TestContentDigestMovesOnEveryAxisAReaderCanSee` mutates a font, but pdfcpu nests a
 // watermark's font inside a form XObject, so that assertion is carried by `hashObject`'s
-// recursion and **dropping "Font" from `resourceKinds` leaves it green** — measured. An
-// ordinary text document has the font directly on the page, which is the entry `resourceKinds`
-// exists for and the one that was inert.
+// recursion and **skipping "Font" in the page's resources leaves it green** — measured on rule 5's
+// list. An ordinary text document has the font directly on the page, which is the entry
+// `hashEveryResource` (rule 6 and 7) must read; skipping the kind there turns THIS test red.
 func TestContentDigestSeesAPageLevelFont(t *testing.T) {
 	pdf, err := testpdf.Text("the price is four hundred pounds")
 	if err != nil {
@@ -729,7 +729,7 @@ func TestContentDigestSeesAPageLevelFont(t *testing.T) {
 	fo, _ := ctx.XRefTable.DereferenceDict(res["Font"])
 	if len(fo) == 0 {
 		t.Fatal("setup: no page-level /Font — this test would be carried by the XObject " +
-			"recursion and would not exercise resourceKinds at all")
+			"recursion and would not exercise hashEveryResource's page-level kinds at all")
 	}
 
 	before, err := ContentDigest(pdf)
