@@ -54,7 +54,7 @@ const { page } = h;
 after(() => shutdown(h));
 
 // What pdfcpu reads as the field's value in the document now open. v0.16.2 reads this pair, which has no Radio
-// flag, as ONE check box (ADR-174 §4, D5): a boolean, true when /V names any on-state — a Yes and a No both read
+// flag, as ONE check box (ADR-174 §4, D5; ADR-176 adds the answer's name as `state`): a boolean, true when /V names any on-state — a Yes and a No both read
 // `ticked`, where v0.13 counted the widgets and listed a radio group naming the state. So this asks the half that
 // still matters: that an answer is STORED. The bug it pins wrote /V Off, which reads `unticked`; WHICH box
 // answered is the window's /AS, and is asserted below from the boxes themselves.

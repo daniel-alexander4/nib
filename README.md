@@ -149,7 +149,7 @@ Got a fillable form and a spreadsheet of records? **Mark Up → Fill Forms from 
 picks a CSV and fills the form once per row, handing you a **ZIP with one PDF per
 row**. The CSV's first row is the form's field names (export them with *File →
 Export & Print → Form data…*, choosing CSV, to see the exact names); checkbox fields take
-true/false/yes/1. It runs **entirely on your machine** — the same engine as the
+true/false/yes/1 (a Yes/No pair takes the name of the box to tick). It runs **entirely on your machine** — the same engine as the
 `nib fill` command line, just point-and-click. (The form needs real fillable
 fields; on a flat scan, run *Save as fillable form…* first.)
 
