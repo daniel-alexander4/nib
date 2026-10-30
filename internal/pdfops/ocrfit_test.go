@@ -3,11 +3,13 @@ package pdfops
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -278,22 +280,22 @@ func TestOnlyAnUprightRunInAnOCRFaceHasItsInkMeasured(t *testing.T) {
 	}
 	for _, font := range []string{ocrFont, "ABCDEF+" + ocrFont} {
 		// "Invoice" in Roboto at 10pt: no descender, a capital's height.
-		bottom, top, ok := fittedInk(run(font, "Invoice", false))
+		bottom, top, ok := fittedInk(run(font, "Invoice", false), nil)
 		if !ok || math.Abs(bottom-100) > 0.2 || math.Abs(top-107.2) > 0.2 {
 			t.Errorf("%s: ink %.2f..%.2f (ok=%v), want 100..107.2", font, bottom, top, ok)
 		}
 	}
 	// A face named in the table, not only the default one — and a descender below the baseline.
-	if bottom, top, ok := fittedInk(run("NotoSansArabic-Regular", "مرحبا", false)); !ok || !(top > 100 && bottom < 100) {
+	if bottom, top, ok := fittedInk(run("NotoSansArabic-Regular", "مرحبا", false), nil); !ok || !(top > 100 && bottom < 100) {
 		t.Errorf("an Arabic word in nib's Arabic face: ink %.2f..%.2f (ok=%v), want ink either side of the baseline at 100", bottom, top, ok)
 	}
-	if _, _, ok := fittedInk(run("Helvetica", "Invoice", false)); ok {
+	if _, _, ok := fittedInk(run("Helvetica", "Invoice", false), nil); ok {
 		t.Error("a run in a face nib does not stamp was measured by Roboto's ink")
 	}
 	if _, kept := ocrFaces.Load("Helvetica"); kept {
 		t.Error("a font name from a document was remembered as a face: the table is what bounds that cache")
 	}
-	if _, _, ok := fittedInk(run(ocrFont, "Invoice", true)); ok {
+	if _, _, ok := fittedInk(run(ocrFont, "Invoice", true), nil); ok {
 		t.Error("a turned run was given a height about its baseline")
 	}
 }
@@ -527,5 +529,68 @@ func TestOnlyAWholeRightToLeftWordIsSetInReverse(t *testing.T) {
 	}
 	if !seen {
 		t.Error("the unfitted word is not in the layer")
+	}
+}
+
+// TestAPageMapAsksPdfcpuForEachAdvanceOnce — /pending 920 F06. `fittedInk` used to pass no cache, so every rune of
+// every hidden run cloned the font's metrics table in pdfcpu v0.16.2: 63% of a 600-word page's map (380-505 ms,
+// measured by CPU profile). A map holds one cache per face for its page; the answer is the same, and a page of
+// repeated words allocates a fraction of what it did.
+func TestAPageMapAsksPdfcpuForEachAdvanceOnce(t *testing.T) {
+	runs := make([]textRun, 300)
+	for i := range runs {
+		runs[i] = textRun{text: fmt.Sprintf("w%dord", i%97), baseFont: ocrFont, size: 10, x: 50, y: 100, width: 40}
+	}
+	ink := func(widths faceWidths) (out [][2]float64) {
+		for _, r := range runs {
+			b, tp, ok := fittedInk(r, widths)
+			if !ok {
+				t.Fatalf("%q was not measured", r.text)
+			}
+			out = append(out, [2]float64{b, tp})
+		}
+		return out
+	}
+	ink(nil) // the face is read once, outside both measurements
+	var plain, cached [][2]float64
+	uncached := allocated(func() { plain = ink(nil) })
+	held := allocated(func() { cached = ink(faceWidths{}) })
+	if !reflect.DeepEqual(plain, cached) {
+		t.Fatal("a cache changed what a run's ink measures")
+	}
+	if uncached < 1<<20 {
+		t.Fatalf("stimulus: 300 runs allocated %d B uncached — the measurement reads nothing", uncached)
+	}
+	if held*4 > uncached {
+		t.Errorf("300 runs allocated %d KB with the page's cache and %d KB without: the cache is not being used", held>>10, uncached>>10)
+	}
+}
+
+// TestMappingAnOCRPageDoesNotCloneTheFontPerRune is the same rule through the door that must wire it: `MapPage` of
+// a page of 600 stamped words allocated 132 MB when `fittedInk` got no cache and 28 MB with the page's own
+// (measured, v0.16.2). The floor sits between, at 60 MB.
+func TestMappingAnOCRPageDoesNotCloneTheFontPerRune(t *testing.T) {
+	var words []Word
+	for i := 0; i < 600; i++ {
+		x, y := 30+float64(i%12)*46, 20+float64(i/12)*15
+		words = append(words, Word{Page: 1, Rect: [4]float64{x, y, x + 40, y + 9}, Text: fmt.Sprintf("w%dord", i%97)})
+	}
+	out, err := StampTextLayer(scannedPages(t, 1), words, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MapPage(out, 1); err != nil { // the fonts and the face are read once, outside the measurement
+		t.Fatal(err)
+	}
+	var m PageMap
+	got := allocated(func() { m, err = MapPage(out, 1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Text) != 600 {
+		t.Fatalf("stimulus: the map holds %d runs, want the 600 stamped", len(m.Text))
+	}
+	if got > 60<<20 {
+		t.Errorf("mapping 600 stamped words allocated %d MB; the floor is 60 MB (28 MB with a cache per page, 132 MB without)", got>>20)
 	}
 }
