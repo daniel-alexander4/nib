@@ -181,6 +181,13 @@ func TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), "max recursion depth exceeded") {
 		t.Fatalf("a 150-link ring under two equal fonts: %v, want pdfcpu's depth refusal", err)
 	}
+	// And in nib's sentence, as the validation's is (F12): the raw pdfcpu text alone told a user nothing.
+	if !errors.Is(err, pdfread.ErrNestedTooDeep) {
+		t.Errorf("the pass's depth refusal is not named: %v", err)
+	}
+	if n := len(err.Error()); n > 700 || !strings.Contains(err.Error(), "max recursion depth exceeded (depth 101, limit 100)") {
+		t.Errorf("the refusal is %d bytes and must keep pdfcpu's closing sentence: %.300q", n, err.Error())
+	}
 }
 
 // TestASkippedPassIsRememberedAgainstItsContext — /pending 766 part 7. `optimize` returned nil for a pass it ran
