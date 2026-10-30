@@ -30,7 +30,39 @@ func FillFormJSON(pdf, data []byte) ([]byte, error) {
 		f := now.Forms[0]
 		held = optionValuesHeld(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes)
 	}
-	return fillForm(pdf, data, held)
+	// A check box with several on-states carries the one that is ticked in `state`; pdfcpu's boolean cannot say it
+	// (checkstate.go).
+	var picks map[string]string
+	if states, err := CheckStates(pdf); err == nil {
+		var fg form.FormGroup
+		var shadow struct {
+			Forms []struct {
+				Checkbox []struct {
+					Name  string `json:"name"`
+					State string `json:"state"`
+				} `json:"checkbox"`
+			} `json:"forms"`
+		}
+		if json.Unmarshal(data, &fg) == nil && json.Unmarshal(data, &shadow) == nil && len(shadow.Forms) > 0 && len(fg.Forms) > 0 {
+			named := map[string]string{}
+			for _, c := range shadow.Forms[0].Checkbox {
+				named[c.Name] = c.State
+			}
+			picks, err = applyCheckChoices(&fg, states, truthy, func(x *form.CheckBox) (string, bool) {
+				if st := named[x.Name]; st != "" {
+					return st, true
+				}
+				return strconv.FormatBool(x.Value), true
+			})
+			if err != nil {
+				return nil, err
+			}
+			if data, err = json.Marshal(fg); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return fillForm(pdf, data, held, picks)
 }
 
 // fillForm is pdfcpu's `api.FillForm` inside nib's own rewrite, and the one fill door every caller uses —
@@ -43,7 +75,7 @@ func FillFormJSON(pdf, data []byte) ([]byte, error) {
 // changes), refuse invalid JSON, an empty group and an option value the field does not offer, fill,
 // update the page tree — without the post-write validation no other nib rewrite performs. The rewrite
 // also drops an unverified PDF/UA identification (ADR-032).
-func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
+func fillForm(pdf, data []byte, held heldOptionValues, picks map[string]string) ([]byte, error) {
 	if !json.Valid(data) {
 		return nil, api.ErrInvalidJSON
 	}
@@ -73,10 +105,14 @@ func fillForm(pdf, data []byte, held heldOptionValues) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if !ok && len(picks) == 0 {
 			return api.ErrNoFormFieldsAffected
 		}
+		applyCheckPicks(ctx.XRefTable, picks)
 		dropStaleWidgetValues(ctx.XRefTable, repeated)
+		if !ok {
+			return nil // only a check box's pick changed, and it is written above
+		}
 		_, _, err = create.UpdatePageTree(context.Background(), ctx, pages, nil)
 		return err
 	})
@@ -257,6 +293,18 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked fu
 			x.Value = checked(first(v))
 		}
 	}
+	// A check box with several on-states is chosen by name, and overrides the boolean above (checkstate.go).
+	var picks map[string]string
+	if states, err := CheckStates(pdf); err == nil {
+		var cerr error
+		picks, cerr = applyCheckChoices(&fg, states, checked, func(x *form.CheckBox) (string, bool) {
+			v, ok := pick(values, x.Name, x.ID)
+			return first(v), ok
+		})
+		if cerr != nil {
+			return nil, cerr
+		}
+	}
 	for _, x := range f.ComboBoxes {
 		if v, ok := pick(values, x.Name, x.ID); ok {
 			x.Value = first(v)
@@ -276,7 +324,7 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked fu
 	if err != nil {
 		return nil, err
 	}
-	return fillForm(pdf, b, held)
+	return fillForm(pdf, b, held, picks)
 }
 
 // rowValues turns a CSV record into the name→value(s) map fillFromValues consumes,

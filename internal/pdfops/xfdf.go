@@ -60,6 +60,10 @@ func ExportFormXFDF(pdf []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	states, err := CheckStates(pdf) // which on-state a ticked box holds (checkstate.go)
+	if err != nil {
+		return nil, err
+	}
 	var root xfdfField // virtual root; its children are the top-level fields
 	add := func(name string, vals []string) {
 		if name != "" {
@@ -74,7 +78,7 @@ func ExportFormXFDF(pdf []byte) ([]byte, error) {
 			add(x.Name, []string{x.Value})
 		}
 		for _, x := range f.CheckBoxes {
-			add(x.Name, []string{xfdfCheckboxValue(x.Value)})
+			add(x.Name, []string{xfdfCheckboxValue(x.Value, answerOf(states, x.Name))})
 		}
 		for _, x := range f.RadioButtonGroups {
 			add(x.Name, []string{x.Value})
@@ -228,12 +232,12 @@ func flattenField(f *xfdfField, prefix string, out map[string][]string, budget *
 	return true
 }
 
-// xfdfCheckboxValue maps a checkbox's boolean state to its XFDF value — the "Yes"
-// on-state Acrobat writes, or "Off". On import, truthy reads "Yes"/"On"/… back as
-// checked, so the round-trip is exact.
-func xfdfCheckboxValue(on bool) string {
+// xfdfCheckboxValue maps a checkbox's boolean state to its XFDF value — the export-value name of the on-state it
+// holds (answer), as Acrobat writes it, or "Off". On import xfdfChecked reads any name but Off as checked, and a
+// field with several on-states reads the name itself, so the round-trip is exact.
+func xfdfCheckboxValue(on bool, answer string) string {
 	if on {
-		return "Yes"
+		return answer
 	}
 	return "Off"
 }

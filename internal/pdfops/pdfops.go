@@ -2663,7 +2663,14 @@ func LangTag(s string) (string, error) {
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	out, err := pdfread.ExportFormJSON(pdf, "nib", setPushButtonsAside)
-	return out, noFormFields(err) // a document with nothing to export says so (formfields.go)
+	if err != nil {
+		return out, noFormFields(err) // a document with nothing to export says so (formfields.go)
+	}
+	states, err := CheckStates(pdf)
+	if err != nil {
+		return nil, err
+	}
+	return withCheckStates(out, states) // the on-state pdfcpu's boolean cannot name (checkstate.go)
 }
 
 // ExportFormCSV returns the form field data as two columns: field name and value.
@@ -2684,6 +2691,10 @@ func ExportFormCSV(pdf []byte) ([]byte, error) {
 	if err := json.Unmarshal(jsonData, &fg); err != nil {
 		return nil, err
 	}
+	states, err := CheckStates(pdf)
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	cw := csv.NewWriter(&buf)
 	_ = cw.Write([]string{"field", "value"})
@@ -2695,7 +2706,11 @@ func ExportFormCSV(pdf []byte) ([]byte, error) {
 			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
 		}
 		for _, x := range f.CheckBoxes {
-			_ = cw.Write([]string{csvSafe(x.Name), strconv.FormatBool(x.Value)})
+			cell := strconv.FormatBool(x.Value)
+			if x.Value && states[x.Name].pair() {
+				cell = states[x.Name].Answer // which box, where a boolean cannot say (checkstate.go)
+			}
+			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(cell)})
 		}
 		for _, x := range f.RadioButtonGroups {
 			_ = cw.Write([]string{csvSafe(x.Name), csvSafe(x.Value)})
