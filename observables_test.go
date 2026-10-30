@@ -335,6 +335,8 @@ var published = map[string][]string{
 	// carrier is not a reader, and naming one makes the shape read as better covered than it is.
 	"pdfops.AttachmentInfo": {"internal/cli/commands.go", "web/app.js"},
 	"pdfops.OutlineItem":    {"internal/cli/commands.go", "web/app.js"},
+	// `nib fields` (/pending 923): the command line prints every field of the listing; FieldWidget is read through it.
+	"pdfops.FormFieldInfo": {"internal/cli/commands.go"},
 	// text-reflow P06.S05: the reflow editor lists a page's paragraphs, reading index, text and refusal.
 	"pdfops.Paragraph": {"web/app.js"},
 	// text-reflow P07.S03: the reflow editor reads why a reflow fell back, and which paragraph below stood in the way.

@@ -1195,6 +1195,74 @@ func cmdOutline(args []string) int {
 	return 0
 }
 
+// cmdFields lists a form's fields: the names `nib fill` takes, each with its type, flags, tooltip and where it is
+// drawn. No value is printed — `export-xfdf` is the command for what a form holds.
+func cmdFields(args []string) int {
+	fs := flag.NewFlagSet("nib fields", flag.ContinueOnError)
+	var asJSON bool
+	fs.BoolVar(&asJSON, "json", false, "emit the fields as JSON")
+	fs.Usage = usageFunc(fs, "nib fields IN [--json]", "List a form's fields: name, type, flags, tooltip (/TU), page and rectangle. Rectangles are [llx lly urx ury] in the page's own user space (points, origin bottom-left, /Rotate not applied).")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	fields, err := pdfops.ListFormFields(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	if asJSON {
+		b, _ := json.Marshal(fields)
+		fmt.Println(string(b))
+		return 0
+	}
+	if len(fields) == 0 {
+		fmt.Println("(no form fields)")
+		return 0
+	}
+	for _, f := range fields {
+		where := "on no page"
+		if f.OnPage {
+			pages := ""
+			for i, w := range f.Widgets {
+				if i > 0 {
+					pages += ","
+				}
+				pages += strconv.Itoa(w.Page)
+			}
+			where = "p " + pages
+		}
+		kind := f.Type
+		if !f.Fillable {
+			kind += " (not fillable)"
+		}
+		var marks []string
+		if f.Flags&1 != 0 {
+			marks = append(marks, "read-only")
+		}
+		if f.Flags&2 != 0 {
+			marks = append(marks, "required")
+		}
+		if len(marks) == 0 {
+			marks = []string{"-"}
+		}
+		line := fmt.Sprintf("%s\t%s\t%s\t%s", termText(f.Name), kind, where, strings.Join(marks, ","))
+		if f.Tooltip != "" {
+			line += "\t" + termText(f.Tooltip)
+		}
+		fmt.Println(line)
+	}
+	return 0
+}
+
 func cmdSign(args []string) int {
 	fs := flag.NewFlagSet("nib sign", flag.ContinueOnError)
 	var out, cert, passFile, reason, name, tsa string
