@@ -3190,8 +3190,8 @@ Upstream: <https://github.com/adobe-type-tools/cmap-resources>.
 
 ## Adobe Glyph List
 
-Vendored under `internal/uacheck/agl/` (adobe-type-tools/agl-aglfn@4036a9ca80a62f64f9de4f7321a9a045ad0ecfd6 (Table version 2.0)), read by the
-PDF/UA checker to map a glyph name to Unicode. Redistributed under the following three-clause
+Vendored under `internal/fontcode/agl/` (adobe-type-tools/agl-aglfn@4036a9ca80a62f64f9de4f7321a9a045ad0ecfd6 (Table version 2.0)), read by the
+PDF/UA checker and the text reader to map a glyph name to Unicode. Redistributed under the following three-clause
 BSD licence, reproduced from the file's own header:
 
 Copyright 2002-2019 Adobe (http://www.adobe.com/).
