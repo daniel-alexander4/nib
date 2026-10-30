@@ -123,6 +123,7 @@ func mapPageIn(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (
 		return PageMap{}, err
 	}
 	sp := newDisplaySpace(pg)
+	sp.widths = faceWidths{}
 	m := PageMap{Page: pg.Nr, Width: sp.w, Height: sp.h, NoText: pr.noText, Text: []MapText{}, Shapes: []MapShape{}, Widgets: []MapWidget{}}
 	for _, r := range pr.runs {
 		if t, ok := mapText(sp, r); ok {
@@ -161,6 +162,24 @@ type displaySpace struct {
 	box  [4]float64 // the visible box in user space
 	rot  int        // /Rotate, a quarter turn in [0, 360)
 	w, h float64    // the displayed page, in points
+	// widths holds, per OCR face, the advances `wordInk` asked pdfcpu for while mapping this page (ocrfit.go's
+	// runeWidths): v0.16.2's `font.CharWidth` clones the font's metrics table on every call, 63% of a 600-word
+	// page's map (380-505 ms, measured). It lives as long as the page's map does; nil asks pdfcpu every time.
+	widths faceWidths
+}
+
+// faceWidths is the runeWidths of each face name, made as they are first asked for.
+type faceWidths map[string]*runeWidths
+
+func (f faceWidths) of(face string) *runeWidths {
+	if f == nil {
+		return nil
+	}
+	if w := f[face]; w != nil {
+		return w
+	}
+	f[face] = newRuneWidths(face)
+	return f[face]
 }
 
 func newDisplaySpace(pg pdfread.Page) displaySpace {
@@ -255,7 +274,7 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 			slices.Reverse(t.Chars)
 			t.Text = strings.Join(t.Chars, "")
 		}
-		if bottom, top, ok := fittedInk(r); ok && t.Hidden && r.inForm && !t.Short {
+		if bottom, top, ok := fittedInk(r, sp.widths); ok && t.Hidden && r.inForm && !t.Short {
 			_, y0 := sp.point(r.x, top)
 			_, y1 := sp.point(r.x, bottom)
 			t.Ink = []float64{y0, y1}
@@ -279,12 +298,12 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 //
 // Only for a face nib stamps an OCR layer in, on an upright run. The name is checked against the table before the
 // face is asked for, because `ocrFace` remembers every name it is asked — and a document chooses its own font names.
-func fittedInk(r textRun) (bottom, top float64, ok bool) {
+func fittedInk(r textRun, widths faceWidths) (bottom, top float64, ok bool) {
 	name, isFace := ocrFaceName(r.baseFont) // the one test for "a face Nib stamps a layer in" (ocrreplace.go)
 	if !isFace || r.rotated {
 		return 0, 0, false
 	}
-	_, b, t, ok := wordInk(name, ocrFace(name), r.text, nil)
+	_, b, t, ok := wordInk(name, ocrFace(name), r.text, widths.of(name))
 	if !ok {
 		return 0, 0, false
 	}
