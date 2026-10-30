@@ -5,10 +5,10 @@
  
  import (
 +	"nib/internal/atomicfile"
+ 	"cmp"
  	"context"
  	"crypto/sha256"
- 	"encoding/json"
-@@ -509,7 +510,7 @@
+@@ -585,7 +586,7 @@
  		return 1
  	}
  	for i, p := range parts {

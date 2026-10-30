@@ -26,6 +26,10 @@ type FormFieldInfo struct {
 	Flags int `json:"flags"`
 	// Tooltip is the field's own /TU — what an author wrote to say what the field is for ("Line 1a"), or "".
 	Tooltip string `json:"tooltip,omitempty"`
+	// Label is the text an XFA form's template gives the field (`<assist><speak>`, else `<toolTip>`) — the printed line
+	// label of an IRS form, which carries no /TU. "" when the document has no XFA template, the template names no
+	// label, or two fields of one XFA name path disagree (pdfread.XFALabels).
+	Label string `json:"label,omitempty"`
 	// OnPage is false for a field in the form's tree that no page draws (ADR-166); it then has no widgets, and a
 	// fill does nothing to it.
 	OnPage  bool          `json:"onPage"`
@@ -70,6 +74,10 @@ func ListFormFields(pdf []byte) ([]FormFieldInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	labels, err := pdfread.XFALabels(pdf)
+	if err != nil {
+		labels = nil // a label is a convenience over the listing, never a condition of it
+	}
 	out := make([]FormFieldInfo, 0, len(fields))
 	for _, f := range fields {
 		info := FormFieldInfo{
@@ -78,6 +86,7 @@ func ListFormFields(pdf []byte) ([]FormFieldInfo, error) {
 			Fillable: f.fillable(),
 			Flags:    f.flags,
 			Tooltip:  f.tooltip,
+			Label:    labels[f.name],
 			OnPage:   f.onPage,
 			Widgets:  make([]FieldWidget, 0, len(f.widgets)),
 		}

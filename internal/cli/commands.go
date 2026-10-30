@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1201,7 +1202,7 @@ func cmdFields(args []string) int {
 	fs := flag.NewFlagSet("nib fields", flag.ContinueOnError)
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "emit the fields as JSON")
-	fs.Usage = usageFunc(fs, "nib fields IN [--json]", "List a form's fields: name, type, flags, tooltip (/TU), page and rectangle. Rectangles are [llx lly urx ury] in the page's own user space (points, origin bottom-left, /Rotate not applied).")
+	fs.Usage = usageFunc(fs, "nib fields IN [--json]", "List a form's fields: name, type, flags, tooltip (/TU), label (an XFA form's printed line label), page and rectangle. The text line shows the tooltip, else the label. Rectangles are [llx lly urx ury] in the page's own user space (points, origin bottom-left, /Rotate not applied).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1255,8 +1256,8 @@ func cmdFields(args []string) int {
 			marks = []string{"-"}
 		}
 		line := fmt.Sprintf("%s\t%s\t%s\t%s", termText(f.Name), kind, where, strings.Join(marks, ","))
-		if f.Tooltip != "" {
-			line += "\t" + termText(f.Tooltip)
+		if text := cmp.Or(f.Tooltip, f.Label); text != "" {
+			line += "\t" + termText(text)
 		}
 		fmt.Println(line)
 	}
