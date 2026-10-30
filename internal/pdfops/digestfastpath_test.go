@@ -309,7 +309,30 @@ func sameReport(got, want string) bool {
 		return true
 	}
 	const e = "ERROR:"
-	return strings.HasPrefix(got, e) && strings.HasPrefix(want, e) && strings.Contains(want, strings.TrimPrefix(got, e))
+	// An EMPTY refusal says nothing, and Contains(x, "") is true: it would agree with every refusal there is (F15).
+	said := strings.TrimSpace(strings.TrimPrefix(got, e))
+	return strings.HasPrefix(got, e) && strings.HasPrefix(want, e) && said != "" && strings.Contains(want, said)
+}
+
+// TestAnEmptyRefusalAgreesWithNoOtherRefusal holds sameReport's own rule: the prefix pdfcpu's door adds is
+// forgiven, a different sentence and an empty one are not, and a digest never agrees with a refusal.
+func TestAnEmptyRefusalAgreesWithNoOtherRefusal(t *testing.T) {
+	for _, c := range []struct {
+		got, want string
+		agree     bool
+	}{
+		{"ERROR: page tree: node missing Type", "ERROR: prepare PDF context: validation error (obj#:3): page tree: node missing Type", true},
+		{"ERROR: page tree: node missing Type", "ERROR: something else entirely", false},
+		{"ERROR:", "ERROR: page tree: node missing Type", false},
+		{"ERROR: ", "ERROR: page tree: node missing Type", false},
+		{"ERROR:", "ERROR:", true},
+		{"abc123", "ERROR: page tree: node missing Type", false},
+		{"ERROR: page tree: node missing Type", "abc123", false},
+	} {
+		if got := sameReport(c.got, c.want); got != c.agree {
+			t.Errorf("sameReport(%q, %q) = %v, want %v", c.got, c.want, got, c.agree)
+		}
+	}
 }
 
 func short16(s string) string {
