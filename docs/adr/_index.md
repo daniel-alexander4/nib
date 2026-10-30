@@ -977,3 +977,5 @@ home today.
   — extends ADR-174 §1 and ADR-102: the update check counts the ceremonies that have not ended (`openCeremonies`) and only for an update that crosses 2.3.0; the download popup and the pill say so and ask nothing; the release notes file carries the flag day to the release page.
 - [ADR-176](176-a-check-box-with-several-on-states-is-exported-and-filled-by-name.md) — **a check box with several on-states is exported and filled by name**
   — extends ADR-174 §4, ADR-172: pdfcpu's boolean cannot say which box of a Yes/No pair answered, so one door reads the on-states and the three exports and three fills carry the name; a bare yes onto an unanswered pair is refused rather than ticking both.
+- [ADR-177](177-pdfcpu-v0162-guards-its-duplicate-walk-so-nib-no-longer-refuses-for-it.md) — **pdfcpu v0.16.2 guards its duplicate walk, so nib no longer refuses on its behalf**
+  — extends ADR-055/069/077: the loop and unnamed-`/Subtype` refusals and `pagebalance.go` are deleted (measured: the pass runs over every shape, flat 10,000 pages read in 751 ms); `pages.go`/`pagesim.go`, the `/State` set-aside and `refuseDeepReferences` stay, each with its measurement.

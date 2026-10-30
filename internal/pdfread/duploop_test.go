@@ -51,13 +51,13 @@ const (
 	dupImage = "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 %s /Length 1 >>\nstream\n\x00\nendstream"
 )
 
-// TestALoopUnderAFontOrImagePdfcpuCouldMergeSkipsThePass — /pending 867. For every font or image pdfcpu's optimize
-// pass finds equal to another it follows everything the duplicate names, remembering nothing (`traverse`,
-// optimize.go:1019, v0.13.0; v0.16.2 depth-bounds it, optimize.go:1167), so a loop under a key the validator never reads was a fatal stack overflow — measured in
-// a throwaway process on the first shape here. The pass is not run over such a document: a reader that only wants the
-// document still gets it, and one whose answer depends on the pass is refused. **Each shape is asked of `Unaffordable`
-// before the pass is ever started**, so a rule that stops refusing fails here as an assertion and not as a dead process.
-func TestALoopUnderAFontOrImagePdfcpuCouldMergeSkipsThePass(t *testing.T) {
+// TestALoopUnderAFontOrImagePdfcpuCouldMergeIsOptimized — /pending 867, reversed by /pending 920 F11 (ADR-177). v0.13.0's
+// duplicate walk remembered nothing, so a loop under a key the validator never reads was a fatal stack overflow and the
+// pass was not run over such a document. v0.16.2 marks an object before it descends and stops at depth 100
+// (optimize.go:1167): each shape below was measured, 2026-10-30, to run the pass to a nil error. **A guard that
+// refuses one of them again fails here as an assertion on the pass having run** — and the pass itself is the oracle,
+// so a shape that did overflow would take this process, not pass quietly.
+func TestALoopUnderAFontOrImagePdfcpuCouldMergeIsOptimized(t *testing.T) {
 	f := func(extra string) string { return fmt.Sprintf(dupHelv, extra) }
 	for _, c := range []struct {
 		name string
@@ -86,20 +86,11 @@ func TestALoopUnderAFontOrImagePdfcpuCouldMergeSkipsThePass(t *testing.T) {
 		{"two equal Type 3 fonts that each name themselves",
 			dupDoc(fmt.Sprintf(dupType3, 10, 8), fmt.Sprintf(dupType3, 10, 9), [2]string{}, map[int]string{30: dupGlyph})},
 	} {
-		ctx, err := pdfread.Validated(c.pdf, model.NewDefaultConfiguration())
-		if err != nil {
-			t.Errorf("setup: %s does not validate: %v", c.name, err)
-			continue
+		if runs, err := passRuns(t, c.pdf); err != nil || runs != 1 {
+			t.Errorf("%s: %d runs of the pass, %v; want one", c.name, runs, err)
 		}
-		if why := pdfread.Unaffordable(ctx); !strings.Contains(why, "lead back to themselves") {
-			t.Errorf("%s: Unaffordable = %q, want the loop named — pdfcpu's pass would follow it until the stack ran out", c.name, why)
-			continue // never hand it to the pass
-		}
-		if runs, err := passRuns(t, c.pdf); err != nil || runs != 0 {
-			t.Errorf("%s: read with the pass skipped: %d runs, %v; want the document and no pass", c.name, runs, err)
-		}
-		if _, err := pdfread.ReadOptimizedOrRefuse(c.pdf, model.NewDefaultConfiguration()); !errors.Is(err, pdfread.ErrUnaffordable) {
-			t.Errorf("%s: a reader that depends on the pass got %v, want ErrUnaffordable", c.name, err)
+		if _, err := pdfread.ReadOptimizedOrRefuse(c.pdf, model.NewDefaultConfiguration()); err != nil {
+			t.Errorf("%s: a reader that depends on the pass got %v, want the document", c.name, err)
 		}
 	}
 }
@@ -142,29 +133,53 @@ func TestAFontThatNamesItselfIsStillOptimized(t *testing.T) {
 	}
 }
 
-// TestAnXObjectWhoseSubtypeIsAReferenceSkipsThePass — /pending 867's second note. pdfcpu's relaxed validator reads
-// `/Subtype 20 0 R` through the reference; its optimize pass asks the dictionary for a name and dereferences the nil it
-// gets (optimize.go:697, :801, v0.13.0; v0.16.2's optimize.go has no `*sd.Subtype()` — grepped, not re-run), a runtime panic. Found on the two SHA-1 collision PDFs in the Go module cache.
-func TestAnXObjectWhoseSubtypeIsAReferenceSkipsThePass(t *testing.T) {
+// TestAnXObjectWhoseSubtypeIsAReferenceIsOptimized — /pending 867's second note, reversed (ADR-177). pdfcpu's relaxed
+// validator reads `/Subtype 20 0 R` through the reference; v0.13.0's pass asked for a name and dereferenced the nil
+// (`*sd.Subtype()`), a runtime panic, found on the two SHA-1 collision PDFs in the Go module cache. v0.16.2's has no such
+// call: the pass runs over this document and over both of those files.
+func TestAnXObjectWhoseSubtypeIsAReferenceIsOptimized(t *testing.T) {
 	f := fmt.Sprintf(dupHelv, "")
 	indirect := strings.Replace(fmt.Sprintf(dupImage, ""), "/Subtype /Image", "/Subtype 20 0 R", 1)
 	pdf := dupDoc(f, f, [2]string{indirect, fmt.Sprintf(dupImage, "")}, map[int]string{20: "/Image"})
-	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
-	if err != nil {
+	if _, err := pdfread.Validated(pdf, model.NewDefaultConfiguration()); err != nil {
 		t.Fatalf("setup: an image whose /Subtype is a reference does not validate: %v", err)
 	}
-	if why := pdfread.Unaffordable(ctx); !strings.Contains(why, "/Subtype of its XObject in object 6") {
-		t.Fatalf("Unaffordable = %q, want the XObject named — pdfcpu's pass would panic on it", why)
+	if runs, err := passRuns(t, pdf); err != nil || runs != 1 {
+		t.Fatalf("%d runs of the pass, %v; want one", runs, err)
 	}
-	if runs, err := passRuns(t, pdf); err != nil || runs != 0 {
-		t.Fatalf("read with the pass skipped: %d runs, %v; want the document and no pass", runs, err)
+	if _, err := pdfread.ReadOptimizedOrRefuse(pdf, model.NewDefaultConfiguration()); err != nil {
+		t.Fatalf("a reader that depends on the pass got %v, want the document", err)
 	}
-	if _, err := pdfread.ReadOptimizedOrRefuse(pdf, model.NewDefaultConfiguration()); !errors.Is(err, pdfread.ErrUnaffordable) {
-		t.Fatalf("a reader that depends on the pass got %v, want ErrUnaffordable", err)
+}
+
+// TestAWideSharedGraphUnderADuplicateFontIsLinear is the other half of the reversal: the duplicate walk marks what it
+// enters, so a graph in which every level names the next twice is walked once, not 2^levels times.
+func TestAWideSharedGraphUnderADuplicateFontIsLinear(t *testing.T) {
+	more := map[int]string{}
+	const levels = 80
+	for i := 0; i < levels; i++ {
+		more[10+i] = fmt.Sprintf("[%d 0 R %d 0 R]", 11+i, 11+i)
 	}
-	named := dupDoc(f, f, [2]string{fmt.Sprintf(dupImage, ""), fmt.Sprintf(dupImage, "")}, nil)
-	if runs, err := passRuns(t, named); err != nil || runs != 1 {
-		t.Fatalf("control: the same document with the name written in place: %d runs, %v; want one", runs, err)
+	more[10+levels] = "[]"
+	f := fmt.Sprintf(dupHelv, "/Foo 10 0 R")
+	if runs, err := passRuns(t, dupDoc(f, f, [2]string{}, more)); err != nil || runs != 1 {
+		t.Fatalf("%d runs of the pass, %v; want one, and promptly", runs, err)
+	}
+}
+
+// TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError — the declared edge of ADR-177. pdfcpu's duplicate walk
+// refuses a path of more than 100 references (`MaxRecursionDepth`), by error and not by crash. A ring that long under two
+// equal fonts used to read with the pass skipped; it now answers pdfcpu's own refusal, as a chain with no loop already did.
+func TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError(t *testing.T) {
+	more := map[int]string{}
+	const ring = 150
+	for i := 0; i < ring; i++ {
+		more[10+i] = fmt.Sprintf("[%d 0 R]", 10+(i+1)%ring)
+	}
+	f := fmt.Sprintf(dupHelv, "/Foo 10 0 R")
+	_, err := passRuns(t, dupDoc(f, f, [2]string{}, more))
+	if err == nil || !strings.Contains(err.Error(), "max recursion depth exceeded") {
+		t.Fatalf("a 150-link ring under two equal fonts: %v, want pdfcpu's depth refusal", err)
 	}
 }
 

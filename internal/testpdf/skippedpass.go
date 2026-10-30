@@ -2,20 +2,21 @@ package testpdf
 
 import "fmt"
 
-// PassSkipped is a one-page document pdfcpu's optimize pass cannot be run over, so Nib skips it
-// (`pdfread.Unaffordable`): an image XObject whose `/Subtype` is written as a reference, which the relaxed
-// validator reads through and the pass dereferences as a name. It reads, validates and writes like any other.
+// PassSkipped is a one-page document pdfcpu's optimize pass is not run over, so Nib skips it (`pdfread.Unaffordable`):
+// a page drawing one form whose `/Foo` — a key pdfcpu's validator never follows — names a chain `N 0 obj [N+1 0 R]`
+// longer than the estimate's `maxShapeDepth` (1<<13). It reads, validates and writes like any other.
 func PassSkipped() []byte {
-	const font = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
-	const image = "<< /Type /XObject /Subtype %s /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream"
-	return Assemble(map[int]string{
-		1:  "<< /Type /Catalog /Pages 2 0 R >>",
-		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << /Font << /F1 8 0 R /F2 9 0 R >> /XObject << /I1 6 0 R /I2 7 0 R >> >> >>",
-		6:  fmt.Sprintf(image, "20 0 R"),
-		7:  fmt.Sprintf(image, "/Image"),
-		8:  font,
-		9:  font,
-		20: "/Image",
-	})
+	const links = 9000
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R /Resources << /XObject << /Fm0 5 0 R >> >> >>",
+		4: "<< /Length 8 >>\nstream\n/Fm0 Do\nendstream",
+		5: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Foo 10 0 R /Length 0 >>\nstream\n\nendstream",
+	}
+	for i := 0; i < links; i++ {
+		objs[10+i] = fmt.Sprintf("[%d 0 R]", 11+i)
+	}
+	objs[10+links] = "[]"
+	return Assemble(objs)
 }

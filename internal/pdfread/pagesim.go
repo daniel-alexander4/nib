@@ -17,7 +17,7 @@ import (
 // 1m40-2m at every `Pages()` call (Scan, Inspect, uacheck, ceremony hashing), against 34 ms for the clean tree.
 //
 // `simulatePages` replays pdfcpu's own per-page algorithm (`processPageTreeForPageDictDepth`, model/xreftable.go:2458
-// v0.16.2; written against v0.13.0, not re-compared) for every page, and shares the work between consecutive pages instead of re-walking from the root:
+// v0.16.2; written against v0.13.0, not re-compared; v0.16.2's walk measured still quadratic, ADR-177) for every page, and shares the work between consecutive pages instead of re-walking from the root:
 //
 //   - The walk for page P consults P at exactly two kinds of decision — a node's `/Count` skip (`p + Count < P`) and
 //     a leaf's descent (`p == P`). Everything else (types, dereferences, attributes, the visit set) is a function of
