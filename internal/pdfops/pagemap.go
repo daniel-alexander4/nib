@@ -111,13 +111,19 @@ func MapPage(pdf []byte, page int) (PageMap, error) {
 	if err := pageInDocument(page, ctx.PageCount); err != nil {
 		return PageMap{}, err
 	}
-	pg := pageAt(ctx, nil, page)
-	pr, err := readPageShapes(ctx, pg)
+	return mapPageIn(ctx, pageAt(ctx, nil, page))
+}
+
+// mapPageIn maps pg of the validated ctx — the whole of `MapPage` once the document is open, so a caller that maps
+// every page (`DocumentText`) validates once and not once a page (a call costs 4.8-6.4 s on a 126-page file, nearly all
+// of it the validation: /pending 918). shared is that loop's one walk budget (`readPageRuns`' rule, /pending 715).
+func mapPageIn(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (PageMap, error) {
+	pr, err := readPageShapes(ctx, pg, shared...)
 	if err != nil {
 		return PageMap{}, err
 	}
 	sp := newDisplaySpace(pg)
-	m := PageMap{Page: page, Width: sp.w, Height: sp.h, NoText: pr.noText, Text: []MapText{}, Shapes: []MapShape{}, Widgets: []MapWidget{}}
+	m := PageMap{Page: pg.Nr, Width: sp.w, Height: sp.h, NoText: pr.noText, Text: []MapText{}, Shapes: []MapShape{}, Widgets: []MapWidget{}}
 	for _, r := range pr.runs {
 		if t, ok := mapText(sp, r); ok {
 			m.Text = append(m.Text, t)

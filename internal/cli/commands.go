@@ -1264,6 +1264,91 @@ func cmdFields(args []string) int {
 	return 0
 }
 
+// cmdInfo lists each page's geometry: the size a person measures (visible box, /Rotate applied) and the boxes as the file
+// gives them.
+func cmdInfo(args []string) int {
+	fs := flag.NewFlagSet("nib info", flag.ContinueOnError)
+	var asJSON bool
+	fs.BoolVar(&asJSON, "json", false, "emit the pages as JSON")
+	fs.Usage = usageFunc(fs, "nib info IN [--json]", "List each page: its size as shown in points (the crop box, else the media box, with /Rotate applied), /Rotate, and the media and crop boxes [llx lly urx ury] in the page's own user space.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	pages, err := pdfops.ListPages(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	if asJSON {
+		b, _ := json.Marshal(pages)
+		fmt.Println(string(b))
+		return 0
+	}
+	if len(pages) == 0 {
+		fmt.Println("(no pages)")
+		return 0
+	}
+	for _, p := range pages {
+		fmt.Printf("%d\t%gx%g\trotate %d\tmedia %g %g %g %g\tcrop %g %g %g %g\n", p.Page, p.Width, p.Height, p.Rotate,
+			p.Media[0], p.Media[1], p.Media[2], p.Media[3], p.Crop[0], p.Crop[1], p.Crop[2], p.Crop[3])
+	}
+	return 0
+}
+
+// cmdText lists what each page prints and where: one pass over the whole document. A page whose text the document does
+// not let nib read in full says so on stderr (`PageText.Unread`) — an empty result is never the whole truth there.
+func cmdText(args []string) int {
+	fs := flag.NewFlagSet("nib text", flag.ContinueOnError)
+	var asJSON bool
+	fs.BoolVar(&asJSON, "json", false, "emit the pages and their runs as JSON")
+	fs.Usage = usageFunc(fs, "nib text IN [--json]", "List the text each page prints, one run per line: page, left, top, right, bottom (points on the page as shown, origin top left), size, text. Runs come in the order the page draws them, not reading order. A page that sets no text, or has text nib cannot read, says so on stderr.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	pages, err := pdfops.DocumentText(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	for _, p := range pages {
+		if p.NoText {
+			errf("page %d: it sets no text (a scan, or text drawn as outlines)", p.Page)
+		}
+		if p.Unread > 0 {
+			errf("page %d: %d glyphs could not be read as text, so its runs are not all it prints", p.Page, p.Unread)
+		}
+	}
+	if asJSON {
+		b, _ := json.Marshal(pages)
+		fmt.Println(string(b))
+		return 0
+	}
+	for _, p := range pages {
+		for _, r := range p.Runs {
+			fmt.Printf("%d\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%s\n", p.Page, r.Rect[0], r.Rect[1], r.Rect[2], r.Rect[3], r.Size, termText(r.Text))
+		}
+	}
+	return 0
+}
+
 func cmdSign(args []string) int {
 	fs := flag.NewFlagSet("nib sign", flag.ContinueOnError)
 	var out, cert, passFile, reason, name, tsa string
