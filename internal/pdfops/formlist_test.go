@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -125,6 +126,76 @@ func TestEachKindOfFieldHasItsOwnWord(t *testing.T) {
 	} {
 		if got := fieldType(c.f); got != c.want {
 			t.Errorf("%+v: got %q, want %q", c.f, got, c.want)
+		}
+	}
+}
+
+// xfaFormToLabel is a one-page form whose fields are named as an XFA form's are (`a[0]`, `a[1]`: same-named
+// siblings), with an XFA packet giving labels three ways and a datasets packet holding a decoy. asArray says whether
+// the packet is the array of name/stream pairs or one XDP stream.
+func xfaFormToLabel(asArray bool) []byte {
+	tpl := `<template><subform name="form1"><field name="a"><assist><speak> First   a
+</speak></assist></field><field name="a"><caption><value><text>Second a</text></value></caption></field>` +
+		`<field name="b"><assist><toolTip>The b</toolTip></assist></field><field name="c"/></subform></template>`
+	data := `<datasets><field name="c">decoy</field></datasets>`
+	xfa := "12 0 R"
+	objs := map[int]string{
+		2:  "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 612 792] >>",
+		4:  "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Resources << >> /Annots [11 0 R 13 0 R 14 0 R 15 0 R] >>",
+		5:  stream("q Q"),
+		7:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		10: "<< /T (form1[0]) /Kids [11 0 R 13 0 R 14 0 R 15 0 R] >>",
+	}
+	for i, n := range []struct {
+		obj  int
+		name string
+	}{{11, "a[0]"}, {13, "a[1]"}, {14, "b[0]"}, {15, "c[0]"}} {
+		objs[n.obj] = fmt.Sprintf("<< /Type /Annot /Subtype /Widget /FT /Tx /T (%s) /Parent 10 0 R /DA (/F1 12 Tf 0 g) /Rect [72 %d 272 %d] /P 4 0 R >>", n.name, 72+30*i, 96+30*i)
+	}
+	if asArray {
+		objs[12] = "[(preamble) 16 0 R (template) 17 0 R (datasets) 18 0 R]"
+		objs[16], objs[17], objs[18] = stream("<xdp:xdp>"), stream(tpl), stream(data)
+	} else {
+		objs[12] = stream("<xdp:xdp>" + tpl + data + "</xdp:xdp>")
+	}
+	objs[1] = "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [10 0 R] /DA (/F1 0 Tf 0 g) /DR << /Font << /F1 7 0 R >> >> /XFA " + xfa + " >> >>"
+	return assembleFixture(objs)
+}
+
+// `/pending 924`: an IRS form has no /TU; the printed line label is in its XFA template. A label is keyed by the
+// field's indexed XFA path (the AcroForm name), taken from `speak`, else `toolTip`, else the caption, and only from
+// inside `<template>`.
+func TestAnXFAFormsFieldsAreLabelledFromItsTemplate(t *testing.T) {
+	for _, asArray := range []bool{false, true} {
+		got, err := ListFormFields(xfaFormToLabel(asArray))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{
+			"form1[0].a[0]": "First a",  // speak, white space folded
+			"form1[0].a[1]": "Second a", // same name, its own caption: the INDEX tells them apart
+			"form1[0].b[0]": "The b",    // toolTip
+			"form1[0].c[0]": "",         // the template names no label; the datasets decoy is not one
+		}
+		if len(got) != len(want) {
+			t.Fatalf("array=%v: %d fields, want %d: %+v", asArray, len(got), len(want), got)
+		}
+		for _, f := range got {
+			if w, ok := want[f.Name]; !ok || f.Label != w {
+				t.Errorf("array=%v: %s label %q, want %q", asArray, f.Name, f.Label, w)
+			}
+		}
+	}
+}
+
+func TestAFormWithNoXFAHasNoLabels(t *testing.T) {
+	got, err := ListFormFields(formToList())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range got {
+		if f.Label != "" {
+			t.Errorf("%s carries label %q without an XFA packet", f.Name, f.Label)
 		}
 	}
 }
