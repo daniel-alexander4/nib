@@ -51,7 +51,7 @@ const (
 	dupImage = "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 %s /Length 1 >>\nstream\n\x00\nendstream"
 )
 
-// TestALoopUnderAFontOrImagePdfcpuCouldMergeIsOptimized — /pending 867, reversed by /pending 920 F11 (ADR-177). v0.13.0's
+// TestALoopUnderAFontOrImagePdfcpuCouldMergeIsOptimized — /pending 867, reversed by /pending 920 F11 (ADR-178). v0.13.0's
 // duplicate walk remembered nothing, so a loop under a key the validator never reads was a fatal stack overflow and the
 // pass was not run over such a document. v0.16.2 marks an object before it descends and stops at depth 100
 // (optimize.go:1167): each shape below was measured, 2026-10-30, to run the pass to a nil error. **A guard that
@@ -133,7 +133,7 @@ func TestAFontThatNamesItselfIsStillOptimized(t *testing.T) {
 	}
 }
 
-// TestAnXObjectWhoseSubtypeIsAReferenceIsOptimized — /pending 867's second note, reversed (ADR-177). pdfcpu's relaxed
+// TestAnXObjectWhoseSubtypeIsAReferenceIsOptimized — /pending 867's second note, reversed (ADR-178). pdfcpu's relaxed
 // validator reads `/Subtype 20 0 R` through the reference; v0.13.0's pass asked for a name and dereferenced the nil
 // (`*sd.Subtype()`), a runtime panic, found on the two SHA-1 collision PDFs in the Go module cache. v0.16.2's has no such
 // call: the pass runs over this document and over both of those files.
@@ -167,7 +167,7 @@ func TestAWideSharedGraphUnderADuplicateFontIsLinear(t *testing.T) {
 	}
 }
 
-// TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError — the declared edge of ADR-177. pdfcpu's duplicate walk
+// TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError — the declared edge of ADR-178. pdfcpu's duplicate walk
 // refuses a path of more than 100 references (`MaxRecursionDepth`), by error and not by crash. A ring that long under two
 // equal fonts used to read with the pass skipped; it now answers pdfcpu's own refusal, as a chain with no loop already did.
 func TestAChainDeeperThanPdfcpusBoundUnderADuplicateIsPdfcpusError(t *testing.T) {

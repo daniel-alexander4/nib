@@ -197,16 +197,16 @@ fi
 # The Adobe Glyph List, vendored unmodified for the PDF/UA checker's glyph names (P07.S02). Adobe's again,
 # under its own three-clause BSD licence, which the file carries in its header — reproduced from there, so
 # the notice and the file cannot disagree.
-if [ -f internal/uacheck/agl/glyphlist.txt ]; then
+if [ -f internal/fontcode/agl/glyphlist.txt ]; then
   emit "## Adobe Glyph List"
   emit ""
-  emit "Vendored under \`internal/uacheck/agl/\` ($(cat internal/uacheck/agl/VERSION)), read by the"
-  emit "PDF/UA checker to map a glyph name to Unicode. Redistributed under the following three-clause"
+  emit "Vendored under \`internal/fontcode/agl/\` ($(cat internal/fontcode/agl/VERSION)), read by the"
+  emit "PDF/UA checker and the text reader to map a glyph name to Unicode. Redistributed under the following three-clause"
   emit "BSD licence, reproduced from the file's own header:"
   emit ""
   # The header between the file's first two rules of dashes, whatever its length — a fixed line range would cut
   # a longer upstream header silently.
-  awk '/^# -+$/ { n++; next } n == 1' internal/uacheck/agl/glyphlist.txt | sed -e 's/^# \{0,1\}//' | sed -e 's/[[:space:]]*$//' >>"$tmp"
+  awk '/^# -+$/ { n++; next } n == 1' internal/fontcode/agl/glyphlist.txt | sed -e 's/^# \{0,1\}//' | sed -e 's/[[:space:]]*$//' >>"$tmp"
   emit ""
   emit "Upstream: <https://github.com/adobe-type-tools/agl-aglfn>."
   emit ""

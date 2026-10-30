@@ -315,7 +315,7 @@ for (const doc of docs) {
       const live = await page.evaluate((pn) => window.nibFetch('/api/pagemap?page=' + pn).then((r) => (r.ok ? r.json() : null)), n);
       if (!live) throw new Error(`the app could not map page ${n}`);
       const map = { ...live, widgets: prepared.widgets };
-      const row = { doc: name, page: n, kind: map.noText ? (map.shapes.length ? 'outlines' : 'scan') : 'text', size: `${Math.round(map.width)}x${Math.round(map.height)}` };
+      const row = { doc: name, page: n, kind: map.noText ? (map.shapes.length ? 'outlines' : 'scan') : 'text', size: `${Math.round(map.width)}x${Math.round(map.height)}`, unread: map.unread || 0 };
       const found = await detect(n);
       row.detection = scoreDetection(found, map);
       // The same page, zoomed: what a field IS must not depend on how large the page is drawn.
@@ -352,8 +352,12 @@ const sum = (f) => rows.reduce((a, r) => a + (f(r) || 0), 0);
 const keyed = rows.filter((r) => r.detection.truth > 0);
 const red = rows.flatMap((r) => r.redaction);
 const hits = red.filter((r) => !r.missed);
+// Glyphs the map could not give a character (`PageMap.Unread`, ADR-176): above zero the map's text is not all the page
+// prints, and every figure below that reads the text is of the part that was read.
 const summary = {
   pages: rows.length,
+  unreadPages: rows.filter((r) => r.unread > 0).length,
+  unreadGlyphs: rows.reduce((a, r) => a + r.unread, 0),
   detection: {
     answerKeyPages: keyed.length,
     realFields: keyed.reduce((a, r) => a + r.detection.truth, 0),

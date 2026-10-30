@@ -35,7 +35,7 @@ import (
 // (A loop under a font or an image it could merge, and an XObject whose `/Subtype` is a reference, were refused here
 // too — `/pending 867` — because v0.13.0's duplicate walk marked nothing and its pass dereferenced a nil. v0.16.2 marks
 // each object before it descends and stops at `MaxRecursionDepth` (optimize.go:1167), and asks no `/Subtype` of a
-// duplicate candidate; both were measured to read, 2026-10-30, and the refusals are gone: ADR-177.)
+// duplicate candidate; both were measured to read, 2026-10-30, and the refusals are gone: ADR-178.)
 //
 // **Past either budget the pass is SKIPPED, never interrupted** — pdfcpu takes no context and a goroutine
 // abandoned mid-pass keeps burning and mutating the context. What the pass buys is deduplication (equal

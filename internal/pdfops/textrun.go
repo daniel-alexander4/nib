@@ -35,9 +35,10 @@ import (
 //
 // `/ToUnicode` first. Without one, a simple font declaring `WinAnsiEncoding` or `MacRomanEncoding` is
 // decoded through that table, and a Latin core font with no `/Encoding` through StandardEncoding's
-// printable range. Anything else — `/Differences`, a Type0 font under a CMap other than Identity, a
-// symbolic font with no map — is NOT guessed: its codes still advance the text position, and the run
-// reports `decoded == false`.
+// printable range. A simple font whose `/Encoding` is a dictionary is read through its `/Differences` names and
+// Adobe's glyph list (`encodingDictionaryOf`, ADR-176). Anything else — a Type0 font under a CMap other than
+// Identity, a symbolic font with no map, a glyph name the list does not carry — is NOT guessed: its codes still
+// advance the text position, and the run reports `decoded == false`.
 //
 // # Containment (reflow D6)
 //
@@ -381,6 +382,11 @@ type runFont struct {
 	widths     fontWidths
 	toUni      map[string]string
 	simple     func(byte) (rune, bool)
+	// diffs and diffBase read a simple font whose /Encoding is a DICTIONARY (ADR-176): the /Differences names as text,
+	// and the base a code outside them falls to. Held apart from `simple`, which says "a named encoding or a standard
+	// font's own" and gates `coreTop` — a renamed font must not be boxed to Adobe's table (ADR-139).
+	diffs    map[byte]string // "" is a renamed code whose name the glyph list cannot read
+	diffBase func(byte) (rune, bool)
 	// drawing is textFor inverted — text to the codes that draw it — built on first use by `codesFor`.
 	drawing map[string][][]byte
 	// ink is where the font's embedded program can be read for how far its glyphs reach (fontink.go), or nil. Read
@@ -465,6 +471,8 @@ func loadRunFont(xt *model.XRefTable, obj types.Object, shared ...*formWalkBudge
 		f.simple = simpleDecoderFor(d)
 		if f.simple != nil { // a named encoding, or a standard font's own: never `/Differences`
 			f.coreTop, _ = coreFontTop(xt, d)
+		} else {
+			f.diffs, f.diffBase = encodingDictionaryOf(xt, d)
 		}
 	}
 	return f
@@ -478,9 +486,19 @@ func (f *runFont) textFor(code []byte) (string, bool) {
 	if s, ok := f.toUni[string(code)]; ok {
 		return s, true
 	}
-	if f.simple != nil && len(code) == 1 {
-		if r, ok := f.simple(code[0]); ok {
-			return string(r), true
+	if len(code) == 1 {
+		if s, renamed := f.diffs[code[0]]; renamed {
+			return s, s != "" // renamed to a glyph the list cannot read: no text, and never the base's character
+		}
+		if f.diffBase != nil {
+			if r, ok := f.diffBase(code[0]); ok {
+				return string(r), true
+			}
+		}
+		if f.simple != nil {
+			if r, ok := f.simple(code[0]); ok {
+				return string(r), true
+			}
 		}
 	}
 	return "", false

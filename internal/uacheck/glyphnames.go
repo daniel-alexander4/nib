@@ -1,13 +1,12 @@
 package uacheck
 
 import (
-	_ "embed"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/fontcode"
 )
 
 // A simple font's Unicode, past its /ToUnicode — veraPDF-parser 1.30.2's `PDSimpleFont.toUnicode`:
@@ -22,10 +21,7 @@ import (
 // The encoding is `PDFont.getEncodingMappingFromCOSObject`, with `PDType1Font.calculateEncodingMapping`'s
 // override for a standard face read from veraPDF's own metrics. The tables are veraPDF's
 // (`glyphnames_tables.go`, generated from `TrueTypePredefined`, `SymbolSet` and `ZapfDingbats`), and the glyph
-// list is Adobe's (`agl/glyphlist.txt`, BSD-3-Clause, vendored unmodified) with the one entry veraPDF adds.
-
-//go:embed agl/glyphlist.txt
-var aglText string
+// list is Adobe's (`internal/fontcode/agl/glyphlist.txt`, BSD-3-Clause, vendored unmodified, read through `fontcode.GlyphList`) with the one entry veraPDF adds.
 
 var (
 	aglOnce sync.Once
@@ -39,27 +35,8 @@ var (
 func adobeGlyphList() map[string]string {
 	aglOnce.Do(func() {
 		aglMap = map[string]string{".notdef": "\x00"}
-		for _, line := range strings.Split(aglText, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || line[0] == '#' {
-				continue
-			}
-			name, codes, ok := strings.Cut(line, ";")
-			if !ok {
-				continue
-			}
-			var v []rune
-			for _, h := range strings.Fields(codes) {
-				n, err := strconv.ParseUint(h, 16, 32)
-				if err != nil {
-					v = nil
-					break
-				}
-				v = append(v, rune(n))
-			}
-			if v != nil {
-				aglMap[name] = string(v)
-			}
+		for name, text := range fontcode.GlyphList() { // Adobe's list as published, read once by the one door (ADR-176)
+			aglMap[name] = text
 		}
 	})
 	return aglMap
