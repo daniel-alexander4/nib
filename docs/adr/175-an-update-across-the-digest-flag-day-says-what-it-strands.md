@@ -21,13 +21,13 @@ person who updates with a ceremony waiting finds out after it is too late.
 3. **Unknown counts as open.** `Stored.Ended` is empty for a running ceremony and for one whose end nobody observed, and
    a record that did not load has not ended either: all are counted, because the error that matters is not warning.
 4. **The release page says it too.** `docs/release-notes/<version>.md`, when present, is the release's notes
-   (`build/publish-release.sh --notes-file`); 2.4.0's states the flag day and which build to finish on. The default
+   (`build/publish-release.sh --notes-file`); 2.5.1's states the flag day and which build to finish on. The default
    remains the one line `Nib <version>`.
 
 **Declared — and this is the large one.** The warning is built into the BUILD THAT IS RUNNING, so it does not reach anyone
 who crosses 2.3.0 from a build that predates it: every machine on 2.2.x or earlier, which is every machine this flag day
 strands, runs an update check with no `openCeremonies` reader and is told nothing in the popup. For that crossing the release
-page (`docs/release-notes/2.4.0.md`) is the only channel, and the mechanism here is for the NEXT boundary — until
+page (`docs/release-notes/2.5.1.md`) is the only channel, and the mechanism here is for the NEXT boundary — until
 `ceremonyFlagDay` is raised, `crossesCeremonyFlagDay` is false for every update from 2.3.0 on. The plan's pin assumed the
 popup could protect the first crossing; it cannot, because the code that would show it is the code being installed. A ceremony whose record is on another machine
 is not this machine's to count. `ceremonyFlagDay` is a constant: a later rule retirement that strands ceremonies needs
