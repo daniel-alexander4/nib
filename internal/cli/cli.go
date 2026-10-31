@@ -121,6 +121,7 @@ var commands = map[string]func([]string) int{
 	"booklet":     cmdBooklet,
 	"normalize":   cmdNormalize,
 	"pagenum":     cmdPagenum,
+	"stamp":       cmdStamp,
 	"pagelabels":  cmdPagelabels,
 	"fill":        cmdFill,
 	"export-xfdf": cmdExportXFDF,
@@ -172,6 +173,7 @@ These subcommands run headlessly, without a browser:
   nib office IN -o OUT             convert a document (.md/.docx/.xlsx/.odt/…) to PDF (office formats need LibreOffice)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
+  nib stamp IN -o OUT             put text, a diagonal watermark or a logo on every page (--text/--watermark/--image, --pages)
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
   nib fill IN --data D            fill a form from JSON/XFDF (-o OUT), or mail-merge a CSV (--out-dir DIR)
   nib export-xfdf IN -o OUT        export a form's field data as XFDF (Acrobat/Foxit interchange)
@@ -187,7 +189,7 @@ These subcommands run headlessly, without a browser:
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
-sign, rotate, pages, encrypt, decrypt, booklet, nup, normalize, pagenum, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
+sign, rotate, pages, encrypt, decrypt, booklet, nup, normalize, pagenum, stamp, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).
 

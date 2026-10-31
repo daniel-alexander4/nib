@@ -258,6 +258,12 @@ const els = {
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
+  pageStampBtn: $('pageStampBtn'), pageStampModal: $('pageStampModal'), pstStamped: $('pstStamped'),
+  pstKind: $('pstKind'), pstText: $('pstText'), pstImage: $('pstImage'), pstPosition: $('pstPosition'), pstOpacity: $('pstOpacity'),
+  pstSize: $('pstSize'), pstWidth: $('pstWidth'), pstAngle: $('pstAngle'), pstColor: $('pstColor'), pstPages: $('pstPages'),
+  pstTextRow: $('pstTextRow'), pstImageRow: $('pstImageRow'), pstPositionRow: $('pstPositionRow'), pstSizeRow: $('pstSizeRow'),
+  pstWidthRow: $('pstWidthRow'), pstAngleRow: $('pstAngleRow'), pstColorRow: $('pstColorRow'), pstWhy: $('pstWhy'),
+  pstCancel: $('pstCancel'), pstGo: $('pstGo'),
   reflowBtn: $('reflowBtn'), reflowModal: $('reflowModal'), reflowPick: $('reflowPick'), reflowText: $('reflowText'),
   reflowWhy: $('reflowWhy'), reflowCancel: $('reflowCancel'), reflowGo: $('reflowGo'),
   pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
@@ -3399,7 +3405,7 @@ for (const b of all('button[data-apppage]')) b.onclick = () => openAppPage(b.dat
 const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
-  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'reflowModal',
+  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'pageStampModal', 'reflowModal',
   'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
@@ -7966,6 +7972,14 @@ async function pageOp(op, extra = {}) {
   // `pageNumGo`'s object literal, which is one function short of the wire.
   if (extra.size != null) form.append('size', String(extra.size));
   if (extra.color) form.append('color', extra.color);
+  // Stamp every page (/pending 907): the kind and its words, and the picture as a file.
+  if (extra.kind) form.append('kind', extra.kind);
+  if (extra.text != null) form.append('text', extra.text);
+  if (extra.angle != null) form.append('angle', String(extra.angle));
+  if (extra.opacity != null) form.append('opacity', String(extra.opacity));
+  if (extra.scale != null) form.append('scale', String(extra.scale));
+  if (extra.margin != null) form.append('margin', String(extra.margin));
+  if (extra.image) form.append('image', extra.image, extra.image.name || 'stamp.png');
   // What these bytes were built on, so the server refuses them if the document has moved (ADR-146).
   if (owner.loadedRev != null) form.append('baseRev', String(owner.loadedRev));
   let res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
@@ -8265,6 +8279,69 @@ async function pageNumGo() {
 }
 els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
+
+// --- stamp every page (/pending 907) -------------------------------------------
+// A line of text, a diagonal watermark or a picture on every page or the pages named (op:'pagestamp' on
+// /api/pages → pdfops.StampPages). The dialog shows only the controls the chosen kind reads, and sends
+// numbers already inside the bounds the server clamps to, so it cannot ask for what it will not get.
+const PST_ROWS = {
+  text: ['pstTextRow', 'pstPositionRow', 'pstSizeRow', 'pstColorRow'],
+  watermark: ['pstTextRow', 'pstAngleRow', 'pstColorRow'],
+  image: ['pstImageRow', 'pstPositionRow', 'pstWidthRow'],
+};
+const PST_ALL_ROWS = ['pstTextRow', 'pstImageRow', 'pstPositionRow', 'pstSizeRow', 'pstWidthRow', 'pstAngleRow', 'pstColorRow'];
+// What a fresh choice of kind starts at: a watermark is faint, a footer and a logo are not.
+const PST_OPACITY = { text: 100, watermark: 10, image: 100 };
+function pstShowKind() {
+  const kind = els.pstKind.value;
+  for (const id of PST_ALL_ROWS) els[id].hidden = !PST_ROWS[kind].includes(id);
+  els.pstOpacity.value = String(PST_OPACITY[kind]);
+  if (kind === 'watermark' && els.pstColor.value === '#000000') els.pstColor.value = '#8a8a8a';
+  if (kind !== 'watermark' && els.pstColor.value === '#8a8a8a') els.pstColor.value = '#000000';
+  els.pstWhy.hidden = true;
+}
+function openPageStamp() {
+  if (!view.pdfDocument) return;
+  pstShowKind();
+  els.pageStampModal.hidden = false;
+  warnIfStamped(els.pstStamped);
+}
+function pstClamp(el, lo, hi, dflt) {
+  const v = parseFloat(el.value);
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+}
+async function pageStampGo() {
+  const kind = els.pstKind.value;
+  const extra = {
+    kind,
+    pages: els.pstPages.value.trim(),
+    opacity: pstClamp(els.pstOpacity, 2, 100, PST_OPACITY[kind]) / 100,
+  };
+  if (kind === 'image') {
+    const file = els.pstImage.files[0];
+    if (!file) { els.pstWhy.textContent = 'Choose a picture (PNG or JPEG) first.'; els.pstWhy.hidden = false; return; }
+    extra.image = file;
+    extra.position = els.pstPosition.value;
+    extra.scale = pstClamp(els.pstWidth, 2, 100, 20) / 100;
+  } else {
+    extra.text = els.pstText.value;
+    if (!extra.text.trim()) { els.pstWhy.textContent = 'Type the words to stamp.'; els.pstWhy.hidden = false; return; }
+    extra.color = /^#[0-9a-fA-F]{6}$/.test(els.pstColor.value) ? els.pstColor.value : '#000000';
+    if (kind === 'text') {
+      extra.position = els.pstPosition.value;
+      extra.size = Math.round(pstClamp(els.pstSize, 6, 72, 11));
+    } else {
+      extra.angle = Math.round(pstClamp(els.pstAngle, -90, 90, 45));
+      extra.scale = 0.9;
+    }
+  }
+  const ok = await pageOp('pagestamp', extra);
+  if (ok) { els.pageStampModal.hidden = true; toast('Stamped'); }
+}
+els.pageStampBtn.onclick = openPageStamp;
+els.pstKind.onchange = pstShowKind;
+els.pstCancel.onclick = () => { els.pageStampModal.hidden = true; };
+els.pstGo.onclick = pageStampGo;
 
 // --- reflow a paragraph (PLAN-text-reflow.md P06) ------------------------------
 // The server reads the page's paragraphs and says which it cannot reflow and why; the edit goes back with the text the
@@ -14084,7 +14161,7 @@ const DOC_REQUIRED = [
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because

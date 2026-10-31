@@ -2357,6 +2357,12 @@ func clampUnit(v, lo, hi float64) float64 {
 // styled by st. Finalize applies it before signing so the certification covers
 // the watermark.
 func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) {
+	return stampWatermarkOn(pdf, text, st, nil)
+}
+
+// stampWatermarkOn is StampWatermark on the pages a selection names (nil: every page) — the one body, so the
+// diagonal watermark Finalize bakes and the one "Stamp every page" draws cannot drift (ADR-009).
+func stampWatermarkOn(pdf []byte, text string, st WatermarkStyle, sel []string) ([]byte, error) {
 	wtext, err := stampText(text)
 	if err != nil {
 		return nil, err
@@ -2383,8 +2389,12 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 		if err != nil {
 			return err
 		}
+		on, err := stampedPages(sel, ctx.PageCount)
+		if err != nil {
+			return err
+		}
 		every := types.IntSet{}
-		for p := 1; p <= ctx.PageCount; p++ {
+		for _, p := range on {
 			every[p] = true
 		}
 		return pdfcpu.AddWatermarks(context.Background(), ctx, every, wm)

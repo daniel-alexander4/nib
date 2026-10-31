@@ -213,8 +213,11 @@ var tagFates = map[string]tagFate{
 	}},
 	"StampPageNumbers": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampPageNumbers(b, PageNumberStyle{}) }},
 	"StampWatermark":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampWatermark(b, "DRAFT", WatermarkStyle{}) }},
-	"AddNotes":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddNotes(b, []Note{{Page: 1, X: 10, Y: 10, Text: "n"}}) }},
-	"AddAttachment":    {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddAttachment(b, "a.txt", []byte("hi")) }},
+	"StampPages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return StampPages(b, PageStamp{Kind: StampKindImage, Image: onePixelPNG(), Pages: []string{"1"}})
+	}},
+	"AddNotes":      {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddNotes(b, []Note{{Page: 1, X: 10, Y: 10, Text: "n"}}) }},
+	"AddAttachment": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddAttachment(b, "a.txt", []byte("hi")) }},
 	"EmbedCeremonyRecord": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return EmbedCeremonyRecord(b, []byte(`{"id":"x"}`))
 	}},

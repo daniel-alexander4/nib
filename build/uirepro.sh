@@ -309,7 +309,7 @@ fi
 # because Quit ends the process, and its own Chrome, because the harness's page is one Chrome will not let close.
 # 57 since /pending 889 part 4 (untypedannot.test.mjs): an annotation with no /Subtype drawn from its appearance —
 # only a real renderer draws it, and a pdf.js bump that stopped would change no real document's look.
-expect_files=58
+expect_files=59
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"
