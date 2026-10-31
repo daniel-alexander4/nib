@@ -29,11 +29,24 @@ var validatorRefusals = []struct {
 		model.ErrFormFieldCycle, model.ErrNameTreeCycle, model.ErrNumberTreeCycle, model.ErrPageTreeCycle,
 		model.ErrStructureTreeCycle, model.ErrFunctionCycle, model.ErrHalftoneCycle, model.ErrMediaClipCycle,
 		model.ErrPatternCycle, model.ErrRenditionCycle, model.ErrTargetCycle,
+		// The annotation reply thread, the font's CMap chain and a colour space naming itself are loops of the same
+		// kind; they reached the user as pdfcpu's words alone (/pending 919 F12).
+		model.ErrAnnotationIRTCycle, model.ErrCMapCycle, model.ErrColorSpaceCycle,
 	}, ErrReferenceCycle},
 	{[]error{
 		model.ErrFormFieldDuplicate, model.ErrNameTreeDuplicate, model.ErrNumberTreeDuplicate,
 		model.ErrPageTreeDuplicate, model.ErrStructureTreeDuplicate,
 	}, ErrNodeNamedTwice},
+}
+
+// StructureRefusals are the sentences of the refusals above and of the reference door's two, the words the
+// server's error door recognises to answer 422 with a cause (ADR-072): the fault is the document's, not the
+// request's and not the server's.
+func StructureRefusals() []string {
+	return []string{
+		ErrNestedTooDeep.Error(), ErrReferenceCycle.Error(), ErrNodeNamedTwice.Error(),
+		ErrReferenceDepth.Error(), ErrReferencePaths.Error(),
+	}
 }
 
 // refusal is nib's sentence for a validator error, with pdfcpu's own words behind it. errors.Is answers for both.

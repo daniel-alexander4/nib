@@ -27,29 +27,29 @@ var expectedNames = map[error]error{
 	model.ErrPatternCycle: ErrReferenceCycle, model.ErrRenditionCycle: ErrReferenceCycle,
 	model.ErrTargetCycle: ErrReferenceCycle,
 
+	model.ErrAnnotationIRTCycle: ErrReferenceCycle, model.ErrCMapCycle: ErrReferenceCycle,
+	model.ErrColorSpaceCycle: ErrReferenceCycle,
+
 	model.ErrFormFieldDuplicate: ErrNodeNamedTwice, model.ErrNameTreeDuplicate: ErrNodeNamedTwice,
 	model.ErrNumberTreeDuplicate: ErrNodeNamedTwice, model.ErrPageTreeDuplicate: ErrNodeNamedTwice,
 	model.ErrStructureTreeDuplicate: ErrNodeNamedTwice,
 }
 
 // unnamedByDecision are the validator's bounded-walk errors nib does NOT name, each with the reason. They pass
-// through as pdfcpu's own words (F12, /pending 919 owns whether they should be classified). A new `Err…` in
+// through as pdfcpu's own words (F12, /pending 919). A new `Err…` in
 // pdfcpu's recursion.go that is in neither this set nor expectedNames fails the census below, so a bump cannot add
 // a refusal nobody decided about.
 var unnamedByDecision = map[string]string{
-	"ErrActionCycle":        "no pdfcpu v0.16.2 code returns it",
-	"ErrBeadCycle":          "no pdfcpu v0.16.2 code returns it",
-	"ErrAnnotationIRTCycle": "returned by the annotation walk; not named (F12)",
-	"ErrCMapCycle":          "returned by the font walk; not named (F12)",
-	"ErrColorSpaceCycle":    "returned by the colour-space walk; not named (F12)",
+	"ErrActionCycle": "no pdfcpu v0.16.2 code returns it",
+	"ErrBeadCycle":   "no pdfcpu v0.16.2 code returns it",
 }
 
 // TestEveryBoundedWalkRefusalIsNamedAsExpected probes validatorRefusals one error at a time (P02 red-proof: 15 of
 // the 17 were unprobed). Each error, wrapped as the validator wraps it, must come back as its named refusal and
 // still answer errors.Is for pdfcpu's own.
 func TestEveryBoundedWalkRefusalIsNamedAsExpected(t *testing.T) {
-	if len(expectedNames) != 17 {
-		t.Fatalf("setup: the expectation holds %d errors, want the 17 the table names", len(expectedNames))
+	if len(expectedNames) != 20 {
+		t.Fatalf("setup: the expectation holds %d errors, want the 20 the table names", len(expectedNames))
 	}
 	for pdfcpuErr, want := range expectedNames {
 		wrapped := fmt.Errorf("prepare PDF context: validation error (obj#:7): %w", pdfcpuErr)
@@ -66,7 +66,7 @@ func TestEveryBoundedWalkRefusalIsNamedAsExpected(t *testing.T) {
 	if got := nameValidatorRefusal(other); got != other {
 		t.Errorf("an unrelated error came back as %v", got)
 	}
-	for _, e := range []error{model.ErrActionCycle, model.ErrBeadCycle, model.ErrAnnotationIRTCycle, model.ErrCMapCycle, model.ErrColorSpaceCycle} {
+	for _, e := range []error{model.ErrActionCycle, model.ErrBeadCycle} {
 		if got := nameValidatorRefusal(e); got != e {
 			t.Errorf("%v is declared unnamed and came back as %v", e, got)
 		}
@@ -127,6 +127,8 @@ func errorName(e error) string {
 		"ErrHalftoneCycle": model.ErrHalftoneCycle, "ErrMediaClipCycle": model.ErrMediaClipCycle,
 		"ErrPatternCycle": model.ErrPatternCycle, "ErrRenditionCycle": model.ErrRenditionCycle,
 		"ErrTargetCycle":        model.ErrTargetCycle,
+		"ErrAnnotationIRTCycle": model.ErrAnnotationIRTCycle, "ErrCMapCycle": model.ErrCMapCycle,
+		"ErrColorSpaceCycle":    model.ErrColorSpaceCycle,
 		"ErrFormFieldDuplicate": model.ErrFormFieldDuplicate, "ErrNameTreeDuplicate": model.ErrNameTreeDuplicate,
 		"ErrNumberTreeDuplicate": model.ErrNumberTreeDuplicate, "ErrPageTreeDuplicate": model.ErrPageTreeDuplicate,
 		"ErrStructureTreeDuplicate": model.ErrStructureTreeDuplicate,
