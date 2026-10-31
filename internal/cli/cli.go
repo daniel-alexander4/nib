@@ -151,7 +151,7 @@ These subcommands run headlessly, without a browser:
   nib timestamp --verify FILE...  check each FILE against its FILE.ots proof
   nib verify [--json] FILE...     report signature integrity (exit 2 if not wholly signed)
   nib optimize IN -o OUT          losslessly shrink a PDF
-  nib merge IN... -o OUT          concatenate PDFs into one
+  nib merge IN... -o OUT          concatenate PDFs or images into one
   nib sanitize IN -o OUT          strip metadata and active content (JS, actions)
                                   (--fields: also form fields that are on no page)
   nib sign IN -o OUT --cert C.p12 certify a PDF with an imported .p12 identity

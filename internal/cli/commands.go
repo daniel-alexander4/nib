@@ -337,7 +337,7 @@ func cmdMerge(args []string) int {
 	fs := flag.NewFlagSet("nib merge", flag.ContinueOnError)
 	var out string
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT", "Concatenate two or more PDFs, in the order given, into one.")
+	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT", "Concatenate two or more PDFs or images (PNG, JPEG, TIFF, WebP), in the order given, into one.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -346,7 +346,7 @@ func cmdMerge(args []string) int {
 		return 1
 	}
 	if fs.NArg() < 2 {
-		errf("merge needs at least two input PDFs")
+		errf("merge needs at least two inputs (PDFs or images)")
 		return 1
 	}
 	pdfs := make([][]byte, 0, fs.NArg())
@@ -359,6 +359,13 @@ func cmdMerge(args []string) int {
 		if overwritesSignedInput(p, out, b) {
 			errf("%s: %s", p, refuseSignedInPlace)
 			return 1
+		}
+		if !pdfops.LooksLikePDF(b) && pdfops.LooksLikeImage(b) {
+			// The opener's door, so a picture is the page the opener would make of it.
+			if b, err = pdfops.ImageToDocument(b, filepath.Base(p)); err != nil {
+				errf("%s: %v", p, err)
+				return 1
+			}
 		}
 		pdfs = append(pdfs, b)
 	}
