@@ -277,7 +277,8 @@ func generatedDigestCorpus(t *testing.T) []struct {
 
 // digestRules is every rule this build computes, with the golden-file suffix it is pinned under (ADR-080).
 //
-// **Only the computable rule is pinned** (ADR-143 §3: a golden for a rule nothing computes pins nothing). Rules 5 and 6
+// **Only a computable rule is pinned** (ADR-143 §3: a golden for a rule nothing computes pins nothing). Rule 7 stays
+// pinned beside rule 8 because it is still computed for its own records (ADR-179). Rules 5 and 6
 // were retired together at the pdfcpu v0.16.2 bump (D1, P02.S08) and their `-v5` / `-v6` files were deleted with them;
 // git history is their record. A retired rule's RECORD is still accepted by the record-level questions
 // (`ContentDigestRuleRetired`), and that is held by `internal/ceremony`'s tests, not by a golden.
@@ -287,7 +288,8 @@ var digestRules = []struct {
 	rule   int
 	suffix string
 }{
-	{ContentDigestVersion, "-v7"},
+	{7, "-v7"},
+	{ContentDigestVersion, "-v8"},
 }
 
 // TestEveryReadableRuleIsPinnedUnderItsOwnNumber holds the table above to the two constants: a bump that moved

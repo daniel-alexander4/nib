@@ -269,7 +269,7 @@ func TestARecordUnderARetiredDigestRuleIsARecordButNotAHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	for _, rule := range []int{pdfops.ContentDigestVersion - 2, pdfops.ContentDigestVersion - 1} {
+	for _, rule := range []int{5, 6} {
 		t.Run(fmt.Sprintf("rule %d", rule), func(t *testing.T) {
 			if pdfops.ContentDigestRuleReadable(rule) || !pdfops.ContentDigestRuleRetired(rule) {
 				t.Fatalf("setup: rule %d is not a retired rule of this build", rule)

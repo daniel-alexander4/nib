@@ -118,9 +118,9 @@ func pageOneContent(t *testing.T, pdf []byte) []byte {
 
 func TestRuleSixFollowsEveryKindOfResourceAPageBinds(t *testing.T) {
 	// Rule 5 is retired (D1, P02.S08): its blind half cannot be asserted because nothing computes it. These rows keep
-	// the SEEING half, under the rule this build computes, which is rule 6's axes read by pdfcpu v0.16.x.
-	if ContentDigestVersion != 7 {
-		t.Fatalf("these rows pin the every-kind axes under rule 7; this build computes rule %d, so the rows need "+
+	// the SEEING half, under the rule this build computes (rule 8: rule 6's axes read by pdfcpu v0.16.x, font tags left out).
+	if ContentDigestVersion != 8 {
+		t.Fatalf("these rows pin the every-kind axes under rule 8; this build computes rule %d, so the rows need "+
 			"re-reading against the rule they name", ContentDigestVersion)
 	}
 	for _, inherited := range []bool{false, true} {
