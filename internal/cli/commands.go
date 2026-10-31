@@ -719,6 +719,61 @@ func cmdNormalize(args []string) int {
 	return runTransform(fs, out, inPlace, pdfops.NormalizePageSizes)
 }
 
+func cmdStamp(args []string) int {
+	fs := flag.NewFlagSet("nib stamp", flag.ContinueOnError)
+	var out, text, watermark, picture, pages string
+	var inPlace bool
+	var widthPct float64
+	st := pdfops.PageStamp{}
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.StringVar(&text, "text", "", "a line of text to stamp (a footer, header or corner)")
+	fs.StringVar(&watermark, "watermark", "", "a large diagonal text watermark")
+	fs.StringVar(&picture, "image", "", "a PNG or JPEG to stamp, such as a logo")
+	fs.StringVar(&st.Position, "position", "", "tl/tc/tr/cl/c/cr/bl/bc/br (default: bc for text, br for an image)")
+	fs.IntVar(&st.Size, "size", 11, "point size of --text")
+	fs.StringVar(&st.Color, "color", "", "hex colour #RRGGBB of --text or --watermark")
+	fs.Float64Var(&st.Opacity, "opacity", 0, "0.02-1 (default 1; 0.1 for --watermark)")
+	fs.Float64Var(&widthPct, "width", 20, "--image: width as a percentage of the page's width")
+	fs.IntVar(&st.Angle, "angle", 45, "--watermark: degrees, -90 to 90")
+	fs.Float64Var(&st.Margin, "margin", 36, "points in from the edge (--text and --image)")
+	fs.StringVar(&pages, "pages", "", "pages to stamp, e.g. 1-3,5 or even (default: every page)")
+	fs.Usage = usageFunc(fs, "nib stamp IN -o OUT (--text T | --watermark T | --image FILE) [--position P --pages SEL]  |  nib stamp -w FILE... (...)", "Put a line of text, a diagonal watermark or a picture on every page, or the pages named.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	given := 0
+	for _, v := range []string{text, watermark, picture} {
+		if v != "" {
+			given++
+		}
+	}
+	if given != 1 {
+		errf("give exactly one of --text, --watermark and --image")
+		return 1
+	}
+	switch {
+	case text != "":
+		st.Kind, st.Text = pdfops.StampKindText, text
+	case watermark != "":
+		st.Kind, st.Text, st.Scale = pdfops.StampKindWatermark, watermark, 0.9
+		if st.Opacity == 0 {
+			st.Opacity = 0.1
+		}
+	default:
+		img, err := os.ReadFile(picture)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		st.Kind, st.Image, st.Scale = pdfops.StampKindImage, img, widthPct/100
+	}
+	st.Pages = splitSel(pages)
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		return pdfops.StampPages(b, st)
+	})
+}
+
 func cmdPagenum(args []string) int {
 	fs := flag.NewFlagSet("nib pagenum", flag.ContinueOnError)
 	var out, outDir string

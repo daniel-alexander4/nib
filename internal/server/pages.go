@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +35,14 @@ func optionalInt(v string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(v)
+}
+
+// optionalFloat is optionalInt for a fractional field.
+func optionalFloat(v string) (float64, error) {
+	if v == "" {
+		return 0, nil
+	}
+	return strconv.ParseFloat(v, 64)
 }
 
 // handlePages applies a structural page operation (rotate, delete, reorder,
@@ -189,6 +198,34 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = pdfops.SetPageLabels(pdfBytes, ranges)
+	case "pagestamp":
+		// A mark on the pages named (`pages`, every page when empty) — `/pending 907`. A field left out
+		// takes the operation's default; one that is sent and is not a number is refused, as pagenum's are.
+		size, zErr := optionalInt(r.FormValue("size"))
+		angle, aErr := optionalInt(r.FormValue("angle"))
+		opacity, oErr := optionalFloat(r.FormValue("opacity"))
+		scale, cErr := optionalFloat(r.FormValue("scale"))
+		margin, mErr := optionalFloat(r.FormValue("margin"))
+		if zErr != nil || aErr != nil || oErr != nil || cErr != nil || mErr != nil {
+			httpError(w, http.StatusBadRequest, "stamping needs numbers for the size, angle, opacity, scale and margin")
+			return
+		}
+		st := pdfops.PageStamp{
+			Kind: r.FormValue("kind"), Text: r.FormValue("text"), Position: r.FormValue("position"),
+			Size: size, Color: r.FormValue("color"), Opacity: opacity, Scale: scale, Angle: angle, Margin: margin,
+			Pages: pages,
+		}
+		if st.Kind == pdfops.StampKindImage {
+			var ok2 bool
+			if st.Image, ok2 = formFileBytes(w, r, "image"); !ok2 {
+				return
+			}
+		}
+		result, err = pdfops.StampPages(pdfBytes, st)
+		if errors.Is(err, pdfops.ErrStampNeedsContent) {
+			httpError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	case "normalize":
 		result, err = pdfops.NormalizePageSizes(pdfBytes)
 	default:
