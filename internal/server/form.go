@@ -4,8 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"unicode/utf16"
 
 	"nib/internal/pdfops"
 )
@@ -52,6 +55,43 @@ func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
 	sendDownload(w, "fillable.pdf", "application/pdf", out)
 }
 
+// maxSkippedListed is how many field names `X-Nib-Skipped` lists; the count is always whole.
+const maxSkippedListed = 10
+
+// skippedFieldsHeader is `X-Nib-Skipped` on a fill's answer (ADR-072: a fact about the returned bytes is a header):
+// the fields the fill could not reach, whose widget's /Parent leads nowhere (`pdfops.UnfillableFields`,
+// /pending 919 F14), so the window can say what the file does not show. Nothing when there are none or the form
+// cannot be read - the fill has already answered for that. ASCII only: fetch decodes a header as Latin-1, and a
+// field name is the document's text.
+func skippedFieldsHeader(w http.ResponseWriter, pdf []byte) {
+	names, err := pdfops.UnfillableFields(pdf)
+	if err != nil || len(names) == 0 {
+		return
+	}
+	facts := struct {
+		Count int      `json:"count"`
+		Names []string `json:"names"`
+	}{Count: len(names), Names: names}
+	if len(facts.Names) > maxSkippedListed {
+		facts.Names = facts.Names[:maxSkippedListed]
+	}
+	raw, err := json.Marshal(facts)
+	if err != nil {
+		return
+	}
+	var b strings.Builder
+	for _, r := range string(raw) {
+		if r < 0x80 {
+			b.WriteRune(r)
+			continue
+		}
+		for _, u := range utf16.Encode([]rune{r}) {
+			fmt.Fprintf(&b, "\\u%04x", u)
+		}
+	}
+	w.Header().Set("X-Nib-Skipped", b.String())
+}
+
 // handleFormFillCSV mail-merges a CSV onto the posted form template — one filled
 // PDF per data row — and returns them bundled as a ZIP download. It reuses the
 // same engine as `nib fill --data rows.csv` (pdfops.FillFormCSV); like author and
@@ -89,6 +129,7 @@ func (s *Server) handleFormFillCSV(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not build zip")
 		return
 	}
+	skippedFieldsHeader(w, pdfBytes)
 	sendDownload(w, "filled-forms.zip", "application/zip", buf.Bytes())
 }
 
@@ -111,5 +152,6 @@ func (s *Server) handleFormFillXFDF(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not fill form: "+err.Error())
 		return
 	}
+	skippedFieldsHeader(w, pdfBytes)
 	sendDownload(w, "filled.pdf", "application/pdf", out)
 }
