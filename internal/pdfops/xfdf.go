@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"nib/internal/pdfread"
+	"sort"
 	"strings"
 
 	"golang.org/x/text/encoding/ianaindex"
@@ -142,6 +143,21 @@ func xfdfCharset(label string, input io.Reader) (io.Reader, error) {
 		return nil, fmt.Errorf("this XFDF declares an encoding Nib cannot read (%s)", label)
 	}
 	return enc.NewDecoder().Reader(input), nil
+}
+
+// XFDFFieldNames is the fully-qualified field names an XFDF document gives a value to, sorted — what a fill
+// from it was asked to set. An unreadable document names none.
+func XFDFFieldNames(data []byte) []string {
+	values, err := parseXFDF(data)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // parseXFDF reads an XFDF document into a flat map of fully-qualified field name →

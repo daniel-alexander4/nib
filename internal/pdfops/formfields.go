@@ -357,6 +357,28 @@ func UnfillableFields(pdf []byte) ([]string, error) {
 	return names, nil
 }
 
+// UnfillableFieldsAsked is UnfillableFields narrowed to the names a fill's DATA gave (/pending 919 F14): the
+// window says what this fill dropped, not what the form cannot take at all, and a name the data wrote is one the
+// person recognises where the file's own partials ("", "0") are not. Each asked name is matched whole against the
+// dotted name `UnfillableFields` reads; sorted, each once.
+func UnfillableFieldsAsked(pdf []byte, asked []string) ([]string, error) {
+	all, err := UnfillableFields(pdf)
+	if err != nil || len(all) == 0 {
+		return nil, err
+	}
+	want := make(map[string]bool, len(asked))
+	for _, a := range asked {
+		want[a] = true
+	}
+	var out []string
+	for _, n := range all {
+		if n != "" && want[n] {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
 // eachUnwalkableWidget calls fn for every page annotation whose `/Parent` chain reaches an empty or unresolvable
 // dictionary, with the dotted name its reachable `/T` partials make (empty when none has one).
 func eachUnwalkableWidget(xt *model.XRefTable, root types.Dict, fn func(ir types.IndirectRef, name string)) {

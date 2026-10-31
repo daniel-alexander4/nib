@@ -59,12 +59,13 @@ func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
 const maxSkippedListed = 10
 
 // skippedFieldsHeader is `X-Nib-Skipped` on a fill's answer (ADR-072: a fact about the returned bytes is a header):
-// the fields the fill could not reach, whose widget's /Parent leads nowhere (`pdfops.UnfillableFields`,
-// /pending 919 F14), so the window can say what the file does not show. Nothing when there are none or the form
+// the fields the fill's DATA named and the fill could not reach, whose widget's /Parent leads nowhere
+// (`pdfops.UnfillableFieldsAsked`, /pending 919 F14), so the window can say what the file does not show — by the
+// names the data used, since the file's own partials are often empty or a bare number. Nothing when there are none or the form
 // cannot be read - the fill has already answered for that. ASCII only: fetch decodes a header as Latin-1, and a
 // field name is the document's text.
-func skippedFieldsHeader(w http.ResponseWriter, pdf []byte) {
-	names, err := pdfops.UnfillableFields(pdf)
+func skippedFieldsHeader(w http.ResponseWriter, pdf []byte, asked []string) {
+	names, err := pdfops.UnfillableFieldsAsked(pdf, asked)
 	if err != nil || len(names) == 0 {
 		return
 	}
@@ -129,7 +130,7 @@ func (s *Server) handleFormFillCSV(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not build zip")
 		return
 	}
-	skippedFieldsHeader(w, pdfBytes)
+	skippedFieldsHeader(w, pdfBytes, pdfops.CSVFieldNames([]byte(r.FormValue("data"))))
 	sendDownload(w, "filled-forms.zip", "application/zip", buf.Bytes())
 }
 
@@ -152,6 +153,6 @@ func (s *Server) handleFormFillXFDF(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not fill form: "+err.Error())
 		return
 	}
-	skippedFieldsHeader(w, pdfBytes)
+	skippedFieldsHeader(w, pdfBytes, pdfops.XFDFFieldNames([]byte(r.FormValue("data"))))
 	sendDownload(w, "filled.pdf", "application/pdf", out)
 }

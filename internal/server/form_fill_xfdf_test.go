@@ -82,7 +82,8 @@ func TestFormFillNamesTheFieldsItCouldNotReach(t *testing.T) {
 		9:  "<< /Type /Annot /Subtype /Widget /FT /Tx /T (orphan) /Parent 99 0 R /Rect [10 40 70 60] /P 3 0 R >>",
 		10: "<< /Type /Annot /Subtype /Widget /FT /Tx /T <FEFF00C9> /Parent 98 0 R /Rect [10 80 70 100] /P 3 0 R >>",
 	})
-	xfdf := `<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields><field name="name"><value>A</value></field></fields></xfdf>`
+	xfdf := `<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields><field name="name"><value>A</value></field>` +
+		`<field name="orphan"><value>B</value></field><field name="&#201;"><value>C</value></field></fields></xfdf>`
 	body, ct := fillXFDFForm(t, orphans, xfdf)
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/form/fill-xfdf", ct, body)
 	defer resp.Body.Close()
@@ -96,11 +97,23 @@ func TestFormFillNamesTheFieldsItCouldNotReach(t *testing.T) {
 	}
 
 	// The mail-merge says the same, from the same door.
-	csvBody, csvCT := fillCSVForm(t, orphans, "name\nA\n")
+	csvBody, csvCT := fillCSVForm(t, orphans, "name,orphan,\u00c9\nA,B,C\n")
 	merged := write(t, c, csrf, http.MethodPost, ts.URL+"/api/form/fill-csv", csvCT, csvBody)
 	defer merged.Body.Close()
 	if merged.StatusCode != http.StatusOK || merged.Header.Get("X-Nib-Skipped") != got {
 		t.Errorf("fill-csv: status %d, X-Nib-Skipped = %q, want %q", merged.StatusCode, merged.Header.Get("X-Nib-Skipped"), got)
+	}
+
+	// Only what the data NAMED is reported: the same form, filled with a value for the reachable field alone, drops
+	// nothing the person asked for, so it says nothing (the count is of this fill, not of the form).
+	body, ct = fillXFDFForm(t, orphans, `<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields><field name="name"><value>A</value></field></fields></xfdf>`)
+	unasked := write(t, c, csrf, http.MethodPost, ts.URL+"/api/form/fill-xfdf", ct, body)
+	defer unasked.Body.Close()
+	if unasked.StatusCode != http.StatusOK {
+		t.Fatalf("the unasked fill answered %d, so its missing header says nothing", unasked.StatusCode)
+	}
+	if h := unasked.Header.Get("X-Nib-Skipped"); h != "" {
+		t.Errorf("data that named no orphan still carried X-Nib-Skipped = %q", h)
 	}
 
 	form, _ := testpdf.Form()
