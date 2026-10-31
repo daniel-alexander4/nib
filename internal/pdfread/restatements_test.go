@@ -84,7 +84,7 @@ func TestEveryV013CitationHasARestatementsRow(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == "third_party" || rel == "node_modules" || rel == ".git" || rel == "dist" || rel == "web" || rel == "test" {
+			if rel == "third_party" || rel == "node_modules" || rel == ".git" || rel == ".claude" || rel == "dist" || rel == "web" || rel == "test" {
 				return filepath.SkipDir
 			}
 			return nil

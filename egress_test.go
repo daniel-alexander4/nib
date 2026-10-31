@@ -66,7 +66,7 @@ func TestNibNeverTurnsOnPdfcpuNetworkCode(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "third_party", "node_modules", ".git", "dist", "web":
+			case "third_party", "node_modules", ".git", ".claude", "dist", "web":
 				return filepath.SkipDir
 			}
 			return nil

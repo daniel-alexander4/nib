@@ -2301,6 +2301,14 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "no-form-fields"})
 		return
 	}
+	// The fifth: a document nib refused to read because of how it is built (a loop, a tree that names one node twice,
+	// nesting past pdfcpu's levels). The fault is the document's, so 422 and a cause (ADR-072, /pending 919 F12).
+	for _, w2 := range pdfread.StructureRefusals() {
+		if strings.Contains(msg, w2) {
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": msg, "cause": "document-structure"})
+			return
+		}
+	}
 	// A vault write the vault refused in words of its own (ADR-154): 409 and its cause from every
 	// route that stores something, whichever handler voiced it. See vaulterror.go.
 	if _, ok := vaultRefusal(msg); ok {

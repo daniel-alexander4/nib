@@ -137,7 +137,7 @@ func TestForgetNameTreeHasItsThreeNamedCallers(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "node_modules", ".git", "testdata", "third_party":
+			case "node_modules", ".git", ".claude", "testdata", "third_party":
 				return filepath.SkipDir
 			}
 			return nil
