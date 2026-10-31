@@ -55,7 +55,7 @@ func referenceDigestBody(ctx *model.Context) (string, error) {
 	hashUint(h, uint64(ctx.PageCount))
 	// A memo already past its budget stores nothing: every stream is decoded afresh, which is what the old code
 	// did. It is here only to carry the page positions the rule hashes a reached page by.
-	sc := &streamMemo{met: map[int]bool{}, body: map[int]decodedStream{}, spent: streamMemoBudget + 1, pageAt: map[int]int{}}
+	sc := &streamMemo{met: map[int]bool{}, body: map[int]decodedStream{}, spent: streamMemoBudget + 1, pageAt: map[int]int{}, stripFontTags: true}
 	for i := 1; i <= ctx.PageCount; i++ {
 		if ir, err := ctx.PageDictIndRef(context.Background(), i); err == nil && ir != nil {
 			sc.pageAt[ir.ObjectNumber.Value()] = i

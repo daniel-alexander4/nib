@@ -84,7 +84,8 @@ func ShortHash(h string) string { return short(h) }
 // identity, so the convener and a party at hop four would compute different numbers from
 // the same document, every time.
 //
-// pdfops.ContentDigest is stable where a byte hash is not: measured identical across adding
+// pdfops.ContentDigest is stable where a byte hash is not (rule 8; rule 7 varied on documents holding fonts that differ
+// only in their subset tag, /pending 927): measured identical across adding
 // the attachment, and across a REWRITE of the same document.
 //
 // # What this hash proves, and to whom — corrected 2026-08-24 (P07.S02), by measurement

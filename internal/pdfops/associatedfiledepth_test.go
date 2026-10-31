@@ -60,15 +60,16 @@ func TestAnAssociatedFileIsStrippedFromEveryContainerItCanSitIn(t *testing.T) {
 }
 
 // TestTheRetiredRulesAreExactlyTheOnesBelowTheCurrentRule — P02 close, redproof survivor 10. A bound written `<=` would
-// call the CURRENT rule retired, and ReadMirrorToEnd would then skip the DocHash comparison for every current mirror.
+// call a readable rule retired, and ReadMirrorToEnd would then skip the DocHash comparison for every such mirror.
+// Rule 7 is below the current rule 8 and still readable (/pending 927), so the retired ones are 5 and 6.
 func TestTheRetiredRulesAreExactlyTheOnesBelowTheCurrentRule(t *testing.T) {
 	cur := ContentDigestVersion
-	for v, want := range map[int]bool{4: false, 5: true, cur - 1: true, cur: false, cur + 1: false} {
+	for v, want := range map[int]bool{4: false, 5: true, 6: true, 7: false, cur: false, cur + 1: false} {
 		if got := ContentDigestRuleRetired(v); got != want {
 			t.Errorf("ContentDigestRuleRetired(%d) = %v, want %v (current rule %d)", v, got, want, cur)
 		}
 	}
-	if !ContentDigestRuleReadable(cur) || ContentDigestRuleReadable(cur-1) {
-		t.Errorf("only rule %d is readable", cur)
+	if !ContentDigestRuleReadable(cur) || !ContentDigestRuleReadable(7) || ContentDigestRuleReadable(6) {
+		t.Errorf("only rules 7 and %d are readable", cur)
 	}
 }

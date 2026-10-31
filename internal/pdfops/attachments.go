@@ -374,14 +374,19 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // post-optimize graph (`ReadOptimized`), and v0.16.2 reads 24 of 2,326 real documents to a different graph. Rules 5
 // and 6 are RETIRED: a record under either is accepted by every record-level question (`ContentDigestRuleRetired`)
 // and refused wherever a digest would be computed (`ContentDigestRuleReadable`).
-const ContentDigestVersion = 7
+//
+// **Rule 8 is rule 7 with a font's subset tag left out of the hash** (/pending 927, ADR-177's successor): pdfcpu's
+// optimize pass merges two fonts that differ only in `ABCDEF+` and keeps whichever its map iteration meets first,
+// so rule 7 hashed a different tag on different reads of the same bytes (3 of 2,013 real documents). Rule 7 stays
+// computable, byte for byte, for the records written under it.
+const ContentDigestVersion = 8
 
 // ContentDigestRuleReadable reports whether this build can compute ContentDigest under rule v: the current rule
 // only, since rules 5 and 6 were retired together at the pdfcpu v0.16.2 bump (D1). The rule number is bound into the
 // digest, so a retired rule is not computable by any code that keeps its axes. A record naming any other rule is a
 // version skew (D32), and `ceremony.digestRuleComputable` is the one door that says so where a digest is needed.
 func ContentDigestRuleReadable(v int) bool {
-	return v == ContentDigestVersion
+	return v == ContentDigestVersion || v == 7
 }
 
 // ContentDigestRuleRetired reports a rule this build once computed and no longer does — 5 and 6. A RECORD under one is
@@ -389,7 +394,7 @@ func ContentDigestRuleReadable(v int) bool {
 // so `ceremony.digestRuleSkew` accepts it. Rule 4 and earlier were retired before the record format carried them in
 // any live ceremony and stay a skew everywhere, as before.
 func ContentDigestRuleRetired(v int) bool {
-	return v >= 5 && v < ContentDigestVersion
+	return v >= 5 && v < 7
 }
 
 // ErrDigestRuleUnknown is ContentDigestAt's refusal of a rule this build does not compute.
@@ -551,6 +556,9 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 // later cleanup (ADR-174 Consequences), not a rule this build computes.
 func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int) (string, error) {
 	h := sha256.New()
+	if sc != nil {
+		sc.stripFontTags = version >= 8
+	}
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first
 	// draft wrote the resource kind and name unprefixed, which is injective by luck rather
 	// than by construction (C3).
@@ -1177,8 +1185,13 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 		}
 		sort.Strings(keys)
 		hashUint(h, uint64(len(keys)))
+		font := sc != nil && sc.stripFontTags && isFontDict(v)
 		for _, k := range keys {
 			hashChunk(h, []byte(k))
+			if n, ok := v[k].(types.Name); ok && font && (k == "BaseFont" || k == "FontName" || k == "Name") {
+				hashChunk(h, []byte(types.Name(withoutSubsetTag(string(n))).PDFString()))
+				continue
+			}
 			hashObjectSeen(xt, v[k], h, depth+1, seen, sc, 0)
 		}
 	case types.StreamDict:
@@ -1196,6 +1209,23 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 		// ordering hazard is dicts, and those are handled above.
 		hashChunk(h, []byte(o.PDFString()))
 	}
+}
+
+// isFontDict reports a dictionary whose /Type is /Font — the dictionaries pdfcpu's EqualObjects compares leniently
+// on BaseFont, FontName and Name (model/equal.go, equalFontNames). A /FontDescriptor is compared strictly there and
+// is not one.
+func isFontDict(d types.Dict) bool {
+	t, ok := d["Type"].(types.Name)
+	return ok && string(t) == "Font"
+}
+
+// withoutSubsetTag drops everything up to the first '+' when that '+' is not the first byte, as pdfcpu's
+// equalFontNames does.
+func withoutSubsetTag(n string) string {
+	if i := strings.IndexByte(n, '+'); i > 0 {
+		return n[i+1:]
+	}
+	return n
 }
 
 // streamMemo remembers the DECODED bytes of a stream object across one ContentDigest call.
@@ -1241,6 +1271,8 @@ type streamMemo struct {
 	// position), carried here because this is the one per-call value every hash function already threads.
 	// Nil outside digestRule.
 	pageAt map[int]int
+	// stripFontTags is rule 8: a font dictionary's name keys are hashed without the `ABCDEF+` subset tag.
+	stripFontTags bool
 }
 
 // pageOf reports the position of page object `num`, under a rule that hashes pages by position.
