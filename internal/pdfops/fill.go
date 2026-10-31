@@ -190,6 +190,16 @@ func (h heldOptionValues) holds(name, v string) bool {
 	return slices.Contains(h[name], v)
 }
 
+// CSVFieldNames is the header row of a mail-merge CSV: the field names a fill from it was asked to set. An
+// unreadable CSV names none.
+func CSVFieldNames(data []byte) []string {
+	row, err := csv.NewReader(bytes.NewReader(data)).Read()
+	if err != nil {
+		return nil
+	}
+	return row
+}
+
 // FillFormCSV mail-merges pdf against a wide CSV — row 0 holds field names (or
 // ids), each later row is one record producing one filled PDF. A column whose
 // header matches no field is ignored, so a label column can ride along. When
