@@ -20,7 +20,7 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 	defer cleanup()
 	headers := r.MultipartForm.File["file"]
 	if len(headers) < 2 {
-		httpError(w, http.StatusBadRequest, "choose at least two PDFs to combine")
+		httpError(w, http.StatusBadRequest, "choose at least two PDFs or images to combine")
 		return
 	}
 	pdfs := make([][]byte, 0, len(headers))
@@ -30,7 +30,21 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "could not read "+fh.Filename)
 			return
 		}
-		pdfs = append(pdfs, data)
+		// An image is a page like any other: the same door that opens one converts it here, so
+		// its size rule is the opener's (ADR-009). A refused file is left as it came and Combine
+		// names it, as it always has; a convertible office file says where it is opened.
+		doc, kind, cerr := asOpenableDocument(data, fh.Filename)
+		switch {
+		case cerr != nil:
+			httpError(w, http.StatusBadRequest, fh.Filename+": "+cerr.Error())
+			return
+		case kind == openConvertible:
+			httpError(w, http.StatusBadRequest, fh.Filename+": "+convertibleRefusal(fh.Filename))
+			return
+		case kind == openRefused:
+			doc = data
+		}
+		pdfs = append(pdfs, doc)
 	}
 	combined, err := pdfops.Combine(pdfs)
 	if err != nil {

@@ -1173,8 +1173,9 @@ clicking. And a folder Nib can't read says so — "you don't have permission to
 read that folder", "that's a file, not a folder" — instead of looking empty.
 
 ### Pages & export
-**Combine PDFs…** (Page Functions tab) assembles several documents into one: add the files,
-arrange them with ↑ ↓, and they merge top-to-bottom into a new document — then
+**Combine PDFs…** (Page Functions tab) assembles several documents into one: add the files
+— PDFs, or pictures (PNG, JPEG, TIFF, WebP), each of which becomes a page the way
+*Open an image* makes one, at its physical size — arrange them with ↑ ↓, and they merge top-to-bottom into a new document — then
 reorder individual pages across them by dragging thumbnails. It works even with
 nothing open, and the result is a new, unsigned document (Save As to keep it).
 
@@ -1609,7 +1610,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
 | `nib verify [--json] [--signer FINGERPRINT]… FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, carries a signature Nib refused, **or belongs to a ceremony an obliged party has not signed, whose signatures do not all commit to it, or that carries a signature from someone off its roster** — a signature written by a newer Nib excuses only its own unread attestation, never another signature and never the roster check. A valid signature shows that its key signed, not whose key it is: **`--signer`** (repeatable, or comma-separated) names the key fingerprints you expect, as `nib verify` prints them, and the exit is then also `2` — with one line saying so, and `expectedSigners` in the JSON — when any signature is from a key you did not name or a key you named has not signed. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
-| `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
+| `nib merge IN… -o OUT` | Concatenate PDFs or images (PNG, JPEG, TIFF, WebP), in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). `--fields` also removes form fields that are in the form's list and on none of its pages, with what was typed in them; `--web-capture` also removes the record of the web pages the document was captured from — a record Nib could not read in full refuses every other change until it is gone. |
 | `nib sign IN -o OUT --cert ID.p12` | Certify a PDF with an imported `.p12` identity. |
 | `nib rotate IN -o OUT --deg N` | Rotate pages by 90/180/270° (`--pages 1-3,5` to limit; or `-w FILE…`). |

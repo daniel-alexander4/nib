@@ -481,7 +481,7 @@
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
           </div>
           <div class="tbgroup" data-label="Combine &amp; Compare" data-fold="2">
-<button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
+<button id="combineBtn" title="Combine several PDFs or images into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
             </div>
     </div><div class="tbtab" data-tab="accessibility">
@@ -1904,17 +1904,17 @@
     </div>
   </div>
 
-  <!-- Combine: merge several PDFs (in a chosen order) into one new document. -->
+  <!-- Combine: merge several PDFs or images (in a chosen order) into one new document. -->
   <div id="combineModal" hidden>
     <div class="sigcard">
-      <h3>Combine PDFs</h3>
-      <p class="libhint">Add the PDFs to merge and arrange them with ↑ ↓ — they combine top-to-bottom into
+      <h3>Combine PDFs and images</h3>
+      <p class="libhint">Add the PDFs or images (PNG, JPEG, TIFF, WebP) to merge and arrange them with ↑ ↓ — they combine top-to-bottom into
         one new document. Reorder individual pages afterward by dragging thumbnails. The result is a new,
         unsigned document — Save As to keep it.</p>
       <div id="combineList" class="combinelist"></div>
       <div class="sigbtns">
         <button id="combineAddBtn">Add files…</button>
-        <input id="combineInput" type="file" accept="application/pdf" multiple hidden />
+        <input id="combineInput" type="file" accept="application/pdf,image/png,image/jpeg,image/tiff,image/webp" multiple hidden />
         <span class="grow"></span>
         <button id="combineCancel">Cancel</button>
         <button id="combineGo" class="primary" disabled>Combine</button>

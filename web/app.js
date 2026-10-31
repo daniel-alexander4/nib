@@ -4642,7 +4642,7 @@ function renderCombineList() {
   if (!combineFiles.length) {
     const p = document.createElement('p');
     p.className = 'scan-empty';
-    p.textContent = 'Add two or more PDFs to combine.';
+    p.textContent = 'Add two or more PDFs or images to combine.';
     els.combineList.appendChild(p);
   }
   combineFiles.forEach((f, i) => {
@@ -4692,7 +4692,7 @@ els.combineGo.onclick = async () => {
   // errText rather than a fixed string, so the cap refusal reaches the user with its
   // own wording instead of "could not combine the PDFs", which would be a lie: the
   // combine succeeded and the ninth document is what was refused.
-  if (!res.ok) return toast(await errText(res, 'could not combine the PDFs'));
+  if (!res.ok) return toast(await errText(res, 'could not combine the files'));
   await installOpened(await res.json());
   els.combineModal.hidden = true;
   combineFiles = [];
