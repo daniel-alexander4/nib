@@ -5269,6 +5269,16 @@ function openFillCsv() {
 els.fillCsvBtn.onclick = openFillCsv;
 els.fillCsvClose.onclick = () => { els.fillCsvModal.hidden = true; };
 els.fillCsvPick.onclick = () => els.fillCsvInput.click();
+// What a fill could not reach, from the answer's `X-Nib-Skipped` (/pending 919 F14): a field whose widget's /Parent
+// leads nowhere takes no value, and the file would otherwise look as though it had. Said once, after the merge.
+function tellSkippedFields(res) {
+  let facts = {};
+  try { facts = JSON.parse(res.headers.get('X-Nib-Skipped') || '{}'); } catch { /* worded as none skipped */ }
+  if (!facts.count) return;
+  const names = (facts.names || []).slice(0, 3).join(', ');
+  const more = facts.count - Math.min(3, (facts.names || []).length);
+  toast(`${facts.count === 1 ? '1 field was' : `${facts.count} fields were`} left empty: the form cannot take a value for ${facts.count === 1 ? 'it' : 'them'} (${names}${more > 0 ? ` and ${more} more` : ''})`);
+}
 els.fillCsvInput.onchange = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
@@ -5288,6 +5298,7 @@ els.fillCsvInput.onchange = async () => {
       return;
     }
     els.fillCsvModal.hidden = true;
+    tellSkippedFields(res);
     openSaveAs(await res.blob(), exportName + '-filled.zip', 'Save merged PDFs (ZIP)');
   } catch (e) {
     els.fillCsvStatus.textContent = 'Merge failed — ' + e.message;
@@ -5325,6 +5336,7 @@ els.importXfdfInput.onchange = async () => {
       return;
     }
     els.importXfdfModal.hidden = true;
+    tellSkippedFields(res);
     openSaveAs(await res.blob(), exportName + '-filled.pdf', 'Save filled PDF');
   } catch (e) {
     els.importXfdfStatus.textContent = 'Fill failed — ' + e.message;
