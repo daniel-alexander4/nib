@@ -74,6 +74,11 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   file's title at its running page offset, its own outline one level down — and sets it with `SetOutline`, rather than reading what
   `Combine` carried: the offsets are then the inputs' page counts, checked to sum to the result's. Titles are made unique across
   the list because pdfcpu keys a destination by title. Opt-in; a plain merge is unchanged.
+- **`nib author IN --fields F.json -o OUT`** (RelaxTax B2, `internal/cli/author.go`) is `AuthorTaggedForm`, the window's door, and then
+  `FillFormJSON` for the optional per-field `value`: the default lives in the CLI's own `authorField` and not in `pdfops.FormField`,
+  because the window authors blank forms and the web route reads that type. A value that is not an option, or is the wrong kind, is
+  refused before anything is authored, naming the field (ADR-183's no-value rule). Measured: the door tags text, check box and
+  dropdown, and cannot tag a radio group, so such a form is untagged and the summary says so.
 
 ## Declared
 

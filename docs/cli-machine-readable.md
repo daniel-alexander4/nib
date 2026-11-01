@@ -18,6 +18,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
   with is addressed by its full path.
 - `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
 - `nib merge IN… -o OUT --bookmark-per-file` gives the result one top-level bookmark per input — titled from the file name without its extension (`stdin` for `-`; a repeat becomes `name (2)`) and pointing at that input's first page — with the input's own outline nested beneath it. It replaces the result's outline; without the flag a merge's outline is what it always was.
+- `nib author IN --fields F.json -o OUT` adds fillable fields (below).
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
@@ -71,3 +72,16 @@ writes the appearance; a **signed** document (flattening changes the bytes a sig
 away; and a document with no form fields. A PDF/UA identification is dropped (ADR-032), and a tagged document keeps its tree with the
 widgets' references and their now-empty Form elements removed. The drawn content is an artifact: a screen reader does not announce a
 flattened value, so flatten what is printed, not what is read.
+
+## `nib author IN --fields F.json -o OUT`
+
+Adds real fillable fields to the pages of `IN` (`-` for stdin unless `--fields` is `-`; `-o -` for stdout), through the window's own door
+(`AuthorTaggedForm`): a tagged form where the document allows it, and an untagged one when it does not — a radio group cannot be tagged by
+that door, so a form with one is untagged. The stderr summary says which: `added N field(s), M with a default value; the form is tagged|untagged`.
+
+`F.json` is an array. Each entry: `page` (from 1), `rect` `[x0,y0,x1,y1]` in points from the page's **lower left**, `kind` (`text`, `check`,
+`dropdown` or `radio`), `name` (the field's identifier, the `fullName` you fill by), `options` (a dropdown needs 1 or more, a radio group 2 or
+more), optional `label` (the accessible name), optional `orientation` (`vert` stacks a radio group down), and optional `value`, the default
+a template carries: a string for text, a dropdown or radio option, `true`/`false` for a check box. A `value` that is not one of the options,
+a non-boolean check box value, or a value with no `name` is exit 1 naming the field (`"status"`), never the value. Values are written
+by the same fill as `nib fill`, so a character the field's face cannot draw is that fill's limit.
