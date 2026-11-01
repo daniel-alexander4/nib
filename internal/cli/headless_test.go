@@ -122,6 +122,10 @@ func TestNoVerbWritesThePdfcpuConfiguration(t *testing.T) {
 	if err := os.WriteFile(data, []byte(`{"forms":[{"textfield":[{"name":"fullName","value":"Ada"}]}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	md := filepath.Join(work, "note.md")
+	if err := os.WriteFile(md, []byte("# Title\n\nSome text.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cases := map[string][]string{
 		"fill":        {"fill", in, "--data", data, "-o", filepath.Join(work, "f.pdf")},
 		"fields":      {"fields", in, "--json"},
@@ -131,6 +135,8 @@ func TestNoVerbWritesThePdfcpuConfiguration(t *testing.T) {
 		"merge":       {"merge", in, in, "-o", filepath.Join(work, "m.pdf")},
 		"split":       {"split", in, "--every", "1", "--out-dir", filepath.Join(work, "s")},
 		"stamp":       {"stamp", in, "--text", "X", "-o", filepath.Join(work, "st.pdf")},
+		"pagenum":     {"pagenum", in, "-o", filepath.Join(work, "pn.pdf")},
+		"office-md":   {"office", md, "-o", filepath.Join(work, "md.pdf")},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -140,6 +146,11 @@ func TestNoVerbWritesThePdfcpuConfiguration(t *testing.T) {
 			}
 			for _, d := range dirs {
 				empty(t, d)
+			}
+			// The private configuration must still carry fonts: with the configuration merely disabled, stamped text,
+			// page numbers and a Markdown conversion all fell back to unembedded Base-14 faces and said so here.
+			if strings.Contains(stderr, "embedded faces are unavailable") || strings.Contains(stderr, "stamping in the embedded faces failed") {
+				t.Errorf("%s lost its embedded fonts: %s", name, stderr)
 			}
 		})
 	}

@@ -9,7 +9,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 
 - Set **`NIB_HEADLESS=1`**. Any first argument that is not a command is then `unknown command` (exit 1), and no argument is a usage
   error; the desktop app, its server and its browser are never started. `version` and `help` still answer.
-- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`).
+- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`). A command works in a scratch directory of its own under the temporary directory (`nib-pdfcpu-*`: pdfcpu's configuration and nib's public fonts, never a document or a value) and removes it when it ends; only a killed process leaves one.
 - No refusal repeats a value you supplied to a form field. A field's name, a path and the options the form offers may appear in a message.
 - A command that produces a PDF writes it to `-o FILE` (staged in a `.nib-*.tmp` beside FILE until it is renamed into place) or, with
   `-o -`, to stdout, where nothing is staged. `IN` and `fill --data` accept `-` for stdin (not both at once).

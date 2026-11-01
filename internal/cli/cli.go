@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -80,7 +81,7 @@ func Run(args []string, version string) (handled bool, code int) {
 		}
 		return false, 0 // not a subcommand — let main open the desktop app
 	}
-	keepPdfcpuConfigClosed()
+	defer keepPdfcpuConfigPrivate()()
 	return true, run(args[1:])
 }
 
@@ -129,15 +130,33 @@ func printVersion(args []string, version string) int {
 // command`, with or without a transform flag, and no argument at all is a usage error.
 func headless() bool { return os.Getenv("NIB_HEADLESS") == "1" }
 
-// keepPdfcpuConfigClosed stops pdfcpu creating `$XDG_CONFIG_HOME/pdfcpu` (config.yml, certs/,
-// fonts/Roboto-Regular.gob) when a headless verb builds its first configuration (ADR-183).
+// keepPdfcpuConfigPrivate points pdfcpu's configuration at a directory private to this process, and returns the
+// cleanup the caller must run when the verb is done (ADR-183). A verb therefore never writes
+// `$XDG_CONFIG_HOME/pdfcpu` (config.yml, certs/, fonts/Roboto-Regular.gob), and nothing it installs outlives it.
 //
-// It sets the package variable the deprecated `api.DisableConfigDir` sets, because that is the
-// one line every `model.NewDefaultConfiguration()` call site in the tree reads; it must run
-// before the first configuration is built (pdfcpu caches it), and no package-level variable
-// builds one — `TestNoPackageLevelPdfcpuConfiguration` holds that. The cost pdfcpu documents is
-// that user fonts are unavailable; nib sets its own prose in faces it embeds (ADR-150).
-func keepPdfcpuConfigClosed() { model.ConfigPath = "disable" }
+// **It is a private root and not a disabled configuration, and the first version of this function was the second.**
+// `api.DisableConfigDir` leaves pdfcpu with no user fonts at all (its own documentation says so), and nib installs the
+// embedded faces its stamped text, page numbers, contents page and Markdown conversion draw in into exactly that
+// directory (`mdpdf.InstallFaces`): with the configuration disabled they all degraded, with a log line, to unembedded
+// Base-14 fonts. `fill` had been checked and passed; `nib stamp --stamps` is what showed it.
+//
+// `api.EnsureDefaultConfigAt` is deprecated in v0.16.2 for `LoadConfiguration`, but it is the call that makes every
+// `model.NewDefaultConfiguration()` site in the tree answer from this root (pdfcpu caches the first one), and it must
+// run before any is built — no package-level variable builds one (`TestNoPackageLevelPdfcpuConfiguration`). The root is
+// made under the temporary directory and removed on return; a killed process leaves its few hundred kilobytes of
+// public fonts there, which is declared. If the root cannot be made the configuration is disabled instead and text
+// degrades to the core fonts, as it logs.
+func keepPdfcpuConfigPrivate() (cleanup func()) {
+	root, err := os.MkdirTemp("", "nib-pdfcpu-")
+	if err == nil {
+		if err = api.EnsureDefaultConfigAt(root); err == nil {
+			return func() { os.RemoveAll(root) }
+		}
+		os.RemoveAll(root)
+	}
+	model.ConfigPath = "disable"
+	return func() {}
+}
 
 // hasTransformFlag reports whether args carry an output flag that only the
 // headless transform commands accept, so a non-verb first argument alongside one

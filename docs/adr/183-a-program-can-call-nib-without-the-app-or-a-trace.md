@@ -14,12 +14,18 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   switch. It is an environment variable and not a flag: a flag would be a second spelling of one rule (ADR-009), and the
   caller that needs it cannot rely on its own argument list being a verb. Unset, the fall-through stands — it is how a
   double-click opens a file.
-- **A verb never writes pdfcpu's configuration directory** (`keepPdfcpuConfigClosed`). Before any verb runs,
-  `model.ConfigPath` is `"disable"`, which `api.DisableConfigDir` (deprecated in v0.16.2) sets and which every
-  `model.NewDefaultConfiguration()` site in the tree reads. Measured: `fields` alone created `config.yml`, `certs/` and
-  `fonts/Roboto-Regular.gob`. A filled f1040 (12 text fields, 2 check boxes) has the same 39 decoded streams, text and
-  field values with it closed as open (the bytes differ run to run on both, so bytes are not the oracle). Cost pdfcpu
-  documents: user fonts are unavailable; nib sets its own prose in faces it embeds (ADR-150). The GUI path is untouched.
+- **A verb never writes pdfcpu's configuration directory — it works in a private one** (`keepPdfcpuConfigPrivate`). Before any verb
+  runs, `api.EnsureDefaultConfigAt` points pdfcpu at a directory made for this process under the temporary directory, which is
+  removed when the verb returns; HOME and XDG_CONFIG_HOME are not touched. Measured: `fields` alone created `config.yml`,
+  `certs/` and `fonts/Roboto-Regular.gob` under XDG_CONFIG_HOME. **The first version of this decision disabled the configuration
+  instead (`model.ConfigPath = "disable"`, v2.17.0–v2.24.0) and was wrong:** pdfcpu then offers no user fonts at all, nib installs
+  its embedded faces (stamped text, page numbers, the contents page, Markdown conversion) into that directory before drawing, and
+  every such verb fell back to unembedded Base-14 fonts with a log line. `fill` on the f1040 had been checked identical and
+  passed; `nib stamp --stamps` showed the rest. `TestNoVerbWritesThePdfcpuConfiguration` now also fails on that log line, for
+  `stamp`, `pagenum` and a Markdown conversion. Declared: a killed process leaves its scratch directory (a few hundred kilobytes of
+  public fonts) under TMPDIR; installing the faces costs about half a second on a verb that stamps text, where the old shared
+  directory kept them between runs. `TestNoPackageLevelPdfcpuConfiguration` holds that no package builds a configuration before
+  `Run` can point it.
 - **A refusal never repeats the value it was given.** The only echo found in nib's code was `optionValuesOffered`
   (combo, list and radio); it names the field and the form's own options. pdfcpu's form package was searched for a
   message built from a value (`errors.New(... +`, `Errorf` with `%s/%q/%v`) and the rest are field ids, object numbers
