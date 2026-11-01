@@ -1538,6 +1538,22 @@ no window of its own. `apt` installs recommends by default, so this only matters
 if you install with `--no-install-recommends` on a machine with no browser at all:
 Nib will start, bind its loopback port, and have nothing to display itself in.
 
+### Install a specific version
+Every release has a tag, `v<version>`, and its binaries and a `SHA256SUMS` file are attached to it at
+`https://github.com/daniel-alexander4/nib/releases/tag/v<version>`. To get exactly one (a program that needs
+at least version X names X; any release from X on will do):
+```sh
+v=2.20.0   # the version you need
+curl -LO "https://github.com/daniel-alexander4/nib/releases/download/v$v/nib-$v-linux-amd64"
+curl -LO "https://github.com/daniel-alexander4/nib/releases/download/v$v/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 -c SHA256SUMS
+chmod +x "nib-$v-linux-amd64" && "./nib-$v-linux-amd64" version --json
+```
+`nib version --json` prints `{"version","api","commands"}`; `api` is the integer a program pins
+(see `docs/cli-machine-readable.md`). The in-app update check offers only the newest release, so an older
+one is always downloaded by hand as above. A release cannot be pulled once published: a fix ships under a
+higher version.
+
 ### Other platforms
 ```sh
 ./build.sh
