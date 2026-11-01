@@ -348,6 +348,8 @@ var published = map[string][]string{
 	"pdfops.ScanReport": {"web/app.js"},
 	// `/pending 908`: the route puts the whole report in `X-Nib-Shrink`, the window builds its sentence from it, and `nib shrink` prints its counts.
 	"pdfops.ShrinkReport": {"internal/cli/commands.go", "web/app.js"},
+	// `/pending 929`: `nib contents` prints the counts and the source; the route does not publish the report.
+	"pdfops.ContentsReport": {"internal/cli/commands.go"},
 	// The autotagger's proposal (PLAN-accessibility.md P08.S06b). Its reader is the propose route, which
 	// copies every field onto the wire; the wire shapes' reader is the Tags card, checked by
 	// `published.test.mjs`. Only the RETURNED type is discovered — `TagElement` and `TagPageNote` are

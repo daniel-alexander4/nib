@@ -263,6 +263,9 @@ const els = {
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
+  contentsBtn: $('contentsBtn'), contentsModal: $('contentsModal'),
+  contentsAfter: $('contentsAfter'), contentsDepth: $('contentsDepth'), contentsTitle: $('contentsTitle'),
+  contentsCancel: $('contentsCancel'), contentsGo: $('contentsGo'),
   pageStampBtn: $('pageStampBtn'), pageStampModal: $('pageStampModal'), pstStamped: $('pstStamped'),
   pstKind: $('pstKind'), pstText: $('pstText'), pstImage: $('pstImage'), pstPosition: $('pstPosition'), pstOpacity: $('pstOpacity'),
   pstSize: $('pstSize'), pstWidth: $('pstWidth'), pstAngle: $('pstAngle'), pstColor: $('pstColor'), pstPages: $('pstPages'),
@@ -3410,7 +3413,7 @@ for (const b of all('button[data-apppage]')) b.onclick = () => openAppPage(b.dat
 const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
-  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'pageStampModal', 'reflowModal',
+  'nupModal', 'outlineModal', 'contentsModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'pageStampModal', 'reflowModal',
   'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
@@ -7990,6 +7993,11 @@ async function pageOp(op, extra = {}) {
   if (extra.scale != null) form.append('scale', String(extra.scale));
   if (extra.margin != null) form.append('margin', String(extra.margin));
   if (extra.image) form.append('image', extra.image, extra.image.name || 'stamp.png');
+  // Contents page (/pending 929).
+  if (extra.after != null) form.append('after', String(extra.after));
+  if (extra.depth != null) form.append('depth', String(extra.depth));
+  if (extra.title != null) form.append('title', extra.title);
+  if (extra.items) form.append('items', extra.items);
   // What these bytes were built on, so the server refuses them if the document has moved (ADR-146).
   if (owner.loadedRev != null) form.append('baseRev', String(owner.loadedRev));
   let res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
@@ -8289,6 +8297,28 @@ async function pageNumGo() {
 }
 els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
+
+// --- contents page (/pending 929) ----------------------------------------------------------------------
+// op:'contents' on /api/pages → pdfops.InsertContents. The server reads the bookmarks (else the headings), so the list a
+// user corrected in Edit outline… is the list printed; the position and depth are the only choices made here, held to the
+// bounds the server enforces. A document with nothing to list is refused by the server with its own sentence, shown here.
+function openContents() {
+  if (!view.pdfDocument) return;
+  els.contentsAfter.max = String(view.pdfDocument.numPages);
+  els.contentsModal.hidden = false;
+}
+async function contentsGo() {
+  const after = Math.min(view.pdfDocument.numPages, Math.max(0, parseInt(els.contentsAfter.value, 10) || 0));
+  const depth = Math.min(3, Math.max(1, parseInt(els.contentsDepth.value, 10) || 3));
+  els.contentsGo.disabled = true;
+  try {
+    const ok = await pageOp('contents', { after, depth, title: els.contentsTitle.value.trim() });
+    if (ok) { els.contentsModal.hidden = true; toast('Contents page added'); }
+  } finally { els.contentsGo.disabled = false; }
+}
+els.contentsBtn.onclick = openContents;
+els.contentsCancel.onclick = () => { els.contentsModal.hidden = true; };
+els.contentsGo.onclick = contentsGo;
 
 // --- stamp every page (/pending 907) -------------------------------------------
 // A line of text, a diagonal watermark or a picture on every page or the pages named (op:'pagestamp' on
@@ -14377,7 +14407,7 @@ const DOC_REQUIRED = [
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because

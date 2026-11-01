@@ -213,6 +213,13 @@ var tagFates = map[string]tagFate{
 	}},
 	"StampPageNumbers": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampPageNumbers(b, PageNumberStyle{}) }},
 	"StampWatermark":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampWatermark(b, "DRAFT", WatermarkStyle{}) }},
+	// The new pages carry artifacts only (pdfcpu text stamps), so a tagged document gains no untagged CONTENT (ADR-182);
+	// but the census reads a page with content and no /StructParents as one the tree does not reach, so the honest
+	// verdict is `partial`, as for the pages InsertPDF brings in untagged.
+	"InsertContents": {verdict: "partial", drive: func(b []byte) ([]byte, error) {
+		out, _, err := InsertContents(b, ContentsOptions{Items: []OutlineItem{{Title: "x", Page: 1}}})
+		return out, err
+	}},
 	// The pictures are replaced and nothing else is read or written, through Optimize's own read-and-write (ADR-181).
 	"ShrinkPictures": {verdict: "carried", drive: func(b []byte) ([]byte, error) { out, _, err := ShrinkPictures(b, 2); return out, err }},
 	"ShrinkToSize":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { out, _, err := ShrinkToSize(b, 1<<20); return out, err }},
