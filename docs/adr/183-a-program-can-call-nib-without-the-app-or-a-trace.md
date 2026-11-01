@@ -54,6 +54,19 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   block on a stand-in `dist/`. The README's *Install a specific version* gives the download and `sha256sum -c`. Measured: the
   remote's highest tag was v2.7.0 against VERSION 2.16.9 (`git ls-remote --tags origin`), so a pin to an unpublished version could
   not be satisfied until a release is cut; tagging and publishing stay the maintainer's act (`./build.sh --publish`).
+- **`nib flatten IN -o OUT` is a vector flatten, and the window's rasterising Flatten is not its model** (RelaxTax Group B1;
+  `pdfops.FlattenForm`). pdfcpu v0.16.2 has no flatten (it only locks fields or deletes annotations), so nib writes one: each
+  widget's `/AP /N` (or `/N[/AS]` for a button) is reused as a Form XObject and drawn on the widget's rectangle by the matrix of
+  ISO 32000-1 12.5.5 (the form's `/BBox` through its `/Matrix`, scaled and moved onto `/Rect`), inside `/Artifact … EMC`, with the
+  page's existing content wrapped in `q … Q`; an appearance with no `/Resources` takes the form's `/DR` before the AcroForm goes
+  (the key is unlinked, not freed: `dropKey` freed the font). A widget with a value and no appearance refuses the call by name; a
+  hidden or no-view one is removed undrawn; a signed document is refused unless `--drop-signature`. Tagged: the widgets' OBJRs
+  leave the tree as a removed annotation's do (`unnameInStructure`) and the Form elements that held nothing else are deleted
+  (ADR-124's `deleteElement`): left behind they failed veraPDF's 7.18.4 t2, measured by the UA census. Measured on the public
+  f1040 filled in 14 fields: 16 flattened, 183 blank, 176,769 → 87,245 bytes, 0.6 s, the value found as text by `nib text` and
+  `pdftotext`, `nib fields` empty. The 73 check boxes have a dictionary of states for `/N` and need `/AS` to choose one.
+  Declared: a screen reader does not announce a flattened value; a ticked box's ZapfDingbats mark has no Unicode mapping
+  (veraPDF 7.21.7); an unbalanced page graphics state is only closed once; widgets under optional content are not special-cased.
 
 ## Declared
 

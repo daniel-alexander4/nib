@@ -116,7 +116,10 @@ var knownUA1Deltas = map[string]struct {
 
 	// ── Annotations and form fields.
 	"AuthorTaggedForm": {[]string{"7.21.4.1 t1"}, "Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
-	"AuthorForm":       {[]string{"7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Fonts /pending 479"},
+	// The census drive authors a tagged form with Helvetica field text (the row above) and flattens it; the flatten moves
+	// that text from the widget's appearance into the page, where the font is checked. It adds nothing of its own.
+	"FlattenForm": {[]string{"7.21.4.1 t1"}, "the drive's Helvetica field text (/pending 479), drawn into the page"},
+	"AuthorForm":  {[]string{"7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Fonts /pending 479"},
 
 	// ── **`Collect`, `DuplicatePage`, `Booklet` and `CarryAttachments` have NO row since P02.S04b**,
 	// and their absence is the slice's strongest measurement: a subset prunes the source tree onto

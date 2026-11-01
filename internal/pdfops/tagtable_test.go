@@ -188,6 +188,21 @@ var tagFates = map[string]tagFate{
 	// ADR-166: it cuts fields out of the FORM's tree and touches nothing of the structure tree. The census
 	// fixture has no field off its pages, so this row measures the write carrying the tags and not a removal;
 	// a structure element that points at a removed field's widget still holds that widget (declared in the ADR).
+	// A flatten removes the widgets' references from the tree and leaves their elements (unnameInStructure), so the
+	// tree is carried. Driven on the fixture with a tagged field authored and filled, so the row measures a flatten
+	// and not a refusal for a document with no form.
+	"FlattenForm": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		form, _, err := AuthorTaggedForm(b, []FormField{{Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text", Name: "f1", Label: "Your full name"}})
+		if err != nil {
+			return nil, err
+		}
+		filled, err := FillFormJSON(form, []byte(`{"forms":[{"textfield":[{"name":"f1","value":"Census"}]}]}`))
+		if err != nil {
+			return nil, err
+		}
+		out, _, err := FlattenForm(filled, false)
+		return out, err
+	}},
 	"RemoveOffPageFields": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveOffPageFields(b) }},
 	"RemoveWebCapture":    {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveWebCapture(b) }},
 	// `/pending 486`: it writes only the catalog's XMP packet. Driven on the fixture titled and declared in a

@@ -339,6 +339,8 @@ var published = map[string][]string{
 	"pdfops.FormFieldInfo": {"internal/cli/commands.go"},
 	"pdfops.PageInfo":      {"internal/cli/commands.go"},
 	"pdfops.PageText":      {"internal/cli/commands.go"},
+	// `nib flatten` (RelaxTax B1): prints the three counts, stderr text or JSON.
+	"pdfops.FlattenResult": {"internal/cli/flatten.go"},
 	// text-reflow P06.S05: the reflow editor lists a page's paragraphs, reading index, text and refusal.
 	"pdfops.Paragraph": {"web/app.js"},
 	// text-reflow P07.S03: the reflow editor reads why a reflow fell back, and which paragraph below stood in the way.
