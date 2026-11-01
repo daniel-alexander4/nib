@@ -530,8 +530,9 @@ func cmdSplit(args []string) int {
 	fs := flag.NewFlagSet("nib split", flag.ContinueOnError)
 	var outDir, ranges, prefix string
 	var every int
-	var bookmarks bool
+	var bookmarks, noClobber bool
 	fs.StringVar(&outDir, "out-dir", "", "write the output PDFs into this folder (required)")
+	fs.BoolVar(&noClobber, "no-clobber", false, "refuse, before writing anything, if any output file already exists (default: replace it)")
 	fs.IntVar(&every, "every", 0, "split into chunks of N pages each")
 	fs.StringVar(&ranges, "ranges", "", "split at these page ranges, e.g. 1-3,4-8,9")
 	fs.BoolVar(&bookmarks, "bookmarks", false, "split at each top-level bookmark")
@@ -587,7 +588,7 @@ func cmdSplit(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts)
+	return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts, noClobber)
 }
 
 // splitSel turns a comma-separated page selection ("1-3,5") into pdfcpu tokens;
@@ -655,7 +656,7 @@ func splitSel(s string) []string {
 // refuses the colliding part with the earlier ones already on disk, and a half-filled folder under
 // a non-zero exit is a state the user has to reverse-engineer. The containment refusal moved into
 // the same pass for the same reason.
-func writeSplitFiles(src, dir string, parts []pdfops.SplitPart) int {
+func writeSplitFiles(src, dir string, parts []pdfops.SplitPart, noClobber bool) int {
 	dir = filepath.Clean(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		errf("%v", err)
@@ -677,6 +678,17 @@ func writeSplitFiles(src, dir string, parts []pdfops.SplitPart) int {
 		errf("%s is the document being read: writing it would replace the whole document with "+
 			"one part of it. Choose a different --prefix or --out-dir.", clash)
 		return 1
+	}
+	// --no-clobber (RelaxTax B7): a rerun over a folder that already holds the earlier parts used to replace them
+	// all with exit 0. Checked in this same pass, before the first write, for the reason above: a folder half
+	// old and half new under a non-zero exit is a state to reverse-engineer.
+	if noClobber {
+		for _, o := range outs {
+			if _, err := os.Lstat(o); err == nil {
+				errf("%s already exists: nothing was written (--no-clobber). Choose another --out-dir or --prefix, or drop --no-clobber to replace it.", o)
+				return 1
+			}
+		}
 	}
 	for i, p := range parts {
 		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
@@ -1146,10 +1158,12 @@ func noteUnfillableAsked(pdf []byte, asked []string) {
 func cmdFill(args []string) int {
 	fs := flag.NewFlagSet("nib fill", flag.ContinueOnError)
 	var out, outDir, dataPath, nameCol, format string
+	var noClobber bool
 	outFlag(fs, &out)
 	fs.StringVar(&dataPath, "data", "", "form data: a .json or .xfdf record (single fill) or a .csv (one row → one PDF); - reads the record from stdin (required)")
 	fs.StringVar(&format, "format", "", "the record's format, json or xfdf; for --data - (stdin has no extension) and anywhere the extension is not the answer (default: from the extension, else json)")
 	fs.StringVar(&outDir, "out-dir", "", "with a CSV: write one filled PDF per row into this folder")
+	fs.BoolVar(&noClobber, "no-clobber", false, "with --out-dir: refuse, before writing anything, if any output file already exists (default: replace it)")
 	fs.StringVar(&nameCol, "name-col", "", "with a CSV: name each output from this column's value")
 	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json|.xfdf|- [--format json|xfdf] -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]",
 		"Fill a form from a JSON or XFDF record, or mail-merge a CSV (one filled PDF per row).\n"+
@@ -1206,7 +1220,7 @@ func cmdFill(args []string) int {
 		// Found while fixing the split (/pending 569), not filed separately, because the whole
 		// reason the rule is in `writeSplitFiles` rather than in `cmdSplit` is that this caller
 		// exists.
-		return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts)
+		return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts, noClobber)
 	}
 
 	// Single fill from a JSON or XFDF record (pipeable via - / -o -).

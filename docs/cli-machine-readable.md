@@ -16,6 +16,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 - `fill IN --data - --format json|xfdf -o -` is the call that touches no file: `cat answers.json | nib fill form.pdf --data - --format json -o -`.
   The JSON is pdfcpu's shape — `{"forms":[{"textfield":[{"name":"<full path>","value":"…"}]}]}`; a field two parents share a leaf name
   with is addressed by its full path.
+- `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
