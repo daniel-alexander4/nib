@@ -427,7 +427,14 @@
       <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
       <span id="hlColors" class="hlcolors" hidden>
         <span id="hlSwatches" class="hlswatches"></span>
-        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
+        <label class="hlcustom" title="Pick any colour for the tool in use"><input id="hlCustom" type="color" value="#fff066" /></label>
+      </span>
+      <span id="inkOpts" class="borderwidth" hidden>
+        <label title="Pen thickness">Thickness <input id="inkThickness" type="number" min="1" max="20" step="1" value="1" /></label>
+        <label title="Pen opacity, in percent">Opacity <input id="inkOpacity" type="number" min="5" max="100" step="5" value="100" /> %</label>
+      </span>
+      <span id="textOpts" class="borderwidth" hidden>
+        <label title="Text size, in points">Size <input id="textSize" type="number" min="6" max="96" step="1" value="10" /> pt</label>
       </span>
       <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
       <button id="borderBtn" title="Draw a colored outline box — a border with no fill">Border</button>

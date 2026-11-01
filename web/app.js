@@ -87,6 +87,8 @@ const els = {
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
   hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
+  inkOpts: $('inkOpts'), inkThickness: $('inkThickness'), inkOpacity: $('inkOpacity'),
+  textOpts: $('textOpts'), textSize: $('textSize'),
   dropdownBtn: $('dropdownBtn'), radioBtn: $('radioBtn'), checkboxBtn: $('checkboxBtn'),
   shapeBtn: $('shapeBtn'), shapeOpts: $('shapeOpts'), shapeFill: $('shapeFill'),
   noteBtn: $('noteBtn'),
@@ -619,7 +621,7 @@ function applyStatus(st) {
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
-    selectedHlColor = recentHlColors[0];
+    selectedHlColor = toolColor.border = toolColor.shape = recentHlColors[0];
     renderHlSwatches();
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
@@ -3491,6 +3493,7 @@ function activateView(v) {
   if (v.pageNumber) v.viewer.currentPageNumber = v.pageNumber;
   if (v.scrollTop) v.container.scrollTop = v.scrollTop;
   applyHighlightColor(selectedHlColor); // the colour is session state; the dispatch is per bus
+  applyToolParams(v);
 
   // ── D: repaint the shared chrome ────────────────────────────────────────────
   repaintForActiveView();
@@ -4038,6 +4041,7 @@ async function setDocumentFromServer(meta, target = view) {
   // A fresh document gets a new pdf.js editor manager; re-assert the chosen
   // highlight color so it sticks across reloads (page ops) until the user changes it.
   applyHighlightColor(selectedHlColor, target);
+  applyToolParams(target);
 
   // Everything from here to the sidebars is SHARED chrome: one element for N documents.
   // A background load records its state on the target and paints nothing; activateView is
@@ -13507,6 +13511,41 @@ let recentHlColors = DEFAULT_HL_COLORS.slice();
 // document reloads re-assert it, so a highlight color persists until changed.
 let selectedHlColor = DEFAULT_HL_COLORS[0];
 
+// --- one colour per tool (/pending 913) -----------------------------------------------------------------
+// Highlight, Draw, Text, Border and Shapes each keep the colour last chosen FOR THEM, so a red border no longer
+// makes the next highlight red. Session state, as `selectedHlColor` always was: a tool starts where it started
+// before (the newest recent colour for the ones Nib draws, and pdf.js's own black for the two it owns).
+// `selectedHlColor` stays the HIGHLIGHT colour.
+const toolColor = { INK: '#000000', FREETEXT: '#000000', border: DEFAULT_HL_COLORS[0], shape: DEFAULT_HL_COLORS[0] };
+// The tool whose colour the row is showing: the pdf.js editor armed, or the border / shape mode Nib draws itself.
+function colorTool() {
+  if (view.activeTool === 'HIGHLIGHT' || view.activeTool === 'INK' || view.activeTool === 'FREETEXT') return view.activeTool;
+  if (view.borderMode) return 'border';
+  if (view.shapeMode) return 'shape';
+  return null;
+}
+const colorOf = (tool) => (tool === 'HIGHLIGHT' ? selectedHlColor : toolColor[tool]);
+// pdf.js parameters Nib sets, by the user's own choice only: a value nobody changed is not dispatched, so the
+// defaults pdf.js ships stay exactly what they were. Each is a number or a colour pdf.js reads as given.
+const toolParams = {};
+const PDFJS_PARAM_OF = { HIGHLIGHT: 'HIGHLIGHT_COLOR', INK: 'INK_COLOR', FREETEXT: 'FREETEXT_COLOR' };
+function setToolParam(name, value, owner = view) {
+  toolParams[name] = value;
+  dispatchToolParam(name, value, owner);
+}
+function dispatchToolParam(name, value, owner = view) {
+  owner.eventBus.dispatch('switchannotationeditorparams', {
+    source: window,
+    type: pdfjsLib.AnnotationEditorParamsType[name],
+    value,
+  });
+}
+// Every parameter the user has set, onto one view's bus. The dispatch is per bus (a fresh document has a fresh
+// editor manager), so this runs where the colour always did: on activating a view and on loading a document.
+function applyToolParams(owner = view) {
+  for (const [name, value] of Object.entries(toolParams)) dispatchToolParam(name, value, owner);
+}
+
 function applyHighlightColor(hex, owner = view) {
   owner.eventBus.dispatch('switchannotationeditorparams', {
     source: window,
@@ -13530,11 +13569,11 @@ function renderHlSwatches() {
     b.className = 'hlswatch';
     b.style.background = c;
     b.title = c === '#000000' ? 'Black' : c === '#ffffff' ? 'White' : c;
-    setArmed(b, c === selectedHlColor);
+    setArmed(b, c === colorOf(colorTool()));
     b.onclick = () => setHighlightColor(c);
     els.hlSwatches.appendChild(b);
   }
-  els.hlCustom.value = selectedHlColor;
+  els.hlCustom.value = colorOf(colorTool()) || selectedHlColor;
 }
 
 // setHighlightColor is the explicit-pick path (a swatch or the custom picker): it
@@ -13543,14 +13582,34 @@ function renderHlSwatches() {
 // caps). Re-asserting the existing color elsewhere uses applyHighlightColor.
 function setHighlightColor(hex) {
   hex = hex.toLowerCase();
-  selectedHlColor = hex;
-  applyHighlightColor(hex);
+  // The colour belongs to the tool the row is showing; a pick with none armed (nothing shows the row then) is the
+  // highlight's, as it has always been.
+  const tool = colorTool() || 'HIGHLIGHT';
+  if (tool === 'HIGHLIGHT') {
+    selectedHlColor = hex;
+    applyHighlightColor(hex);
+  } else {
+    toolColor[tool] = hex;
+    if (PDFJS_PARAM_OF[tool]) setToolParam(PDFJS_PARAM_OF[tool], hex);
+  }
   recentHlColors = [hex, ...recentHlColors.filter((c) => c !== hex)].slice(0, 5);
   renderHlSwatches();
   saveSettings({ recentHighlightColors: recentHlColors });
 }
 
 els.hlCustom.onchange = () => setHighlightColor(els.hlCustom.value);
+
+// Draw's thickness and opacity and Text's size, sent to pdf.js as the numbers it reads (/pending 913). Each is held
+// inside the range the control states, so the dialog cannot send what pdf.js would clamp or ignore. Opacity is a
+// percentage on the screen and a fraction on the wire. Highlight has no opacity here: pdf.js's parameter list
+// (6.1.200) has HIGHLIGHT_COLOR and HIGHLIGHT_THICKNESS and no HIGHLIGHT_OPACITY.
+const paramNumber = (el, lo, hi, dflt) => {
+  const v = parseFloat(el.value);
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+};
+els.inkThickness.onchange = () => setToolParam('INK_THICKNESS', paramNumber(els.inkThickness, 1, 20, 1));
+els.inkOpacity.onchange = () => setToolParam('INK_OPACITY', paramNumber(els.inkOpacity, 5, 100, 100) / 100);
+els.textSize.onchange = () => setToolParam('FREETEXT_SIZE', paramNumber(els.textSize, 6, 96, 10));
 
 // --- border boxes ------------------------------------------------------------
 // A "Border" is a colored outline with no fill — the unfilled sibling of a
@@ -13564,8 +13623,11 @@ let bdStart = null, bdDiv = null, bdHit = null;
 // Show the highlight color row while highlighting OR drawing borders; the
 // thickness control only while drawing borders.
 function reflectAnnoControls() {
-  els.hlColors.hidden = !(view.activeTool === 'HIGHLIGHT' || view.borderMode || view.shapeMode);
+  els.hlColors.hidden = !colorTool();
   els.borderWidth.hidden = !(view.borderMode || view.shapeMode);
+  els.inkOpts.hidden = view.activeTool !== 'INK';
+  els.textOpts.hidden = view.activeTool !== 'FREETEXT';
+  renderHlSwatches();
   els.shapeOpts.hidden = !view.shapeMode;
 }
 function reflectBorder() {
@@ -13598,7 +13660,7 @@ els.viewerWrap.addEventListener('pointerdown', (e) => {
   bdStart = { x: e.clientX, y: e.clientY };
   bdDiv = document.createElement('div');
   bdDiv.className = 'bordermark';
-  bdDiv.style.borderColor = selectedHlColor;
+  bdDiv.style.borderColor = toolColor.border;
   bdHit.pv.div.appendChild(bdDiv);
   sizeMark(bdDiv, bdHit.r, bdStart, bdStart);
   e.preventDefault();
@@ -13629,7 +13691,7 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
 // live with the chosen color and thickness; collectStamps bakes it via boxPNG.
 function makeBox(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'box',
-    color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
+    color: toolColor.border, weight: clampWeight(els.borderWidthInput.value) };
   const el = document.createElement('div');
   el.className = 'ovl ovl-box';
   el.tabIndex = 0;
@@ -13964,7 +14026,7 @@ els.viewerWrap.addEventListener('pointermove', (e) => {
   const g = shapeGeom(ss.x - r.left, ss.y - r.top, sp.x - r.left, sp.y - r.top, pad, pad);
   shCanvas.style.left = g.x0 + 'px'; shCanvas.style.top = g.y0 + 'px';
   shCanvas.width = Math.max(1, Math.round(g.w)); shCanvas.height = Math.max(1, Math.round(g.h));
-  paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, selectedHlColor, w, g.from, g.to);
+  paintShape(shCanvas.getContext('2d'), shCanvas.width, shCanvas.height, shapeType, els.shapeFill.checked, toolColor.shape, w, g.from, g.to);
 });
 els.viewerWrap.addEventListener('pointerup', async (e) => {
   if (!shStart) return;
@@ -13996,7 +14058,7 @@ els.viewerWrap.addEventListener('pointerup', async (e) => {
 function makeShape(frac, opts, owner = view) {
   const f = { page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'shape',
     type: opts.type, fill: opts.fill, from: opts.from, to: opts.to,
-    color: selectedHlColor, weight: clampWeight(els.borderWidthInput.value) };
+    color: toolColor.shape, weight: clampWeight(els.borderWidthInput.value) };
   const el = document.createElement('div');
   el.className = 'ovl ovl-shape';
   el.tabIndex = 0;
