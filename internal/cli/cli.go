@@ -181,7 +181,7 @@ These subcommands run headlessly, without a browser:
   nib info IN [--json]            list each page's size as shown, /Rotate and boxes
   nib text IN [--json]            list the text each page prints, with its place (a whole document, read once)
   nib attachments IN [--json]     list embedded files (--extract ID|NAME / --add FILE)
-  nib outline IN [--json]         list the document's bookmark outline
+  nib outline IN [--json]         list the document's bookmark outline (--propose: from its headings; --set FILE -o OUT: replace)
   nib discover [--seconds N]      report what link-local peer discovery can see here
   nib rendezvous [--seconds N]    report whether the DHT remote co-signing uses is
                                   reachable (contacts the public internet)

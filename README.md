@@ -1247,6 +1247,13 @@ re-render, so every piece keeps its original quality.
 bookmarks; **Edit outline…** opens an editor to author them: add a bookmark for any
 page, rename, delete, and indent to nest (chapters → sections). Bookmarks stay in
 page order and jump to the top of their page; saving replaces the document's outline.
+**Fill from headings** in the editor proposes the whole list from the headings Nib finds on
+the pages (the same reading as *Tags → Propose*): a heading of rank *n* nests *n* − 1
+deep, a heading that repeats an earlier one is told apart by its page (`Summary (p. 4)`),
+and nothing is written until you have reviewed the list and pressed **Save outline**. It
+finds headings by their size, so a document whose headings are set the same size as its
+body gives none, and it says so. On the command line, `nib outline IN --propose [--json]` prints
+the proposal and `nib outline IN --set FILE -o OUT` writes an (edited) list back.
 **Bookmarks survive a page operation.** Reorder, delete, extract or duplicate pages and
 the outline comes with the pages it still points at — a bookmark whose page is gone is
 dropped, and a heading is kept as long as something under it survives. Nothing is
@@ -1645,7 +1652,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib info IN [--json]` | List each page's size as shown, in points — the visible box (the crop box, else the media box) with `/Rotate` applied — and its `/Rotate`, media box and crop box as the file gives them (`[llx lly urx ury]`, the page's own user space). |
 | `nib text IN [--json]` | List the text every page prints and where: one run per line, with page, `left top right bottom` and size in points on the page as shown (origin top left), and the text. The whole document is read in one pass. Runs come in the order the page draws them, not reading order, and are one show operator's text — a producer that sets one letter at a time gives one letter a run. A page that sets no text (a scan) or has text Nib cannot read says so on stderr (`noText`, `unread` in the JSON). |
 | `nib attachments IN [--json]` | List embedded files; `--extract ID -o OUT` pulls one out (the id `--json` lists, or a name only one file carries), `--add FILE -o OUT` embeds one. |
-| `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
+| `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). `--propose` lists what the document's headings would give, writing nothing; `--set FILE -o OUT` (or `-w`) replaces the outline with a JSON list of `{title, page, level}`. |
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `open`/`timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. `open` opens each one in Nib — "Print to Nib" from any program's print dialog. |
 | `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
@@ -1711,7 +1718,7 @@ instruction, `ua`'s verdict — goes to stderr, so stdout carries only the
 document.
 
 `booklet`, `decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`,
-`pagenum`, `pages`, `rotate`, `sanitize`, and `stamp` take `-w`/`--in-place` to rewrite each file
+`outline` (with `--set`), `pagenum`, `pages`, `rotate`, `sanitize`, and `stamp` take `-w`/`--in-place` to rewrite each file
 given instead of writing a single `-o` output — the batch form for a folder.
 `tag commit` and `tag edit` take `-w` too, over exactly one file, because a review or a batch of
 edits describes one document.

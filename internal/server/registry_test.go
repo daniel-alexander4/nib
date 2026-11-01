@@ -143,8 +143,10 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 40: `handleTagsRemove` (ADR-120) removes the tree of the document it names — `handleTagsEdit`'s shape.
 	// 41: `handleTagsUntagged` (ADR-125) reads what one page of the document it names draws that no tag owns —
 	// read-only, `handlePageMap`'s shape.
-	if resolveSites != 41 {
-		t.Errorf("expected 41 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 42: `handleOutlinePropose` (/pending 910) reads the open document's headings for the outline editor — read-only,
+	// `handleTagsPropose`'s shape.
+	if resolveSites != 42 {
+		t.Errorf("expected 42 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

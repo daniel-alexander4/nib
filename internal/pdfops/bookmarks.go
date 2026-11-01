@@ -121,3 +121,56 @@ func buildBookmarkTree(items []OutlineItem) []pdfcpu.Bookmark {
 	}
 	return build(0)
 }
+
+// maxHeadingTitle caps a proposed bookmark title in characters: a heading the reader took for a whole
+// paragraph is not a title, and a viewer's outline pane shows a line.
+const maxHeadingTitle = 200
+
+// headingRoleLevel is the bookmark level of each heading role the tagger proposes.
+var headingRoleLevel = map[string]int{"H1": 0, "H2": 1, "H3": 2, "H4": 3, "H5": 4, "H6": 5}
+
+// OutlineFromHeadings proposes bookmarks from the headings the tagger reads off the pages (`ProposeTags`,
+// the one reading — `/pending 910`). It writes nothing: the window opens it in the outline editor, where the
+// hierarchy is reviewed before `SetOutline` writes anything.
+//
+// A heading `H<n>` is level n-1, brought down so the list deepens one level at a time (a document that opens
+// on an H3 starts at 0, and an H1 followed by an H4 nests the H4 one deep) — the rule SetOutline holds.
+// Titles are the heading's words with runs of white space made one space. `SetOutline` keys each bookmark by
+// its title and refuses a repeat, so a heading that repeats an earlier one is told apart by its page
+// (`Summary (p. 4)`), and by a count where the page repeats too; the first is left as the document has it.
+func OutlineFromHeadings(pdf []byte) ([]OutlineItem, error) {
+	prop, err := ProposeTags(pdf)
+	if err != nil {
+		return nil, err
+	}
+	items := []OutlineItem{}
+	seen := map[string]bool{}
+	prev := -1
+	for _, el := range prop.Elements {
+		level, isHeading := headingRoleLevel[el.Role]
+		if !isHeading {
+			continue
+		}
+		title := strings.Join(strings.Fields(el.Text), " ")
+		if title == "" {
+			continue
+		}
+		if r := []rune(title); len(r) > maxHeadingTitle {
+			title = strings.TrimSpace(string(r[:maxHeadingTitle]))
+		}
+		if seen[title] {
+			base := fmt.Sprintf("%s (p. %d)", title, el.Page)
+			title = base
+			for n := 2; seen[title]; n++ {
+				title = fmt.Sprintf("%s (%d)", base, n)
+			}
+		}
+		seen[title] = true
+		if level > prev+1 {
+			level = prev + 1
+		}
+		prev = level
+		items = append(items, OutlineItem{Title: title, Page: el.Page, Level: level})
+	}
+	return items, nil
+}
