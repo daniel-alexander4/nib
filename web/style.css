@@ -233,6 +233,11 @@ body { display: flex; flex-direction: column; }
   border: 1px solid var(--surface2); cursor: pointer;
 }
 .hlswatch.active { box-shadow: 0 0 0 2px var(--base), 0 0 0 3px var(--blue); }
+/* A pinned colour keeps a mark in its corner (/pending 930), so it reads as kept and not as recent. */
+.hlswatch.pinned { position: relative; border-color: var(--text); }
+.hlswatch.pinned::after { content: "★"; position: absolute; top: -5px; right: -3px; font-size: 9px; line-height: 1; color: var(--text); }
+.hlpin { padding: 0 4px; height: 22px; background: transparent; border: 1px solid var(--surface2); border-radius: 4px; color: var(--text); cursor: pointer; }
+.hlpin[aria-pressed="true"] { background: var(--surface0); }
 .hlcustom { display: inline-flex; align-items: center; }
 .hlcustom input[type="color"] {
   width: 22px; height: 22px; padding: 0; border: 1px solid var(--surface2);

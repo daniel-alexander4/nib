@@ -166,6 +166,14 @@ type PinnedPeer struct {
 	Ceremonies []string `json:"ceremonies,omitempty"`
 }
 
+// MarkupStyle is one markup tool's remembered style (`/pending 930`). Every field is optional.
+type MarkupStyle struct {
+	Color     string  `json:"color,omitempty"`     // #rrggbb
+	Thickness float64 `json:"thickness,omitempty"` // Draw
+	Opacity   float64 `json:"opacity,omitempty"`   // Draw, 0.05-1
+	Size      float64 `json:"size,omitempty"`      // Text, points
+}
+
 // Settings holds the user's togglable UI preferences. Zero values are the
 // defaults: an empty Appearance means the dark theme and a false
 // DisableAutoUpdate means the startup update check runs — so an older vault that
@@ -181,6 +189,13 @@ type Settings struct {
 	CardHue               string   `json:"cardHue,omitempty"`               // "" / "all" (the six-accent rotation) | one of blue|mauve|green|peach|red|yellow, that hue at stepped tints
 	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
+	// PinnedColors are the colours the user keeps beside the recent ones (#rrggbb, `/pending 930`): the recent list
+	// rotates, so a house colour falls off it after five other picks. Additive and `omitempty`, like the field above.
+	PinnedColors []string `json:"pinnedColors,omitempty"`
+	// MarkupStyles is what each markup tool was last set to — colour, and for Draw its thickness and opacity, for Text
+	// its size — so a tool starts where it was left (`/pending 930`). Keyed by tool: HIGHLIGHT, INK, FREETEXT, border,
+	// shape. A value of zero is "never set", and the client then leaves pdf.js's own default alone.
+	MarkupStyles map[string]MarkupStyle `json:"markupStyles,omitempty"`
 	// ViewLayout is how pages are laid out: "" / "pages" (discrete pages, the default) |
 	// "continuous" (pages joined into one strip).
 	//

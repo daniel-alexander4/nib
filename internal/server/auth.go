@@ -271,11 +271,13 @@ type statusResponse struct {
 	Advanced *advancedStatus `json:"advanced"`
 	// HiddenModes are the main-menu tabs switched off (ADR-036). Omitted when empty, which is the
 	// default: absent means every mode shows, the same reading the vault stores by.
-	HiddenModes           []string `json:"hiddenModes,omitempty"`
-	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
-	Version               string   `json:"version"`                         // running build, shown in the About dialog
-	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
-	LibreOffice           bool     `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
+	HiddenModes           []string                     `json:"hiddenModes,omitempty"`
+	RecentHighlightColors []string                     `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
+	PinnedColors          []string                     `json:"pinnedColors,omitempty"`          // colours the user keeps beside them (/pending 930)
+	MarkupStyles          map[string]vault.MarkupStyle `json:"markupStyles,omitempty"`          // each markup tool's last style (/pending 930)
+	Version               string                       `json:"version"`                         // running build, shown in the About dialog
+	Ghostscript           bool                         `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
+	LibreOffice           bool                         `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -309,6 +311,8 @@ func (s *Server) currentStatus() statusResponse {
 		st.DownloadDir, st.DownloadDirFrom, st.DownloadDirBrowser = place.Dir, place.From, place.Browser
 		st.DownloadDirSet = set.DownloadDir
 		st.RecentHighlightColors = set.RecentHighlightColors
+		st.PinnedColors = set.PinnedColors
+		st.MarkupStyles = set.MarkupStyles
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false
 		}

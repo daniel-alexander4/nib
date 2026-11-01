@@ -441,8 +441,10 @@ hop needs both peers online; nothing is stored on a server in between.
 PDFs too. Highlights, drawing, text, borders and shapes are **any color**: pick one from the
 swatch row (your last five colors stay one click away) or open the picker for a new shade.
 **Each tool keeps the colour you last gave it** — a red border does not make the next highlight
-red — until Nib is restarted. **Draw** also has its own thickness and opacity, and **Text** its
-size (in points); a value you never change is left at what the viewer ships with. A highlight
+red — and keeps it across restarts, as it keeps Draw's thickness and opacity and Text's size (in
+points); a tool you never set starts where it always did, and a value you never change is left at
+what the viewer ships with. **Pin a colour** with the ☆ beside the picker and it leads the row,
+marked with a star, until you unpin it (eight at most); the five recent colours follow it. A highlight
 has no opacity setting, because the viewer offers none. A border's thickness is yours to set,
 in points. Draw **Shapes** — a line, an
 arrow, a rectangle, or an ellipse (rectangles and ellipses can be filled) — in any

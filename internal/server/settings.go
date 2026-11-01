@@ -18,6 +18,10 @@ type settingsRequest struct {
 	CardHue               *string   `json:"cardHue"`
 	CheckUpdatesOnStartup *bool     `json:"checkUpdatesOnStartup"`
 	RecentHighlightColors *[]string `json:"recentHighlightColors"` // whole-list replace, newest first
+	// PinnedColors and MarkupStyles (`/pending 930`) are whole replacements, sanitised on the way in: the client owns
+	// the content, this is the guard on what gets stored.
+	PinnedColors *[]string        `json:"pinnedColors"`
+	MarkupStyles *json.RawMessage `json:"markupStyles"` // a map of tool -> style, parsed and bounded below
 	// ViewLayout is "pages" or "continuous"; anything else is refused rather than stored, so a
 	// future build cannot be handed a layout name this one invented.
 	ViewLayout *string `json:"viewLayout"`
@@ -53,6 +57,9 @@ type advancedRequest struct {
 
 // maxRecentHighlightColors caps the stored most-recently-used highlight palette.
 const maxRecentHighlightColors = 5
+
+// maxPinnedColors caps the pinned list: enough for a house palette, few enough to stay one row.
+const maxPinnedColors = 8
 
 // The read-aloud bounds (/pending 482): a voice name is a label, and the speeds are the ones the
 // Settings card offers.
@@ -120,6 +127,56 @@ func sanitizeHighlightColors(in []string) []string {
 	return out
 }
 
+// markupTools are the keys a stored style may have: the three pdf.js editors Nib sets and the two it draws itself.
+var markupTools = map[string]bool{"HIGHLIGHT": true, "INK": true, "FREETEXT": true, "border": true, "shape": true}
+
+// sanitizePinnedColors is sanitizeHighlightColors with its own cap.
+func sanitizePinnedColors(in []string) []string {
+	out := make([]string, 0, maxPinnedColors)
+	seen := map[string]bool{}
+	for _, c := range in {
+		c = strings.ToLower(strings.TrimSpace(c))
+		if !hexColorRe.MatchString(c) || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+		if len(out) == maxPinnedColors {
+			break
+		}
+	}
+	return out
+}
+
+// sanitizeMarkupStyles keeps the styles of known tools, with a colour that is #rrggbb and numbers inside the range
+// the controls offer; anything else is dropped field by field, and an entry left empty is dropped whole. So the vault
+// never holds a value the window could not have sent.
+func sanitizeMarkupStyles(in map[string]vault.MarkupStyle) map[string]vault.MarkupStyle {
+	out := map[string]vault.MarkupStyle{}
+	for tool, st := range in {
+		if !markupTools[tool] {
+			continue
+		}
+		var clean vault.MarkupStyle
+		if c := strings.ToLower(strings.TrimSpace(st.Color)); hexColorRe.MatchString(c) {
+			clean.Color = c
+		}
+		if st.Thickness >= 1 && st.Thickness <= 20 {
+			clean.Thickness = st.Thickness
+		}
+		if st.Opacity >= 0.05 && st.Opacity <= 1 {
+			clean.Opacity = st.Opacity
+		}
+		if st.Size >= 6 && st.Size <= 96 {
+			clean.Size = st.Size
+		}
+		if clean != (vault.MarkupStyle{}) {
+			out[tool] = clean
+		}
+	}
+	return out
+}
+
 // handleSettings persists the user's UI preferences (appearance, auto-update check,
 // recent highlight colours) into the vault. The current values are read back via
 // /api/status.
@@ -169,6 +226,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if req.RecentHighlightColors != nil {
 		colors := sanitizeHighlightColors(*req.RecentHighlightColors)
 		apply(func(s *vault.Settings) { s.RecentHighlightColors = colors })
+	}
+	if req.PinnedColors != nil {
+		pins := sanitizePinnedColors(*req.PinnedColors)
+		apply(func(s *vault.Settings) { s.PinnedColors = pins })
+	}
+	if req.MarkupStyles != nil {
+		var raw map[string]vault.MarkupStyle
+		if err := json.Unmarshal(*req.MarkupStyles, &raw); err != nil {
+			httpError(w, http.StatusBadRequest, "invalid markupStyles")
+			return
+		}
+		styles := sanitizeMarkupStyles(raw)
+		if len(styles) == 0 {
+			styles = nil
+		}
+		apply(func(s *vault.Settings) { s.MarkupStyles = styles })
 	}
 	if req.ViewLayout != nil {
 		// **"pages" is stored as EMPTY, which is the whole reason this is a switch and not an

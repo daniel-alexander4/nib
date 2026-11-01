@@ -85,7 +85,7 @@ const els = {
   fillCsvInput: $('fillCsvInput'), fillCsvStatus: $('fillCsvStatus'), fillCsvClose: $('fillCsvClose'),
   pathInput: $('pathInput'), openGo: $('openGo'),
   textToolBtn: $('textToolBtn'), detectBtn: $('detectBtn'),
-  hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'),
+  hlColors: $('hlColors'), hlSwatches: $('hlSwatches'), hlCustom: $('hlCustom'), hlPin: $('hlPin'),
   borderBtn: $('borderBtn'), borderWidth: $('borderWidth'), borderWidthInput: $('borderWidthInput'),
   inkOpts: $('inkOpts'), inkThickness: $('inkThickness'), inkOpacity: $('inkOpacity'),
   textOpts: $('textOpts'), textSize: $('textSize'),
@@ -628,6 +628,7 @@ function applyStatus(st) {
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
     selectedHlColor = toolColor.border = toolColor.shape = recentHlColors[0];
+    restoreMarkupStyles(st); // pins, and each tool where it was left (/pending 930)
     renderHlSwatches();
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
@@ -13685,10 +13686,62 @@ const colorOf = (tool) => (tool === 'HIGHLIGHT' ? selectedHlColor : toolColor[to
 // pdf.js parameters Nib sets, by the user's own choice only: a value nobody changed is not dispatched, so the
 // defaults pdf.js ships stay exactly what they were. Each is a number or a colour pdf.js reads as given.
 const toolParams = {};
+// --- what survives a restart (/pending 930) ----------------------------------------------------------------
+// Pinned colours, and each tool's last style, in the vault's settings. ONLY a tool the user has set is stored, so a tool
+// they never touched keeps starting where it always did. The server bounds every value on the way in; restoring puts
+// the values back where the controls and pdf.js read them.
+let pinnedColors = [];
+const touchedTools = new Set();
+const MAX_PINNED = 8;
+function markupStylesNow() {
+  const out = {};
+  for (const tool of touchedTools) {
+    if (tool === 'HIGHLIGHT') out.HIGHLIGHT = { color: selectedHlColor };
+    else if (tool === 'INK') out.INK = { color: toolColor.INK, thickness: toolParams.INK_THICKNESS, opacity: toolParams.INK_OPACITY };
+    else if (tool === 'FREETEXT') out.FREETEXT = { color: toolColor.FREETEXT, size: toolParams.FREETEXT_SIZE };
+    else out[tool] = { color: toolColor[tool] };
+  }
+  return out;
+}
+function persistMarkupStyles() { saveSettings({ markupStyles: markupStylesNow() }); }
+function restoreMarkupStyles(st) {
+  pinnedColors = (st.pinnedColors || []).slice(0, MAX_PINNED);
+  const ms = st.markupStyles || {};
+  if (ms.HIGHLIGHT && ms.HIGHLIGHT.color) { selectedHlColor = ms.HIGHLIGHT.color; touchedTools.add('HIGHLIGHT'); }
+  for (const t of ['border', 'shape']) {
+    if (ms[t] && ms[t].color) { toolColor[t] = ms[t].color; touchedTools.add(t); }
+  }
+  if (ms.INK) {
+    touchedTools.add('INK');
+    if (ms.INK.color) { toolColor.INK = ms.INK.color; toolParams.INK_COLOR = ms.INK.color; }
+    if (ms.INK.thickness) { toolParams.INK_THICKNESS = ms.INK.thickness; els.inkThickness.value = String(ms.INK.thickness); }
+    if (ms.INK.opacity) { toolParams.INK_OPACITY = ms.INK.opacity; els.inkOpacity.value = String(Math.round(ms.INK.opacity * 100)); }
+  }
+  if (ms.FREETEXT) {
+    touchedTools.add('FREETEXT');
+    if (ms.FREETEXT.color) { toolColor.FREETEXT = ms.FREETEXT.color; toolParams.FREETEXT_COLOR = ms.FREETEXT.color; }
+    if (ms.FREETEXT.size) { toolParams.FREETEXT_SIZE = ms.FREETEXT.size; els.textSize.value = String(ms.FREETEXT.size); }
+  }
+  // The open view's bus, if there is one: a document opened later is told on activation / load.
+  try { applyToolParams(view); applyHighlightColor(selectedHlColor); } catch { /* no view yet: activation does it */ }
+}
+// The pin: toggles the colour the row is showing for the tool in use.
+els.hlPin.onclick = () => {
+  const c = (colorOf(colorTool()) || selectedHlColor || '').toLowerCase();
+  if (!c) return;
+  if (pinnedColors.includes(c)) pinnedColors = pinnedColors.filter((p) => p !== c);
+  else if (pinnedColors.length >= MAX_PINNED) return toast(`You can pin ${MAX_PINNED} colours — unpin one first`);
+  else pinnedColors = [...pinnedColors, c];
+  renderHlSwatches();
+  saveSettings({ pinnedColors });
+};
 const PDFJS_PARAM_OF = { HIGHLIGHT: 'HIGHLIGHT_COLOR', INK: 'INK_COLOR', FREETEXT: 'FREETEXT_COLOR' };
 function setToolParam(name, value, owner = view) {
   toolParams[name] = value;
   dispatchToolParam(name, value, owner);
+  if (/^INK_/.test(name)) touchedTools.add('INK');
+  if (/^FREETEXT_/.test(name)) touchedTools.add('FREETEXT');
+  persistMarkupStyles();
 }
 function dispatchToolParam(name, value, owner = view) {
   owner.eventBus.dispatch('switchannotationeditorparams', {
@@ -13721,16 +13774,23 @@ const FIXED_COLORS = ['#000000', '#ffffff'];
 
 function renderHlSwatches() {
   els.hlSwatches.replaceChildren();
-  for (const c of [...recentHlColors, ...FIXED_COLORS]) {
+  // Pinned colours come first and stay (/pending 930); the recent ones follow without repeating them.
+  for (const c of [...pinnedColors, ...recentHlColors.filter((r) => !pinnedColors.includes(r)), ...FIXED_COLORS]) {
     const b = document.createElement('button');
-    b.className = 'hlswatch';
+    b.className = pinnedColors.includes(c) ? 'hlswatch pinned' : 'hlswatch';
     b.style.background = c;
-    b.title = c === '#000000' ? 'Black' : c === '#ffffff' ? 'White' : c;
+    b.title = c === '#000000' ? 'Black' : c === '#ffffff' ? 'White' : (pinnedColors.includes(c) ? 'Pinned ' + c : c);
     setArmed(b, c === colorOf(colorTool()));
     b.onclick = () => setHighlightColor(c);
     els.hlSwatches.appendChild(b);
   }
   els.hlCustom.value = colorOf(colorTool()) || selectedHlColor;
+  const shown = (colorOf(colorTool()) || selectedHlColor || '').toLowerCase();
+  const isPinned = pinnedColors.includes(shown);
+  els.hlPin.textContent = isPinned ? '★' : '☆';
+  els.hlPin.setAttribute('aria-pressed', String(isPinned));
+  els.hlPin.setAttribute('aria-label', isPinned ? 'Unpin this colour' : 'Pin this colour');
+  els.hlPin.title = isPinned ? 'Unpin this colour' : 'Pin this colour — it stays in the row';
 }
 
 // setHighlightColor is the explicit-pick path (a swatch or the custom picker): it
@@ -13749,6 +13809,8 @@ function setHighlightColor(hex) {
     toolColor[tool] = hex;
     if (PDFJS_PARAM_OF[tool]) setToolParam(PDFJS_PARAM_OF[tool], hex);
   }
+  touchedTools.add(tool);
+  persistMarkupStyles();
   recentHlColors = [hex, ...recentHlColors.filter((c) => c !== hex)].slice(0, 5);
   renderHlSwatches();
   saveSettings({ recentHighlightColors: recentHlColors });
@@ -14407,7 +14469,7 @@ const DOC_REQUIRED = [
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'hlPin', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because

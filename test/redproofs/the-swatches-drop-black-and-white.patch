@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -8747,7 +8747,7 @@
- 
+@@ -13775,7 +13775,7 @@
  function renderHlSwatches() {
    els.hlSwatches.replaceChildren();
--  for (const c of [...recentHlColors, ...FIXED_COLORS]) {
-+  for (const c of recentHlColors) {
+   // Pinned colours come first and stay (/pending 930); the recent ones follow without repeating them.
+-  for (const c of [...pinnedColors, ...recentHlColors.filter((r) => !pinnedColors.includes(r)), ...FIXED_COLORS]) {
++  for (const c of [...pinnedColors, ...recentHlColors.filter((r) => !pinnedColors.includes(r))]) {
      const b = document.createElement('button');
-     b.className = 'hlswatch';
+     b.className = pinnedColors.includes(c) ? 'hlswatch pinned' : 'hlswatch';
      b.style.background = c;
