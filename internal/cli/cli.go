@@ -30,6 +30,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // buildVersion is the version Run was given, kept so the DIAGNOSTICS can name the build.
@@ -46,6 +48,10 @@ func Run(args []string, version string) (handled bool, code int) {
 		buildVersion = version
 	}
 	if len(args) == 0 {
+		if headless() {
+			errf("no command given (NIB_HEADLESS is set, so the desktop app is never started; run \"nib help\")")
+			return true, 1
+		}
 		return false, 0
 	}
 	switch args[0] {
@@ -67,10 +73,33 @@ func Run(args []string, version string) (handled bool, code int) {
 			fmt.Fprintf(os.Stderr, "nib: unknown command %q (run \"nib help\" for the command list)\n", args[0])
 			return true, 1
 		}
+		if headless() {
+			fmt.Fprintf(os.Stderr, "nib: unknown command %q (run \"nib help\" for the command list)\n", args[0])
+			return true, 1
+		}
 		return false, 0 // not a subcommand — let main open the desktop app
 	}
+	keepPdfcpuConfigClosed()
 	return true, run(args[1:])
 }
+
+// headless reports whether the caller asked that nib never start the desktop app (ADR-183).
+//
+// **An environment variable and not a flag, on purpose:** the program that sets it is the one
+// that cannot rely on its own argument list being a verb — a flag would be a second spelling of
+// the same rule (ADR-009). Under it every first argument that is not a verb is `unknown
+// command`, with or without a transform flag, and no argument at all is a usage error.
+func headless() bool { return os.Getenv("NIB_HEADLESS") == "1" }
+
+// keepPdfcpuConfigClosed stops pdfcpu creating `$XDG_CONFIG_HOME/pdfcpu` (config.yml, certs/,
+// fonts/Roboto-Regular.gob) when a headless verb builds its first configuration (ADR-183).
+//
+// It sets the package variable the deprecated `api.DisableConfigDir` sets, because that is the
+// one line every `model.NewDefaultConfiguration()` call site in the tree reads; it must run
+// before the first configuration is built (pdfcpu caches it), and no package-level variable
+// builds one — `TestNoPackageLevelPdfcpuConfiguration` holds that. The cost pdfcpu documents is
+// that user fonts are unavailable; nib sets its own prose in faces it embeds (ADR-150).
+func keepPdfcpuConfigClosed() { model.ConfigPath = "disable" }
 
 // hasTransformFlag reports whether args carry an output flag that only the
 // headless transform commands accept, so a non-verb first argument alongside one
@@ -191,6 +220,9 @@ These subcommands run headlessly, without a browser:
                                   reachable (contacts the public internet)
   nib watch DIR --do OP           run open/timestamp/optimize/sanitize/ua on each new PDF
   nib version                     print the version
+
+Set NIB_HEADLESS=1 when a program calls nib: any first argument that is not a command above
+is then "unknown command" (exit 1) and the desktop app is never started.
 
 Commands that produce a PDF require -o/--out FILE. For optimize, shrink, contents, merge, sanitize,
 sign, rotate, pages, encrypt, decrypt, booklet, nup, normalize, pagenum, stamp, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
