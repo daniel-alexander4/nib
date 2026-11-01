@@ -58,6 +58,11 @@ else
   echo "nfpm not found — skipping .deb. Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.3"
 fi
 
+# SHA256SUMS: one line per binary and package, so a user (or a program that pins a minimum version) can check
+# the file it downloaded is the one this build made. The licence and notices are not signed by it.
+( cd "$DIST" && shopt -s nullglob && files=("nib-$VERSION"-* "nib_${VERSION}_"*.deb) \
+  && if command -v sha256sum >/dev/null 2>&1; then sha256sum "${files[@]}"; else shasum -a 256 "${files[@]}"; fi > SHA256SUMS )
+
 echo "done — artifacts in $DIST/"
 
 # Optional: publish the public binaries to a GitHub release (only with --publish).
@@ -70,7 +75,7 @@ if [ "$PUBLISH" = "1" ]; then
   shopt -s nullglob
   # Ship the AGPL licence + third-party attribution alongside the binaries so the
   # bare (non-.deb) downloads carry their required notices too.
-  assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb LICENSE THIRD-PARTY-NOTICES.md)
+  assets=("$DIST/nib-$VERSION"-* "$DIST/nib_${VERSION}_"*.deb "$DIST/SHA256SUMS" LICENSE THIRD-PARTY-NOTICES.md)
   shopt -u nullglob
   # Upload, publish a release found as a draft, and report what releases/latest answers (/pending 868).
   ./build/publish-release.sh "$VERSION" "$branch" "${assets[@]}"
