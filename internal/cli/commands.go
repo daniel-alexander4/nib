@@ -1145,12 +1145,16 @@ func noteUnfillableAsked(pdf []byte, asked []string) {
 // signature, since the content changes.
 func cmdFill(args []string) int {
 	fs := flag.NewFlagSet("nib fill", flag.ContinueOnError)
-	var out, outDir, dataPath, nameCol string
+	var out, outDir, dataPath, nameCol, format string
 	outFlag(fs, &out)
-	fs.StringVar(&dataPath, "data", "", "form data: a .json or .xfdf record (single fill) or a .csv (one row → one PDF) (required)")
+	fs.StringVar(&dataPath, "data", "", "form data: a .json or .xfdf record (single fill) or a .csv (one row → one PDF); - reads the record from stdin (required)")
+	fs.StringVar(&format, "format", "", "the record's format, json or xfdf; for --data - (stdin has no extension) and anywhere the extension is not the answer (default: from the extension, else json)")
 	fs.StringVar(&outDir, "out-dir", "", "with a CSV: write one filled PDF per row into this folder")
 	fs.StringVar(&nameCol, "name-col", "", "with a CSV: name each output from this column's value")
-	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json|.xfdf -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]", "Fill a form from a JSON or XFDF record, or mail-merge a CSV (one filled PDF per row).")
+	fs.Usage = usageFunc(fs, "nib fill IN --data DATA.json|.xfdf|- [--format json|xfdf] -o OUT  |  nib fill IN --data DATA.csv --out-dir DIR [--name-col COL]",
+		"Fill a form from a JSON or XFDF record, or mail-merge a CSV (one filled PDF per row).\n"+
+			"The record can come on stdin (--data -) and the PDF can go to stdout (-o -): with both, nothing is written to disk.\n"+
+			"-o FILE stages the filled PDF in a .nib-*.tmp beside FILE until it is renamed into place; -o - never does.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1158,13 +1162,22 @@ func cmdFill(args []string) int {
 		errf("missing --data (the form-data JSON or CSV file)")
 		return 1
 	}
-	data, err := os.ReadFile(dataPath)
+	if dataPath == "-" && fs.NArg() > 0 && fs.Arg(0) == "-" {
+		errf("the form and --data cannot both be - : stdin is one stream")
+		return 1
+	}
+	recordFormat, ok := fillFormat(format, dataPath)
+	if !ok {
+		errf("--format is json or xfdf (%q is neither, or --data is a .csv, which is read as one)", format)
+		return 1
+	}
+	data, err := readInput(dataPath)
 	if err != nil {
 		errf("%v", err)
 		return 1
 	}
 
-	if strings.EqualFold(filepath.Ext(dataPath), ".csv") { // mail-merge
+	if recordFormat == "csv" { // mail-merge
 		if out != "" {
 			errf("a CSV mail-merge writes many files: use --out-dir DIR, not -o")
 			return 1
@@ -1209,7 +1222,7 @@ func cmdFill(args []string) int {
 		noteUnfillableAsked(b, pdfops.JSONFieldNames(data))
 		return pdfops.FillFormJSON(b, data)
 	}
-	if strings.EqualFold(filepath.Ext(dataPath), ".xfdf") {
+	if recordFormat == "xfdf" {
 		fillFn = func(b []byte) ([]byte, error) {
 			noteUnfillableAsked(b, pdfops.XFDFFieldNames(data))
 			return pdfops.FillFormXFDF(b, data)
@@ -1220,6 +1233,31 @@ func cmdFill(args []string) int {
 		return code
 	}
 	return transform(in, out, fillFn)
+}
+
+// fillFormat names how a fill's --data is read: "csv" (a mail-merge), "xfdf" or "json". An explicit
+// --format wins over the extension and is json or xfdf only; ok is false for anything else, and for a
+// --format given beside a .csv (a mail-merge has no other reading). With no --format the extension
+// decides, and a name with none — stdin included — is JSON, as it always was.
+func fillFormat(format, dataPath string) (kind string, ok bool) {
+	ext := strings.ToLower(filepath.Ext(dataPath))
+	if format == "" {
+		switch ext {
+		case ".csv":
+			return "csv", true
+		case ".xfdf":
+			return "xfdf", true
+		}
+		return "json", true
+	}
+	if ext == ".csv" {
+		return "", false
+	}
+	switch strings.ToLower(format) {
+	case "json", "xfdf":
+		return strings.ToLower(format), true
+	}
+	return "", false
 }
 
 // cmdExportXFDF exports a form's field data as XFDF — the XML interchange format
