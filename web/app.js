@@ -240,6 +240,8 @@ const els = {
   staleReload: $('staleReload'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
+  profileOfferModal: $('profileOfferModal'), profileOfferList: $('profileOfferList'),
+  profileOfferCancel: $('profileOfferCancel'), profileOfferYes: $('profileOfferYes'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
   saveAsFormatRow: $('saveAsFormatRow'), saveAsFormat: $('saveAsFormat'), saveAsStatus: $('saveAsStatus'),
   saveAsDir: $('saveAsDir'), saveAsHere: $('saveAsHere'), saveAsUp: $('saveAsUp'),
@@ -5520,6 +5522,8 @@ async function save() {
     // The server now holds the bytes this view baked, so this view is at the saved revision whether
     // or not it reloads below (ADR-146) — without this the next page operation would be refused.
     owner.loadedRev = meta.rev || 0;
+    // What the user typed into form fields, read BEFORE the reload below empties pdf.js's storage (/pending 917).
+    const filled = await collectFilledValues(owner);
 
     // Everything below reports on the SAVE, and the save was of `doc`. If the open
     // document changed while the bytes were in flight, none of it belongs on screen:
@@ -5556,6 +5560,7 @@ async function save() {
       if (boxes.length && owner.redactMarks !== boxes) { owner.redactMarks = [...boxes, ...owner.redactMarks]; relayoutRedactMarks(owner); }
     }
     setDirty(owner, false);
+    offerToKeepFilled(filled);
   } catch (err) {
     toast('save failed: ' + err.message);
   } finally {
@@ -9380,6 +9385,8 @@ els.saveAsGo.onclick = async () => {
   if (!dir) return toast('Choose a folder');
   // Name first, bytes second, and nothing between them that can change the format: the Format
   // line is disabled for as long as a maker runs.
+  const filledOwner = view;
+  const filled = await collectFilledValues(filledOwner); // before anything can reload the view (/pending 917)
   const bytes = await saveAsBytes();
   if (!bytes) return;
   const form = new FormData();
@@ -9407,6 +9414,7 @@ els.saveAsGo.onclick = async () => {
   const meta = await res.json();
   closeSaveAs();
   toast('Saved to ' + meta.path);
+  offerToKeepFilled(filled);
 };
 
 // --- split by bookmarks to a folder ------------------------------------------
@@ -10939,6 +10947,89 @@ els.profileSave.onclick = async () => {
     autofillSecondPass = true; // read, and cleared, before the handler's first await
     await els.autofillBtn.onclick();
   }
+};
+
+// --- offer to keep what was filled in, for Autofill (/pending 917) ---------------------------------------
+// After a Save in which the user typed values into form fields, Nib asks whether to keep them in the Autofill profile
+// (the vault's `profile`, the store Autofill already reads — no second one). The ask is the consent: nothing is kept
+// unless "Keep selected" is pressed, and "Not now" leaves no residue beyond this session's memory of what was
+// declined, so the same values do not ask again.
+//
+// What is offered: a TEXT field the user changed, with a value that differs from the profile's, that is not a
+// password field and was not declined this session. Matching is by the field's own name, as Autofill matches it, so a
+// form whose fields are named alike is filled next time; that is the store's rule, not this offer's.
+const declinedProfileOffers = new Set(); // `${name}\0${value}`
+const PROFILE_OFFER_MAX = 500; // characters: a field holding more is prose, not a detail to keep
+
+// collectFilledValues reads what the user put in `owner`'s form fields, from pdf.js's own storage — BEFORE any
+// reload, which empties it. Asked of the view captured at the press; [] when nothing qualifies or anything cannot be read.
+async function collectFilledValues(owner) {
+  try {
+    const storage = owner.pdfDocument && owner.pdfDocument.annotationStorage;
+    if (!storage || !storage.size) return [];
+    const objs = await owner.pdfDocument.getFieldObjects();
+    if (!objs) return [];
+    const res = await apiFetch('/api/profile');
+    const profile = res.ok ? await res.json() : {};
+    const out = new Map();
+    for (const [name, arr] of Object.entries(objs)) {
+      for (const o of arr) {
+        if (o.type !== 'text') continue;
+        const entry = storage.getRawValue(o.id);
+        const v = entry && typeof entry.value === 'string' ? entry.value.trim() : '';
+        if (!v || v.length > PROFILE_OFFER_MAX || profile[name] === v || declinedProfileOffers.has(name + '\0' + v)) continue;
+        // A password box is never offered, whatever it is named.
+        const el = [...owner.container.querySelectorAll('[data-element-id]')].find((e) => e.dataset.elementId === o.id);
+        if (el && el.type === 'password') continue;
+        if (!out.has(name)) out.set(name, v);
+      }
+    }
+    return [...out].map(([name, value]) => ({ name, value }));
+  } catch { return []; }
+}
+
+// offerToKeepFilled puts the question up for the values collected. One question at a time: a second Save while one
+// is on screen asks nothing new.
+function offerToKeepFilled(filled) {
+  if (!filled.length || !els.profileOfferModal.hidden) return;
+  els.profileOfferList.replaceChildren();
+  for (const f of filled) {
+    const row = document.createElement('label');
+    row.className = 'check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.dataset.name = f.name;
+    box.dataset.value = f.value;
+    row.append(box, ` ${f.name} = ${f.value}`);
+    els.profileOfferList.appendChild(row);
+  }
+  els.profileOfferYes.disabled = false;
+  els.profileOfferModal.hidden = false;
+}
+function declineProfileOffer() {
+  for (const box of els.profileOfferList.querySelectorAll('input[type=checkbox]')) {
+    declinedProfileOffers.add(box.dataset.name + '\0' + box.dataset.value);
+  }
+  els.profileOfferModal.hidden = true;
+}
+els.profileOfferCancel.onclick = declineProfileOffer;
+els.profileOfferYes.onclick = async () => {
+  const chosen = [...els.profileOfferList.querySelectorAll('input[type=checkbox]')];
+  const keep = chosen.filter((b) => b.checked);
+  // The unticked are a "no" for those values.
+  for (const b of chosen) if (!b.checked) declinedProfileOffers.add(b.dataset.name + '\0' + b.dataset.value);
+  if (!keep.length) { els.profileOfferModal.hidden = true; return; }
+  els.profileOfferYes.disabled = true;
+  const res = await apiFetch('/api/profile');
+  const profile = res.ok ? await res.json() : {};
+  for (const b of keep) profile[b.dataset.name] = b.dataset.value;
+  const saved = await apiFetch('/api/profile', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
+  });
+  els.profileOfferModal.hidden = true;
+  if (saved.ok) { profileCache = null; toast(`Kept ${keep.length} value${keep.length === 1 ? '' : 's'} for Autofill`); }
+  else toast(await errText(saved, 'could not save to the profile'));
 };
 
 // --- redaction (M9) ----------------------------------------------------------
