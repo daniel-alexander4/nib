@@ -24,6 +24,16 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   (combo, list and radio); it names the field and the form's own options. pdfcpu's form package was searched for a
   message built from a value (`errors.New(... +`, `Errorf` with `%s/%q/%v`) and the rest are field ids, object numbers
   and `%T`. A decoder's type error names a type, not the text.
+- **`nib fill --data -` reads the record from stdin, `--format json|xfdf` names it** (`fillFormat`, the one place the
+  format is decided). Without `--format` the extension decides as before and a name with none — stdin included — is JSON.
+  `--format` beside a `.csv` is refused (a mail-merge has no other reading). `IN` and `--data` both `-` is refused.
+  The JSON stays pdfcpu's shape. `-o -` writes no file; `-o FILE` stages `.nib-*.tmp` in FILE's directory until the rename
+  (the help says so). The oracle is a syscall trace of the whole process tree, because a staged file that is made and
+  removed leaves nothing for a listing to find; its control run (`-o FILE`) must show the `.nib-` file.
+- **Measured on the 2025 Form 1040, which carries an `/XFA` packet:** a filled copy has no `/XFA` (ADR-145) and no
+  `/NeedAppearances` — the original has none either. A fill neither adds nor removes `/NeedAppearances`, so a form that
+  carries it keeps it; do not describe the output as free of it in general. Two fields sharing a leaf name under different
+  parents are addressed by full path and only that one is written (`TestAFillByFullPath…`).
 
 ## Declared
 
