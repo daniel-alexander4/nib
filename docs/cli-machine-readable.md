@@ -44,3 +44,12 @@ and `hidden` (true for an OCR layer) only when true. Runs are in the order the p
 ## `nib info IN --json`
 
 A JSON array, one object per page: `page`, `width`, `height`, `rotate`, `mediaBox`, `cropBox` (each box `[llx, lly, urx, ury]`).
+
+## `nib images IN --out-dir DIR [--json]`
+
+Writes each embedded picture of `IN` (`-` for stdin) into `DIR` (created `0700` if missing, files `0600`, never overwriting: a name that
+already exists is exit 1 and nothing is written) as `page-NNN-img-NN.EXT`. A JPEG stream comes out as the **same JPEG** (`.jpg`, byte for
+byte); any other picture is decoded and re-encoded as `.png` (or `.tif`), with the same pixels. `--json` prints an array, one object per
+picture, in page order: `page` and `index` (from 1; the picture's place among that page's), `width`, `height` (pixels), `filter` (the
+stream's own filter pipeline in the PDF, space-separated, e.g. `FlateDecode` or `DCTDecode`), `bytes` (the file's length) and `file`
+(its name in `DIR`). A picture drawn on several pages is listed once, on the first. A document with none prints `[]` and creates no folder.
