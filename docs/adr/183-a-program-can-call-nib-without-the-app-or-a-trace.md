@@ -70,6 +70,10 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
 - **`--no-clobber` on `fill --out-dir` and `split --out-dir`** (RelaxTax B7) is checked in `writeSplitFiles`' own first pass, before the
   first write, beside the source-overwrite refusal (ADR-009: that helper is the one door both verbs share). It is opt-in: the
   default still replaces, because a script that reruns over a folder may rely on it; `nib images` refuses by default because it is new.
+- **`nib merge --bookmark-per-file`** (RelaxTax B6, `pdfops.BookmarkMergedFiles`) builds the whole outline from the INPUTS — each
+  file's title at its running page offset, its own outline one level down — and sets it with `SetOutline`, rather than reading what
+  `Combine` carried: the offsets are then the inputs' page counts, checked to sum to the result's. Titles are made unique across
+  the list because pdfcpu keys a destination by title. Opt-in; a plain merge is unchanged.
 
 ## Declared
 

@@ -174,3 +174,55 @@ func OutlineFromHeadings(pdf []byte) ([]OutlineItem, error) {
 	}
 	return items, nil
 }
+
+// MergedFile is one input of a merge: the title its bookmark takes and the document itself.
+type MergedFile struct {
+	Title string
+	PDF   []byte
+}
+
+// BookmarkMergedFiles gives a merge one top-level bookmark per input, each pointing at that input's first page in
+// merged, and nests the input's own outline beneath it (RelaxTax B6, ADR-183). It replaces merged's outline, so a
+// caller passes every input, in order: the page offsets are the running sum of their page counts, which must add up
+// to merged's (a merge that dropped or added pages is refused rather than pointed at the wrong ones). Titles are made
+// unique across the whole list (pdfcpu keys a destination by title): a repeat becomes "title (2)".
+func BookmarkMergedFiles(merged []byte, files []MergedFile) ([]byte, error) {
+	total, err := PageCount(merged)
+	if err != nil {
+		return nil, err
+	}
+	var items []OutlineItem
+	used := map[string]bool{}
+	unique := func(t string) string {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			t = "document"
+		}
+		name := t
+		for n := 2; used[name]; n++ {
+			name = fmt.Sprintf("%s (%d)", t, n)
+		}
+		used[name] = true
+		return name
+	}
+	offset := 0
+	for _, f := range files {
+		n, err := PageCount(f.PDF)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, OutlineItem{Title: unique(f.Title), Page: offset + 1, Level: 0})
+		own, err := Outline(f.PDF)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range own {
+			items = append(items, OutlineItem{Title: unique(it.Title), Page: it.Page + offset, Level: it.Level + 1})
+		}
+		offset += n
+	}
+	if offset != total {
+		return nil, fmt.Errorf("the merged document has %d pages and its inputs %d: the bookmarks would point at the wrong ones", total, offset)
+	}
+	return SetOutline(merged, items)
+}

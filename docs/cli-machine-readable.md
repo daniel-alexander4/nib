@@ -17,6 +17,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
   The JSON is pdfcpu's shape — `{"forms":[{"textfield":[{"name":"<full path>","value":"…"}]}]}`; a field two parents share a leaf name
   with is addressed by its full path.
 - `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
+- `nib merge IN… -o OUT --bookmark-per-file` gives the result one top-level bookmark per input — titled from the file name without its extension (`stdin` for `-`; a repeat becomes `name (2)`) and pointing at that input's first page — with the input's own outline nested beneath it. It replaces the result's outline; without the flag a merge's outline is what it always was.
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
