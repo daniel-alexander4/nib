@@ -1024,9 +1024,15 @@ func cmdPagelabels(args []string) int {
 	})
 }
 
+// unfilledStem is the clause the window's toast (`tellSkippedFields`, web/app.js) and `nib fill` share: a field the
+// DATA named that the form cannot take a value for. `TestTheCLIAndTheWindowSayTheSameThingOfASkippedField` holds
+// the two together.
+const unfilledStem = "not filled: the form cannot take a value for"
+
 // noteUnfillable says, on stderr, which fields of pdf a fill cannot reach (/pending 919 F14): their widget's
 // /Parent chain ends in nothing, pdfcpu cannot name them, and a value the data gives one is dropped without an
-// error. It never fails the command - a form that cannot be read is the caller's own error to report.
+// error. It is the whole-form statement, for `nib fields`, where no data is in play; a fill uses
+// noteUnfillableAsked. It never fails the command - a form that cannot be read is the caller's own error to report.
 func noteUnfillable(pdf []byte) {
 	names, err := pdfops.UnfillableFields(pdf)
 	if err != nil || len(names) == 0 {
@@ -1034,6 +1040,16 @@ func noteUnfillable(pdf []byte) {
 	}
 	errf("%d field(s) cannot be filled, whatever the data says: their /Parent leads nowhere (%s)",
 		len(names), strings.Join(names, ", "))
+}
+
+// noteUnfillableAsked is the fill's statement: only the fields the DATA named, by the data's own names, and
+// nothing when it named none - the window's rule (`skippedFieldsHeader`), so the two say one thing.
+func noteUnfillableAsked(pdf []byte, asked []string) {
+	names, err := pdfops.UnfillableFieldsAsked(pdf, asked)
+	if err != nil || len(names) == 0 {
+		return
+	}
+	errf("%d field(s) %s them (%s)", len(names), unfilledStem, strings.Join(names, ", "))
 }
 
 // cmdFill fills a PDF form from data — a single record (JSON → one PDF, -o OUT,
@@ -1079,7 +1095,7 @@ func cmdFill(args []string) int {
 			errf("%v", err)
 			return 1
 		}
-		noteUnfillable(pdf)
+		noteUnfillableAsked(pdf, pdfops.CSVFieldNames(data))
 		parts, err := pdfops.FillFormCSV(pdf, data, nameCol)
 		if err != nil {
 			errf("%v", err)
@@ -1102,9 +1118,15 @@ func cmdFill(args []string) int {
 		errf("--name-col is only for a CSV mail-merge")
 		return 1
 	}
-	fillFn := func(b []byte) ([]byte, error) { noteUnfillable(b); return pdfops.FillFormJSON(b, data) }
+	fillFn := func(b []byte) ([]byte, error) {
+		noteUnfillableAsked(b, pdfops.JSONFieldNames(data))
+		return pdfops.FillFormJSON(b, data)
+	}
 	if strings.EqualFold(filepath.Ext(dataPath), ".xfdf") {
-		fillFn = func(b []byte) ([]byte, error) { noteUnfillable(b); return pdfops.FillFormXFDF(b, data) }
+		fillFn = func(b []byte) ([]byte, error) {
+			noteUnfillableAsked(b, pdfops.XFDFFieldNames(data))
+			return pdfops.FillFormXFDF(b, data)
+		}
 	}
 	in, code := singleInput(fs, out)
 	if code != 0 {

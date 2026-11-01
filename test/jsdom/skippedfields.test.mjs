@@ -28,13 +28,13 @@ function run(header) {
 
 test('one field skipped is named in a sentence', () => {
   assert.deepEqual(run('{"count":1,"names":["orphan"]}'),
-    ['1 field was left empty: the form cannot take a value for it (orphan)']);
+    ['1 field was not filled: the form cannot take a value for it (orphan)']);
 });
 
 test('many are counted whole and only the first three are named', () => {
   const said = run('{"count":12,"names":["a","b","c","d","e","f","g","h","i","j"]}');
   assert.equal(said.length, 1);
-  assert.match(said[0], /^12 fields were left empty/);
+  assert.match(said[0], /^12 fields were not filled/);
   assert.match(said[0], /\(a, b, c and 9 more\)$/);
 });
 

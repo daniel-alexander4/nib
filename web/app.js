@@ -5283,7 +5283,7 @@ function tellSkippedFields(res) {
   if (!facts.count) return;
   const names = (facts.names || []).slice(0, 3).join(', ');
   const more = facts.count - Math.min(3, (facts.names || []).length);
-  toast(`${facts.count === 1 ? '1 field was' : `${facts.count} fields were`} left empty: the form cannot take a value for ${facts.count === 1 ? 'it' : 'them'} (${names}${more > 0 ? ` and ${more} more` : ''})`);
+  toast(`${facts.count === 1 ? '1 field was' : `${facts.count} fields were`} not filled: the form cannot take a value for ${facts.count === 1 ? 'it' : 'them'} (${names}${more > 0 ? ` and ${more} more` : ''})`);
 }
 els.fillCsvInput.onchange = async () => {
   // Export name captured at operation entry — see exportBase (D7).
