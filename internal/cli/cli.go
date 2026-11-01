@@ -193,6 +193,7 @@ var commands = map[string]func([]string) int{
 	"stamp":       cmdStamp,
 	"pagelabels":  cmdPagelabels,
 	"fill":        cmdFill,
+	"flatten":     cmdFlatten,
 	"export-xfdf": cmdExportXFDF,
 	"fields":      cmdFields,
 	"info":        cmdInfo,
@@ -248,6 +249,7 @@ These subcommands run headlessly, without a browser:
   nib stamp IN -o OUT             put text, a diagonal watermark or a logo on every page (--text/--watermark/--image, --pages)
   nib pagelabels IN -o OUT        set logical page labels (--range PAGE:STYLE[:START[:PREFIX]])
   nib fill IN --data D            fill a form from JSON/XFDF (-o OUT), or mail-merge a CSV (--out-dir DIR)
+  nib flatten IN -o OUT           burn a form's widgets into the page as vector content and remove the form
   nib export-xfdf IN -o OUT        export a form's field data as XFDF (Acrobat/Foxit interchange)
   nib fields IN [--json]          list a form's fields: name, type, label, page, rectangle (no values)
   nib info IN [--json]            list each page's size as shown, /Rotate and boxes

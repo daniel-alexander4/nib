@@ -32,7 +32,7 @@ func TestVersionJSONShapeIsLocked(t *testing.T) {
 	if got.Version != "9.8.7" || got.API != 1 {
 		t.Errorf("version %q api %d, want 9.8.7 and 1 (APIVersion is a number a program has pinned: raise it for an incompatible change only)", got.Version, got.API)
 	}
-	const want = "attachments booklet contents decrypt discover encrypt export-xfdf fields fill images info merge normalize nup office optimize outline pagelabels pagenum pages pdfa register rendezvous rotate sanitize shrink sign split stamp tag text timestamp ua unregister verify version watch"
+	const want = "attachments booklet contents decrypt discover encrypt export-xfdf fields fill flatten images info merge normalize nup office optimize outline pagelabels pagenum pages pdfa register rendezvous rotate sanitize shrink sign split stamp tag text timestamp ua unregister verify version watch"
 	if have := strings.Join(got.Commands, " "); have != want {
 		t.Errorf("commands = %q\n want     %q", have, want)
 	}

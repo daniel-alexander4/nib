@@ -16,6 +16,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 - `fill IN --data - --format json|xfdf -o -` is the call that touches no file: `cat answers.json | nib fill form.pdf --data - --format json -o -`.
   The JSON is pdfcpu's shape — `{"forms":[{"textfield":[{"name":"<full path>","value":"…"}]}]}`; a field two parents share a leaf name
   with is addressed by its full path.
+- `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
 ## Exit codes
@@ -53,3 +54,18 @@ byte); any other picture is decoded and re-encoded as `.png` (or `.tif`), with t
 picture, in page order: `page` and `index` (from 1; the picture's place among that page's, by ascending object number — a fixed order, not the order they are drawn in), `width`, `height` (pixels), `filter` (the
 stream's own filter pipeline in the PDF, space-separated, e.g. `FlateDecode` or `DCTDecode`), `bytes` (the file's length) and `file`
 (its name in `DIR`). A picture drawn on several pages is listed once, on the first. A document with none prints `[]` and creates no folder.
+
+## `nib flatten IN -o OUT [--drop-signature] [--json]`
+
+Draws every form widget's appearance into its page as vector content and removes the widgets, the fields and the AcroForm. The page's
+own content is untouched, so its text layer stays, and a filled value is text that `nib text` finds. `IN` may be `-`; `-o -` writes the
+PDF to stdout. The counts go to **stderr** — a line of words, or with `--json` `{"flattened","blank","hidden"}` — because stdout may be the
+PDF: `flattened` widgets whose appearance is now page content, `blank` widgets with no value and no appearance (nothing was drawn and nothing
+lost), `hidden` widgets a reader does not show (removed, not drawn). Counts only, never a value.
+
+Refused, exit 1, nothing written: a widget that holds a **value but no appearance** (a viewer that regenerates appearances would show it; a
+flattened page would not) — the message names the fields, never the value, and the remedy is to fill the form with `nib fill` first, which
+writes the appearance; a **signed** document (flattening changes the bytes a signature covers) unless `--drop-signature` takes the signature
+away; and a document with no form fields. A PDF/UA identification is dropped (ADR-032), and a tagged document keeps its tree with the
+widgets' references and their now-empty Form elements removed. The drawn content is an artifact: a screen reader does not announce a
+flattened value, so flatten what is printed, not what is read.
