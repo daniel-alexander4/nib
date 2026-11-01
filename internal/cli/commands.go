@@ -1233,11 +1233,29 @@ func cmdAttachments(args []string) int {
 // (or as JSON). A bookmark-less PDF prints nothing and exits 0.
 func cmdOutline(args []string) int {
 	fs := flag.NewFlagSet("nib outline", flag.ContinueOnError)
-	var asJSON bool
+	var asJSON, propose, inPlace bool
+	var out, setFile string
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
 	fs.BoolVar(&asJSON, "json", false, "emit the outline as JSON")
-	fs.Usage = usageFunc(fs, "nib outline IN [--json]", "List the document's bookmark outline.")
+	fs.BoolVar(&propose, "propose", false, "list the bookmarks the document's headings would give, without writing anything")
+	fs.StringVar(&setFile, "set", "", "replace the outline with the JSON list in FILE (the --propose --json shape: title, page, level), writing -o OUT or -w")
+	fs.Usage = usageFunc(fs, "nib outline IN [--json] [--propose]  |  nib outline IN --set FILE -o OUT  |  nib outline -w FILE... --set FILE", "List the document's bookmark outline, or what its headings would give (--propose), or replace it (--set).")
 	if code, ok := parse(fs, args); !ok {
 		return code
+	}
+	if setFile != "" {
+		raw, err := os.ReadFile(setFile)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		var set []pdfops.OutlineItem
+		if err := json.Unmarshal(raw, &set); err != nil {
+			errf("%s: not a list of {title, page, level}: %v", setFile, err)
+			return 1
+		}
+		return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) { return pdfops.SetOutline(b, set) })
 	}
 	if fs.NArg() != 1 {
 		errf("expected one input PDF, got %d", fs.NArg())
@@ -1248,7 +1266,11 @@ func cmdOutline(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	items, err := pdfops.Outline(pdf)
+	read := pdfops.Outline
+	if propose {
+		read = pdfops.OutlineFromHeadings
+	}
+	items, err := read(pdf)
 	if err != nil {
 		errf("%v", err)
 		return 1
@@ -1262,7 +1284,11 @@ func cmdOutline(args []string) int {
 		return 0
 	}
 	if len(items) == 0 {
-		fmt.Println("(no bookmarks)")
+		if propose {
+			fmt.Println("(no headings found)")
+		} else {
+			fmt.Println("(no bookmarks)")
+		}
 		return 0
 	}
 	for _, it := range items {

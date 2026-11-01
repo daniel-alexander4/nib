@@ -115,7 +115,7 @@ const els = {
   cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
-  outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
+  outlineAddBtn: $('outlineAddBtn'), outlineFromHeadingsBtn: $('outlineFromHeadingsBtn'), outlineWhy: $('outlineWhy'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
   thumbSelBar: $('thumbSelBar'), thumbSelCount: $('thumbSelCount'),
   selRotateLeftBtn: $('selRotateLeftBtn'), selRotateRightBtn: $('selRotateRightBtn'),
   selDeleteBtn: $('selDeleteBtn'), selClearBtn: $('selClearBtn'),
@@ -8724,6 +8724,7 @@ async function openOutlineEditor() {
   } catch { items = []; }
   if (owner !== view) return;
   owner.outlineItems = items;
+  els.outlineWhy.hidden = true;
   renderOutlineEditor();
   els.outlineModal.hidden = false;
 }
@@ -8731,6 +8732,32 @@ els.outlineCancel.onclick = () => { els.outlineModal.hidden = true; };
 els.outlineAddBtn.onclick = () => {
   view.outlineItems.push({ title: 'New bookmark', page: view.viewer.currentPageNumber || 1, level: 0 });
   renderOutlineEditor();
+};
+// Fill from headings (/pending 910): the proposal replaces the editor's LIST, not the document's outline —
+// nothing is written until Save outline, so the hierarchy is reviewed with the editor's own controls. The list
+// is the user's work, so a non-empty one is asked about first, and the proposal is dropped if the document on
+// screen changed while the (whole-document) reading ran.
+els.outlineFromHeadingsBtn.onclick = async () => {
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  if (owner.outlineItems.length && !confirm('Replace the bookmarks listed here with ones proposed from the headings? Nothing is saved until you press Save outline.')) return;
+  els.outlineFromHeadingsBtn.disabled = true;
+  els.outlineWhy.hidden = true;
+  try {
+    const res = await apiFetch('/api/outline/propose', { docId: owner.docMeta && owner.docMeta.id });
+    if (!res.ok) { toast(await errText(res, 'could not read headings')); return; }
+    const items = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
+    if (owner !== view) return;
+    if (!items.length) {
+      els.outlineWhy.textContent = 'No headings were found on the pages, so there is nothing to propose.';
+      els.outlineWhy.hidden = false;
+      return;
+    }
+    owner.outlineItems = items;
+    renderOutlineEditor();
+    els.outlineWhy.textContent = `${items.length} bookmark${items.length === 1 ? '' : 's'} proposed from the headings. Check the nesting and the titles, then Save outline.`;
+    els.outlineWhy.hidden = false;
+  } finally { els.outlineFromHeadingsBtn.disabled = false; }
 };
 els.outlineSave.onclick = async () => {
   // Captured at entry: the bake and the POST are both awaits, and the outline being

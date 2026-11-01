@@ -1928,10 +1928,14 @@
     <div class="sigcard">
       <h3>Edit outline</h3>
       <p class="libhint">Bookmarks jump to the top of a page and are kept in page order. Indent to nest
-        (chapters → sections). Titles must be unique. Saving replaces the document's whole outline.</p>
+        (chapters → sections). Titles must be unique. Saving replaces the document's whole outline.
+        <em>Fill from headings</em> proposes bookmarks from the headings Nib finds on the pages — nothing is written
+        until you Save.</p>
+      <p id="outlineWhy" class="libhint" role="status" hidden></p>
       <div id="outlineEditList" class="outline-edit-list"></div>
       <div class="sigbtns">
         <button id="outlineAddBtn">Add bookmark</button>
+        <button id="outlineFromHeadingsBtn" title="Replace the list below with bookmarks proposed from the headings on the pages">Fill from headings</button>
         <span class="grow"></span>
         <button id="outlineCancel">Cancel</button>
         <button id="outlineSave" class="primary">Save outline</button>

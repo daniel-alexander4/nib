@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"nib/internal/pdfops"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -111,5 +114,50 @@ func TestEveryPageStampFieldTheServerReadsIsOneTheClientSends(t *testing.T) {
 	}
 	if !strings.Contains(body, "form.append('image'") {
 		t.Error("the server reads the image file for a picture stamp and pageOp never appends it")
+	}
+}
+
+// /pending 910 — the route that proposes bookmarks from the headings. It reads, so it must leave the document
+// as it found it, and what it answers is the shape the outline editor already takes.
+func TestOutlineProposeAnswersTheHeadingsAndWritesNothing(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	pdf, err := pdfops.ConvertDocToPDF([]byte("# Alpha\n\nbody text\n\n## Beta\n\nbody text\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "doc.pdf")
+	fw.Write(pdf)
+	mw.Close()
+	if resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/upload", mw.FormDataContentType(), &buf); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup: upload answered %d", resp.StatusCode)
+	}
+	resp, err := c.Get(ts.URL + "/api/outline/propose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Items []pdfops.OutlineItem `json:"items"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&got) != nil || len(got.Items) != 2 {
+		t.Fatalf("propose answered %d with %+v, want 200 and two bookmarks", resp.StatusCode, got)
+	}
+	if got.Items[0].Title != "Alpha" || got.Items[0].Level != 0 || got.Items[1].Level != 1 {
+		t.Errorf("items = %+v", got.Items)
+	}
+	cur, err := c.Get(ts.URL + "/api/outline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cur.Body.Close()
+	var written struct {
+		Items []pdfops.OutlineItem `json:"items"`
+	}
+	json.NewDecoder(cur.Body).Decode(&written)
+	if len(written.Items) != 0 {
+		t.Errorf("proposing wrote %d bookmark(s) into the document", len(written.Items))
 	}
 }

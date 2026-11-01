@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"strings"
 
 	"nib/internal/pdfops"
 )
@@ -21,6 +23,28 @@ func (s *Server) handleOutlineGet(w http.ResponseWriter, r *http.Request) {
 	items, err := pdfops.Outline(s.docBytes(doc))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not read the outline: "+err.Error())
+		return
+	}
+	writeJSON(w, outlineResponse{Items: items})
+}
+
+// handleOutlinePropose proposes bookmarks from the open document's headings (`/pending 910`). It writes nothing: the
+// outline editor shows the proposal for review and Save outline is what writes. The reading is the tagger's whole-
+// document one, so it is the user's action and not a reply built for every request.
+func (s *Server) handleOutlinePropose(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("outline: recovered panic proposing from headings: %v", rec)
+			httpError(w, http.StatusUnprocessableEntity, "could not read headings from this document")
+		}
+	}()
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	items, err := pdfops.OutlineFromHeadings(s.docBytes(doc))
+	if err != nil {
+		httpError(w, http.StatusUnprocessableEntity, "could not read headings: "+strings.TrimPrefix(err.Error(), "pdfops: "))
 		return
 	}
 	writeJSON(w, outlineResponse{Items: items})
