@@ -11,7 +11,7 @@ cost, Tier 2/3 tools) checked the plan against the code and this machine; four c
 tagged `(grill pin, 2026-11-01)`. Seam inventory: `memory/instruments/import-export.md`.
 
 **Status: unbuilt. P01.S01 is next.** Stage 3 (subsystem rounds: the import door, the document model, the Export card) is the next pass.
-**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15; the other two rounds — the document model, the Export card — remain).
+**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15); Stage 3 round 2, the document model, 2026-11-01 (D16–D23; the Export card round remains).
 
 **SME packs:** `go`, `verification` (inferred from `go.mod` and the repo's census guards).
 
@@ -171,6 +171,46 @@ unmeasured guesses* and are tuned at P01.S03 against a measured run; the output 
 `nib import IN -o OUT [--lang TAG]` calls the same function and prints the same missing-tool sentence with the vendor URL (`cmdOffice`'s today); `nib office` stays as an alias so no script breaks.
 The unprintable-character warning (`UnprintableMarkdown`) moves into the function and is returned, so the window and the command both show it.
 
+### Stage 3, round 2 — the document model *(via /discuss, autonomous, 2026-11-01; facts read from `tagreview.go`, `structview.go`, `pagemap.go`, `doctext.go`, `textrun.go`, `anchors.go`, `pdfops.go:2755`, `reflowdoor.go`)*
+
+### D16 — The model is a package of data, and the writers cannot reach a PDF *(assumed)*
+`internal/docmodel` holds `Document{Blocks}`: Heading(level), Paragraph, ListItem(level, marker), Table(rows of cells with column and row span, header flag), Figure(bytes or none, alt), each with its
+page and place, and a paragraph's text as `Spans{Text, Bold, Italic, Link}`. `docmodel.Read(pdf, opts)` is the ONE reader; the writers (`internal/docwrite/<format>`) import the model and nothing
+that reads a PDF, held by an AST census as `TestTheReadersRouteThroughThisDoor` holds ADR-052. *Assumed:* a separate package rather than `pdfops` keeps the writers testable on hand-built models.
+
+### D17 — The author's tree wins; the proposal is the fallback, and the export says which *(auto-adopted)*
+`ReadStructure(...).Tagged` with text on its elements → the tree is the structure (ADR-031: a document's own tagging is the author's statement); otherwise `ProposeTags` and reflow's grouping. The
+result carries `Source: "tree" | "proposal"` so the export can say what it did (L6). A tagged document whose tree holds no text falls to the proposal.
+
+### D18 — The four missing inputs, each an additive read *(assumed)*
+- **Style.** Bold and italic come from the font descriptor (`/FontWeight` ≥ 700, `/ItalicAngle` ≠ 0, `/Flags` ForceBold / Italic), the base-font name as the fallback, looked up once per font. Exposed as `bold` / `italic` (`omitempty`) on
+  `MapText`, an additive change to ADR-088's door — the detection readers ignore them and the JSON-name test is extended in the same slice.
+- **Links.** A new `pdfops.PageLinks` reads `/Link` annotations with a `/URI` action or a page destination, as boxes; a span takes the link whose box holds the run's centre (ADR-090's rule, never overlap). An external URI is carried; an internal
+  destination becomes plain text and is counted as dropped.
+- **Images.** A Figure is joined to the image object drawn at its box and takes that object's bytes through `pdfread.ExtractImages` (the existing door, `pdfops.go:2766`), one object once. An image the writers cannot carry (a mask, JBIG2, an exotic colour space)
+  becomes a placeholder with its description and is counted. Per-image and total byte caps are named constants (D14's shape).
+- **Paragraph grouping.** Exposed as an exported read returning runs per paragraph with the bold / italic / link spans above; `Paragraphs` (text only, for the reflow editor) is unchanged.
+
+### D19 — Reading order is the grouping's, and what it could not read is reported, never refused *(assumed)*
+Columns and gutters come from reflow's grouping (ADR-155, ADR-161); a page the grouping reported (`TagProposal.Unsupported`) is exported in its best order and **named in the result** with its reason, so a two-column page that
+came out wrong is a stated limit rather than a silent one (L6). No export is refused for it.
+
+### D20 — A page with no text exports as its own picture, and the window reads it first when asked *(assumed)*
+The server cannot rasterise a page (the browser does that), so a page with no text and no OCR layer becomes a Figure of the picture it already holds, described "Scanned page N". The window runs `ensureText` (ADR-106) on the
+`unread` pages before the request, as it does for the table and text exports, and the document then carries real text. This replaces P02's "or is refused": an export of a scan is a document of pictures, and it says so.
+
+### D21 — Flowing for every writer but PPTX, which is the exact one *(assumed; narrows D3's "both" to where both exist)*
+DOCX, ODT, EPUB, HTML and Markdown are flowing only. PPTX is the positioned form (one slide per page, boxes from the page map). A DOCX of positioned frames is a third family for no reader who asked for it, so the Format line offers one form per
+format and names it. P03.S04 (the choice) folds into the three writer slices as their labels.
+
+### D22 — Every writer has a text oracle, or it is not done *(auto-adopted)*
+Fidelity is judged by the words in order, not by looking: LibreOffice converts each exported DOCX / ODT / PPTX back to PDF, and `DocumentText` of the result must equal the model's text modulo whitespace; EPUB / HTML / Markdown are read back by their own parsers.
+`build/exportfidelity.sh` (local corpus, counts only, beside `accuracy.sh`) prints it, and each writer's slice names its red proof (drop a table cell, reorder two paragraphs). An instrument, not a tier.
+
+### D23 — One route, one pass, and the facts ride in a header *(auto-adopted)*
+`POST /api/export/document?format=` is pinned to the document by `X-Nib-Doc` (ADR-004), reads the model in ONE pass (the 559-page file measured 2–5 s; a `MapPage` loop would be minutes) on the request's context, and answers the bytes with
+`X-Nib-Export` carrying compact JSON — `source`, `droppedLinks`, `placeholderImages`, `flaggedPages`, `scannedPages` — as `X-Nib-Revision` does (ADR-072). A refusal is a 422 with a cause.
+
 ---
 
 ## Out of scope
@@ -236,19 +276,19 @@ Goal: the Export card reshaped to L3, image exports widened, and the one documen
 Exit criteria:
 - Export takes a PDF only; Split by bookmarks / page range live in Page Functions; one button per thing exported, the format on the Format line.
 - Pages as images offers PNG, JPEG, TIFF (multi-page), WebP, GIF, BMP and CBZ.
-- Markdown and HTML export a tagged and an untagged document with headings, lists and tables kept; a scanned page goes through `ensureText` first or is refused with its reason.
+- Markdown and HTML export a tagged and an untagged document with headings, lists and tables kept; a scanned page goes through `ensureText` first, and one still unread exports as its own picture and says so (D20).
 *Slices sketched:* S01 Export card + Split move (ADR superseding 906's definitions); S02 image formats; S03 the document model; S04 Markdown + HTML writers.
 **(grill pin, 2026-11-01)** S01 is half done: ADR-103 already gives one button per thing and a Format line. What remains is moving the two splits and
 widening the image row; a new ADR supersedes ADR-103's "Pages as images" row and its "Export & Print is now eight" sentence, and the same slice edits
 the tests that pin the card (`filemenu.test.mjs:79-89`, `toolbargroups.test.mjs:170,214`, `saveformats.test.mjs:326-507`, `racepins.test.mjs:192`,
 `app.js:14452-14462`). S02: the browser renders PNG as now (pdf.js, `app.js:10027`); `/api/assemble` transcodes to GIF, BMP, CBZ and multi-page TIFF
 (a hand-built IFD chain — `x/image/tiff` writes one image per file); Go has no WebP encoder, so WebP uses canvas `toBlob('image/webp')`, offered only
-where the browser can encode it and said so on the Format line. S03 carries the four missing inputs named in D4.
+where the browser can encode it and said so on the Format line. S03 carries the four missing inputs named in D4 and D18, the package and census of D16, the source rule D17 and the scan rule D20; S04's route is D23 and its oracle D22 (Refs: D4, D16–D23).
 
 ### P03 — Editable documents
 Goal: DOCX, ODT and EPUB writers over the model, judged by instruments, with flowing and exact-layout forms where both make sense.
 Exit criteria: each opens in LibreOffice with headings, lists, tables and pictures intact on the fixture corpus; EPUB passes `epubcheck` where it is installed and Nib's structural test (stored-first `mimetype`, `container.xml`, nav) everywhere — `epubcheck` is absent on the dev machine; the menu states what each keeps (L6). One zip helper (`GridToODS`'s stored-first `CreateRaw`, `spreadsheet.go:64`) serves ODT, EPUB, DOCX, PPTX and CBZ, held by a census.
-*Slices sketched:* S01 minimal OOXML writer; S02 ODT; S03 EPUB; S04 flowing-versus-exact choice and the honest labels.
+*Slices sketched:* S01 minimal OOXML writer; S02 ODT; S03 EPUB (each writer carries its labels and its D22 oracle; the old S04, flowing-versus-exact, is folded in by D21).
 
 ### P04 — Tier 2 imports
 Goal: the formats that need a tool, each behind the one door.
