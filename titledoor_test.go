@@ -38,6 +38,9 @@ import (
 func TestEveryAuthoredDocumentGetsATitle(t *testing.T) {
 	// The named exemptions, keyed `<file>:<enclosing function>`. Every row carries its reason.
 	exempt := map[string]string{
+		"internal/pdfops/office.go:ConvertDocToPDF": "a one-line forward to ConvertDocToPDFWith with no options. " +
+			"The title is the CALLER's (handleOffice, cmdOffice and the others each apply TitleFromName and are " +
+			"checked as sites of their own); a wrapper that titled would name the document twice.",
 		"internal/pdfops/pdfops.go:RedactPages": "a one-page raster FRAGMENT, re-merged into the " +
 			"document being redacted and never handed to anyone on its own. Titling it would put a " +
 			"dc:title on an intermediate that is discarded three lines later, and the redacted " +

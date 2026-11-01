@@ -103,7 +103,24 @@ func SupportedDocExt(ext string) bool {
 // ConvertDocToPDF converts a non-PDF document to PDF. Markdown renders in pure
 // Go and is always available; everything else goes through LibreOffice.
 func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
+	return ConvertDocToPDFWith(data, ext, mdpdf.Options{})
+}
+
+// ErrOptionsNeedMarkdown is a page size, margin or placeholder asked of a document LibreOffice converts: those are
+// Markdown's, and silently ignoring them would hand back a document that is not what was asked for.
+var ErrOptionsNeedMarkdown = errors.New("page size, margin and placeholders apply to Markdown only; this document is converted by LibreOffice, which sets its own")
+
+// ConvertDocToPDFWith is ConvertDocToPDF with the Markdown conversion's options (mdpdf.Options): the page, its
+// margin, and `{{key}}` placeholders (RelaxTax, ADR-183). Any option on a non-Markdown document is
+// ErrOptionsNeedMarkdown.
+func ConvertDocToPDFWith(data []byte, ext string, opts mdpdf.Options) ([]byte, error) {
+	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil) {
+		return nil, ErrOptionsNeedMarkdown
+	}
 	if SupportedMarkdownExt(ext) {
+		if err := opts.Validate(); err != nil {
+			return nil, err
+		}
 		// With Nib's vendored faces, so a Markdown file containing Cyrillic, Greek, CJK,
 		// Arabic or an Indic script prints instead of rendering as spaces. mdpdf itself
 		// holds no fonts on purpose — it lives at the repo root so other projects can
@@ -131,13 +148,19 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 		// conversion**, so it falls back to the untagged render and says so — an untagged PDF is
 		// what this door always returned, and no PDF is worse than both.
 		fallbacks := markdownFallbackFonts()
-		tagged, terr := tagMarkdown(data, faces, fallbacks)
+		tagged, terr := tagMarkdownWith(data, faces, fallbacks, opts)
 		if terr == nil {
 			return tagged, nil
 		}
+		// A template the conversion refuses is the answer, not a tagging failure to paper over with a second render.
+		var missing *mdpdf.MissingPlaceholderError
+		var split *mdpdf.SplitPlaceholderError
+		if errors.As(terr, &missing) || errors.As(terr, &split) {
+			return nil, terr
+		}
 		log.Printf("markdown: the document converted but could not be tagged, so it is returned "+
 			"without structure: %v", terr)
-		out, err := mdpdf.ConvertWithFaces(data, faces, fallbacks)
+		out, err := mdpdf.ConvertWithFacesAndOptions(data, faces, fallbacks, opts)
 		if err != nil {
 			return nil, err
 		}

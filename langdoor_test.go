@@ -51,6 +51,9 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 			"here would be inventing one, which is what `none` exists to say. **If OCR is ever folded " +
 			"into this route** the classification changes with it, because the recognised text WOULD " +
 			"have a language and `pdfops.SetLang` is where it would be declared (/pending 400, 539)."},
+		"internal/pdfops/office.go:ConvertDocToPDF": {none, "a one-line forward to ConvertDocToPDFWith with no options. " +
+			"The language question belongs to ITS callers, each classified in this table (handleOffice, cmdOffice); " +
+			"a wrapper that declared one would answer it twice."},
 		"internal/server/office.go:handleOffice": {told, "the Document language field (/pending 471, " +
 			"Dan's option B) sends `lang`, pre-filled with the machine's locale from navigator.language " +
 			"and changeable or clearable by the user; a value is declared through pdfops.SetLang. " +

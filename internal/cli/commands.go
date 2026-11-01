@@ -321,13 +321,21 @@ func composeUAReport(pdf []byte, rep uacheck.Report, refusals []string) (table, 
 
 // cmdOffice converts a document to PDF: Markdown natively, office documents
 // (Word/Excel/PowerPoint/OpenDocument) via installed LibreOffice. The input's
-// extension selects the conversion, so it needs a real file path (not stdin).
+// extension selects the conversion, or --type does where there is none (stdin).
+// `nib import` is the same command (PLAN-import-export D15).
 func cmdOffice(args []string) int {
 	fs := flag.NewFlagSet("nib office", flag.ContinueOnError)
-	var out, lang string
+	var out, lang, typ, pageSize, setFile string
+	var margin float64
+	var sets stringList
 	outFlag(fs, &out)
-	fs.StringVar(&lang, "lang", "", "the language the document is written in, as a BCP 47 tag (e.g. de, fr-CA), declared for screen readers. Without it nib declares none; an office conversion keeps LibreOffice's, which is this machine's locale, not the document's")
-	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG]",
+	fs.StringVar(&lang, "lang", "", "the language the document is written in, as a BCP 47 tag (e.g. de, fr-CA), declared for screen readers. Without it nib declares none; an office document keeps the language its converter gave it")
+	fs.StringVar(&typ, "type", "", "the input's type when its name has no extension (stdin): md or markdown")
+	fs.StringVar(&pageSize, "page-size", "", "Markdown only: letter (default), a4 or legal, portrait")
+	fs.Float64Var(&margin, "margin", 0, "Markdown only: the margin on all four sides, in points (default 72, one inch)")
+	fs.Var(&sets, "set", "Markdown only: fill {{KEY}} in the text with VALUE (repeatable): --set KEY=VALUE. Values are text, never markup; a key the template uses and no value covers is an error naming the key; {{=KEY}} prints {{KEY}} literally; code blocks are literal")
+	fs.StringVar(&setFile, "set-file", "", "Markdown only: a JSON object of KEY: \"VALUE\" strings for the placeholders; - reads it from stdin (--set overrides it)")
+	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG] [--type md] [--page-size a4] [--margin PT] [--set KEY=VALUE] [--set-file F.json]  (also: nib import)",
 		"Convert a document (.md/.docx/.xlsx/.odt/.pptx/…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -337,9 +345,35 @@ func cmdOffice(args []string) int {
 		return code
 	}
 	ext := filepath.Ext(in)
+	if typ != "" {
+		switch strings.ToLower(strings.TrimPrefix(typ, ".")) {
+		case "md", "markdown":
+			ext = ".md"
+		default:
+			errf("--type is md or markdown (%q is neither)", typ)
+			return 1
+		}
+	}
 	if !pdfops.SupportedDocExt(ext) {
-		errf("unsupported document type %q — give a Markdown, Word, Excel, PowerPoint, or OpenDocument file", ext)
+		if ext == "" && in == "-" {
+			errf("a document read from stdin needs --type md")
+		} else {
+			errf("unsupported document type %q — give a Markdown, Word, Excel, PowerPoint, or OpenDocument file", ext)
+		}
 		return 1
+	}
+	if in == "-" && setFile == "-" {
+		errf("the document and --set-file cannot both be - : stdin is one stream")
+		return 1
+	}
+	opts := mdpdf.Options{PageSize: pageSize, Margin: margin}
+	if len(sets) > 0 || setFile != "" {
+		vars, err := placeholderValues(setFile, sets)
+		if err != nil {
+			errf("%v", err)
+			return 1
+		}
+		opts.Vars = vars
 	}
 	data, err := readInput(in)
 	if err != nil {
@@ -367,7 +401,7 @@ func cmdOffice(args []string) int {
 				len(bad), mdpdf.FormatRunes(bad))
 		}
 	}
-	pdf, err := pdfops.ConvertDocToPDF(data, ext)
+	pdf, err := pdfops.ConvertDocToPDFWith(data, ext, opts)
 	if err == nil {
 		// The source file's name is the title. Best-effort and warned about, never fatal: the
 		// conversion the user asked for has already succeeded by this point.

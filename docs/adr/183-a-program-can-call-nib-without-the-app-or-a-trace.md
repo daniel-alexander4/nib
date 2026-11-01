@@ -94,6 +94,14 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
 - **`nib stamp --stamps F.json`** (RelaxTax B3, `internal/cli/stamps.go`) is a list of the window's two stampers — text through
   `StampFields` (which fits it: shrink, wrap, or overrun, reported as counts) and pictures through `StampImages` — applied in that
   order in two rewrites. No new writer, so no new census row. It is the call that exposed the font defect above.
+- **`nib office` / `nib import` takes placeholders, a page size and a margin** (RelaxTax B4 and the page half of B5; the part of
+  `PLAN-import-export.md` P01.S03's pins that does not need the import door). `mdpdf.Options` carries `PageSize`, `Margin` and `Vars`;
+  the page constants became a per-document `geom`, and `Vars` non-nil turns substitution on. Substitution runs on the PARSED text nodes, so a
+  value is text by construction and no escaping exists to get wrong; every unusable case is an error and never a literal `{{key}}`: a missing key,
+  a placeholder an escape or emphasis breaks across nodes (counted per block against the block's plain text), and braces that are not a
+  token. `{{=key}}` is the escape (`!` is not usable: it splits Markdown text nodes). The tag path falls back to an untagged render on a tagging
+  failure, but a placeholder refusal is returned at once. `--set`/`--set-file` errors name keys, never values. Tables and images are NOT built:
+  they are renderer and tagging work with their own increments.
 
 ## Declared
 

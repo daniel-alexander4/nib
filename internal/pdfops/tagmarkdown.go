@@ -104,7 +104,12 @@ func nestHeadingLevels(pages [][]mdpdf.Role) {
 
 // tagMarkdown converts Markdown and tags the result from its own structure.
 func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, error) {
-	pdf, st, err := mdpdf.ConvertStructured(md, base, fallbacks)
+	return tagMarkdownWith(md, base, fallbacks, mdpdf.Options{})
+}
+
+// tagMarkdownWith is tagMarkdown with the caller's page size, margin and placeholders.
+func tagMarkdownWith(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font, opts mdpdf.Options) ([]byte, error) {
+	pdf, st, err := mdpdf.ConvertStructuredWithOptions(md, base, fallbacks, opts)
 	if err != nil {
 		return nil, err
 	}

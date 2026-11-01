@@ -25,6 +25,8 @@ var authoringPrimitives = map[string]bool{
 	"CreateFromJSON":  true,
 	"ImagesToPDF":     true,
 	"ConvertDocToPDF": true,
+	// The same primitive with the Markdown options (page, margin, placeholders): `nib office` calls this one.
+	"ConvertDocToPDFWith": true,
 }
 
 type authoringSite struct {
