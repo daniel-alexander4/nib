@@ -2759,25 +2759,94 @@ func ExtractImagesZip(pdf []byte) ([]byte, int, error) {
 	return extractImages(pdf, true)
 }
 
-// extractImages builds the image ZIP. With perPage false it runs a single
-// api.ExtractImages over the whole document (fast, but one bad image aborts it).
-// With perPage true it runs one pass per page, recovering each so a page whose
-// image pdfcpu can't handle is skipped instead of sinking the whole archive.
+// ImageFile is one embedded picture as pdfcpu hands it over: the page that first draws it, its place among that
+// page's pictures, the stream's own size and filter, and the bytes in the format pdfcpu writes (Ext) — a JPEG
+// stream (DCTDecode) comes out as the same JPEG, anything else as a PNG or TIFF it re-encodes.
+type ImageFile struct {
+	Page, Index   int
+	objNr         int // the archive names a picture by it; no caller outside reads it
+	Width, Height int
+	Filter        string
+	Ext           string
+	Data          []byte
+}
+
+// ExtractImageFiles lists a document's embedded pictures, each once (a picture drawn on several pages is
+// reported on the first), in page order. A document with none answers an empty list.
+//
+// pdfcpu's renderer hands over the encoded picture and nothing of the stream it came from, so Width and Height
+// are read from the written file's header and Filter from the stream dictionary in a second read of the
+// document (one parse more, paid only here and not by the archive).
+func ExtractImageFiles(pdf []byte) ([]ImageFile, error) {
+	files, err := collectImages(pdf, false)
+	if err != nil {
+		if files, err = collectImages(pdf, true); err != nil {
+			return nil, err
+		}
+	}
+	if len(files) == 0 {
+		return files, nil
+	}
+	for i := range files {
+		if c, _, err := image.DecodeConfig(bytes.NewReader(files[i].Data)); err == nil {
+			files[i].Width, files[i].Height = c.Width, c.Height
+		}
+	}
+	if ctx, err := pdfread.ReadForInspection(pdf); err == nil {
+		for i := range files {
+			if sd, _, err := ctx.DereferenceStreamDict(*types.NewIndirectRef(files[i].objNr, 0)); err == nil && sd != nil {
+				names := make([]string, 0, len(sd.FilterPipeline))
+				for _, f := range sd.FilterPipeline {
+					names = append(names, f.Name)
+				}
+				files[i].Filter = strings.Join(names, " ")
+			}
+		}
+	}
+	return files, nil
+}
+
+// extractImages builds the image ZIP over collectImages: the ONE door that finds pictures (ADR-009), so the
+// archive and `nib images` cannot disagree about what a document holds.
 func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
+	files, err := collectImages(pdf, perPage)
+	if err != nil || len(files) == 0 {
+		return nil, 0, err
+	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	for i, f := range files {
+		if _, err := addZipImage(zw, fmt.Sprintf("image-%03d-obj%d.%s", i+1, f.objNr, f.Ext), bytes.NewReader(f.Data)); err != nil {
+			return nil, 0, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), len(files), nil
+}
+
+// collectImages runs the extraction. With perPage false it runs a single api.ExtractImages over the whole
+// document (fast, but one bad image aborts it). With perPage true it runs one pass per page, recovering each
+// so a page whose image pdfcpu can't handle is skipped instead of sinking the whole list.
+func collectImages(pdf []byte, perPage bool) ([]ImageFile, error) {
+	var files []ImageFile
 	seen := map[int]bool{}
-	count := 0
+	onPage := map[int]int{}
 	digest := func(img model.Image, _ bool, _ int) error {
 		if img.Reader == nil || img.FileType == "" || seen[img.ObjNr] {
 			return nil // unsupported/empty render, or a repeat of one already written
 		}
-		n, err := addZipImage(zw, fmt.Sprintf("image-%03d-obj%d.%s", count+1, img.ObjNr, img.FileType), img)
+		// Read whole before it is kept: a decode that failed part-way must not leave a truncated picture in
+		// the list (/pending 599). Marked seen only once read, so a later page naming the object may supply it.
+		data, err := io.ReadAll(img)
 		if err != nil {
 			return err
 		}
 		seen[img.ObjNr] = true
-		count += n
+		onPage[img.PageNr]++
+		files = append(files, ImageFile{Page: img.PageNr, Index: onPage[img.PageNr], objNr: img.ObjNr,
+			Width: img.Width, Height: img.Height, Filter: img.Filter, Ext: img.FileType, Data: data})
 		return nil
 	}
 	// run does one extraction pass over a page selection (nil = whole doc). The
@@ -2795,12 +2864,12 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 
 	if !perPage {
 		if err := run(nil); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 	} else {
 		n, err := PageCount(pdf)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		anyOK := false
 		for p := 1; p <= n; p++ {
@@ -2808,21 +2877,14 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 				anyOK = true
 			}
 		}
-		// count==0 with no page succeeding means every page's extraction failed —
+		// no picture and no page succeeding means every page's extraction failed —
 		// report that rather than an indistinguishable "no images found". (A clean
 		// image-free doc reaches this branch only after the whole-doc pass errored.)
-		if count == 0 && !anyOK {
-			return nil, 0, fmt.Errorf("could not extract images from any page")
+		if len(files) == 0 && !anyOK {
+			return nil, fmt.Errorf("could not extract images from any page")
 		}
 	}
-
-	if count == 0 {
-		return nil, 0, nil
-	}
-	if err := zw.Close(); err != nil {
-		return nil, 0, err
-	}
-	return buf.Bytes(), count, nil
+	return files, nil
 }
 
 // addZipImage writes one extracted image as the entry name, and writes NOTHING when the image cannot be read

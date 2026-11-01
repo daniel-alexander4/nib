@@ -43,6 +43,11 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   `fields --json` (origin bottom-left, `/Rotate` not applied), `text --json` (origin TOP left, draw order) and `info --json` (one object
   per page). Each key, its type and each rectangle's length are pinned; the test fails on a rename or removal, which is the change
   that raises `APIVersion`, and the document must name every key. Exit codes are in the same document. The shapes themselves did not change.
+- **`nib images IN --out-dir DIR [--json]` writes a PDF's embedded pictures** over `pdfops.ExtractImageFiles`, which the archive
+  route (`ExtractImagesZip`) now also goes through: one door finds pictures (ADR-009). A JPEG stream is written byte for byte,
+  anything else re-encoded with the same pixels. pdfcpu's renderer returns no dimensions or filter, so width and height come from
+  the written file's header and the filter from the stream dictionary. Files are `0600`, a name that exists refuses the whole
+  extraction before any write, and a document with none creates no folder.
 
 ## Declared
 
