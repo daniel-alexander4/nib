@@ -39,6 +39,10 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   for an addition; `commands` is every verb, sorted. The VERSION file is embedded (`nib.VersionFile()`), and `main` uses it when
   no `-ldflags -X main.version` was set, so `go build ./cmd/nib` no longer prints `nib dev`; build.sh's `-X` and the embedded
   file read the same line and cannot disagree. Golden tests pin the object and the verb list.
+- **The three JSON shapes are documented and locked** (`docs/cli-machine-readable.md`, `TestTheMachineReadableShapesAreLocked`):
+  `fields --json` (origin bottom-left, `/Rotate` not applied), `text --json` (origin TOP left, draw order) and `info --json` (one object
+  per page). Each key, its type and each rectangle's length are pinned; the test fails on a rename or removal, which is the change
+  that raises `APIVersion`, and the document must name every key. Exit codes are in the same document. The shapes themselves did not change.
 
 ## Declared
 
