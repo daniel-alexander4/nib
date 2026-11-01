@@ -106,6 +106,30 @@ func parseSize(s string) (int, error) {
 	return int(v * mult), nil
 }
 
+func cmdContents(args []string) int {
+	fs := flag.NewFlagSet("nib contents", flag.ContinueOnError)
+	var out, title string
+	var inPlace bool
+	var after, depth int
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.IntVar(&after, "after", 0, "insert after this page (0: before page 1)")
+	fs.IntVar(&depth, "depth", 3, "levels listed, 1 to 3")
+	fs.StringVar(&title, "title", "", "the heading (default: Contents)")
+	fs.Usage = usageFunc(fs, "nib contents IN -o OUT [--after N --depth 1-3 --title T]  |  nib contents -w FILE... (...)", "Insert a contents page listing the bookmarks (else the headings Nib finds), with the page numbers the document will have.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		res, rep, err := pdfops.InsertContents(b, pdfops.ContentsOptions{After: after, Depth: depth, Title: title})
+		if err != nil {
+			return nil, err
+		}
+		errf("contents: %d entries from the %s on %d page(s)", rep.Entries, rep.Source, rep.Pages)
+		return res, nil
+	})
+}
+
 func cmdSanitize(args []string) int {
 	fs := flag.NewFlagSet("nib sanitize", flag.ContinueOnError)
 	var out string

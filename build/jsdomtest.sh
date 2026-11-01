@@ -126,7 +126,7 @@ fi
 # 113 since v2.4.0 (updateceremonies.test.mjs): the download popup says how many ceremonies an update that crosses the digest
 # flag day strands (ADR-175).
 # 114 since v2.7.2 (skippedfields.test.mjs): a fill says which fields it could not reach (/pending 919 F14).
-Nib_expect_files=118
+Nib_expect_files=119
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

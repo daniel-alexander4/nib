@@ -226,6 +226,26 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	case "contents":
+		// A contents page from the bookmarks (else the headings), or from the list the window sends — `/pending 929`.
+		after, aErr := optionalInt(r.FormValue("after"))
+		depth, dErr := optionalInt(r.FormValue("depth"))
+		if aErr != nil || dErr != nil {
+			httpError(w, http.StatusBadRequest, "a contents page needs whole numbers for the position and the depth")
+			return
+		}
+		opt := pdfops.ContentsOptions{After: after, Depth: depth, Title: r.FormValue("title")}
+		if raw := r.FormValue("items"); raw != "" {
+			if uErr := json.Unmarshal([]byte(raw), &opt.Items); uErr != nil {
+				httpError(w, http.StatusBadRequest, "could not read the contents list")
+				return
+			}
+		}
+		result, _, err = pdfops.InsertContents(pdfBytes, opt)
+		if errors.Is(err, pdfops.ErrNoContentsEntries) {
+			httpError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 	case "normalize":
 		result, err = pdfops.NormalizePageSizes(pdfBytes)
 	default:

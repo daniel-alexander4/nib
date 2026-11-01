@@ -479,6 +479,7 @@
       <div class="tbgroup" data-label="Size &amp; Number Pages" data-fold="3">
 <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
       <button id="pageStampBtn" title="Put a logo, a footer or a text watermark on every page, or on the pages you name">Stamp every page…</button>
+      <button id="contentsBtn" title="Insert a contents page listing the bookmarks (or the headings Nib finds), with their page numbers">Contents page…</button>
       <button id="pageLabelsBtn" title="Set the logical page numbers a viewer shows (front matter i, ii, iii then body 1, 2, 3)">Page labels…</button>
       <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">Pages per sheet…</button>
       <button id="normalizeBtn" title="Resize every page to the document's most common size — make a mixed-size document uniform">Normalize sizes</button>
@@ -1682,6 +1683,32 @@
         <span class="grow"></span>
         <button id="profileCancel">Cancel</button>
         <button id="profileSave" class="primary">Save profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contents page (/pending 929): a page listing the bookmarks, or the headings Nib finds where there are none. -->
+  <div id="contentsModal" hidden>
+    <div class="sigcard">
+      <h3>Contents page</h3>
+      <p class="libhint">Inserts a page that lists the document's bookmarks — or, where it has none, the headings Nib finds —
+        with the page numbers the document will have once it is added. To correct the list first, use <em>Edit outline…</em>
+        (<em>Fill from headings</em> proposes one) and Save it. The entries are not links; the bookmarks are.</p>
+      <div class="splitcontrols">
+        <label>Insert after page <input id="contentsAfter" type="number" min="0" value="0" /> <span class="libhint">(0 puts it first)</span></label>
+        <label>Levels
+          <select id="contentsDepth">
+            <option value="1">Top level only</option>
+            <option value="2">Two levels</option>
+            <option value="3" selected>Three levels</option>
+          </select>
+        </label>
+      </div>
+      <label>Heading <input id="contentsTitle" type="text" placeholder="Contents" /></label>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="contentsCancel">Cancel</button>
+        <button id="contentsGo" class="primary">Insert contents page</button>
       </div>
     </div>
   </div>

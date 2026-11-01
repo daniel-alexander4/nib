@@ -21,6 +21,24 @@ import (
 
 // `/pending 907` — the route that puts a mark on every page.
 
+// postPageOp posts one /api/pages operation with plain form fields.
+func postPageOp(t *testing.T, ts string, c *http.Client, csrf string, pdf []byte, op string, fields map[string]string) (int, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(pdf)
+	mw.WriteField("op", op)
+	for k, v := range fields {
+		mw.WriteField(k, v)
+	}
+	mw.Close()
+	resp := write(t, c, csrf, http.MethodPost, ts+"/api/pages", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
 func postPageStamp(t *testing.T, ts string, c *http.Client, csrf string, pdf []byte, fields map[string]string, picture []byte) (int, string) {
 	t.Helper()
 	var buf bytes.Buffer
