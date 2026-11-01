@@ -18,6 +18,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"nib/internal/addrscope"
 	"nib/internal/atomicfile"
 	"os"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -56,8 +58,7 @@ func Run(args []string, version string) (handled bool, code int) {
 	}
 	switch args[0] {
 	case "version", "--version":
-		fmt.Println("nib " + version)
-		return true, 0
+		return true, printVersion(args[1:], version)
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 		return true, 0
@@ -81,6 +82,43 @@ func Run(args []string, version string) (handled bool, code int) {
 	}
 	keepPdfcpuConfigClosed()
 	return true, run(args[1:])
+}
+
+// APIVersion is the integer a program pins to (`nib version --json`, ADR-183). **Raise it when a command's
+// flags, a JSON key or an exit code changes incompatibly** — a rename, a removal, a changed meaning — and
+// never for an addition. `TestTheMachineReadableShapesAreLocked` fails on the change that should raise it.
+const APIVersion = 1
+
+// printVersion answers `nib version`: "nib 2.18.0", or with --json {"version","api","commands"}.
+// commands is every verb the binary has, sorted, so a program can ask for one instead of parsing help.
+func printVersion(args []string, version string) int {
+	for _, a := range args {
+		if a != "--json" && a != "-json" {
+			errf("unknown argument %q (nib version [--json])", a)
+			return 1
+		}
+	}
+	if len(args) == 0 {
+		fmt.Println("nib " + version)
+		return 0
+	}
+	verbs := make([]string, 0, len(commands)+1)
+	for v := range commands {
+		verbs = append(verbs, v)
+	}
+	verbs = append(verbs, "version")
+	sort.Strings(verbs)
+	b, err := json.Marshal(struct {
+		Version  string   `json:"version"`
+		API      int      `json:"api"`
+		Commands []string `json:"commands"`
+	}{version, APIVersion, verbs})
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	fmt.Println(string(b))
+	return 0
 }
 
 // headless reports whether the caller asked that nib never start the desktop app (ADR-183).
@@ -219,7 +257,7 @@ These subcommands run headlessly, without a browser:
   nib rendezvous [--seconds N]    report whether the DHT remote co-signing uses is
                                   reachable (contacts the public internet)
   nib watch DIR --do OP           run open/timestamp/optimize/sanitize/ua on each new PDF
-  nib version                     print the version
+  nib version [--json]            print the version (--json: version, api number, command list)
 
 Set NIB_HEADLESS=1 when a program calls nib: any first argument that is not a command above
 is then "unknown command" (exit 1) and the desktop app is never started.

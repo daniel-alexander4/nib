@@ -32,7 +32,8 @@ import (
 	"nib/internal/addrscope"
 )
 
-// version is set at build time via -ldflags "-X main.version=…".
+// version is set at build time via -ldflags "-X main.version=…". A build that sets nothing
+// reports the embedded VERSION file instead (ADR-183), so "dev" is never what a program reads.
 var version = "dev"
 
 // main is a wrapper and run() is the program, so that **every deferred cleanup actually
@@ -49,6 +50,9 @@ var version = "dev"
 func main() { os.Exit(run()) }
 
 func run() int {
+	if version == "dev" {
+		version = nib.VersionFile()
+	}
 	log.SetFlags(0)
 	log.SetPrefix("nib: ")
 
