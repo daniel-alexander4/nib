@@ -1,6 +1,6 @@
 --- a/internal/cli/commands.go
 +++ b/internal/cli/commands.go
-@@ -500,14 +500,7 @@
+@@ -671,14 +671,7 @@
  		}
  		outs[i] = full
  	}
@@ -13,6 +13,6 @@
 -		return 1
 -	}
 +	_ = src
- 	for i, p := range parts {
- 		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
- 			errf("%v", err)
+ 	// --no-clobber (RelaxTax B7): a rerun over a folder that already holds the earlier parts used to replace them
+ 	// all with exit 0. Checked in this same pass, before the first write, for the reason above: a folder half
+ 	// old and half new under a non-zero exit is a state to reverse-engineer.

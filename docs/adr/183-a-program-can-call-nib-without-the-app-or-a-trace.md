@@ -67,6 +67,9 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   `pdftotext`, `nib fields` empty. The 73 check boxes have a dictionary of states for `/N` and need `/AS` to choose one.
   Declared: a screen reader does not announce a flattened value; a ticked box's ZapfDingbats mark has no Unicode mapping
   (veraPDF 7.21.7); an unbalanced page graphics state is only closed once; widgets under optional content are not special-cased.
+- **`--no-clobber` on `fill --out-dir` and `split --out-dir`** (RelaxTax B7) is checked in `writeSplitFiles`' own first pass, before the
+  first write, beside the source-overwrite refusal (ADR-009: that helper is the one door both verbs share). It is opt-in: the
+  default still replaces, because a script that reruns over a folder may rely on it; `nib images` refuses by default because it is new.
 
 ## Declared
 
