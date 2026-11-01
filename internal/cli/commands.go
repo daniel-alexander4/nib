@@ -43,6 +43,69 @@ func cmdOptimize(args []string) int {
 	return runTransform(fs, out, inPlace, pdfops.Optimize)
 }
 
+func cmdShrink(args []string) int {
+	fs := flag.NewFlagSet("nib shrink", flag.ContinueOnError)
+	var out, target string
+	var inPlace bool
+	level := 2
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.IntVar(&level, "level", level, fmt.Sprintf("how hard to shrink the pictures, 0 (gentle) to %d (smallest)", len(pdfops.ShrinkLadder)-1))
+	fs.StringVar(&target, "target", "", "instead of --level: the gentlest setting whose result is at most this size, e.g. 1MB or 500KB")
+	fs.Usage = usageFunc(fs, "nib shrink IN -o OUT [--level N | --target 1MB]  |  nib shrink -w FILE... (...)", "Make the pictures in a PDF smaller and leave the text, vectors and colours as they are.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	var want int
+	if target != "" {
+		n, err := parseSize(target)
+		if err != nil {
+			errf("--target: %v", err)
+			return 1
+		}
+		want = n
+	}
+	return runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) {
+		var (
+			res []byte
+			rep pdfops.ShrinkReport
+			err error
+		)
+		if want > 0 {
+			res, rep, err = pdfops.ShrinkToSize(b, want)
+		} else {
+			res, rep, err = pdfops.ShrinkPictures(b, level)
+		}
+		if err != nil {
+			return nil, err
+		}
+		errf("pictures: %d of %d shrunk, %d kept, %d left as they are; %d → %d bytes", rep.Shrunk, rep.Images, rep.Kept, rep.Skipped, rep.Before, rep.After)
+		if want > 0 && !rep.Met {
+			errf("the target of %d bytes could not be met: this is the smallest shrinking pictures alone reaches", want)
+		}
+		return res, nil
+	})
+}
+
+// parseSize reads "1048576", "500KB", "1.5MB" (powers of 1024, case-insensitive).
+func parseSize(s string) (int, error) {
+	t := strings.ToUpper(strings.TrimSpace(s))
+	mult := 1.0
+	switch {
+	case strings.HasSuffix(t, "MB"):
+		mult, t = 1<<20, strings.TrimSuffix(t, "MB")
+	case strings.HasSuffix(t, "KB"):
+		mult, t = 1<<10, strings.TrimSuffix(t, "KB")
+	case strings.HasSuffix(t, "B"):
+		t = strings.TrimSuffix(t, "B")
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+	if err != nil || v <= 0 || v*mult > 1<<40 {
+		return 0, fmt.Errorf("%q is not a size above zero (try 1MB, 500KB or a number of bytes)", s)
+	}
+	return int(v * mult), nil
+}
+
 func cmdSanitize(args []string) int {
 	fs := flag.NewFlagSet("nib sanitize", flag.ContinueOnError)
 	var out string

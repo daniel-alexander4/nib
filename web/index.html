@@ -1586,12 +1586,28 @@
     <div class="sigcard">
       <h3>Reduce file size</h3>
       <p class="libhint"><strong>Optimize</strong> is lossless — it removes redundant data and keeps
-        selectable text, but mostly helps bloated files (little effect on scans). <strong>Compress</strong>
-        re-renders every page as a JPEG image: big savings on scans, but it <strong>flattens the
+        selectable text, but mostly helps bloated files (little effect on scans). <strong>Shrink pictures</strong>
+        re-encodes the images inside the document and nothing else. <strong>Compress</strong>
+        re-renders every page as a JPEG image: the biggest savings on scans, but it <strong>flattens the
         document</strong> — selectable text and search are lost.</p>
       <div class="fzfield">
         <label class="check"><input type="radio" name="reduceMode" value="optimize" checked /> Optimize (lossless, keeps text)</label>
-        <label class="check"><input type="radio" name="reduceMode" value="compress" /> Compress (smaller, flattens to images)</label>
+        <label class="check"><input type="radio" name="reduceMode" value="pictures" /> Shrink pictures (keeps text, links and colours)</label>
+        <label class="check"><input type="radio" name="reduceMode" value="compress" /> Compress (smallest, flattens to images)</label>
+      </div>
+      <div id="reducePictures" class="fzfield" hidden>
+        <label class="fzlabel" for="reducePicLevel">How small</label>
+        <select id="reducePicLevel">
+          <option value="0">Gentle (pictures up to 3200 px)</option>
+          <option value="2" selected>Balanced (up to 1800 px)</option>
+          <option value="4">Small (up to 1000 px)</option>
+          <option value="5">Smallest (up to 700 px)</option>
+        </select>
+        <label class="fzlabel" for="reducePicTarget">Or aim for at most</label>
+        <span><input id="reducePicTarget" type="number" min="0.1" step="0.1" placeholder="e.g. 1" /> MB</span>
+        <p class="libhint">Only the pictures change: text, vector drawing, links and form fields are left alone, and
+          each picture keeps its colour profile. A picture that would not get smaller, and flat-colour graphics,
+          are kept exactly as they are. A target uses the gentlest setting that fits.</p>
       </div>
       <div id="reduceQuality" class="fzfield" hidden>
         <label class="fzlabel" for="reduceQ">Quality</label>

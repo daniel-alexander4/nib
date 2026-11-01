@@ -108,6 +108,7 @@ var commands = map[string]func([]string) int{
 	"timestamp":   cmdTimestamp,
 	"verify":      cmdVerify,
 	"optimize":    cmdOptimize,
+	"shrink":      cmdShrink,
 	"merge":       cmdMerge,
 	"sanitize":    cmdSanitize,
 	"sign":        cmdSign,
@@ -152,6 +153,7 @@ These subcommands run headlessly, without a browser:
   nib timestamp --verify FILE...  check each FILE against its FILE.ots proof
   nib verify [--json] FILE...     report signature integrity (exit 2 if not wholly signed)
   nib optimize IN -o OUT          losslessly shrink a PDF
+  nib shrink IN -o OUT            make the pictures smaller, keep text and colours (--level N | --target 1MB)
   nib merge IN... -o OUT          concatenate PDFs or images into one
   nib sanitize IN -o OUT          strip metadata and active content (JS, actions)
                                   (--fields: also form fields that are on no page)
@@ -188,7 +190,7 @@ These subcommands run headlessly, without a browser:
   nib watch DIR --do OP           run open/timestamp/optimize/sanitize/ua on each new PDF
   nib version                     print the version
 
-Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
+Commands that produce a PDF require -o/--out FILE. For optimize, shrink, merge, sanitize,
 sign, rotate, pages, encrypt, decrypt, booklet, nup, normalize, pagenum, stamp, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).

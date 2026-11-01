@@ -213,6 +213,9 @@ var tagFates = map[string]tagFate{
 	}},
 	"StampPageNumbers": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampPageNumbers(b, PageNumberStyle{}) }},
 	"StampWatermark":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampWatermark(b, "DRAFT", WatermarkStyle{}) }},
+	// The pictures are replaced and nothing else is read or written, through Optimize's own read-and-write (ADR-181).
+	"ShrinkPictures": {verdict: "carried", drive: func(b []byte) ([]byte, error) { out, _, err := ShrinkPictures(b, 2); return out, err }},
+	"ShrinkToSize":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { out, _, err := ShrinkToSize(b, 1<<20); return out, err }},
 	"StampPages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return StampPages(b, PageStamp{Kind: StampKindImage, Image: onePixelPNG(), Pages: []string{"1"}})
 	}},
