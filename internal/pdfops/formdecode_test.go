@@ -117,7 +117,7 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	// uaid.go's is the catalog packet's (`decodePacket`), bounded by the figure pdfread's read door sets a packet aside at.
 	// attachments.go's is `CeremonyRecord`'s, bounded by the most a record that verifies can be (`maxCeremonyRecord`,
 	// `/pending 870`) — an embedded file read for nib's own use, where the extraction's whole-file decode stays uncapped.
-	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1, "uaid.go": 1, "attachments.go": 1}
+	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1, "uaid.go": 1, "attachments.go": 1, "shrinkpictures.go": 1}
 	// **And an UNCAPPED decode is counted too** (`/pending 795` I3): the two counts above are of spellings, so a bare
 	// `sd.Decode()` passed them — `resourceprune.go` and `tagcarry.go` each inflated a content stream that way, and now
 	// read through the door. What is left is pinned by file so that a new one is a decision: route it through

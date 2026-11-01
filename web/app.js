@@ -217,6 +217,7 @@ const els = {
   saveFlatBtn: $('saveFlatBtn'), saveAsBtn: $('saveAsBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
   fieldNameModal: $('fieldNameModal'), fieldNameList: $('fieldNameList'), fieldNameGo: $('fieldNameGo'), fieldNameCancel: $('fieldNameCancel'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
+  reducePictures: $('reducePictures'), reducePicLevel: $('reducePicLevel'), reducePicTarget: $('reducePicTarget'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportPagesBtn: $('exportPagesBtn'),
   exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
@@ -10152,12 +10153,34 @@ function resetReduce() {
   els.reduceSave.hidden = true; els.reduceGo.hidden = false;
   els.reduceModal.querySelector('input[value="optimize"]').checked = true;
   els.reduceQuality.hidden = true;
+  els.reducePictures.hidden = true;
+  els.reducePicTarget.value = '';
 }
 els.reduceBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); resetReduce(); els.reduceModal.hidden = false; };
 els.reduceCancel.onclick = () => { resetReduce(); els.reduceModal.hidden = true; };
 all('input[name="reduceMode"]').forEach((r) => {
-  r.onchange = () => { els.reduceQuality.hidden = r.value !== 'compress' || !r.checked; };
+  r.onchange = () => {
+    if (!r.checked) return;
+    els.reduceQuality.hidden = r.value !== 'compress';
+    els.reducePictures.hidden = r.value !== 'pictures';
+  };
 });
+// The words for each reason a picture was left as it is (`ShrinkReport.Left`).
+const SHRINK_LEFT_WORDS = {
+  graphic: 'flat-colour graphics', stencil: 'stencils', decode: 'inverted or remapped pictures', mask: 'pictures with masks',
+  colour: 'pictures in colour spaces this does not re-encode', format: 'pictures in other formats', size: 'pictures too large or unreadable',
+};
+// shrinkSentence says what a Shrink pictures pass did beyond the size: how many pictures changed, why the rest did not,
+// and — when a target was asked for and could not be met — that the pictures were all there was to shrink.
+function shrinkSentence(f, asked) {
+  if (!f) return '';
+  let s = ` — ${f.shrunk} of ${f.images} picture${f.images === 1 ? '' : 's'} shrunk`;
+  const left = Object.entries(f.left || {}).map(([k, n]) => `${n} ${SHRINK_LEFT_WORDS[k] || k}`);
+  if (left.length) s += `; left as they are: ${left.join(', ')}`;
+  if (f.shrunk === 0) s += '. Nothing here would get smaller by shrinking pictures; Compress goes further but flattens the pages.';
+  else if (asked && !f.met) s += '. This is the smallest shrinking pictures alone reaches; the rest is text and graphics. Compress goes further but flattens the pages.';
+  return s;
+}
 els.reduceGo.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
@@ -10176,7 +10199,7 @@ els.reduceGo.onclick = async () => {
     page: (n, of) => { if (seq === reduceSeq && of > 1) els.reduceGo.textContent = `Working… page ${n} of ${of}`; },
   };
   els.reduceGo.disabled = true; els.reduceGo.textContent = 'Working…';
-  let blob, before, after;
+  let blob, before, after, shrinkFacts = null, shrinkAsked = false;
   try {
     if (mode === 'optimize') {
       const res = await apiFetch('/api/optimize', { method: 'POST', docId: opDoc && opDoc.id });
@@ -10184,6 +10207,19 @@ els.reduceGo.onclick = async () => {
       blob = await res.blob();
       before = Number(res.headers.get('X-Original-Size')) || 0;
       after = Number(res.headers.get('X-New-Size')) || blob.size;
+    } else if (mode === 'pictures') {
+      // The pictures inside the document, and nothing else (/pending 908). A target in MB wins over the setting.
+      const mb = parseFloat(els.reducePicTarget.value);
+      const query = Number.isFinite(mb) && mb > 0
+        ? `?target=${Math.round(mb * 1024 * 1024)}`
+        : `?level=${encodeURIComponent(els.reducePicLevel.value)}`;
+      const res = await apiFetch('/api/shrink-pictures' + query, { method: 'POST', docId: opDoc && opDoc.id });
+      if (!res.ok) return toast(await errText(res, 'could not shrink the pictures'));
+      blob = await res.blob();
+      before = Number(res.headers.get('X-Original-Size')) || 0;
+      after = Number(res.headers.get('X-New-Size')) || blob.size;
+      try { shrinkFacts = JSON.parse(res.headers.get('X-Nib-Shrink') || 'null'); } catch { shrinkFacts = null; }
+      shrinkAsked = Number.isFinite(mb) && mb > 0;
     } else {
       const presets = { low: [96 / 72, 0.55], med: [150 / 72, 0.7], high: [220 / 72, 0.82] };
       const [scale, q] = presets[els.reduceQ.value] || presets.med;
@@ -10199,7 +10235,7 @@ els.reduceGo.onclick = async () => {
   // Cancelled (or cancelled and opened again) while it worked: this result is one nobody is waiting for.
   if (seq !== reduceSeq) return;
   reduceBlob = blob; reduceName = exportName;
-  els.reduceResult.textContent = sizeSummary(before, after);
+  els.reduceResult.textContent = sizeSummary(before, after) + (mode === 'pictures' ? shrinkSentence(shrinkFacts, shrinkAsked) : '');
   els.reduceResult.hidden = false;
   els.reduceGo.hidden = true;
   els.reduceSave.hidden = false;

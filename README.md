@@ -1310,7 +1310,13 @@ before→after size before you save. **Optimize** is lossless — it strips redu
 data and keeps selectable text, but mostly helps bloated files (little effect on
 scans). **Compress** re-renders pages as JPEG images at a chosen quality: big
 savings on scans, but it flattens the document, so selectable text and search are
-lost — best for scanned/image-heavy PDFs.
+lost — best for scanned/image-heavy PDFs. **Shrink pictures** sits between the two: it
+re-encodes only the images inside the document — smaller, and to the size you give it if you
+name one (*aim for at most 1 MB*) — and leaves the text, links, form fields and each picture's
+colour profile alone. Flat-colour graphics, stencils and masked pictures are kept exactly as
+they are, a picture that would not get smaller is left, and the result says how many pictures
+changed and why the rest did not. If a target cannot be met by pictures alone it says so and
+points at Compress. On the command line, `nib shrink IN -o OUT [--level N | --target 1MB]`.
 
 **Pull the contents out** (File → Export & Print): **Document text (.txt)** dumps the
 document's text layer to a plain-text file, and **Pictures in the document (ZIP)** bundles
@@ -1658,6 +1664,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib tag untagged IN [--page N] [--json]` | Print what the pages draw that no tag owns — text in paragraphs, pictures, drawings, then rules and boxes — each with its page, whether the page marks it as decoration, and where it is (left, top, right, bottom as fractions of the page as shown). Writes nothing. `--json` is the shape the app reads, and each piece's `"rect"` is what a `region` edit takes. |
 | `nib tag edit IN -o OUT --edits EDITS.json` | Correct the existing tree as one batch — retype, move, alt, scope, colspan, rowspan, headers, artifact, create, delete, region, promote, rolemap — by the ids `nib tag tree` prints. `create` adds an empty tag (`"value"` its type, `"parent"` the id it goes under or `-1` for the top, `"index"` its place); `delete` takes a tag away and keeps what it held; `move` takes `"parent"` and `"index"` the same way. `region` tags untagged content of a `"page"` as one new tag, placed as `create` places one: what is centred in `"rect"` (`[left, top, right, bottom]`, fractions of the page as shown) or lies inside any of `"pieces"` (the rects `nib tag untagged --json` lists), with an `"alt"` that a `Figure` must have. `promote` takes nothing else and gives every tag written inline (id 0) a number, so it can be named. `rolemap` sets what one of the document's own type names means — `"role"` the name, `"value"` the standard type, or `""` to remove a mapping no tag uses. A signed document is refused. |
 | `nib tag remove IN -o OUT` | Take the structure tree and every marked-content id away, leaving the document untagged so it can be tagged again. What is marked as an artifact stays marked. A signed document is refused. |
+| `nib shrink IN -o OUT` | Make the pictures smaller and keep the text, links and colours: `--level 0-5` (gentle to smallest) or `--target 1MB` for the gentlest setting that fits. Says how many pictures changed on stderr. |
 | `nib stamp IN -o OUT` | Put a line of text (`--text T --position bl`), a diagonal watermark (`--watermark T --angle 45`) or a picture (`--image logo.png --width 20`) on every page, or on `--pages 1-3,5`; `--opacity`, `--color`, `--size`, `--margin` as they apply. |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
@@ -1733,7 +1740,7 @@ instruction, `ua`'s verdict — goes to stderr, so stdout carries only the
 document.
 
 `booklet`, `decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`,
-`outline` (with `--set`), `pagenum`, `pages`, `rotate`, `sanitize`, and `stamp` take `-w`/`--in-place` to rewrite each file
+`outline` (with `--set`), `pagenum`, `pages`, `rotate`, `sanitize`, `shrink`, and `stamp` take `-w`/`--in-place` to rewrite each file
 given instead of writing a single `-o` output — the batch form for a folder.
 `tag commit` and `tag edit` take `-w` too, over exactly one file, because a review or a batch of
 edits describes one document.

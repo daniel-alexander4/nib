@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -376,6 +377,58 @@ func (s *Server) handleOptimize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Original-Size", strconv.Itoa(len(before)))
 	w.Header().Set("X-New-Size", strconv.Itoa(len(result)))
 	sendDownload(w, "optimized.pdf", "application/pdf", result)
+}
+
+// handleShrinkPictures makes the pictures in the open document smaller and leaves everything else (/pending 908).
+//
+// `?level=N` takes one rung of `pdfops.ShrinkLadder`; `?target=BYTES` takes the gentlest rung whose output fits. Like
+// Optimize it works from the bytes the server holds and answers a download — the open document is not replaced, the
+// user saves the copy. The facts ride in `X-Nib-Shrink` (ADR-072: a fact about returned bytes is a header), ASCII JSON,
+// so the window can say what it did and what it left alone.
+func (s *Server) handleShrinkPictures(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	before := s.docBytes(doc)
+	var (
+		result []byte
+		rep    pdfops.ShrinkReport
+		err    error
+	)
+	q := r.URL.Query()
+	switch {
+	case q.Get("target") != "":
+		target, perr := strconv.Atoi(q.Get("target"))
+		if perr != nil || target <= 0 {
+			httpError(w, http.StatusBadRequest, "the target size must be a whole number of bytes above zero")
+			return
+		}
+		result, rep, err = pdfops.ShrinkToSize(before, target)
+	default:
+		level := 2
+		if v := q.Get("level"); v != "" {
+			if level, err = strconv.Atoi(v); err != nil {
+				httpError(w, http.StatusBadRequest, "the picture level must be a whole number")
+				return
+			}
+		}
+		if level < 0 || level >= len(pdfops.ShrinkLadder) {
+			httpError(w, http.StatusBadRequest, "there is no such picture level")
+			return
+		}
+		result, rep, err = pdfops.ShrinkPictures(before, level)
+	}
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not shrink the pictures: "+err.Error())
+		return
+	}
+	if raw, merr := json.Marshal(rep); merr == nil {
+		w.Header().Set("X-Nib-Shrink", string(raw))
+	}
+	w.Header().Set("X-Original-Size", strconv.Itoa(len(before)))
+	w.Header().Set("X-New-Size", strconv.Itoa(len(result)))
+	sendDownload(w, "smaller.pdf", "application/pdf", result)
 }
 
 // handleFormData exports the current document's form fields as JSON, CSV, or XFDF.
