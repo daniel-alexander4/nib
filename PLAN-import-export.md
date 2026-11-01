@@ -11,7 +11,7 @@ cost, Tier 2/3 tools) checked the plan against the code and this machine; four c
 tagged `(grill pin, 2026-11-01)`. Seam inventory: `memory/instruments/import-export.md`.
 
 **Status: unbuilt. P01.S01 is next.** Stage 3 (subsystem rounds: the import door, the document model, the Export card) is the next pass.
-**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15); Stage 3 round 2, the document model, 2026-11-01 (D16–D23); Stage 3 round 3, the Export card and the File menu, 2026-11-01 (D24–D28). **Stage 3 is complete; Stage 4 (flat-spot passes) is next.**
+**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15); Stage 3 round 2, the document model, 2026-11-01 (D16–D23); Stage 3 round 3, the Export card and the File menu, 2026-11-01 (D24–D28). Stages 4–6, 2026-11-01 (D29–D35, L8: flat spots, standards alignment, security / privacy, availability / scale / Go / verification; four slice cuts and the browser door redesigned after a measured local-file disclosure). **Stage 7 (`/plan-review`) is next.**
 
 **SME packs:** `go`, `verification` (inferred from `go.mod` and the repo's census guards).
 
@@ -41,6 +41,9 @@ through **Export**; **Save** and **Save As** write PDF and nothing else. Where i
   the menu says so rather than the recipient finding out.
 - **L7 — Conversion is never on a request's hot path.** It runs in the operation that asked for it, bounded by caps (pixels,
   archive entries, decoded bytes, pages, nesting) and a timeout on every subprocess.
+- **L8 — Hot paths and conventions (Stages 4–6, STANDARDS §12).** The hot paths are the open routes, the OS hand-off and the window stream: nothing here adds work to them beyond atomic counters (`import.ok`, `import.refused`) and the one function call; conversion runs only in the operation that
+  asked for it. The import and export routes are long operations, not hot paths. New refusals are sentinels read with `errors.Is`; every new goroutine starts with `safe.Recover`; the open and export paths log nothing. Each slice states its gate: it touches `internal/server`'s open and hand-off paths, not session, ceremony, delivery or discovery, `p2p` or `rendezvous`,
+  so tiers 4 and 6 do not fire and the slice says so in one line; tiers 2 and 3 fire on every slice that changes the front end. `VERSION` is bumped in the slice's own commit (minor for a user-facing feature); `build/gen-notices.sh` runs if a module is added, and any new module is permissive and cgo-free; documentation is updated in the same change, not at P06. `ContentDigestVersion` is not touched by this plan.
 
 ## What exists today (read at v2.16.1)
 
@@ -74,7 +77,7 @@ its read-only non-PDF tab and `FOREIGN_ALLOWED` allowlist, and its "Save As neve
 - **Tier 3:** SVG, rendered by a sandboxed renderer — no script, no external fetch.
 
 **Export (PDF →).**
-- **Tier 1, Nib's own writers:** images (PNG, JPEG, TIFF, WebP, GIF, BMP; multi-page TIFF; CBZ), plain text, Markdown, HTML, EPUB, DOCX,
+- **Tier 1, Nib's own writers:** images (PNG, JPEG, TIFF, WebP — written by the window's canvas, Go has no WebP encoder —, GIF, BMP; multi-page TIFF; CBZ), plain text, Markdown, HTML, EPUB, DOCX,
   ODT, and tables as XLSX / ODS / CSV and form data as CSV / JSON / XFDF (both exist).
 - **Tier 3:** PowerPoint (PPTX) and SVG.
 
@@ -234,6 +237,49 @@ Selecting nothing else changes. *Document as…* runs `ensureText` (ADR-106) bef
 Text (.txt) is written from the document model in reading order (D16), not from pdf.js's content-stream order (`documentText`, `app.js:10531`), which scrambles columns; `documentText` stays for Compare, which shares it, and is no longer an export. Below the Format line a note says what the
 selected format keeps in one sentence (L6), and after the export the status line reports `X-Nib-Export`'s counts in words ("3 links to other pages became plain text; 1 picture could not be carried; page 4 was read as best it could"). *Assumed wording*, mechanism fixed: the note and the report are one text per format and one function, so they cannot disagree.
 
+### Stages 4–6 — flat spots, standards, dimension reviews *(2026-11-01; four fresh reviewers read the plan cold — flat spots, STANDARDS.md, security / privacy, availability / scale / Go / verification; every remedy below that makes a claim about the browser was RUN before it was written)*
+
+### D29 — The browser renders from a single-use loopback listener, not from `file:`, and D5's CSP-meta-only is superseded *(auto-adopted — measured)*
+The reviewer's finding held when re-run here: a page under D5's exact CSP that carries `<meta http-equiv=refresh content="0;url=file:///…/secret.txt">` printed the sibling file's text into the PDF (`virtual-time-budget=3000`;
+the CSP blocks subresources, not top-level navigation) — a local-file disclosure INTO the output. Three renders of the same hostile page: from `file:` the secret was printed; from a `data:` URL it was not; from a loopback HTTP origin it was not.
+**The shape that makes it unrepresentable:** Nib serves the one sanitised document from a single-use listener on an ephemeral port under a random path (any other path is 404, and it closes after one request), the browser gets
+`--host-resolver-rules="MAP nib-render.test 127.0.0.1:<port>, MAP * ~NOTFOUND"` — measured: the page loads, and a refresh to `http://127.0.0.1:<port>/…` is refused (an IP literal is not mapped) — and the CSP is a **response header**,
+with `<meta http-equiv=refresh>` and `<base>` removed by an HTML parse as defence in depth. Flags: a fresh 0700 `--user-data-dir`, `--disable-extensions`, `--no-first-run`, `--disable-background-networking`, `--allow-file-access-from-files` never set, and **no `--no-sandbox`**
+(snap-packaged Chromium may refuse a profile under `/tmp`: the door PROBES a real render before it offers a format, as D2 does for HEIC). MHTML / EPUB unpack **in memory**, rewrite resources to `data:` URLs and reject every other reference; no file is written under an attacker's name.
+Fixtures: (a) the refresh-to-`file:` page — the secret must be absent; (b) the **positive control**, the same page with the protections removed, must print it, or the probe is dead; (c) a loopback canary that the CSP must keep silent and that fires without it. A source census over the
+browser-argument door holds the flags (`TestTheBrowserIsLaunchedOnlyThroughTheDoor`), so the host rule and the header cannot be dropped. STANDARDS §1.1 A/B: **A** (a standing guard with a fails-if-dropped fixture), *assumed*; B would drop SVG import, MHTML and EPUB.
+
+### D30 — The model exports only text a reader could see *(auto-adopted)*
+`DocumentText` emits every run with only a `Hidden` flag (`doctext.go:66-105`), so a white-on-white run, a run off the crop box, or text beneath a box drawn over it would travel into an editable file. The model reads a run only if it is not off the page and is not
+covered. A hidden (OCR) run is read **only on a page with no visible text** — there it IS the picture's reading and D20 depends on it — and dropped on a page that has visible text. Where the map cannot say a run is uncovered (shapes and text are separate lists), the run is
+**excluded** and counted as `coveredText` in `X-Nib-Export`: the safe error leaves text out, never leaks it. A redacted-then-exported fixture is the red proof (the redaction's removed text must not appear; an overlay-only "redaction" is reported, not exported).
+
+### D31 — A converter lives and dies with Nib, and an import has a memory budget *(auto-adopted for the mechanisms; the numbers assumed)*
+`killTreeOnCancel` (`convertproc_unix.go:20`) is reached only by a context cancel that process exit can beat, so Quit (ADR-169), idle exit, SIGKILL and a crash leave `soffice.bin` running and its `nib-office-*` directory (holding the user's source in `in.<ext>`) behind.
+(1) A registry of live converter process groups is killed **synchronously** on the shutdown path, before exit; the window shows the launch overlay's `quit` words. (2) A startup sweep removes `nib-*` temp directories by age, named with the pid and its start time — never by a marker file — and covers the browser profile, Ghostscript's and the multipart spill.
+(3) `ParseMultipartForm(maxPDFBytes)` keeps 200 MiB in RAM and `io.ReadAll` copies it again (`server.go:59`, `office.go:33`): the body spills to disk with a small `maxMemory`; a converter's output is size-checked by `stat` before it is read; the export takes a total-bytes cap (*assumed* 256 MiB with the per-image
+caps D18 left unvalued). The peak RSS of a 200 MiB import and a 1,000-page export is **measured at P01.S03 and quoted**; the estimate of 1.5–3 GiB is unmeasured. (4) **D9's gate, as code:** a buffered-channel acquire in a `select` against `ctx.Done()`, release deferred before any panic point, a queue bound (*assumed* 16, then a named refusal),
+the 2-minute budget **started at acquire** (not at the request), `roomToOpen` asked again after acquire, `safe.Recover` first in every new goroutine, and a test that cancels a queued import and then lets a third acquire. The export takes the same gate. (5) The export is pinned to its document by `X-Nib-Doc` (ADR-004) and answers 409 if it is gone (ADR-001); the model read checks its context per page —
+pdfcpu's validation itself cannot be cancelled, and that is declared.
+
+### D32 — The format table classifies by magic bytes, and no attacker string reaches a command line or a path *(auto-adopted)*
+An extension that disagrees with the sniffed type is a **named refusal**, except where bytes cannot say (Markdown, text, CSV); a tool is handed only the sniffed type, with the input written to a fixed name `in.<sniffedExt>`. CBZ entry names are sort keys, never paths: `..`, absolute names and symlinks are refused; the TIFF walk stops at the page cap
+and detects an IFD loop; zip64 and nested archives are refused. This is what D8's "classified by content first" must mean, and `imageopen.go:60-66` (image sniff, then extension) is the shape it replaces.
+
+### D33 — The outside tools are contained, and each has a row *(auto-adopted for the mechanisms; the numbers assumed)*
+LibreOffice's profile is pre-seeded with macro security at its highest level and links never updating (a DOCX `INCLUDEPICTURE` and an ODT external link are the fixtures; whether LibreOffice fetches them today is **unverified**, so the loopback canary decides). Ghostscript runs only through one `runGS` door with `-dSAFER` pinned by a census (`pdfa_gs.go:99`).
+Every tool has a timeout, a memory ceiling and a lowered priority in the format table (*assumed* starting values: `gs` 2 min, browser 60 s, `pdftocairo` 60 s, HEIF 60 s) and a per-OS candidate row. **Declared gaps:** `pdftocairo` is not on stock Windows or macOS, so SVG export lights up there only where poppler is installed (D7);
+the Windows `taskkill` branch is compiled and argv-tested only (`convertproc_windows.go:12-15`) and every new tool inherits that. The egress guard is the root `egress_test.go` extended with a census of every `exec` site; the README's "every editing feature works with no network" (`README.md:69`) is what it keeps true.
+
+### D34 — An export is judged against the source PDF, and a silent drop is the fatal bug *(auto-adopted)*
+D22's oracle compares the round-tripped words to the **source PDF's** `DocumentText` (a multiset of words plus order within a paragraph), **not** to the model's own text: a reader that drops a paragraph passes the second and fails the first. `X-Nib-Export` adds `completeness` (source rune count against model rune count) and a loud flag below a stated
+ratio (*assumed* 0.98). Red proofs: drop one table cell, swap two paragraphs, drop a footnote, truncate the last page — each must go red. **Metadata:** writers set a fixed Producer / Creator ("Nib"), no author, no source path, no timestamp finer than the day, a random EPUB id; the PDF's Info and XMP are never copied; a test opens `core.xml`, `meta.xml` and `content.opf`.
+Every census names its enumeration source and the mutation that adds a row with no test (a name-grep passes an empty test body). **Failure playbook, stated:** a LibreOffice crash mid-run is a named refusal with the missing-output sentence; a machine that sleeps resumes Go's monotonic timer (it does not fail it), so a conversion past its wall budget is reported, not retried.
+
+### D35 — The source is never written, and a recorded path is only a path *(auto-adopted)*
+L1's census gains its red proof: a mutation making one door call `os.WriteFile(srcPath)`, and an assertion on the source's mtime, inode and directory listing. *Save As* refuses a destination equal to `importedFrom`. Open Recent records the path and nothing of the content (`vault.go:1746`; `/api/recent` is behind `requireUnlocked`); a recorded entry whose tool is now absent shows the missing-tool
+sentence when reopened (`/pending 490` coupling stays). Imports add nothing else to the vault, and **Resume skips an imported tab** (`lastopen.go:32`, declared).
+
 ---
 
 ## Out of scope
@@ -268,9 +314,13 @@ Acceptance:
 - **(grill pin, 2026-11-01)** The table is served to the page and replaces the three `accept` literals (`app.js:597-599`, `index.html:280`, `:1986`),
   `listDir`'s PDF-only filter (`saveas.go:116`) and `build/nib.desktop`'s `MimeType` (generated); the census scans `web/` and `build/` as well as Go.
   Nine sites list extensions today (`office.go:55,75`, `imagedoc.go:83` by magic, the three literals, `listDir`, `.desktop`).
+  **(Stages 4–6 pins)** The table classifies by magic bytes (D32). `.desktop`'s `MimeType` is generated; macOS and Windows file association ship nothing today (`build/nib.desktop:9`, `nfpm.yaml:34`) and are a **declared gap**, so "double-click imports" is a Linux behaviour until scheduled. Guards, one per sync rule and written in the same commit as the rule: table → page `accept`, table → per-tool notices, table → `.desktop`, Format-line reasons, `X-Nib-Export` keys → status wording, `MapText` style fields in the JSON-name test. The owners of the three lists (formats, tools, Format-line labels) are named in `CLAUDE.md` in the same commit.
 Tasks: *(written at slice-grill time)*
 
-#### P01.S02 — Open imports
+#### P01.S02 — Open imports *(cut once, 2026-11-01, into S02a and S02b)*
+**New slice because:** the reviewers found this was a rewrite of the open door plus a UI feature plus two censuses, which cannot be one commit (the cut rules apply: a slice is cut once, never again).
+**S02a** — the function and the doors: D8, D9 (as code, D31), D11, D13, D32; the per-caller census; the L1 census with its mutation (D35); the counters; `nib import` is S04's.
+**S02b** — the window: `importedFrom` on the document and `docResponse`, the once-per-window notice (D12), the Import… relabel and per-tool missing notices (D24), Open Recent for imports (D35), the Save As refusal. The Scope, Acceptance and Tasks below are the pair's together until each is grilled.
 Scope: the four doors route a non-PDF through one import function; the notice; the Import… entry keeps options; Open Recent records the source (D6). Refs: D1, D6, D8, D9, D11, D12, D13, D15, L1, L2.
 Acceptance:
 - Each door imports the same file to the same bytes; the notice names the file; Save on the result is Save As.
@@ -284,6 +334,7 @@ Tasks: *(written at slice-grill time)*
 
 #### P01.S03 — Tier 1 native producers
 Scope: GIF, BMP, multi-page TIFF, plain text, CSV, CBZ producers, with caps (pixels, entries, decoded bytes, pages) and one test per cap. Refs: D2, D10, D14, L7. Tunes D14's unmeasured values against a measured run.
+**(Stages 4–6 pins)** Builds the hostile-input generator in-test (`build/genfixtures.go` shape; nothing binary committed): zip bomb and ratio archive, huge-dimension and many-page TIFF with an IFD loop, a `..` CBZ entry, a malformed docx. Measures and quotes peak RSS for a 200 MiB import, a 250k-row CSV through `mdpdf` (its scaling measured linear to 16k rows only) and a 1,000-page model read, and sets D9's gate of two on them. Adds the startup temp sweep and registry kill (D31). Each native producer has a wall-clock cap.
 Acceptance:
 - Each producer's output opens and reads back its content; each cap refuses by name.
 Tasks: *(written at slice-grill time)*
@@ -307,17 +358,20 @@ widening the image row; a new ADR supersedes ADR-103's "Pages as images" row and
 the tests that pin the card (`filemenu.test.mjs:79-89`, `toolbargroups.test.mjs:170,214`, `saveformats.test.mjs:326-507`, `racepins.test.mjs:192`,
 `app.js:14452-14462`). S02: the browser renders PNG as now (pdf.js, `app.js:10027`); `/api/assemble` transcodes to GIF, BMP, CBZ and multi-page TIFF
 (a hand-built IFD chain — `x/image/tiff` writes one image per file); Go has no WebP encoder, so WebP uses canvas `toBlob('image/webp')`, offered only
-where the browser can encode it and said so on the Format line. S03 carries the four missing inputs named in D4 and D18, the package and census of D16, the source rule D17 and the scan rule D20; S04's route is D23 and its oracle D22 (Refs: D4, D16–D23).
+where the browser can encode it and said so on the Format line. S03 carries the four missing inputs named in D4 and D18, the package and census of D16, the source rule D17 and the scan rule D20; S04's route is D23 and its oracle D22 (Refs: D4, D16–D23, D30, D34).
+**S03 is cut once, 2026-11-01** (**New slice because:** four new readers, a package and a census are not one commit): **S03a** style and links (D18) plus `~/nib/export-corpus.txt` with its sha256 sidecar and a generated hand-built-model set — tagged, untagged, two-column, merged-cell, scanned, right-to-left, redacted; the writers are judged by D34's oracle and are **not** golden-tested;
+**S03b** images and paragraph grouping (D18), with the Figure-to-image join and the unembeddable-image placeholder; **S03c** `docmodel.Read`, D17, D20, D30 and the import-graph census (`go/packages`, not text matching). S01 owns `.txt` from the model's removal of `documentText` as an export (D28) only after S03c lands, so the old export stays until then. ADRs, numbered from 183 and written in the slice that builds each: ADR-183 PDF is the only document, Import and Export, with the splits' move
+(P02.S01, superseding ADR-103's image row and its "eight" sentence); the import door (P01.S02a); the document model (P02.S03c); the export route and `X-Nib-Export` (P02.S04); the outside tools and the browser door (P04.S04).
 
 ### P03 — Editable documents
-Goal: DOCX, ODT and EPUB writers over the model, judged by instruments, with flowing and exact-layout forms where both make sense.
+Goal: DOCX, ODT and EPUB writers over the model, judged by D34's oracle against the source PDF, each flowing (D21).
 Exit criteria: each opens in LibreOffice with headings, lists, tables and pictures intact on the fixture corpus; EPUB passes `epubcheck` where it is installed and Nib's structural test (stored-first `mimetype`, `container.xml`, nav) everywhere — `epubcheck` is absent on the dev machine; the menu states what each keeps (L6). One zip helper (`GridToODS`'s stored-first `CreateRaw`, `spreadsheet.go:64`) serves ODT, EPUB, DOCX, PPTX and CBZ, held by a census.
 *Slices sketched:* S01 minimal OOXML writer; S02 ODT; S03 EPUB (each writer carries its labels and its D22 oracle; the old S04, flowing-versus-exact, is folded in by D21).
 
 ### P04 — Tier 2 imports
 Goal: the formats that need a tool, each behind the one door.
 Exit criteria: each Tier 2 type imports where its tool is present and names the missing tool where it is not; HEIC, saved web pages / EPUB, PostScript / EPS and email each have a fixture and a cap.
-*Slices sketched:* S01 LibreOffice breadth; S02 Ghostscript PS/EPS; S03 HEIC/HEIF (`/pending 911`); S04 the browser as renderer (D5 settled; HTML first, MHTML / EPUB route decided at its grill by probe); S05 `.eml` / `.msg` (`.msg` needs an OLE reader, see D2). S03's HEIC tool order and capability probe are in D2.
+*Slices sketched:* S01 LibreOffice breadth; S02 Ghostscript PS/EPS; S03 HEIC/HEIF (`/pending 911`); S04 the browser as renderer (D5 settled by D29; HTML first, MHTML / EPUB route decided at its grill by probe; one exported browser lookup beside `toolpath.go`'s per-tool candidate lists — `findChromium` is unexported today, `browser.go:130`); S05 `.eml` / `.msg` (`.msg` needs an OLE reader, see D2). S03's HEIC tool order and capability probe are in D2.
 
 ### P05 — Tier 3
 Goal: SVG in and out, PPTX out.
@@ -326,4 +380,4 @@ Exit criteria: an SVG with a script or an external reference imports with both i
 
 ### P06 — Close
 Goal: documentation and the censuses that keep the set honest.
-Exit criteria: README, the web page and the CLI table describe the set; one census asserts every row of the format table has an import or export test, a cap and a missing-tool test; `/pending 906`, `912`, `911` closed or re-pointed here.
+Exit criteria: README, the web page and the CLI table describe the set; one census asserts every row of the format table has an import or export test, a cap and a missing-tool test; `/pending 906`, `912`, `911` closed or re-pointed here. **(Stages 4–6 pin)** Also names `docs/release-notes/<version>.md` (ADR-175), the README feature-matrix row "Office → PDF conversion" (`README.md:48`) and its footnote saying Office needs LibreOffice "and nothing else" (`:79`), "What leaves your computer", and the `nfpm.yaml` `Recommends` decision (it lists LibreOffice only, `:19`; Ghostscript, poppler, a HEIF decoder and a browser are undecided). `instruments/open-as-is.md` is superseded by D1 except for its path inventory.
