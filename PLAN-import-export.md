@@ -6,8 +6,12 @@ wins.** The foundational choices below (D1–D3, D6) are Dan's words; D4, D5 and
 `instruments/open-as-is.md` (906's seam inventory, written for the model this plan reverses, reused where it still holds) and
 the code at v2.16.1, read for this plan.
 
-**Status: unbuilt. P01.S01 is next.** No pass beyond the seed has run: the whole-plan `/grill` (Stage 2) is the next one.
-**Passes:** *(none yet)*
+**Stage 2 grill, 2026-11-01 — amended.** Five fresh agents (browser render, open doors and Open Recent, Export card and ADR-103, document-model
+cost, Tier 2/3 tools) checked the plan against the code and this machine; four claims cracked and four slices were mis-scoped. Pins below are
+tagged `(grill pin, 2026-11-01)`. Seam inventory: `memory/instruments/import-export.md`.
+
+**Status: unbuilt. P01.S01 is next.** Stage 3 (subsystem rounds: the import door, the document model, the Export card) is the next pass.
+**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended).
 
 **SME packs:** `go`, `verification` (inferred from `go.mod` and the repo's census guards).
 
@@ -74,6 +78,11 @@ its read-only non-PDF tab and `FOREIGN_ALLOWED` allowlist, and its "Save As neve
   ODT, and tables as XLSX / ODS / CSV and form data as CSV / JSON / XFDF (both exist).
 - **Tier 3:** PowerPoint (PPTX) and SVG.
 
+**(grill pin, 2026-11-01)** HEIC/HEIF: `heif-dec` or `heif-convert` first, `magick` second, and the door probes that the tool can READ HEIC
+(many ImageMagick builds cannot); its PNG output re-enters `ImageToDocument` and takes the 200 Mpx cap. None is installed on the dev machine.
+`.eml` is standard library; Outlook `.msg` is an OLE compound file with no parser in `go.mod`, so a hardened reader or a dependency is decided at
+P04.S05's grill. SVG import renders through the browser door (D5), not a separate renderer.
+
 **Dropped by Dan, 2026-11-01:** DjVu, XPS, FictionBook, Mobipocket, CBR; and, from the "left out" list, editable Word from a scan, CAD, Kindle's
 own formats. Nothing here is a promise to add them later.
 
@@ -88,21 +97,39 @@ The editable exports share **one reader** that composes what already exists: a t
 proposal and reflow's grouping, with the page map's grids for tables. The writers (Markdown, HTML, EPUB, DOCX, ODT) consume the model and
 never read a PDF themselves. *Why assumed:* five writers each reading the page differently would give five different documents of one PDF.
 Merged cells and multi-column reading order are the declared hard cases.
+**(grill pin, 2026-11-01)** The model is NOT only a composition of what exists. `ReadStructure`, `ProposeTags` and `DocumentText` compose, but four
+inputs are missing and are P02.S03's own content: font style (`MapText` drops `font`/`baseFont`), links (no exported reader), image bytes
+(only `ExtractImagesZip` exists) and paragraph grouping (`Paragraphs` returns text only; `groupRunsAndTables` is unexported). It reads in ONE pass
+(`mapPageIn`, `DocumentText`'s shape) — a `MapPage` loop measured 0.63 s/page, ~6 min on 559 pages, against 2.0–5 s for the one-pass forms.
+Scans and image-heavy files are unmeasured. Until P02.S03 supplies links and font style, an export says what it drops (L6).
 
 ### D5 — Outside tools sit behind the one door *(assumed, 2026-11-01)*
-`magick` / a HEIF decoder, Ghostscript, LibreOffice and a Chromium-family browser join `toolpath.go`, `missingtool.go` and ADR-040's
-wording. **Open question for the grill:** whether the browser can be driven as a renderer (headless print-to-PDF of a local file, scripts
-off, network off) on the user's own browser, and what happens when the user's browser is Firefox.
+`magick` / a HEIF decoder, Ghostscript, LibreOffice, `pdftocairo` and a Chromium-family browser join `toolpath.go`, `missingtool.go` and ADR-040's
+wording.
+**(grill pin, 2026-11-01) The browser question is settled.** A Chromium-family browser renders a local HTML file to PDF headless in 0.7–1.5 s
+(`--headless --print-to-pdf --no-pdf-header-footer`, a fresh `--user-data-dir`, `--host-resolver-rules="MAP * ~NOTFOUND"`). Scripts are made inert by a
+CSP `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">` that Nib injects; it also
+stopped the network fetches (a loopback listener saw none). `--blink-settings=scriptEnabled=false` wrote NO PDF — do not use it. Firefox has no
+headless PDF flag, so the door is Chromium-only (`browser.chromiumCandidatesFor` already excludes Firefox) and a Firefox-only machine gets the
+missing-tool sentence (L4). HTML is built first; MHTML and EPUB need Nib to unpack and rewrite before rendering and are decided at P04.S04's grill
+with a probe. A render fixture proves the script and the fetch do NOT happen, and fails if the CSP is dropped.
 
 ### D6 — Opening a non-PDF imports it, once, with a notice *(Dan, 2026-11-01)*
 Open, drag-drop, double-click and the OS hand-off run the import and say so: *"Imported report.docx as a PDF. Save writes a PDF; use Export for
 other formats."* The **Import…** entry stays for the choices an import has (document language, ADR-033's `LabelUA`). The result is a
 pathless PDF tab (L2). *Assumed with it:* Open Recent records the source path and reopening imports again (906 P15); this couples to
 `/pending 490` (typed entries).
+**(grill pin, 2026-11-01)** Already true for a path-opened image (`handleOpen` records the source after the `converted` branch, `server.go:980`); the
+other doors do not record and `/pending 490` owns that one door. This plan makes NO vault `Contents` change. Resume (`recordLastOpen`,
+`lastopen.go:32`) skips pathless documents, so an imported tab is not resumed — declared gap. Open now refuses Office at the upload and URL doors
+(`convertibleRefusal`); the import function removes that.
 
 ### D7 — ODT and SVG export are in the set *(assumed, 2026-11-01)*
-ODT mirrors the XLSX / ODS pairing the table export already has and costs one writer over D4's model. SVG export (a page as SVG, through
-Ghostscript's SVG device) follows Dan's rule that every type but PDF goes both ways. Either is dropped on a word from Dan.
+ODT mirrors the XLSX / ODS pairing the table export already has and costs one writer over D4's model. SVG export (a page as SVG) follows Dan's rule
+that every type but PDF goes both ways. Either is dropped on a word from Dan.
+~~through Ghostscript's SVG device~~ **(grill pin, 2026-11-01)** Ghostscript 10.02.1 has no SVG device (`gs -h` lists none; `-sDEVICE=svg` is unknown).
+SVG export runs `pdftocairo -svg` (poppler; present on the dev machine, not yet run for this plan) as a tool behind the one door (D5, L4), one page
+per file; with it absent the format is not offered.
 
 ---
 
@@ -135,6 +162,9 @@ Scope: one table in `pdfops` — sniff, extensions, MIME, producer, tool, import
 Acceptance:
 - `SupportedOfficeExt`, `SupportedMarkdownExt` and the image sniff lists are views of the table; `TestTheFormatTableIsTheOnlyList` fails on a second list.
 - A format with no producer on this machine is listed with its missing tool, not omitted.
+- **(grill pin, 2026-11-01)** The table is served to the page and replaces the three `accept` literals (`app.js:597-599`, `index.html:280`, `:1986`),
+  `listDir`'s PDF-only filter (`saveas.go:116`) and `build/nib.desktop`'s `MimeType` (generated); the census scans `web/` and `build/` as well as Go.
+  Nine sites list extensions today (`office.go:55,75`, `imagedoc.go:83` by magic, the three literals, `listDir`, `.desktop`).
 Tasks: *(written at slice-grill time)*
 
 #### P01.S02 — Open imports
@@ -142,6 +172,11 @@ Scope: the four doors route a non-PDF through one import function; the notice; t
 Acceptance:
 - Each door imports the same file to the same bytes; the notice names the file; Save on the result is Save As.
 - A census drives every route against an imported tab and hashes the source file before and after.
+- **(grill pin, 2026-11-01)** `document` gains an `importedFrom` marker (it has none, `server.go:111-123`) carried on `docResponse` for the notice;
+  ONE import function serves all callers of `asOpenableDocument` (`server.go:914,1014`, `sources.go:77`, `handoff.go:176`, `combine.go:36`;
+  `diskstate.go:257` reaches it through `readInstallablePDF`), with a per-caller census; ONE naming rule (images keep `scan.png` today, Office
+  becomes `.pdf`). Counters: `import.ok{door,format}` and `import.refused{cause}`, atomics only — the open routes are request handling and this
+  approval is the hot-path check-in.
 Tasks: *(written at slice-grill time)*
 
 #### P01.S03 — Tier 1 native producers
@@ -163,20 +198,26 @@ Exit criteria:
 - Pages as images offers PNG, JPEG, TIFF (multi-page), WebP, GIF, BMP and CBZ.
 - Markdown and HTML export a tagged and an untagged document with headings, lists and tables kept; a scanned page goes through `ensureText` first or is refused with its reason.
 *Slices sketched:* S01 Export card + Split move (ADR superseding 906's definitions); S02 image formats; S03 the document model; S04 Markdown + HTML writers.
+**(grill pin, 2026-11-01)** S01 is half done: ADR-103 already gives one button per thing and a Format line. What remains is moving the two splits and
+widening the image row; a new ADR supersedes ADR-103's "Pages as images" row and its "Export & Print is now eight" sentence, and the same slice edits
+the tests that pin the card (`filemenu.test.mjs:79-89`, `toolbargroups.test.mjs:170,214`, `saveformats.test.mjs:326-507`, `racepins.test.mjs:192`,
+`app.js:14452-14462`). S02: the browser renders PNG as now (pdf.js, `app.js:10027`); `/api/assemble` transcodes to GIF, BMP, CBZ and multi-page TIFF
+(a hand-built IFD chain — `x/image/tiff` writes one image per file); Go has no WebP encoder, so WebP uses canvas `toBlob('image/webp')`, offered only
+where the browser can encode it and said so on the Format line. S03 carries the four missing inputs named in D4.
 
 ### P03 — Editable documents
 Goal: DOCX, ODT and EPUB writers over the model, judged by instruments, with flowing and exact-layout forms where both make sense.
-Exit criteria: each opens in LibreOffice with headings, lists, tables and pictures intact on the fixture corpus; EPUB passes `epubcheck`; the menu states what each keeps (L6).
+Exit criteria: each opens in LibreOffice with headings, lists, tables and pictures intact on the fixture corpus; EPUB passes `epubcheck` where it is installed and Nib's structural test (stored-first `mimetype`, `container.xml`, nav) everywhere — `epubcheck` is absent on the dev machine; the menu states what each keeps (L6). One zip helper (`GridToODS`'s stored-first `CreateRaw`, `spreadsheet.go:64`) serves ODT, EPUB, DOCX, PPTX and CBZ, held by a census.
 *Slices sketched:* S01 minimal OOXML writer; S02 ODT; S03 EPUB; S04 flowing-versus-exact choice and the honest labels.
 
 ### P04 — Tier 2 imports
 Goal: the formats that need a tool, each behind the one door.
 Exit criteria: each Tier 2 type imports where its tool is present and names the missing tool where it is not; HEIC, saved web pages / EPUB, PostScript / EPS and email each have a fixture and a cap.
-*Slices sketched:* S01 LibreOffice breadth; S02 Ghostscript PS/EPS; S03 HEIC/HEIF (`/pending 911`); S04 the browser as renderer (the D5 question, decided at its grill); S05 `.eml` / `.msg`.
+*Slices sketched:* S01 LibreOffice breadth; S02 Ghostscript PS/EPS; S03 HEIC/HEIF (`/pending 911`); S04 the browser as renderer (D5 settled; HTML first, MHTML / EPUB route decided at its grill by probe); S05 `.eml` / `.msg` (`.msg` needs an OLE reader, see D2). S03's HEIC tool order and capability probe are in D2.
 
 ### P05 — Tier 3
 Goal: SVG in and out, PPTX out.
-Exit criteria: an SVG with a script or an external reference imports with both inert; a page exports as SVG where Ghostscript is present; a PPTX opens in LibreOffice Impress with one slide per page, editable text boxes and the pictures placed.
+Exit criteria: an SVG with a script or an external reference imports with both inert (through the browser door); a page exports as SVG where `pdftocairo` is present; a PPTX opens in LibreOffice Impress with one slide per page, editable text boxes and the pictures placed.
 *Slices sketched:* S01 sandboxed SVG; S02 SVG export; S03 PPTX writer from the page map.
 
 ### P06 — Close
