@@ -11,7 +11,7 @@ cost, Tier 2/3 tools) checked the plan against the code and this machine; four c
 tagged `(grill pin, 2026-11-01)`. Seam inventory: `memory/instruments/import-export.md`.
 
 **Status: unbuilt. P01.S01 is next.** Stage 3 (subsystem rounds: the import door, the document model, the Export card) is the next pass.
-**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15); Stage 3 round 2, the document model, 2026-11-01 (D16–D23; the Export card round remains).
+**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15); Stage 3 round 2, the document model, 2026-11-01 (D16–D23); Stage 3 round 3, the Export card and the File menu, 2026-11-01 (D24–D28). **Stage 3 is complete; Stage 4 (flat-spot passes) is next.**
 
 **SME packs:** `go`, `verification` (inferred from `go.mod` and the repo's census guards).
 
@@ -211,6 +211,29 @@ Fidelity is judged by the words in order, not by looking: LibreOffice converts e
 `POST /api/export/document?format=` is pinned to the document by `X-Nib-Doc` (ADR-004), reads the model in ONE pass (the 559-page file measured 2–5 s; a `MapPage` loop would be minutes) on the request's context, and answers the bytes with
 `X-Nib-Export` carrying compact JSON — `source`, `droppedLinks`, `placeholderImages`, `flaggedPages`, `scannedPages` — as `X-Nib-Revision` does (ADR-072). A refusal is a 422 with a cause.
 
+### Stage 3, round 3 — the Export card and the File menu *(via /discuss, autonomous, 2026-11-01; facts read from `web/index.html:276-362,466`, `web/app.js:9269-9330,10485-10540`, ADR-103)*
+
+### D24 — Open & Import is one group, and a missing tool is said once per tool *(assumed)*
+The File card's group "Open a Document" becomes **Open & Import**: *Open…*, *Open Recent…*, and **Import…** in place of *Open & convert to PDF…* (`officeOpenBtn`, same id, new label and title), with the language field beside it as now. The picker's `accept` comes from the
+format table (P01.S01), not the literal at `index.html:280`. The single LibreOffice paragraph (`#officeMissing`) becomes one static paragraph per tool the table names (LibreOffice, Ghostscript, a HEIF decoder, a Chromium-family browser), each shown only
+when that tool is absent AND the format table lists a format it would unlock; each carries its own static `href` authored in `index.html` (ADR-039/040: the remedy URL is never on the wire) and its own recheck.
+
+### D25 — The Export card, final: one button per thing, formats on the Format line *(auto-adopted, ADR-103)*
+*Print…*; *Pages as images…* — This page (PNG, JPEG, WebP, GIF, BMP, SVG), Every page (ZIP of PNGs, multi-page TIFF, CBZ); *Pictures in the document (ZIP)*; **Document as…** — Markdown, HTML, EPUB, Word (.docx), OpenDocument (.odt), PowerPoint (.pptx), Text (.txt);
+*This page's table…*; *Form data…*. It replaces *Document text (.txt)*. Eight controls become six; the card's label stays **Export & Print**.
+
+### D26 — The two splits move to Split Pages, with their ids *(auto-adopted, D1)*
+`exportBookmarkSplitBtn` and `exportPageSplitBtn` move into the Page Functions group "Split Pages" (`index.html:466`) **keeping their ids**, so the `apiFetch`-gated and document-required id sets (`app.js:14452-14462`), `racepins.test.mjs:192` and the handlers are untouched; what changes is the group-membership pin
+(`toolbargroups.test.mjs:170,214`) and the label order in `filemenu.test.mjs:79-89`.
+
+### D27 — A format that cannot run is listed with its reason, never dropped *(auto-adopted, L4)*
+A Format line entry whose tool is absent (SVG without `pdftocairo`) or whose encoder the browser lacks (WebP) stays on the line, `disabled`, its label ending in the reason ("needs pdftocairo", "this browser cannot write WebP") — text, not colour (WCAG 1.4.1).
+Selecting nothing else changes. *Document as…* runs `ensureText` (ADR-106) before the request, as the text and table exports do.
+
+### D28 — `.txt` comes from the model, and the dialog says what each format keeps *(assumed)*
+Text (.txt) is written from the document model in reading order (D16), not from pdf.js's content-stream order (`documentText`, `app.js:10531`), which scrambles columns; `documentText` stays for Compare, which shares it, and is no longer an export. Below the Format line a note says what the
+selected format keeps in one sentence (L6), and after the export the status line reports `X-Nib-Export`'s counts in words ("3 links to other pages became plain text; 1 picture could not be carried; page 4 was read as best it could"). *Assumed wording*, mechanism fixed: the note and the report are one text per format and one function, so they cannot disagree.
+
 ---
 
 ## Out of scope
@@ -278,6 +301,7 @@ Exit criteria:
 - Pages as images offers PNG, JPEG, TIFF (multi-page), WebP, GIF, BMP and CBZ.
 - Markdown and HTML export a tagged and an untagged document with headings, lists and tables kept; a scanned page goes through `ensureText` first, and one still unread exports as its own picture and says so (D20).
 *Slices sketched:* S01 Export card + Split move (ADR superseding 906's definitions); S02 image formats; S03 the document model; S04 Markdown + HTML writers.
+**(round 3, 2026-11-01)** S01 builds D25–D28 (the six-control card, the splits' move with their ids, disabled-with-reason formats, the per-format note); the Import… relabel and per-tool missing notices of D24 belong to P01.S02, which already owns the entry.
 **(grill pin, 2026-11-01)** S01 is half done: ADR-103 already gives one button per thing and a Format line. What remains is moving the two splits and
 widening the image row; a new ADR supersedes ADR-103's "Pages as images" row and its "Export & Print is now eight" sentence, and the same slice edits
 the tests that pin the card (`filemenu.test.mjs:79-89`, `toolbargroups.test.mjs:170,214`, `saveformats.test.mjs:326-507`, `racepins.test.mjs:192`,
