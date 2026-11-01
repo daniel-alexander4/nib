@@ -7,6 +7,7 @@ import (
 	"embed"
 	"io/fs"
 	"mime"
+	"strings"
 )
 
 // contentTypes is what these assets are, decided here rather than asked of the
@@ -71,6 +72,16 @@ var webFS embed.FS
 //
 //go:embed LICENSE THIRD-PARTY-NOTICES.md
 var legalFS embed.FS
+
+// versionFile is the VERSION file, the source of truth for every build (build.sh, install.sh and
+// the .deb read it too). Embedded so a plain `go build ./cmd/nib` reports the real version and not
+// "dev" — a program that pins a minimum version (ADR-183) cannot read "dev".
+//
+//go:embed VERSION
+var versionFile string
+
+// VersionFile is the VERSION file's semver line.
+func VersionFile() string { return strings.TrimSpace(versionFile) }
 
 // WebFS returns the UI asset tree rooted at the web/ directory, so "/" maps to
 // index.html.

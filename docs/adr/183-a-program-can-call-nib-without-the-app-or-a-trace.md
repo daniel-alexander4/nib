@@ -34,6 +34,11 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   `/NeedAppearances` — the original has none either. A fill neither adds nor removes `/NeedAppearances`, so a form that
   carries it keeps it; do not describe the output as free of it in general. Two fields sharing a leaf name under different
   parents are addressed by full path and only that one is written (`TestAFillByFullPath…`).
+- **`nib version --json` is `{"version","api","commands"}`, and a plain build reports the real version.** `api` is
+  `cli.APIVersion`, an integer raised for an incompatible change to a command's flags, a JSON key or an exit code and never
+  for an addition; `commands` is every verb, sorted. The VERSION file is embedded (`nib.VersionFile()`), and `main` uses it when
+  no `-ldflags -X main.version` was set, so `go build ./cmd/nib` no longer prints `nib dev`; build.sh's `-X` and the embedded
+  file read the same line and cannot disagree. Golden tests pin the object and the verb list.
 
 ## Declared
 
