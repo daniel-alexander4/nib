@@ -431,9 +431,13 @@ hop needs both peers online; nothing is stored on a server in between.
 ### Annotate
 **Highlight** text, **draw** freehand, add free **text** boxes, and drag a
 **border** — a colored outline with no fill — anywhere on a page; works on flat
-PDFs too. Highlights and borders are **any color**: pick one from the swatch row
-(your last five colors stay one click away) or open the picker for a new shade.
-A border's thickness is yours to set, in points. Draw **Shapes** — a line, an
+PDFs too. Highlights, drawing, text, borders and shapes are **any color**: pick one from the
+swatch row (your last five colors stay one click away) or open the picker for a new shade.
+**Each tool keeps the colour you last gave it** — a red border does not make the next highlight
+red — until Nib is restarted. **Draw** also has its own thickness and opacity, and **Text** its
+size (in points); a value you never change is left at what the viewer ships with. A highlight
+has no opacity setting, because the viewer offers none. A border's thickness is yours to set,
+in points. Draw **Shapes** — a line, an
 arrow, a rectangle, or an ellipse (rectangles and ellipses can be filled) — in any
 colour and thickness; they bake into the page so they show in every viewer. Drop a
 **Note** to leave a comment — a sticky note you place, type into, and drag; on save

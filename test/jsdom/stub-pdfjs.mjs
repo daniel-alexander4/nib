@@ -23,7 +23,10 @@ export const AnnotationEditorType = {
 };
 
 export const AnnotationMode = { DISABLE: 0, ENABLE: 1, ENABLE_FORMS: 2, ENABLE_STORAGE: 3 };
-export const AnnotationEditorParamsType = { HIGHLIGHT_COLOR: 31 };
+// The real values (pdf.js 6.1.200): the ones app.js sends by NAME (/pending 913) must resolve to numbers.
+export const AnnotationEditorParamsType = {
+  FREETEXT_SIZE: 11, FREETEXT_COLOR: 12, INK_COLOR: 21, INK_THICKNESS: 22, INK_OPACITY: 23, HIGHLIGHT_COLOR: 31,
+};
 
 // Real values: nib divides by PDF_TO_CSS_UNITS in the fit-width path, and getting
 // it wrong is not hypothetical — a missing divisor zoomed every document by 4/3
