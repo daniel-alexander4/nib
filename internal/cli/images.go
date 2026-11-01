@@ -12,7 +12,7 @@ import (
 
 // imageRow is one line of `nib images --json`. Its keys are part of the machine-readable contract
 // (docs/cli-machine-readable.md, ADR-183): page and index are from 1, index counting the page's
-// pictures in the order pdfcpu finds them; filter is the stream's own filter pipeline; bytes is the
+// pictures by ascending object number (the one order pdfcpu does not shuffle between runs); filter is the stream's own filter pipeline; bytes is the
 // written file's length.
 type imageRow struct {
 	Page   int    `json:"page"`

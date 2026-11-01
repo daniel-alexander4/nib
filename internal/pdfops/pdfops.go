@@ -2792,7 +2792,7 @@ func ExtractImageFiles(pdf []byte) ([]ImageFile, error) {
 			files[i].Width, files[i].Height = c.Width, c.Height
 		}
 	}
-	if ctx, err := pdfread.ReadForInspection(pdf); err == nil {
+	if ctx, err := inspectionRead(pdf); err == nil {
 		for i := range files {
 			if sd, _, err := ctx.DereferenceStreamDict(*types.NewIndirectRef(files[i].objNr, 0)); err == nil && sd != nil {
 				names := make([]string, 0, len(sd.FilterPipeline))
@@ -2832,7 +2832,6 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 func collectImages(pdf []byte, perPage bool) ([]ImageFile, error) {
 	var files []ImageFile
 	seen := map[int]bool{}
-	onPage := map[int]int{}
 	digest := func(img model.Image, _ bool, _ int) error {
 		if img.Reader == nil || img.FileType == "" || seen[img.ObjNr] {
 			return nil // unsupported/empty render, or a repeat of one already written
@@ -2844,8 +2843,7 @@ func collectImages(pdf []byte, perPage bool) ([]ImageFile, error) {
 			return err
 		}
 		seen[img.ObjNr] = true
-		onPage[img.PageNr]++
-		files = append(files, ImageFile{Page: img.PageNr, Index: onPage[img.PageNr], objNr: img.ObjNr,
+		files = append(files, ImageFile{Page: img.PageNr, objNr: img.ObjNr,
 			Width: img.Width, Height: img.Height, Filter: img.Filter, Ext: img.FileType, Data: data})
 		return nil
 	}
@@ -2882,6 +2880,22 @@ func collectImages(pdf []byte, perPage bool) ([]ImageFile, error) {
 		// image-free doc reaches this branch only after the whole-doc pass errored.)
 		if len(files) == 0 && !anyOK {
 			return nil, fmt.Errorf("could not extract images from any page")
+		}
+	}
+	// pdfcpu hands a page's pictures over from a map, so their order differs from run to run (measured on a
+	// real corpus document: the third and the first picture of a page swapped). Page, then object number, is
+	// the one order that does not — a name and an index a program stores must mean the same picture next time.
+	sort.SliceStable(files, func(i, j int) bool {
+		if files[i].Page != files[j].Page {
+			return files[i].Page < files[j].Page
+		}
+		return files[i].objNr < files[j].objNr
+	})
+	for i := range files {
+		if i > 0 && files[i-1].Page == files[i].Page {
+			files[i].Index = files[i-1].Index + 1
+		} else {
+			files[i].Index = 1
 		}
 	}
 	return files, nil
