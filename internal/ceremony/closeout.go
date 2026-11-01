@@ -609,3 +609,47 @@ func readName(dir string) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+// ErrNotEnded is the refusal of a removal that names no closed-out ceremony on this machine.
+var ErrNotEnded = errors.New("no ended ceremony on this computer has that id")
+
+// RemoveEnded deletes a closed-out ceremony's folder from `~/nib/ended/` — the ONE removal of a ceremony the
+// user asks for (ADR-180, `/pending 874`), and it reports how many folders went: `ended/<id>` and any numbered
+// one `CloseOutMirror` set aside beside it.
+//
+// **It reaches only `ended/`.** The live folder `ceremonies/<id>` is never named here, so a proceeding that took
+// the same id after a close-out is untouched; the id is `ValidID`'s (no separator, no `..`), the root must be
+// absolute, and a folder that is a link is left alone rather than followed — `RemoveAll` on a symlink removes the
+// link, and the check keeps even that from happening to a name that is not the directory close-out made.
+//
+// It does not look at the ceremony's state. What a removal costs depends on a fact it cannot know — whether any
+// other copy of this party's signature exists — and the surface that offers it says so before it is pressed.
+func RemoveEnded(root, id string) (int, error) {
+	dirs, err := endedDirs(root, id)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Lstat(dirs[0])
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, ErrNotEnded
+		}
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("%w (%s is not a folder)", ErrNotEnded, filepath.Base(dirs[0]))
+	}
+	removed := 0
+	for _, d := range dirs {
+		li, lerr := os.Lstat(d)
+		if lerr != nil || !li.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(d); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	syncDir(filepath.Dir(dirs[0]))
+	return removed, nil
+}
