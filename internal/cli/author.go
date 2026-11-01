@@ -49,6 +49,9 @@ func cmdAuthor(args []string) int {
 		errf("%v", err)
 		return 1
 	}
+	if needsWideFont(raw) {
+		usePrivateConfig() // a non-Latin default value is drawn in Roboto, which lives in the configuration directory
+	}
 	var fields []authorField
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		// A decoder's own message names a type or a position, never the text (ADR-183).

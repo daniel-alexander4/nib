@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -22,9 +23,12 @@ func TestMain(m *testing.M) {
 			model.NewDefaultConfiguration()
 		}
 		_, code := Run(strings.Split(a, "\x1f"), "test")
+		Cleanup()
 		os.Exit(code)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	Cleanup()
+	os.Exit(code)
 }
 
 // childRun runs `nib args...` in a child with HOME, XDG_CONFIG_HOME and TMPDIR in three empty
@@ -165,4 +169,32 @@ func TestNoVerbWritesThePdfcpuConfiguration(t *testing.T) {
 			t.Fatalf("the control run wrote no configuration (%v): the oracle is blind here", err)
 		}
 	})
+}
+
+// TestAFillOfNonLatinTextStillGetsItsFont — ADR-183. A value pdfcpu draws in Roboto needs the configuration directory
+// Roboto lives in; with the configuration merely disabled a fill of "Иван" failed outright ("font Roboto-Regular not
+// available"). The stateless fill upgrades itself to a private root for non-ASCII data, and leaves nothing behind.
+func TestAFillOfNonLatinTextStillGetsItsFont(t *testing.T) {
+	form, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	in, data, out := filepath.Join(work, "form.pdf"), filepath.Join(work, "a.json"), filepath.Join(work, "f.pdf")
+	os.WriteFile(in, form, 0o600)
+	os.WriteFile(data, []byte(`{"forms":[{"textfield":[{"name":"fullName","value":"Иван Петров"}]}]}`), 0o600)
+	dirs, code, _, stderr := childRun(t, nil, "fill", in, "--data", data, "-o", out)
+	if code != 0 {
+		t.Fatalf("a Cyrillic fill exited %d: %s", code, stderr)
+	}
+	for _, d := range dirs {
+		empty(t, d)
+	}
+	filled, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x, _ := pdfops.ExportFormXFDF(filled); !strings.Contains(string(x), "Иван Петров") {
+		t.Errorf("the value is not in the filled form:\n%s", x)
+	}
 }
