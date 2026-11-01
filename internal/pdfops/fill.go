@@ -190,6 +190,44 @@ func (h heldOptionValues) holds(name, v string) bool {
 	return slices.Contains(h[name], v)
 }
 
+// JSONFieldNames is the ids and names a pdfcpu form-data JSON record gives a value to, sorted, each once — what a
+// fill from it was asked to set (`/pending 919`). A field is matched by id or by name, so both are listed. Only
+// `forms[0]` is read, as the fill reads it. An unreadable record names none.
+func JSONFieldNames(data []byte) []string {
+	type named []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var raw struct {
+		Forms []struct {
+			TextFields        named `json:"textfield"`
+			DateFields        named `json:"datefield"`
+			CheckBoxes        named `json:"checkbox"`
+			RadioButtonGroups named `json:"radiobuttongroup"`
+			ComboBoxes        named `json:"combobox"`
+			ListBoxes         named `json:"listbox"`
+		} `json:"forms"`
+	}
+	if json.Unmarshal(data, &raw) != nil || len(raw.Forms) == 0 {
+		return nil
+	}
+	f := raw.Forms[0]
+	seen := map[string]bool{}
+	var out []string
+	for _, group := range []named{f.TextFields, f.DateFields, f.CheckBoxes, f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes} {
+		for _, x := range group {
+			for _, n := range []string{x.ID, x.Name} {
+				if n != "" && !seen[n] {
+					seen[n] = true
+					out = append(out, n)
+				}
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // CSVFieldNames is the header row of a mail-merge CSV: the field names a fill from it was asked to set. An
 // unreadable CSV names none.
 func CSVFieldNames(data []byte) []string {

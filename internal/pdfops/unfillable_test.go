@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"nib/internal/testpdf"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -45,5 +46,23 @@ func TestUnfillableFieldsIsEmptyForAFormWithNoSuchWidget(t *testing.T) {
 	got, err := UnfillableFields(pdf)
 	if err != nil || len(got) != 0 {
 		t.Errorf("UnfillableFields = %q, %v; want none", got, err)
+	}
+}
+
+// TestJSONFieldNamesAreWhatTheFillIsAskedToSet — /pending 919. A record names its fields by id or name in any of the
+// six kinds; only forms[0] is read; sorted, each once; unreadable names none.
+func TestJSONFieldNamesAreWhatTheFillIsAskedToSet(t *testing.T) {
+	rec := `{"forms":[{"textfield":[{"id":"1","name":"b"},{"id":"2","name":"a"}],"checkbox":[{"name":"c"}],` +
+		`"radiobuttongroup":[{"name":"r"}],"combobox":[{"name":"m"}],"listbox":[{"name":"l"}],"datefield":[{"name":"d"}]},` +
+		`{"textfield":[{"name":"second"}]}]}`
+	got := JSONFieldNames([]byte(rec))
+	want := []string{"1", "2", "a", "b", "c", "d", "l", "m", "r"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("names = %q, want %q (forms[1] is not read)", got, want)
+	}
+	for _, bad := range []string{"", "not json", `{"forms":[]}`} {
+		if n := JSONFieldNames([]byte(bad)); len(n) != 0 {
+			t.Errorf("%q named %q, want none", bad, n)
+		}
 	}
 }

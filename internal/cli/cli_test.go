@@ -1917,8 +1917,10 @@ func TestTextNamesAPageThatSetsNoText(t *testing.T) {
 }
 
 // TestFillAndFieldsSayWhichFieldsCannotBeFilled — /pending 919 F14. A widget whose /Parent leads nowhere is set aside
-// by the fill, which drops a value given to it without an error; `nib fill` and `nib fields` say so on stderr (the
-// listing and the filled PDF keep stdout), and a form with no such widget prints nothing extra.
+// by the fill, which drops a value given to it without an error. `nib fields` says which fields those are, all of
+// them (no data is in play); `nib fill` says only the ones its DATA named, by the data's own names, in the window's
+// words — and nothing when the data named none, however many the form has. All on stderr: the listing and the
+// filled PDF keep stdout.
 func TestFillAndFieldsSayWhichFieldsCannotBeFilled(t *testing.T) {
 	dir := t.TempDir()
 	form := func(orphan bool) string {
@@ -1939,31 +1941,66 @@ func TestFillAndFieldsSayWhichFieldsCannotBeFilled(t *testing.T) {
 		mustWrite(t, p, testpdf.Assemble(objs))
 		return p
 	}
-	data := filepath.Join(dir, "d.json")
-	mustWrite(t, data, []byte(`{"header":{"version":"pdfcpu v0.16.2","source":"x"},"forms":[{"textfield":[{"name":"name","value":"after"}]}]}`))
-	const said = "cannot be filled"
-	for _, c := range []struct {
-		name string
-		args []string
-		run  func([]string) int
-	}{
-		{"fill", nil, cmdFill},
-		{"fields", nil, cmdFields},
-	} {
-		for _, orphan := range []bool{true, false} {
-			in := form(orphan)
-			args := []string{in}
-			if c.name == "fill" {
-				args = []string{in, "--data", data, "-o", filepath.Join(dir, "out.pdf")}
-			}
-			var code int
-			stderr := captureStderr(t, func() { code = c.run(args) })
-			if code != 0 {
-				t.Fatalf("%s (orphan=%v) exited %d: %s", c.name, orphan, code, stderr)
-			}
-			if got := strings.Contains(stderr, said); got != orphan || (orphan && !strings.Contains(stderr, "1 field(s)") || orphan && !strings.Contains(stderr, "orphan")) {
-				t.Errorf("%s (orphan=%v): stderr %q; the note should appear exactly when a widget is orphaned", c.name, orphan, stderr)
-			}
+	record := func(file string, fields ...string) string {
+		var tf []string
+		for _, f := range fields {
+			tf = append(tf, `{"name":"`+f+`","value":"after"}`)
 		}
+		p := filepath.Join(dir, file)
+		mustWrite(t, p, []byte(`{"header":{"version":"pdfcpu v0.16.2","source":"x"},"forms":[{"textfield":[`+strings.Join(tf, ",")+`]}]}`))
+		return p
+	}
+	namesOrphan := record("names-orphan.json", "name", "orphan")
+	namesOnly := record("names-only.json", "name")
+
+	run := func(args []string, run func([]string) int) string {
+		var code int
+		stderr := captureStderr(t, func() { code = run(args) })
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s", args, code, stderr)
+		}
+		return stderr
+	}
+	out := filepath.Join(dir, "out.pdf")
+
+	// nib fields: the whole-form statement, exactly when a widget is orphaned.
+	if got := run([]string{form(true)}, cmdFields); !strings.Contains(got, "cannot be filled") || !strings.Contains(got, "1 field(s)") || !strings.Contains(got, "orphan") {
+		t.Errorf("fields on an orphaned form: stderr %q", got)
+	}
+	if got := run([]string{form(false)}, cmdFields); strings.Contains(got, "cannot be filled") {
+		t.Errorf("fields on a clean form said %q", got)
+	}
+
+	// nib fill: the data's own names, in the window's stem.
+	got := run([]string{form(true), "--data", namesOrphan, "-o", out}, cmdFill)
+	if !strings.Contains(got, unfilledStem) || !strings.Contains(got, "1 field(s)") || !strings.Contains(got, "(orphan)") {
+		t.Errorf("fill whose data names the orphan: stderr %q, want the stem %q and (orphan)", got, unfilledStem)
+	}
+	// The control, and the half that makes the narrowing a claim: the form HAS an orphan and the data does not
+	// name it, so there is nothing to say.
+	if got := run([]string{form(true), "--data", namesOnly, "-o", out}, cmdFill); got != "" {
+		t.Errorf("fill whose data names no orphan said %q on an orphaned form", got)
+	}
+	if got := run([]string{form(false), "--data", namesOrphan, "-o", out}, cmdFill); got != "" {
+		t.Errorf("fill on a clean form said %q", got)
+	}
+
+	// Each data path reaches the narrow list, not only JSON: a name the data gives is the XFDF field's, the CSV
+	// header's.
+	xfdf := filepath.Join(dir, "d.xfdf")
+	mustWrite(t, xfdf, []byte(`<?xml version="1.0" encoding="UTF-8"?><xfdf xmlns="http://ns.adobe.com/xfdf/"><fields>`+
+		`<field name="name"><value>after</value></field><field name="orphan"><value>after</value></field></fields></xfdf>`))
+	if got := run([]string{form(true), "--data", xfdf, "-o", out}, cmdFill); !strings.Contains(got, unfilledStem) || !strings.Contains(got, "(orphan)") {
+		t.Errorf("an XFDF fill naming the orphan said %q", got)
+	}
+	csvNames := filepath.Join(dir, "names.csv")
+	mustWrite(t, csvNames, []byte("name,orphan\nx,y\n"))
+	if got := run([]string{form(true), "--data", csvNames, "--out-dir", filepath.Join(dir, "merged")}, cmdFill); !strings.Contains(got, unfilledStem) || !strings.Contains(got, "(orphan)") {
+		t.Errorf("a CSV merge naming the orphan said %q", got)
+	}
+	csvOnly := filepath.Join(dir, "only.csv")
+	mustWrite(t, csvOnly, []byte("name\nx\n"))
+	if got := run([]string{form(true), "--data", csvOnly, "--out-dir", filepath.Join(dir, "merged2")}, cmdFill); got != "" {
+		t.Errorf("a CSV merge naming no orphan said %q", got)
 	}
 }
