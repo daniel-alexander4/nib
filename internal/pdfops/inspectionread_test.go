@@ -28,7 +28,15 @@ import (
 // no caller.
 var inspectionSites = map[string]func(pdf []byte) any{
 	"inspectTags": func(pdf []byte) any { return inspectTags(pdf) },
-	"Validate":    func(pdf []byte) any { return failed(Validate(pdf)) },
+	"ExtractImageFiles": func(pdf []byte) any {
+		files, err := ExtractImageFiles(pdf)
+		var rows []string
+		for _, f := range files {
+			rows = append(rows, fmt.Sprintf("%d/%d %dx%d %s %s %d", f.Page, f.Index, f.Width, f.Height, f.Filter, f.Ext, len(f.Data)))
+		}
+		return []any{rows, failed(err)}
+	},
+	"Validate": func(pdf []byte) any { return failed(Validate(pdf)) },
 	"carryLang": func(pdf []byte) any {
 		out, err := carryLang(pdf, carryTarget())
 		return []any{stable(out), failed(err)}

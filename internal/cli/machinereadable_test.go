@@ -165,7 +165,7 @@ func TestTheMachineReadableDocNamesEveryKey(t *testing.T) {
 	}
 	for _, k := range []string{"name", "type", "fillable", "flags", "onPage", "widgets", "tooltip", "label", "page", "rect",
 		"width", "height", "runs", "noText", "unread", "text", "size", "hidden", "rotate", "mediaBox", "cropBox",
-		"index", "bytes", "file", "filter", "images", "version", "api", "commands", "NIB_HEADLESS", "--format", "-o -"} {
+		"index", "bytes", "file", "filter", "nib images", "version", "api", "commands", "NIB_HEADLESS", "--format", "-o -"} {
 		if !strings.Contains(string(doc), k) || (k[0] != '-' && k != "NIB_HEADLESS" && !strings.Contains(string(doc), "`"+k)) {
 			t.Errorf("docs/cli-machine-readable.md does not name `%s`", k)
 		}

@@ -12,6 +12,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfread"
 )
 
 // A mark on every page — `/pending 907`.
@@ -220,7 +222,7 @@ func stampPicture(pdf []byte, st PageStamp, pages []int) ([]byte, error) {
 		margin = 36
 	}
 	ox, oy := pageStampOffset(pos, margin)
-	dims, err := api.PageDims(context.Background(), bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	dims, err := pdfread.PageDims(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

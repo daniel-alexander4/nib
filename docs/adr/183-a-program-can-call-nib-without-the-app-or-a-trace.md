@@ -47,7 +47,8 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   route (`ExtractImagesZip`) now also goes through: one door finds pictures (ADR-009). A JPEG stream is written byte for byte,
   anything else re-encoded with the same pixels. pdfcpu's renderer returns no dimensions or filter, so width and height come from
   the written file's header and the filter from the stream dictionary. Files are `0600`, a name that exists refuses the whole
-  extraction before any write, and a document with none creates no folder.
+  extraction before any write, and a document with none creates no folder. A page's pictures are ordered by object number: pdfcpu returns them from a map
+  and the full-suite inspection comparison caught two swapped between runs on a real document.
 - **A release carries `SHA256SUMS` and says how to install one version.** `build.sh` writes it over the binaries and `.deb`
   packages of the version it built (not the licence files) and `--publish` uploads it; `TestAReleaseCarriesItsChecksums` runs the
   block on a stand-in `dist/`. The README's *Install a specific version* gives the download and `sha256sum -c`. Measured: the
