@@ -89,10 +89,11 @@ func TestAFillIsNotRefusedOverAValueItDoesNotChange(t *testing.T) {
 		t.Errorf("after the JSON fill the form does not read the new text and the old choice:\n%s", after)
 	}
 
-	// A value the fill CHANGES to something the field does not offer is still refused, by name.
+	// A value the fill CHANGES to something the field does not offer is still refused, by field name — and the
+	// value is not in the sentence (ADR-183).
 	_, err = FillFormXFDF(pdf, xfdfOf(map[string]string{"colour": "purple"}))
-	if err == nil || !strings.Contains(err.Error(), "colour") || !strings.Contains(err.Error(), "purple") {
-		t.Errorf("changing the choice to a value it does not offer: err = %v, want a refusal naming the field and the value", err)
+	if err == nil || !strings.Contains(err.Error(), "colour") || strings.Contains(err.Error(), "purple") {
+		t.Errorf("changing the choice to a value it does not offer: err = %v, want a refusal naming the field and not the value", err)
 	}
 	if _, err := FillFormJSON(pdf, []byte(strings.Replace(string(edited), `"blue"`, `"purple"`, 1))); err == nil {
 		t.Error("a JSON fill changing the choice to a value it does not offer was accepted")

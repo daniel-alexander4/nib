@@ -989,3 +989,5 @@ home today.
   — `/pending 908`: JPEG and photographic Flate pictures are re-encoded smaller with their colour-space entry untouched; masks, `/Decode`, CMYK, indexed and bilevel pictures are left alone; a flat-colour graphic stays exact; never a larger file; a target is a bisection over six rungs that says when it cannot be met.
 - [ADR-182](182-a-contents-page-prints-the-numbers-the-document-will-have.md) — **a contents page prints the numbers the document will have**
   — `/pending 929`: entries from the bookmarks (else the headings), physical numbers shifted by the block, `/PageLabels` carried, artifacts only so a tagged document gains no untagged content; not links, and why.
+- [ADR-183](183-a-program-can-call-nib-without-the-app-or-a-trace.md) — **a program can call nib without starting the app, writing a configuration or hearing a value back**
+  — RelaxTax handoff: `NIB_HEADLESS=1` turns every non-verb into `unknown command`; every verb closes pdfcpu's config directory (measured: f1040 fill identical); a refused fill names the field and never the value.

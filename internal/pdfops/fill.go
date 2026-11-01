@@ -140,7 +140,8 @@ func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lb
 		if i, aerr := strconv.Atoi(v); aerr == nil && i >= 0 && i < len(options) {
 			return true, nil
 		}
-		return true, fmt.Errorf("pdfcpu: fill field name: \"%s\" unknown value: \"%s\" - options: [%v]\n", name, v, strings.Join(options, ", "))
+		// The value is NOT in the message (ADR-183): it is what the caller typed, a return's SSN among it, and an error reaches stderr and logs. The field and its offered options are the form's own.
+		return true, fmt.Errorf("pdfcpu: fill field name: \"%s\" unknown value - options: [%v]\n", name, strings.Join(options, ", "))
 	}
 	for _, rbg := range rbgs {
 		if done, err := check(rbg.Name, rbg.Value, rbg.Options); done {
