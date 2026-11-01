@@ -395,6 +395,13 @@ every such flag reuses it). Each fill is sized to fit its flag. These place a
 *visible* signature for filling out the form; the cryptographic signature is still
 the separate **Finalize & sign** step.
 
+**Nib offers to keep what you fill in.** After a Save in which you typed into form fields, a
+dialog lists the text you entered and asks whether to keep it for **Autofill from profile** — each
+value ticked or not, nothing kept unless you press *Keep selected*. A password box is never
+offered, nor a value the profile already holds, nor one you said *Not now* to earlier in the
+session. Kept values go into the same encrypted profile, matched next time by the form field's
+name, and you read, change or delete them under *Edit autofill profile…*.
+
 **Send it to someone else to sign** (like DocuSign, without the cloud). Plant the
 flags, then click **Signing marks completed** to lock the document: flag placement
 and every editing tool switch off and the flags freeze, so the layout can't drift

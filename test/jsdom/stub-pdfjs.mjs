@@ -149,6 +149,9 @@ export function getDocument(opts) {
   const doc = {
     numPages: cfg.numPages,
     loadingTask: task,
+    // The form fields, as pdf.js answers `getFieldObjects()`: name -> [{ id, type }], or null for a document with none.
+    // Opt-in (`fieldObjects`), so every existing caller sees a form-less document as before.
+    getFieldObjects: async () => cfg.fieldObjects ?? null,
     // A real Map SUBCLASS, because the app no longer reads `.size` — it installs
     // pdf.js's own `onSetModified` callback, which the real AnnotationStorage fires from
     // setValue when a value actually changed. A plain Map would silently never fire it,
@@ -167,6 +170,8 @@ export function getDocument(opts) {
         return this;
       }
       resetModified() { this.#modified = false; }
+      // pdf.js's own read of one entry (6.1.200 has no `getAll`), undefined when there is none.
+      getRawValue(k) { return this.get(k); }
     })(),
     // `text` may be one string for every page, or an ARRAY of per-page strings. The array form
     // exists because "it read only THIS page" cannot be asserted against a document whose pages all

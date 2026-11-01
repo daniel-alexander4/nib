@@ -46,6 +46,11 @@ test('a form fill reaches the file on disk when you Save', async () => {
   await h.mode('file'); // Save lives on the File tab — see harness.mjs
   await page.click('#saveBtn');
   await saved();
+  // A typed value is offered for Autofill at the Save (/pending 917). This file is about the bytes on disk, so the
+  // offer is declined here — and its presence is asserted, because a dialog that never appears would let the
+  // later clicks in this file pass for the wrong reason (test/ui/profileoffer.test.mjs holds the offer itself).
+  await page.waitForFunction(() => !document.getElementById('profileOfferModal').hidden, null, { timeout: 10000 });
+  await page.click('#profileOfferCancel');
 
   // ONE assertion, because the two ways this fails are two diagnoses of one property and
   // splitting them puts the weaker one first: with this fixture "the fill was lost" and

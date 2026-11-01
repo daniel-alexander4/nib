@@ -1670,6 +1670,23 @@
     </div>
   </div>
 
+  <!-- Offer to keep what was filled in, for Autofill (/pending 917). Shown after a Save when the user typed values into
+       form fields; nothing is kept unless "Keep selected" is pressed. -->
+  <div id="profileOfferModal" hidden>
+    <div class="sigcard">
+      <h3>Keep these for Autofill?</h3>
+      <p class="libhint">You filled in these fields. Nib can keep the ticked ones in your encrypted vault, so Autofill
+        fills them the next time a form uses the same field names. Nothing is kept unless you say so; you can read,
+        change or delete everything kept in <em>Edit autofill profile…</em>.</p>
+      <div id="profileOfferList" class="fieldname-list"></div>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="profileOfferCancel">Not now</button>
+        <button id="profileOfferYes" class="primary">Keep selected</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Hidden-content scan: lists active/hidden content found in the open
        document and offers three removal methods, strongest fidelity-preserving
        first, with a guaranteed-inert flatten as the floor. -->
