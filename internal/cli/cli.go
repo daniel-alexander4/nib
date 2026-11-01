@@ -18,6 +18,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,6 +31,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -81,7 +83,11 @@ func Run(args []string, version string) (handled bool, code int) {
 		}
 		return false, 0 // not a subcommand — let main open the desktop app
 	}
-	defer keepPdfcpuConfigPrivate()()
+	if statelessVerbs[args[0]] {
+		model.ConfigPath = "disable"
+	} else {
+		usePrivateConfig()
+	}
 	return true, run(args[1:])
 }
 
@@ -130,32 +136,74 @@ func printVersion(args []string, version string) int {
 // command`, with or without a transform flag, and no argument at all is a usage error.
 func headless() bool { return os.Getenv("NIB_HEADLESS") == "1" }
 
-// keepPdfcpuConfigPrivate points pdfcpu's configuration at a directory private to this process, and returns the
-// cleanup the caller must run when the verb is done (ADR-183). A verb therefore never writes
-// `$XDG_CONFIG_HOME/pdfcpu` (config.yml, certs/, fonts/Roboto-Regular.gob), and nothing it installs outlives it.
+// statelessVerbs are the commands that never draw text with a font pdfcpu has to supply: they read, list, split, join,
+// or reuse streams a document already holds. They run with pdfcpu's configuration disabled, so they touch no disk at
+// all (ADR-183). Every other verb gets a private configuration (usePrivateConfig), because the default for a command
+// not named here must be the one that cannot lose a font. `TestNoVerbWritesThePdfcpuConfiguration` runs each of these
+// beside the verbs that draw, and fails on the "embedded faces are unavailable" degrade.
+var statelessVerbs = map[string]bool{
+	"fields": true, "text": true, "info": true, "export-xfdf": true, "merge": true, "split": true,
+	"flatten": true, "images": true,
+	// fill and author draw only what Helvetica draws unless their data has non-ASCII text, and upgrade themselves
+	// to a private configuration then (needsWideFont); ASCII data touches no disk at all.
+	"fill": true, "author": true,
+}
+
+var privateConfig struct {
+	sync.Once
+	dir string
+}
+
+// usePrivateConfig points pdfcpu at a configuration directory private to this process (ADR-183): a verb never writes
+// `$XDG_CONFIG_HOME/pdfcpu` (config.yml, certs/, fonts/Roboto-Regular.gob), and nothing it installs outlives the process
+// once Cleanup has run. Idempotent; made once per process, because pdfcpu caches the first configuration it builds and
+// mdpdf remembers which faces it has installed.
 //
-// **It is a private root and not a disabled configuration, and the first version of this function was the second.**
-// `api.DisableConfigDir` leaves pdfcpu with no user fonts at all (its own documentation says so), and nib installs the
-// embedded faces its stamped text, page numbers, contents page and Markdown conversion draw in into exactly that
-// directory (`mdpdf.InstallFaces`): with the configuration disabled they all degraded, with a log line, to unembedded
-// Base-14 fonts. `fill` had been checked and passed; `nib stamp --stamps` is what showed it.
+// **It is a private root and not a disabled configuration for the verbs that draw, and the first version of this
+// decision disabled it for all of them.** `api.DisableConfigDir` leaves pdfcpu with no user fonts at all (its own
+// documentation says so). nib installs the embedded faces its stamped text, page numbers, contents page and Markdown
+// conversion draw in into that directory (`mdpdf.InstallFaces`), and pdfcpu's form fill reaches for Roboto from it when a
+// value is not Latin: with the configuration disabled they all degraded, with a log line, to unembedded Base-14 fonts,
+// and a fill of "Иван" failed outright ("font Roboto-Regular not available"). `fill` on ASCII values had been checked and
+// passed; `nib stamp --stamps` and a Cyrillic fill are what showed the rest.
 //
 // `api.EnsureDefaultConfigAt` is deprecated in v0.16.2 for `LoadConfiguration`, but it is the call that makes every
-// `model.NewDefaultConfiguration()` site in the tree answer from this root (pdfcpu caches the first one), and it must
-// run before any is built — no package-level variable builds one (`TestNoPackageLevelPdfcpuConfiguration`). The root is
-// made under the temporary directory and removed on return; a killed process leaves its few hundred kilobytes of
-// public fonts there, which is declared. If the root cannot be made the configuration is disabled instead and text
-// degrades to the core fonts, as it logs.
-func keepPdfcpuConfigPrivate() (cleanup func()) {
-	root, err := os.MkdirTemp("", "nib-pdfcpu-")
-	if err == nil {
-		if err = api.EnsureDefaultConfigAt(root); err == nil {
-			return func() { os.RemoveAll(root) }
+// `model.NewDefaultConfiguration()` site in the tree answer from this root, and it must run before any is built — no
+// package-level variable builds one (`TestNoPackageLevelPdfcpuConfiguration`). The root is made under the temporary
+// directory; a killed process leaves its few hundred kilobytes of public fonts there, which is declared. If the root
+// cannot be made the configuration is disabled and text degrades to the core fonts, as it logs.
+func usePrivateConfig() {
+	privateConfig.Do(func() {
+		root, err := os.MkdirTemp("", "nib-pdfcpu-")
+		if err == nil {
+			if err = api.EnsureDefaultConfigAt(root); err == nil {
+				privateConfig.dir = root
+				return
+			}
+			os.RemoveAll(root)
 		}
-		os.RemoveAll(root)
+		model.ConfigPath = "disable"
+	})
+}
+
+// Cleanup removes the private configuration directory, if one was made. main calls it once Run has returned.
+func Cleanup() {
+	if privateConfig.dir != "" {
+		os.RemoveAll(privateConfig.dir)
+		privateConfig.dir = ""
 	}
-	model.ConfigPath = "disable"
-	return func() {}
+}
+
+// needsWideFont reports whether form data could carry text that Helvetica cannot draw: any non-ASCII byte, or an escape
+// that could spell one (`\u…` in JSON, `&#…;` in XFDF). pdfcpu's fill then draws it in Roboto, which lives in the
+// configuration directory; ASCII data does not, and a fill of it touches no disk at all.
+func needsWideFont(data []byte) bool {
+	for _, b := range data {
+		if b >= 0x80 {
+			return true
+		}
+	}
+	return bytes.Contains(data, []byte(`\u`)) || bytes.Contains(data, []byte("&#"))
 }
 
 // hasTransformFlag reports whether args carry an output flag that only the

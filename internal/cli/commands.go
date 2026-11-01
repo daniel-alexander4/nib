@@ -834,8 +834,8 @@ func cmdNormalize(args []string) int {
 
 func cmdStamp(args []string) int {
 	fs := flag.NewFlagSet("nib stamp", flag.ContinueOnError)
-	var out, text, watermark, picture, pages string
-	var inPlace bool
+	var out, text, watermark, picture, pages, stamps string
+	var inPlace, asJSON bool
 	var widthPct float64
 	st := pdfops.PageStamp{}
 	outFlag(fs, &out)
@@ -851,9 +851,18 @@ func cmdStamp(args []string) int {
 	fs.IntVar(&st.Angle, "angle", 45, "--watermark: degrees, -90 to 90")
 	fs.Float64Var(&st.Margin, "margin", 36, "points in from the edge (--text and --image)")
 	fs.StringVar(&pages, "pages", "", "pages to stamp, e.g. 1-3,5 or even (default: every page)")
-	fs.Usage = usageFunc(fs, "nib stamp IN -o OUT (--text T | --watermark T | --image FILE) [--position P --pages SEL]  |  nib stamp -w FILE... (...)", "Put a line of text, a diagonal watermark or a picture on every page, or the pages named.")
+	fs.StringVar(&stamps, "stamps", "", "many stamps in one call, from a JSON array [{\"page\":1,\"rect\":[x0,y0,x1,y1],\"text\":\"…\",\"font\":\"Helvetica\",\"size\":10,\"color\":\"#RRGGBB\"} | {…,\"image\":\"logo.png\"}]; - reads it from stdin; replaces --text, --watermark and --image")
+	fs.BoolVar(&asJSON, "json", false, "with --stamps: print the counts as JSON on stderr")
+	fs.Usage = usageFunc(fs, "nib stamp IN -o OUT (--text T | --watermark T | --image FILE) [--position P --pages SEL]  |  nib stamp IN --stamps F.json -o OUT  |  nib stamp -w FILE... (...)", "Put a line of text, a diagonal watermark or a picture on every page, or the pages named.")
 	if code, ok := parse(fs, args); !ok {
 		return code
+	}
+	if stamps != "" {
+		if text != "" || watermark != "" || picture != "" || pages != "" || inPlace {
+			errf("--stamps carries its own pages and rectangles: give it without --text, --watermark, --image, --pages or -w")
+			return 1
+		}
+		return stampMany(fs, out, stamps, asJSON)
 	}
 	given := 0
 	for _, v := range []string{text, watermark, picture} {
@@ -1203,6 +1212,9 @@ func cmdFill(args []string) int {
 	if err != nil {
 		errf("%v", err)
 		return 1
+	}
+	if needsWideFont(data) {
+		usePrivateConfig() // a non-Latin value is drawn in Roboto, which lives in the configuration directory
 	}
 
 	if recordFormat == "csv" { // mail-merge
@@ -2336,4 +2348,37 @@ func inputName(path string) string {
 		return "<stdin>"
 	}
 	return path
+}
+
+// stampMany is `nib stamp --stamps`: one input, one output, a list of stamps from a file or stdin.
+func stampMany(fs *flag.FlagSet, out, stampsPath string, asJSON bool) int {
+	in, code := singleInput(fs, out)
+	if code != 0 {
+		return code
+	}
+	if in == "-" && stampsPath == "-" {
+		errf("the PDF and --stamps cannot both be - : stdin is one stream")
+		return 1
+	}
+	list, err := readInput(stampsPath)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	var rep stampsReport
+	rc := transform(in, out, func(b []byte) ([]byte, error) {
+		stamped, r, err := applyStamps(b, list)
+		rep = r
+		return stamped, err
+	})
+	if rc != 0 {
+		return rc
+	}
+	if asJSON {
+		j, _ := json.Marshal(rep)
+		fmt.Fprintln(os.Stderr, string(j))
+	} else {
+		errf("stamped %d text line(s) and %d picture(s); %d shrunk, %d wrapped, %d overran their box", rep.Text, rep.Images, rep.Shrunk, rep.Wrapped, rep.Overran)
+	}
+	return 0
 }

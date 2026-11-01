@@ -9,7 +9,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 
 - Set **`NIB_HEADLESS=1`**. Any first argument that is not a command is then `unknown command` (exit 1), and no argument is a usage
   error; the desktop app, its server and its browser are never started. `version` and `help` still answer.
-- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`). A command works in a scratch directory of its own under the temporary directory (`nib-pdfcpu-*`: pdfcpu's configuration and nib's public fonts, never a document or a value) and removes it when it ends; only a killed process leaves one.
+- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`). `fields`, `text`, `info`, `export-xfdf`, `merge`, `split`, `flatten` and `images` touch no disk at all, and so does `fill` or `author` on ASCII values. A command that draws text (`stamp`, `pagenum`, `contents`, `import`/`office`, …) or a fill/author with non-ASCII values works in a scratch directory of its own under the temporary directory (`nib-pdfcpu-*`: pdfcpu's configuration and nib's public fonts, never a document or a value) and removes it when it ends; only a killed process leaves one.
 - No refusal repeats a value you supplied to a form field. A field's name, a path and the options the form offers may appear in a message.
 - A command that produces a PDF writes it to `-o FILE` (staged in a `.nib-*.tmp` beside FILE until it is renamed into place) or, with
   `-o -`, to stdout, where nothing is staged. `IN` and `fill --data` accept `-` for stdin (not both at once).
@@ -18,7 +18,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
   with is addressed by its full path.
 - `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
 - `nib merge IN… -o OUT --bookmark-per-file` gives the result one top-level bookmark per input — titled from the file name without its extension (`stdin` for `-`; a repeat becomes `name (2)`) and pointing at that input's first page — with the input's own outline nested beneath it. It replaces the result's outline; without the flag a merge's outline is what it always was.
-- `nib author IN --fields F.json -o OUT` adds fillable fields (below).
+- `nib author IN --fields F.json -o OUT` adds fillable fields, and `nib stamp IN --stamps F.json -o OUT` stamps many text lines and pictures in one call (both below).
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
@@ -85,3 +85,14 @@ more), optional `label` (the accessible name), optional `orientation` (`vert` st
 a template carries: a string for text, a dropdown or radio option, `true`/`false` for a check box. A `value` that is not one of the options,
 a non-boolean check box value, or a value with no `name` is exit 1 naming the field (`"status"`), never the value. Values are written
 by the same fill as `nib fill`, so a character the field's face cannot draw is that fill's limit.
+
+## `nib stamp IN --stamps F.json -o OUT [--json]`
+
+Many stamps in one call, over the window's overlay-field and image stampers. `F.json` (a file, or `-` for stdin) is an array; each entry has
+`page` (from 1), `rect` `[x0,y0,x1,y1]` in points from the page's **lower left** (x1 > x0, y1 > y0), and exactly one of `text` (with optional
+`font` — a Base-14 name such as `Helvetica-Bold` or `Courier`, drawn in nib's embedded look-alike — `size` in points and `color` `#RRGGBB`) and
+`image` (the path of a PNG or JPEG, fitted inside the rectangle). Text is fitted to its rectangle: shrunk to a floor, then wrapped where the
+box has the height, and otherwise left to overrun. The summary on stderr — words, or with `--json` `{"text","images","shrunk","wrapped","overran"}` —
+counts the text lines and pictures stamped and how the text fitted; it never repeats the text. `--stamps` replaces `--text`, `--watermark`,
+`--image`, `--pages` and `-w`. A page out of range, a bad rectangle, an entry with both or neither of text and image, or an unreadable image
+is exit 1 naming the entry's number (`stamp 3`), and nothing is written.

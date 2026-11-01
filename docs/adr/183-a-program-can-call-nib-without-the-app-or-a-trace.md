@@ -14,18 +14,24 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   switch. It is an environment variable and not a flag: a flag would be a second spelling of one rule (ADR-009), and the
   caller that needs it cannot rely on its own argument list being a verb. Unset, the fall-through stands — it is how a
   double-click opens a file.
-- **A verb never writes pdfcpu's configuration directory — it works in a private one** (`keepPdfcpuConfigPrivate`). Before any verb
-  runs, `api.EnsureDefaultConfigAt` points pdfcpu at a directory made for this process under the temporary directory, which is
-  removed when the verb returns; HOME and XDG_CONFIG_HOME are not touched. Measured: `fields` alone created `config.yml`,
-  `certs/` and `fonts/Roboto-Regular.gob` under XDG_CONFIG_HOME. **The first version of this decision disabled the configuration
-  instead (`model.ConfigPath = "disable"`, v2.17.0–v2.24.0) and was wrong:** pdfcpu then offers no user fonts at all, nib installs
-  its embedded faces (stamped text, page numbers, the contents page, Markdown conversion) into that directory before drawing, and
-  every such verb fell back to unembedded Base-14 fonts with a log line. `fill` on the f1040 had been checked identical and
-  passed; `nib stamp --stamps` showed the rest. `TestNoVerbWritesThePdfcpuConfiguration` now also fails on that log line, for
-  `stamp`, `pagenum` and a Markdown conversion. Declared: a killed process leaves its scratch directory (a few hundred kilobytes of
-  public fonts) under TMPDIR; installing the faces costs about half a second on a verb that stamps text, where the old shared
-  directory kept them between runs. `TestNoPackageLevelPdfcpuConfiguration` holds that no package builds a configuration before
-  `Run` can point it.
+- **A verb never writes pdfcpu's configuration directory.** Measured: `fields` alone created `config.yml`, `certs/` and
+  `fonts/Roboto-Regular.gob` under XDG_CONFIG_HOME. Two shapes, by whether the verb draws text:
+  the verbs that only read, list, split, join or reuse streams (`statelessVerbs`: fields, text, info, export-xfdf, merge, split,
+  flatten, images) run with pdfcpu's configuration **disabled** and touch no disk; every other verb works in a **private
+  configuration** made once per process under the temporary directory (`usePrivateConfig`, `api.EnsureDefaultConfigAt`) and
+  removed by `cli.Cleanup` when `main` has the result. `fill` and `author` are stateless unless their data has non-ASCII text
+  (`needsWideFont`), which pdfcpu draws in Roboto from the configuration directory, and then upgrade themselves — so a fill of
+  ASCII values still creates no file at all (the syscall-trace test). HOME and XDG_CONFIG_HOME are never touched.
+  **The first version of this decision disabled the configuration for every verb (v2.17.0–v2.24.0) and was wrong:** pdfcpu then
+  offers no user fonts at all, nib installs its embedded faces (stamped text, page numbers, the contents page, Markdown
+  conversion) into that directory before drawing, and every such verb fell back to unembedded Base-14 fonts with a log line; a
+  fill of "Иван" failed outright ("font Roboto-Regular not available"). `fill` of ASCII values on the f1040 had been checked
+  identical and passed; `nib stamp --stamps` and a Cyrillic fill showed the rest. The tests now fail on the degrade log line for
+  `stamp`, `pagenum` and a Markdown conversion, and run a Cyrillic fill. A verb not named in `statelessVerbs` gets the private
+  configuration, because the default for an unlisted command must be the one that cannot lose a font. Declared: a killed process
+  leaves its scratch directory (a few hundred kilobytes of public fonts) under TMPDIR; installing the faces costs about half a
+  second on a verb that stamps text, where the old shared directory kept them between runs; `TestNoPackageLevelPdfcpuConfiguration`
+  holds that no package builds a configuration before `Run` can point it.
 - **A refusal never repeats the value it was given.** The only echo found in nib's code was `optionValuesOffered`
   (combo, list and radio); it names the field and the form's own options. pdfcpu's form package was searched for a
   message built from a value (`errors.New(... +`, `Errorf` with `%s/%q/%v`) and the rest are field ids, object numbers
@@ -85,6 +91,9 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   because the window authors blank forms and the web route reads that type. A value that is not an option, or is the wrong kind, is
   refused before anything is authored, naming the field (ADR-183's no-value rule). Measured: the door tags text, check box and
   dropdown, and cannot tag a radio group, so such a form is untagged and the summary says so.
+- **`nib stamp --stamps F.json`** (RelaxTax B3, `internal/cli/stamps.go`) is a list of the window's two stampers — text through
+  `StampFields` (which fits it: shrink, wrap, or overrun, reported as counts) and pictures through `StampImages` — applied in that
+  order in two rewrites. No new writer, so no new census row. It is the call that exposed the font defect above.
 
 ## Declared
 

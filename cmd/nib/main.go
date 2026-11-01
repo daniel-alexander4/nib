@@ -60,6 +60,7 @@ func run() int {
 	// without ever binding a port or opening a browser. Anything else (a PDF
 	// path, --replace, or no argument) falls through to the desktop boot below.
 	if handled, code := cli.Run(os.Args[1:], version); handled {
+		cli.Cleanup()
 		return code
 	}
 
