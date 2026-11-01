@@ -184,6 +184,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"and server tests so the skip, the fact and the answer are measured on one fixture (/pending 766 part 7).",
 		"FormChain": "test-support — /pending 706's 400-form comparison shape, the unaffordable-optimize fixture mdpdf's exhibit test takes (ADR-055)",
 
+		"ConvertStructured":              "interface — mdpdf is a root package other projects import; this is its spelling without Options, which ConvertStructuredWithOptions now serves for nib.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*side).SetWriteDeadline":       "interface — net.Conn. Its three siblings on the same type are called; this one is not, and dropping it would stop the type satisfying the interface.",
 		"(blockFontmap).ResolveFace":     "interface — go-text/typesetting's shaping.Fontmap, dispatched by its segmenter when a line of a signature block is split by face (ADR-158).",

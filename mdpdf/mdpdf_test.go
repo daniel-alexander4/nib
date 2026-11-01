@@ -229,7 +229,7 @@ func TestInlineGlue(t *testing.T) {
 // TestPercentEscaping guards against pdfcpu's %-placeholder substitution
 // (%p, %P, %t, %v) mangling literal percent signs.
 func TestPercentEscaping(t *testing.T) {
-	l := newLayout(coreFaces)
+	l := newLayout(coreFaces, letterGeom)
 	l.para(plainWords("50% of pages"), 0, nil, 14)
 	spec, err := l.spec()
 	if err != nil {

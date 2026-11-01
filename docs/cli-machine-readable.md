@@ -19,6 +19,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 - `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
 - `nib merge IN… -o OUT --bookmark-per-file` gives the result one top-level bookmark per input — titled from the file name without its extension (`stdin` for `-`; a repeat becomes `name (2)`) and pointing at that input's first page — with the input's own outline nested beneath it. It replaces the result's outline; without the flag a merge's outline is what it always was.
 - `nib author IN --fields F.json -o OUT` adds fillable fields, and `nib stamp IN --stamps F.json -o OUT` stamps many text lines and pictures in one call (both below).
+- `nib office IN -o OUT` (also `nib import`) fills Markdown templates and chooses the page (below).
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 
@@ -96,3 +97,21 @@ box has the height, and otherwise left to overrun. The summary on stderr — wor
 counts the text lines and pictures stamped and how the text fitted; it never repeats the text. `--stamps` replaces `--text`, `--watermark`,
 `--image`, `--pages` and `-w`. A page out of range, a bad rectangle, an entry with both or neither of text and image, or an unreadable image
 is exit 1 naming the entry's number (`stamp 3`), and nothing is written.
+
+## `nib office IN -o OUT` (also `nib import`) — Markdown templates and the page
+
+Converts a document to PDF: Markdown natively, Office formats through LibreOffice. `nib import` is the same command under the name
+`PLAN-import-export.md` D15 gives it. `IN` may be `-` with `--type md` (a name with no extension has no type), and `-o -` writes the PDF to
+stdout. The options below are **Markdown only**; on a document LibreOffice converts they are exit 1 (`apply to Markdown only`).
+
+- `--set KEY=VALUE` (repeatable) and `--set-file F.json` (a JSON object of string values; `-` reads it from stdin; `--set` overrides it) turn
+  placeholder substitution **on**: `{{key}}` in the text, in headings, emphasis, list items, link text and code spans is replaced by the value,
+  as **text** — a `*`, `_`, `[` or `#` in a value is a character, not Markdown, because it is put in after the document is parsed. A key is letters,
+  digits, `_`, `.` or `-`, with optional spaces inside the braces (`{{ name }}`). `{{=key}}` prints the literal `{{key}}`. Fenced and indented
+  code blocks are literal. Without `--set` or `--set-file` braces are left alone, as they always were.
+- A template that uses a key with no value is exit 1 naming the key — `the template uses {{ref}} and no value was given for "ref"` — and never a
+  value; so is braces that look like a placeholder and are not (`{{ two words }}`, `{{first\_name}}`) and a placeholder that formatting breaks in two
+  (`{{na*me*}}`). Nothing is written. Limits: a `--set-file` of 1 MiB, 10,000 keys, a value of 64 KiB.
+- `--page-size letter|a4|legal` (portrait; default letter) and `--margin POINTS` (all four sides; default 72, one inch) choose the page; a margin that
+  leaves under 144 points of page to write on is refused.
+- Not here yet, pinned on `PLAN-import-export.md` P01.S03: GFM tables and local images in Markdown, and placeholders in DOCX or ODT.

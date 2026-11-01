@@ -155,7 +155,12 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 // own content stream, and `PLAN-accessibility.md` P06.S02 is where it is checked rather than
 // assumed.
 func ConvertStructured(md []byte, base *Faces, fallbacks []Font) ([]byte, Structure, error) {
-	pdf, l, err := convert(md, base, fallbacks)
+	return ConvertStructuredWithOptions(md, base, fallbacks, Options{})
+}
+
+// ConvertStructuredWithOptions is ConvertStructured with the caller's Options (page size, margin, placeholders).
+func ConvertStructuredWithOptions(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, Structure, error) {
+	pdf, l, err := convert(md, base, fallbacks, opts)
 	if err != nil {
 		return nil, Structure{}, err
 	}
@@ -177,7 +182,12 @@ func ConvertStructured(md []byte, base *Faces, fallbacks []Font) ([]byte, Struct
 // because the caller's faces come from an install that can fail (an unwritable font directory)
 // and a document set in core fonts is a worse PDF, not a broken one.
 func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) {
-	pdf, _, err := convert(md, base, fallbacks)
+	return ConvertWithFacesAndOptions(md, base, fallbacks, Options{})
+}
+
+// ConvertWithFacesAndOptions is ConvertWithFaces with the caller's Options (page size, margin, placeholders).
+func ConvertWithFacesAndOptions(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, error) {
+	pdf, _, err := convert(md, base, fallbacks, opts)
 	return pdf, err
 }
 
@@ -187,7 +197,11 @@ func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) 
 // **One body, not two**, because the alternative is a second renderer walk that could disagree with
 // the first about what it produced — and a structure describing a document that was drawn by
 // different code is worse than no structure.
-func convert(md []byte, base *Faces, fallbacks []Font) ([]byte, *layout, error) {
+func convert(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, *layout, error) {
+	g, err := opts.geometry()
+	if err != nil {
+		return nil, nil, err
+	}
 	// **A font install that fails on the MACHINE degrades; one that fails because the caller
 	// declared a face wrongly does not.** `PLAN-accessibility.md` P04.S03, and it is measured
 	// rather than imagined: with the pdfcpu user-font directory unwritable — a read-only or
@@ -221,8 +235,11 @@ func convert(md []byte, base *Faces, fallbacks []Font) ([]byte, *layout, error) 
 		return nil, nil, err
 	}
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
-	r := &renderer{src: md, l: newLayout(faces), fonts: fallbacks, f: faces}
+	r := &renderer{src: md, l: newLayout(faces, g), fonts: fallbacks, f: faces, sub: &substituter{vars: opts.Vars}}
 	r.blocks(doc, 0, nil)
+	if r.sub.err != nil {
+		return nil, nil, r.sub.err
+	}
 	spec, err := r.l.spec()
 	if err != nil {
 		return nil, nil, err
@@ -245,6 +262,7 @@ type renderer struct {
 	// `L`/`LI` nesting needs the number; "this is in a list" does not describe a sublist.
 	listDepth  int
 	quoteDepth int
+	sub        *substituter // placeholders (Options.Vars); nil-safe
 }
 
 // maxNestDepth bounds container nesting BEFORE the document is parsed.
@@ -351,8 +369,8 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 			// mdpdf renders Markdown a stranger sent for both the GUI import and
 			// `nib office`. The clamp shipped on one of the two branches.
 			next := indent + listIndent
-			if next > maxBlockIndent {
-				next = maxBlockIndent
+			if next > r.l.g.maxIndent() {
+				next = r.l.g.maxIndent()
 			}
 			r.blocks(li, next, &m)
 		}
@@ -364,8 +382,8 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		// not a realistic document, but it is a realistic paste, and the output is not an
 		// error: it is hundreds of pages of single characters.
 		next := indent + quoteIndent
-		if next > maxBlockIndent {
-			next = maxBlockIndent
+		if next > r.l.g.maxIndent() {
+			next = r.l.g.maxIndent()
 		}
 		r.quoteDepth++
 		r.blocks(t, next, marker)
@@ -389,7 +407,8 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 // inline collects the inline content of a block into styled words.
 // headSize > 0 sets the heading base size (headings render bold).
 func (r *renderer) inline(n ast.Node, headSize int) []word {
-	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts, f: r.f}
+	r.sub.checkSplit(n, r.src)
+	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts, f: r.f, sub: r.sub}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		in.node(c)
 	}
@@ -414,6 +433,7 @@ type inliner struct {
 	src      []byte
 	fonts    []Font  // fallback faces for words the base faces cannot print
 	f        faceSet // the base faces this document is set in
+	sub      *substituter
 	headSize int
 	bold     int
 	italic   int
@@ -425,14 +445,14 @@ type inliner struct {
 func (in *inliner) node(n ast.Node) {
 	switch t := n.(type) {
 	case *ast.Text:
-		in.addText(string(t.Segment.Value(in.src)))
+		in.addText(in.sub.text(string(t.Segment.Value(in.src))))
 		if t.HardLineBreak() {
 			in.br()
 		} else if t.SoftLineBreak() {
 			in.flush() // soft break = word boundary
 		}
 	case *ast.String:
-		in.addText(string(t.Value))
+		in.addText(in.sub.text(string(t.Value)))
 	case *ast.CodeSpan:
 		in.code++
 		in.children(n)
@@ -566,7 +586,7 @@ func (l *layout) spec() ([]byte, error) {
 			// text operator no role described, so every document with a text-less page — a code
 			// block ending in blank lines that spill onto their own page, or a Markdown file with
 			// nothing printable — could not be tagged. Zero-sized, so nothing is visible.
-			boxes = []box{{x: marginX, y: pageTop}}
+			boxes = []box{{x: l.g.mx, y: l.g.top()}}
 		}
 		content["text"] = texts
 		if len(boxes) > 0 {
@@ -584,9 +604,9 @@ func (l *layout) spec() ([]byte, error) {
 		pages[strconv.Itoa(i+1)] = map[string]any{"content": content}
 	}
 	return json.Marshal(map[string]any{
-		// Must agree with layout.go's pageW/pageH (Letter, 612x792) or the
-		// wrap/pagination math desyncs from the emitted MediaBox.
-		"paper":  "LetterP",
+		// Must agree with the layout's geometry (Letter 612x792 unless Options chose another page) or
+		// the wrap/pagination math desyncs from the emitted MediaBox.
+		"paper":  l.g.paper,
 		"origin": "LowerLeft",
 		"pages":  pages,
 	})

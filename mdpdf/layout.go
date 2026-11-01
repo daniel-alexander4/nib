@@ -230,6 +230,7 @@ type layout struct {
 	runs  [][]run // one slice per page
 	boxes [][]box
 	y     float64 // current baseline cursor on the last page
+	g     geom    // the page and its margins, chosen per document (Options)
 	// f is the base face set, so code blocks measure and draw in the same monospace face
 	// the rest of the document was configured with rather than a package constant.
 	f faceSet
@@ -254,8 +255,8 @@ func (l *layout) beginBlock(role Role) Role {
 	return prev
 }
 
-func newLayout(f faceSet) *layout {
-	l := &layout{f: f}
+func newLayout(f faceSet, g geom) *layout {
+	l := &layout{f: f, g: g}
 	l.newPage()
 	return l
 }
@@ -263,7 +264,7 @@ func newLayout(f faceSet) *layout {
 func (l *layout) newPage() {
 	l.runs = append(l.runs, nil)
 	l.boxes = append(l.boxes, nil)
-	l.y = pageTop
+	l.y = l.g.top()
 }
 
 func (l *layout) add(r run) {
@@ -275,7 +276,7 @@ func (l *layout) add(r run) {
 
 // need starts a new page unless h points of vertical room remain.
 func (l *layout) need(h float64) {
-	if l.y-h < marginY && l.y < pageTop {
+	if l.y-h < l.g.my && l.y < l.g.top() {
 		l.newPage()
 	}
 }
@@ -283,7 +284,7 @@ func (l *layout) need(h float64) {
 // gap advances the cursor by h, except at the top of a page where block
 // spacing would just eat into the margin.
 func (l *layout) gap(h float64) {
-	if l.y < pageTop {
+	if l.y < l.g.top() {
 		l.y -= h
 	}
 }
@@ -292,7 +293,7 @@ func (l *layout) gap(h float64) {
 // line, paginating as needed. A non-nil marker (list bullet or number) is drawn
 // in the gutter markerGutter points left of the first line.
 func (l *layout) para(words []word, indent float64, marker *word, lead float64) {
-	lines := wrapWords(words, contentW-indent)
+	lines := wrapWords(words, l.g.contentW()-indent)
 	if len(lines) == 0 {
 		if marker == nil {
 			return
@@ -308,10 +309,10 @@ func (l *layout) para(words []word, indent float64, marker *word, lead float64) 
 			// The marker is its own block: PDF/UA wants it as `/Lbl` BESIDE the item's `/LBody`,
 			// so it must not share an ordinal with the text it labels.
 			prev := l.beginBlock(Role{Kind: RoleMarker, Level: l.role.Level})
-			l.line([]word{*marker}, marginX+indent-markerGutter)
+			l.line([]word{*marker}, l.g.mx+indent-markerGutter)
 			l.role = prev
 		}
-		l.line(ln, marginX+indent)
+		l.line(ln, l.g.mx+indent)
 	}
 }
 
@@ -346,7 +347,7 @@ func (l *layout) line(words []word, x float64) {
 // wider than the content width (Courier is fixed-pitch, so a rune count works).
 func (l *layout) code(lines []string, indent float64) {
 	sty := l.f.sty(l.f.code, sizeCode)
-	maxChars := int((contentW - indent) / sty.width("M"))
+	maxChars := int((l.g.contentW() - indent) / sty.width("M"))
 	if maxChars < 1 {
 		maxChars = 1
 	}
@@ -357,7 +358,7 @@ func (l *layout) code(lines []string, indent float64) {
 			l.need(lead)
 			l.y -= lead
 			if chunk != "" {
-				l.add(run{x: marginX + indent, y: l.y, text: chunk, sty: sty})
+				l.add(run{x: l.g.mx + indent, y: l.y, text: chunk, sty: sty})
 			}
 		}
 	}
@@ -382,7 +383,7 @@ func (l *layout) rule(indent float64) {
 	l.need(14)
 	l.y -= 10
 	pg := len(l.boxes) - 1
-	l.boxes[pg] = append(l.boxes[pg], box{marginX + indent, l.y, contentW - indent, 0.75})
+	l.boxes[pg] = append(l.boxes[pg], box{l.g.mx + indent, l.y, l.g.contentW() - indent, 0.75})
 	l.y -= 2
 }
 
