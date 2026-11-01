@@ -11,7 +11,8 @@ make scans searchable with on-device OCR in 41 languages, truly redact, compare
 revisions visually, rewrite a paragraph and have it re-wrap in the document's own
 font, tag a document for screen readers and check it against PDF/UA, sign and
 timestamp — alone, with one peer, or in a ceremony of up to 32 — convert to and
-from Office and PDF/A, pull tables out to spreadsheets, and reshape pages — all
+from Office and PDF/A, pull tables out to spreadsheets, stamp a logo or a contents page onto every
+page, shrink a file's pictures without flattening its text, and reshape pages — all
 from a desktop-style app *or* a scriptable command line.
 
 And it's **yours**: free and open source under the AGPL, a single self-contained
