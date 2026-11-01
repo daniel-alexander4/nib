@@ -11,7 +11,7 @@ cost, Tier 2/3 tools) checked the plan against the code and this machine; four c
 tagged `(grill pin, 2026-11-01)`. Seam inventory: `memory/instruments/import-export.md`.
 
 **Status: unbuilt. P01.S01 is next.** Stage 3 (subsystem rounds: the import door, the document model, the Export card) is the next pass.
-**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended).
+**Passes:** Stage 2 whole-plan `/grill` 2026-11-01 (amended); Stage 3 round 1, the import door, 2026-11-01 (D8–D15; the other two rounds — the document model, the Export card — remain).
 
 **SME packs:** `go`, `verification` (inferred from `go.mod` and the repo's census guards).
 
@@ -131,6 +131,46 @@ that every type but PDF goes both ways. Either is dropped on a word from Dan.
 SVG export runs `pdftocairo -svg` (poppler; present on the dev machine, not yet run for this plan) as a tool behind the one door (D5, L4), one page
 per file; with it absent the format is not offered.
 
+### Stage 3, round 1 — the import door *(via /discuss, autonomous, 2026-11-01; facts read from `imageopen.go`, `office.go`, `pdfops/office.go`, `handoff.go`, `instance.go`)*
+
+### D8 — One import function, classified by content first *(auto-adopted)*
+`pdfops.Import(ctx, data, name, ImportOptions) (Result, error)` replaces `asOpenableDocument`'s `openability` enum, `handleOffice`'s body and `cmdOffice`'s. PDF, image
+and archive kinds are decided by their bytes; the extension decides only what bytes cannot say (Markdown, text, CSV, the Office family). Every door (path, upload,
+URL, hand-off, `combine.go:36`, `diskstate.go:257` through `readInstallablePDF`) calls it and no door keeps its own refusal; `convertibleRefusal` goes. One refusal
+sentence per cause, from the function. *Why:* ADR-009 — today the same Office file is converted at one door and refused at four, and `handleOffice` and `cmdOffice` each carry their own copy of the language and PDF/UA handling.
+
+### D9 — An import runs on the request's context, two at a time *(context auto-adopted; the cap assumed)*
+`ConvertOfficeToPDF` runs on `context.Background()` (`office.go:203`), so a closed window leaves LibreOffice running for up to its 2-minute timeout, and nothing
+bounds how many run at once (eight double-clicked `.docx` files start eight). The import takes the request's context, which kills the process tree through
+`runConvert`'s existing path, and a process-wide gate admits two tool conversions at a time, the rest waiting visibly ("Importing…"). `roomToOpen` is asked before the
+conversion, as `handleOffice` already does. *Cap of two assumed:* LibreOffice's per-run profile (`office.go:207`) makes more than one safe; two is a judgment, to be measured at P01.S02.
+The hand-off client's 30 s wait (`instance.go:447`) is unchanged: an import that outlasts it is already served to completion there (`instance.go:438`) and the window shows the tab.
+
+### D10 — Plain text and CSV are native; Markdown's renderer sets them *(Dan's tier in D2; mechanism assumed)*
+`txt` and `csv` leave `OfficeExtensions` (they go through LibreOffice today). Text is set as preformatted wrapped lines and CSV as a table across pages, both by `mdpdf`
+with Nib's faces (`ConvertDocToPDF`'s Markdown path), the CSV delimiter sniffed (comma, semicolon, tab). *Assumed:* reusing mdpdf over a second renderer keeps one set of fonts, `embeddedFontsAreHonest` and tagging.
+
+### D11 — An imported tab is named `<base>.pdf`, titled from the source *(auto-adopted)*
+Images keep `scan.png` as a name today (`server.go:969`, `handoff.go:204`) and Office becomes `.pdf` (`office.go:104`); the Save As suggestion then differs by door. One rule in the function:
+base + `.pdf`, `TitleFromName` from the source name, best-effort as now. `importedFrom` (the source basename) rides on the document.
+
+### D12 — The notice is said once per window per document *(auto-adopted)*
+The window announces an imported document the first time it sees a document id carrying `importedFrom` (ids are never reused, ADR-001), remembered in that window's `sessionStorage`.
+A reload, a tab switch or a second window does not repeat it; a hand-off arrival (ADR-086) says it the same way, because the keying is the document, not the door.
+
+### D13 — Options travel in `ImportOptions`, and the function applies them *(auto-adopted)*
+`Lang`, `LangChosen` move from `handleOffice` (`office.go:82-100`) and `cmdOffice` into the function: `SetLang`, then `LabelUA` only for Markdown with a CHOSEN language (ADR-033), unchanged. The
+automatic open sends neither, so it declares no language and claims no label, as `/api/office` without `lang` does today. *Import…* keeps the language field.
+
+### D14 — One limits struct, every cap a named constant with its test *(starting values assumed)*
+`importLimits` holds: input bytes (`maxPDFBytes`, 200 MiB, existing), image pixels (`maxImagePixels`, 200 Mpx, existing), and new ones — archive entries 2,000, decoded
+bytes 1 GiB, pages 1,000 (TIFF and CBZ), text 20 MiB, CSV cells 1,000,000, with a ratio bound on any archive. Each refuses by name (L7, P5 in the inventory). *The new values are
+unmeasured guesses* and are tuned at P01.S03 against a measured run; the output must still pass the byte cap (ADR-008) at `addDocCapped`.
+
+### D15 — `nib import` is the command, `nib office` its alias *(auto-adopted)*
+`nib import IN -o OUT [--lang TAG]` calls the same function and prints the same missing-tool sentence with the vendor URL (`cmdOffice`'s today); `nib office` stays as an alias so no script breaks.
+The unprintable-character warning (`UnprintableMarkdown`) moves into the function and is returned, so the window and the command both show it.
+
 ---
 
 ## Out of scope
@@ -168,7 +208,7 @@ Acceptance:
 Tasks: *(written at slice-grill time)*
 
 #### P01.S02 — Open imports
-Scope: the four doors route a non-PDF through one import function; the notice; the Import… entry keeps options; Open Recent records the source (D6). Refs: D1, D6, L1, L2.
+Scope: the four doors route a non-PDF through one import function; the notice; the Import… entry keeps options; Open Recent records the source (D6). Refs: D1, D6, D8, D9, D11, D12, D13, D15, L1, L2.
 Acceptance:
 - Each door imports the same file to the same bytes; the notice names the file; Save on the result is Save As.
 - A census drives every route against an imported tab and hashes the source file before and after.
@@ -180,13 +220,13 @@ Acceptance:
 Tasks: *(written at slice-grill time)*
 
 #### P01.S03 — Tier 1 native producers
-Scope: GIF, BMP, multi-page TIFF, plain text, CSV, CBZ producers, with caps (pixels, entries, decoded bytes, pages) and one test per cap. Refs: D2, L7.
+Scope: GIF, BMP, multi-page TIFF, plain text, CSV, CBZ producers, with caps (pixels, entries, decoded bytes, pages) and one test per cap. Refs: D2, D10, D14, L7. Tunes D14's unmeasured values against a measured run.
 Acceptance:
 - Each producer's output opens and reads back its content; each cap refuses by name.
 Tasks: *(written at slice-grill time)*
 
 #### P01.S04 — `nib import`
-Scope: the command, generalising `nib office`. Refs: D2.
+Scope: the command, generalising `nib office`. Refs: D2, D15.
 Acceptance:
 - Same set as the window; a missing tool exits non-zero with the missing-tool sentence.
 Tasks: *(written at slice-grill time)*
