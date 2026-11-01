@@ -423,8 +423,10 @@ func sanitize(pdf []byte) ([]byte, error) {
 func cmdMerge(args []string) int {
 	fs := flag.NewFlagSet("nib merge", flag.ContinueOnError)
 	var out string
+	var perFile bool
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT", "Concatenate two or more PDFs or images (PNG, JPEG, TIFF, WebP), in the order given, into one.")
+	fs.BoolVar(&perFile, "bookmark-per-file", false, "give the result one top-level bookmark per input, titled from its file name and pointing at its first page; an input's own outline is nested beneath it (replaces the result's outline)")
+	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT [--bookmark-per-file]", "Concatenate two or more PDFs or images (PNG, JPEG, TIFF, WebP), in the order given, into one.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -437,6 +439,7 @@ func cmdMerge(args []string) int {
 		return 1
 	}
 	pdfs := make([][]byte, 0, fs.NArg())
+	files := make([]pdfops.MergedFile, 0, fs.NArg())
 	for _, p := range fs.Args() {
 		b, err := readInput(p)
 		if err != nil {
@@ -455,11 +458,22 @@ func cmdMerge(args []string) int {
 			}
 		}
 		pdfs = append(pdfs, b)
+		title := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+		if p == "-" {
+			title = "stdin"
+		}
+		files = append(files, pdfops.MergedFile{Title: title, PDF: b})
 	}
 	res, err := pdfops.Combine(pdfs)
 	if err != nil {
 		errf("%v", err)
 		return 1
+	}
+	if perFile {
+		if res, err = pdfops.BookmarkMergedFiles(res, files); err != nil {
+			errf("%v", err)
+			return 1
+		}
 	}
 	return writeOut(out, res)
 }

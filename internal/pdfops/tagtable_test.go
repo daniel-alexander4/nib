@@ -222,6 +222,9 @@ var tagFates = map[string]tagFate{
 	"DropUAIdentificationUnlessSigned": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return DropUAIdentificationUnlessSigned(b, false)
 	}},
+	"BookmarkMergedFiles": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return BookmarkMergedFiles(b, []MergedFile{{Title: "census", PDF: b}})
+	}},
 	"SetOutline": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetOutline(b, []OutlineItem{{Title: "x", Page: 1}}) }},
 	"SetPageLabels": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return SetPageLabels(b, []PageLabelRange{{Start: 1, Style: "decimal"}})
