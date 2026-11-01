@@ -1114,6 +1114,10 @@ note beside it saying how the ceremony ended and when your machine decided so. *
 ceremony you took part in.** Nothing removes what was moved — not after a year, not ever, and there
 is no setting that would — so `~/nib/ended/` grows by one folder per ceremony. Those are your files:
 delete a folder there, or the whole directory, whenever you no longer want it, and Nib will not miss it.
+Or press **Remove…** on a row of the *Finished* list in the ceremony panel: Nib asks first, in words
+that say the folder holds the document with your signature on it and may be the only copy, and then
+deletes that one ceremony from this computer. It is the only thing in Nib that removes one, and it
+happens only when you press it.
 
 **What the document itself proves — and what it does not.** A finished Nib PDF proves that
 its signatures are intact, that they all commit to the same proceeding, and which of the

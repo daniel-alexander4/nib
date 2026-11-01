@@ -17553,6 +17553,9 @@ function renderCeremonyPanel(data, host, canAct) {
   host.textContent = '';
   const list = (data && data.ceremonies) || [];
   const ended = (data && data.ended) || [];
+  // `canAct` and `primary` are ANDed, and they are different facts — see the note where the cards are built.
+  const mayAct = canAct !== false && !(data && data.primary === false);
+  const refresh = () => loadCeremonyPanel(host, canAct);
   if (!list.length) {
     const p = document.createElement('p');
     p.className = 'libhint';
@@ -17567,7 +17570,7 @@ function renderCeremonyPanel(data, host, canAct) {
     // the moment they are all there is. ADR-012 moves a ceremony rather than deleting it precisely
     // so the party's own signed contribution stays findable; a panel that shows the folder only
     // while some other ceremony happens to be live undoes that for the case it was written for.
-    renderEndedCeremonies(host, ended);
+    renderEndedCeremonies(host, ended, mayAct, refresh);
     return;
   }
   // **`primary` is the field and `note` is its sentence.** Read the flag rather than only the
@@ -17584,11 +17587,10 @@ function renderCeremonyPanel(data, host, canAct) {
   // show a ceremony and must never offer an action on it; a non-primary Nib is unlocked and
   // must still not act, because two processes driving one mirror is two writers with no lock
   // between them. Either one alone would leave the other's case armed.
-  const mayAct = canAct !== false && data.primary !== false;
   for (const c of list) {
     host.appendChild(ceremonyCard(c, mayAct));
   }
-  renderEndedCeremonies(host, ended);
+  renderEndedCeremonies(host, ended, mayAct, refresh);
 }
 
 // renderEndedCeremonies lists what this machine has closed out.
@@ -17598,7 +17600,7 @@ function renderCeremonyPanel(data, host, canAct) {
 // vanish with no trace and no way to find the signed contribution the move deliberately preserved.
 // The receipt carries the state and the date THIS machine observed it — `Termination` has no
 // `When` on purpose, so a convener cannot drive what other machines believe about timing.
-function renderEndedCeremonies(host, ended) {
+function renderEndedCeremonies(host, ended, mayAct, refresh) {
   if (!ended.length) return;
   const h = document.createElement('p');
   h.className = 'libhint cerendedhead';
@@ -17652,6 +17654,32 @@ function renderEndedCeremonies(host, ended) {
       w.className = 'cerwhen';
       w.textContent = when.toLocaleDateString();
       row.appendChild(w);
+    }
+    // Remove (/pending 874, ADR-180): the one way a finished ceremony leaves this computer, and only when pressed.
+    // Offered only where the cards offer their actions (`mayAct`): a second copy of Nib on this machine, or the
+    // lock screen, shows the list and removes nothing.
+    if (mayAct && r.ceremony) {
+      const rm = document.createElement('button');
+      rm.className = 'cerendedremove';
+      rm.textContent = 'Remove…';
+      rm.title = 'Delete this finished ceremony from this computer';
+      rm.onclick = async () => {
+        const label = r.name || ('the ceremony finished ' + (Number.isNaN(when.getTime()) ? 'earlier' : when.toLocaleDateString()));
+        // The words carry the cost: on every machine but the convener's this folder holds the only copy of the
+        // user's own signature (ADR-012), and Nib cannot tell whether another copy exists.
+        if (!confirm(`Remove “${label}” from this computer?\n\nThis deletes the folder Nib kept for it: the document with your signature on it, and its record. If nobody else has kept a copy, it is gone for good.\n\nNothing else is changed.`)) return;
+        rm.disabled = true;
+        const res = await apiFetch('/api/ceremonies/ended/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ceremony: r.ceremony }),
+          unpinned: true,
+        });
+        if (!res.ok) { rm.disabled = false; toast(await errText(res, 'Nib could not remove that ceremony.')); return; }
+        toast('Removed');
+        if (refresh) await refresh();
+      };
+      row.appendChild(rm);
     }
     host.appendChild(row);
   }
