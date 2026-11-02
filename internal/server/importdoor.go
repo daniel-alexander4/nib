@@ -60,7 +60,8 @@ func importRefusal(err error) (status int, msg string) {
 	switch {
 	case errors.As(err, &room):
 		return http.StatusConflict, room.Error()
-	case errors.Is(err, pdfops.ErrImportTooLarge), errors.Is(err, pdfops.ErrConvertedTooLarge), errors.Is(err, pdfops.ErrTooManyPages):
+	case errors.Is(err, pdfops.ErrImportTooLarge), errors.Is(err, pdfops.ErrConvertedTooLarge), errors.Is(err, pdfops.ErrTooManyPages),
+		errors.Is(err, pdfops.ErrTextTooLong), errors.Is(err, pdfops.ErrCSVTooLong), errors.Is(err, pdfops.ErrCSVTooWide), errors.Is(err, pdfops.ErrCSVTooManyCells):
 		return http.StatusRequestEntityTooLarge, err.Error()
 	case errors.Is(err, pdfops.ErrConverterOverMemory):
 		return http.StatusUnprocessableEntity, err.Error()
@@ -72,7 +73,7 @@ func importRefusal(err error) (status int, msg string) {
 		return http.StatusRequestTimeout, "the conversion was cancelled"
 	case errors.Is(err, pdfops.ErrNotADocument), errors.Is(err, pdfops.ErrCorruptDocument), errors.Is(err, pdfops.ErrNotText), errors.Is(err, pdfops.ErrNotAPDF),
 		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused),
-		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels):
+		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrCSVUnreadable):
 		return http.StatusUnsupportedMediaType, err.Error()
 	}
 	if tool, ok := pdfops.MissingToolFor(err); ok {

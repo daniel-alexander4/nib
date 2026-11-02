@@ -10,6 +10,7 @@ package browser
 import (
 	"log"
 	"nib/internal/safe"
+	"nib/internal/tempdir"
 	"os"
 	"os/exec"
 	"runtime"
@@ -43,6 +44,7 @@ func Open(url string) (*exec.Cmd, error) {
 			appArgs = append(appArgs, "--class="+windowClass)
 		}
 		cmd := exec.Command(path, appArgs...)
+		cmd.Env = tempdir.ChildEnv() // the window outlives Nib's spill directory
 		if err := cmd.Start(); err == nil {
 			// Started is not the same as running.
 			//
@@ -73,6 +75,7 @@ func Open(url string) (*exec.Cmd, error) {
 	name, args := tabOpener(url)
 	log.Printf("no Chromium-family browser opened an app window; opening a tab in the default browser with %s", name)
 	cmd := exec.Command(name, args...)
+	cmd.Env = tempdir.ChildEnv()
 	err := cmd.Start()
 	if err == nil {
 		recordOpened(Window{})

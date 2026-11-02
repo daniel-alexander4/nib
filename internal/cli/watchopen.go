@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"nib/internal/tempdir"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,7 @@ func nibLaunch(path string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("could not find the nib binary: %w", err)
 	}
 	cmd := exec.Command(exe, path)
+	cmd.Env = tempdir.ChildEnv() // not the spill directory this process removes on its way out
 	cmd.Stderr = os.Stderr
 	detachLaunch(cmd)
 	return cmd, nil

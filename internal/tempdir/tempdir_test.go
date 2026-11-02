@@ -286,3 +286,29 @@ func TestASecondProcessHoldingADirectoryIsUntouched(t *testing.T) {
 		t.Fatalf("after the holder died Sweep removed %d, want 1", cnt)
 	}
 }
+
+func TestChildEnvRestoresTheTempVariableClaimRedirected(t *testing.T) {
+	orig := t.TempDir()
+	t.Setenv("TMPDIR", orig)
+	resetRoot()
+	t.Cleanup(resetRoot)
+	old, oldOrig := claimed, origTemp
+	claimed, origTemp = nil, nil
+	t.Cleanup(func() { claimed, origTemp = old, oldOrig })
+	if err := Claim(); err != nil {
+		t.Fatal(err)
+	}
+	defer Release()
+	if os.Getenv("TMPDIR") == orig {
+		t.Fatal("Claim did not redirect TMPDIR: the test has no stimulus")
+	}
+	var got []string
+	for _, kv := range ChildEnv() {
+		if strings.HasPrefix(kv, "TMPDIR=") {
+			got = append(got, kv)
+		}
+	}
+	if len(got) != 1 || got[0] != "TMPDIR="+orig {
+		t.Fatalf("a detached child would start with %v, want exactly TMPDIR=%s", got, orig)
+	}
+}

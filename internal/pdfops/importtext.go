@@ -26,6 +26,13 @@ import (
 // Both caps REFUSE, and both are taken from the source before any layout is done (Y6): a layout that
 // has begun has already spent what the cap exists to protect.
 
+const (
+	// textRowRunes is the characters one laid-out row of text is taken to hold, for the pre-layout row estimate.
+	textRowRunes = 90
+	// sniffLines is how many leading lines the delimiter sniff looks through.
+	sniffLines = 20
+)
+
 var (
 	// ErrTextTooLong: a plain-text source with more lines than importTextLines.
 	ErrTextTooLong = errors.New("that text has more lines than Nib sets")
@@ -78,8 +85,14 @@ func utf16String(b []byte, bigEndian bool) string {
 func textToMarkdown(text string) (string, error) {
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	text = strings.TrimRight(text, "\n")
-	if n := strings.Count(text, "\n") + 1; n > importTextLines {
-		return "", fmt.Errorf("%w: Nib sets up to %d lines", ErrTextTooLong, importTextLines)
+	// The cap is on LAID-OUT rows, not source lines: one 20 MiB line wraps into hundreds of thousands of them. A row
+	// is taken as textRowRunes characters at the narrowest page Nib sets, so the estimate errs towards refusing.
+	rows := 0
+	for _, ln := range strings.Split(text, "\n") {
+		rows += max(1, (utf8.RuneCountInString(ln)+textRowRunes-1)/textRowRunes)
+		if rows > importTextLines {
+			return "", fmt.Errorf("%w: Nib sets up to %d lines", ErrTextTooLong, importTextLines)
+		}
 	}
 	longest, run := 0, 0
 	for _, r := range text {
@@ -94,29 +107,37 @@ func textToMarkdown(text string) (string, error) {
 	return fence + "\n" + text + "\n" + fence + "\n", nil
 }
 
-// sniffDelimiter picks the comma, semicolon or tab that splits the first lines most evenly: the one with the
-// most occurrences outside quotes on the first line that has any, comma on a tie or when none does.
+// sniffDelimiter picks the comma, semicolon or tab with the most occurrences outside quotes on the first of the
+// first sniffLines lines that has any (a title line with none is passed over), comma on a tie or when none does.
 func sniffDelimiter(text string) rune {
-	best, bestN := ',', 0
-	line := text
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
-	for _, d := range []rune{',', ';', '\t'} {
-		n, inQuote := 0, false
-		for _, r := range line {
-			switch {
-			case r == '"':
-				inQuote = !inQuote
-			case r == d && !inQuote:
-				n++
+	rest := text
+	for i := 0; i < sniffLines && rest != ""; i++ {
+		line := rest
+		if j := strings.IndexByte(rest, '\n'); j >= 0 {
+			line, rest = rest[:j], rest[j+1:]
+		} else {
+			rest = ""
+		}
+		best, bestN := ',', 0
+		for _, d := range []rune{',', ';', '\t'} {
+			n, inQuote := 0, false
+			for _, r := range line {
+				switch {
+				case r == '"':
+					inQuote = !inQuote
+				case r == d && !inQuote:
+					n++
+				}
+			}
+			if n > bestN {
+				best, bestN = d, n
 			}
 		}
-		if n > bestN {
-			best, bestN = d, n
+		if bestN > 0 {
+			return best
 		}
 	}
-	return best
+	return ','
 }
 
 // mdCell makes a CSV cell literal Markdown: every character the inline syntax could read is escaped, a line

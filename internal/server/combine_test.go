@@ -129,8 +129,8 @@ func TestCombineTakesImagesThroughTheOpenersDoor(t *testing.T) {
 	var refusal struct{ Error string }
 	json.Unmarshal([]byte(body), &refusal)
 	// An office file is converted by the SAME function that opens it (D8), so a package that is not one is
-	// refused with that function's sentence, naming the file.
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(refusal.Error, "report.docx") || !strings.Contains(refusal.Error, "package") {
-		t.Errorf("a corrupt office file = %d %q, want 400 naming it and the opener's own refusal", resp.StatusCode, refusal.Error)
+	// refused with that function's sentence and status (415), naming the file.
+	if resp.StatusCode != http.StatusUnsupportedMediaType || !strings.Contains(refusal.Error, "report.docx") || !strings.Contains(refusal.Error, "package") {
+		t.Errorf("a corrupt office file = %d %q, want 415 (the opener's own status) naming it and its refusal", resp.StatusCode, refusal.Error)
 	}
 }

@@ -51,8 +51,8 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		default:
-			_, msg := importRefusal(err)
-			httpError(w, http.StatusBadRequest, fh.Filename+": "+msg)
+			status, msg := importRefusal(err)
+			httpError(w, status, fh.Filename+": "+msg)
 			return
 		}
 		pdfs = append(pdfs, doc)

@@ -77,6 +77,11 @@ func Open(r io.ReaderAt, size int64, lim Limits) (*Archive, error) {
 	if !lim.valid() {
 		return nil, errors.New("ziputil: Open needs every limit set")
 	}
+	// The entry count is read from the end-of-central-directory record BEFORE zip.NewReader builds an entry for every
+	// record: a package of nothing but minimal records would otherwise be allocated whole and then refused.
+	if n, ok := declaredEntries(r, size); ok && n > uint64(lim.Entries) {
+		return nil, fmt.Errorf("%w: %d parts, and the cap is %d", ErrTooManyEntries, n, lim.Entries)
+	}
 	zr, err := zip.NewReader(r, size)
 	if errors.Is(err, zip.ErrInsecurePath) && zr != nil && lim.TolerateUnsafeNames {
 		err = nil
@@ -237,4 +242,26 @@ func Write(entries []Entry) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// declaredEntries is the total-entries field of the end-of-central-directory record, found in the last 64 KiB + 22
+// bytes. ok is false when there is no record to read or the field is the zip64 sentinel (0xFFFF): the caller then
+// relies on the count after the directory is read, which the archive's size and the input cap bound.
+func declaredEntries(r io.ReaderAt, size int64) (uint64, bool) {
+	const eocdMin, maxComment = 22, 1 << 16
+	n := min(size, int64(eocdMin+maxComment))
+	if n < eocdMin {
+		return 0, false
+	}
+	buf := make([]byte, n)
+	if _, err := r.ReadAt(buf, size-n); err != nil && !errors.Is(err, io.EOF) {
+		return 0, false
+	}
+	for i := len(buf) - eocdMin; i >= 0; i-- {
+		if buf[i] == 'P' && buf[i+1] == 'K' && buf[i+2] == 5 && buf[i+3] == 6 {
+			c := uint64(buf[i+10]) | uint64(buf[i+11])<<8
+			return c, c != 0xFFFF
+		}
+	}
+	return 0, false
 }

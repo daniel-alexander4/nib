@@ -118,3 +118,16 @@ func TestWriteStoresMimetypeFirstAtByte38AndRefusesUnsafeNames(t *testing.T) {
 		t.Fatalf("duplicate: %v", err)
 	}
 }
+
+// The entry count is read from the end-of-central-directory record before zip.NewReader builds an entry per record:
+// a record that claims more entries than the cap is refused as TOO MANY, where reading the directory first would
+// have called the archive unreadable (its real directory is shorter than the claim).
+func TestTheDeclaredEntryCountIsRefusedBeforeTheDirectoryIsRead(t *testing.T) {
+	b := build(t, []string{"a"}, [][]byte{[]byte("x")})
+	i := bytes.LastIndex(b, []byte{'P', 'K', 5, 6})
+	b[i+10], b[i+11] = 0x10, 0x27 // 10,000 entries declared
+	_, err := open(t, b, testLim)
+	if !errors.Is(err, ErrTooManyEntries) {
+		t.Fatalf("err = %v, want ErrTooManyEntries from the declared count", err)
+	}
+}

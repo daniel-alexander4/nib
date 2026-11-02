@@ -412,3 +412,26 @@ func TestThePNGEncoderRoundTripsATransparentFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A TIFF whose first directory is a reduced-resolution thumbnail and whose second is the page: the walk drops the
+// thumbnail, and the decoder — which reads the FIRST directory — would have opened it instead of the page.
+func TestATIFFWithAThumbnailFirstOpensThePageNotTheThumbnail(t *testing.T) {
+	b := tiffOf([]int{8, 40}, 0, false, false)
+	// The first directory's fifth entry (PhotometricInterpretation, tag 262) becomes NewSubfileType = reduced (tag 254),
+	// moved to the front so the tags stay in ascending order and the decoder reads the thumbnail without complaint.
+	d := 8 + 2
+	ent := append([]byte{}, b[d+4*12:d+5*12]...)
+	binary.LittleEndian.PutUint16(ent[0:], 254)
+	binary.LittleEndian.PutUint16(ent[2:], 4)
+	binary.LittleEndian.PutUint32(ent[4:], 1)
+	binary.LittleEndian.PutUint32(ent[8:], 1)
+	copy(b[d+12:d+5*12], b[d:d+4*12])
+	copy(b[d:], ent)
+	res, err := importBytes(t, b, "thumb.tif", ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pageWidths(t, res.PDF); !eq(got, []int{30}) {
+		t.Fatalf("pages = %v, want the one 40 px page (30 pt), not the 8 px thumbnail (6 pt)", got)
+	}
+}

@@ -405,12 +405,13 @@ Four claims were read in the code before they were pinned: `redactMarks` is wind
 
 ## Build order
 
-### P01 — The import door
+### P01 — The import door *(done 2026-11-02, v2.33.1)*
 Goal: one format table and one import door, so every type but PDF arrives as a PDF tab the same way, and Group 1 works with no outside tool.
 Exit criteria:
 - Every Group 1 import type opens (drag, path, upload, hand-off) as a pathless PDF tab with the notice; the original is byte-identical afterwards (L1's census).
 - No list of extensions exists outside the format table (a source census, L5).
 - `nib import IN -o OUT.pdf` converts the same set (`nib office` becomes its alias).
+**P01 close (2026-11-02, v2.33.1).** Ledger: (1) *Every Group 1 import type opens as a pathless tab with the notice* — png/jpeg/tiff/webp/gif/bmp/cbz/txt/csv/md and the Office family across path, upload, URL, hand-off, Combine (`TestEveryNativeFormatIsTheSameDocumentAtEveryDoor`, now with txt and csv fixtures); the notice for a hand-off with NO window open is not announced (/pending 940, declared); (2) *the original is byte-identical afterwards* — L1's census; (3) *no list of extensions outside the table* — `TestTheFormatTableIsTheOnlyList`; (4) *`nib import` converts the same set, `nib office` its alias* — `importnative_test.go`. Gates: full suite on the closing tree (below); tier 2 jsdom 896 ran / 0 skipped; tier 3 279 ran / 2 skipped; tiers 4 and 6 did NOT fire (no change to the session/ceremony/delivery/discovery paths, `internal/p2p` or `internal/rendezvous`). Phase review `code-reviews/v2.33.0-p01-phase-close-2026-11-02.md`: P01 diff only (not the 380k-line repo), no critical, 11 fixed in-phase with 3 red-proved, residue /pending 940. Graduation pass in `instruments/import-export.md`; inventorycheck ok with warnings (the older tables' reader columns are unnamed, so their readers were never checked).
 
 #### P01.S01 — The format table *(done 2026-11-01, v2.29.0)*
 Scope: one table in `pdfops` — sniff, extensions, MIME, producer, tool, import and export flags — read by the open door, `listDir` filters, the picker's `accept`, and the `.desktop` MimeType. Refs: D2, L5.

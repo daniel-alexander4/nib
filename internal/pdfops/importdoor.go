@@ -117,13 +117,18 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 			countOK(o.Door, fkey)
 		}
 	}()
+	if size < 0 {
+		return nil, ErrSourceChanged
+	}
 	if size > MaxImportBytes {
 		return nil, ErrImportTooLarge
 	}
 	head := make([]byte, min(size, int64(importSniffBytes)))
-	if _, err := src.ReadAt(head, 0); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+	n, rerr := src.ReadAt(head, 0)
+	if rerr != nil && !errors.Is(rerr, io.EOF) {
+		return nil, rerr
 	}
+	head = head[:n] // a source that shrank since it was measured is not zero-padded into a different file
 	if LooksLikePDF(head[:min(int64(len(head)), int64(pdfHeaderWindow))]) {
 		data, err := readAll(src, size)
 		if err != nil {
@@ -138,7 +143,7 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 	}
 	nm := name
 	if o.TypeExt != "" {
-		nm = "x" + o.TypeExt
+		nm = "x." + strings.TrimPrefix(o.TypeExt, ".")
 	}
 	f, err := classify(head, nm)
 	if err != nil {
@@ -166,6 +171,14 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 		data, err := readAll(src, size)
 		if err != nil {
 			return nil, err
+		}
+		// The package was inspected before the wait for a slot; a file replaced during it is held to the same caps now,
+		// on the bytes the converter will actually read.
+		if f.Family == FamilyZip && f.Key != "cbz" {
+			rd, n := BytesSource(data)
+			if err := inspectPackage(rd, n, f); err != nil {
+				return nil, err
+			}
 		}
 		return convertImport(ctx, data, name, f, o)
 	}
@@ -199,11 +212,17 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 	return res, nil
 }
 
+// ErrSourceChanged: the source is not the size it was when it was measured.
+var ErrSourceChanged = errors.New("that file changed while it was being opened; try again")
+
 func readAll(src io.ReaderAt, size int64) ([]byte, error) {
 	// Exactly size bytes in one allocation: io.ReadAll grows by doubling and held ~4x a 200 MiB source (measured).
 	buf := make([]byte, size)
 	n, err := src.ReadAt(buf, 0)
 	if err != nil && !(errors.Is(err, io.EOF) && int64(n) == size) {
+		if errors.Is(err, io.EOF) {
+			return nil, ErrSourceChanged
+		}
 		return nil, err
 	}
 	return buf, nil

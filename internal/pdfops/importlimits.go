@@ -29,8 +29,9 @@ const (
 	importTextLines = 40000
 	// importCSVRows caps a CSV's records, taken before layout (provisional until measured).
 	importCSVRows = 10000
-	// importCSVCells caps a CSV's cells (D14).
-	importCSVCells = 1000000
+	// importCSVCells caps a CSV's cells (D14: 1,000,000 as a guess; the row and column caps leave at most 240,000, so
+	// the figure is set where it can bind).
+	importCSVCells = 200000
 	// csvMaxColumns is mdpdf's table width limit (maxTableCols), restated so a wide CSV is refused by name
 	// before a table is built; a test holds them equal.
 	csvMaxColumns = 24

@@ -193,11 +193,13 @@ func TestTextCapsRefuseByName(t *testing.T) {
 		}
 	})
 	t.Run("csv cells", func(t *testing.T) {
-		// 1,000,000 cells in 24 columns exceeds the row cap first; one record of many empty cells would exceed the
-		// column cap first — so the cell cap is held by its own check, with the other two raised out of the way.
-		rows := importCSVCells/csvMaxColumns + 1
-		if rows <= importCSVRows {
-			t.Skipf("the row cap (%d) binds before the cell cap (%d) at %d columns: the cell cap is unreachable and is a backstop", importCSVRows, importCSVCells, csvMaxColumns)
+		atCap := importCSVCells / csvMaxColumns
+		if _, err := csvToMarkdown(string(csvOf(atCap, csvMaxColumns))); err != nil {
+			t.Fatalf("at the cap: %v", err)
+		}
+		_, err := csvToMarkdown(string(csvOf(atCap+1, csvMaxColumns)))
+		if !errors.Is(err, ErrCSVTooManyCells) {
+			t.Fatalf("cap+1 = %v, want ErrCSVTooManyCells", err)
 		}
 	})
 	t.Run("text lines", func(t *testing.T) {
@@ -301,4 +303,31 @@ func pdfTextRaw(t *testing.T, pdf []byte) string {
 		}
 	}
 	return b.String()
+}
+
+func TestOneVeryLongLineIsCountedByTheRowsItWrapsTo(t *testing.T) {
+	_, err := textToMarkdown(strings.Repeat("x", textRowRunes*importTextLines+1))
+	if !errors.Is(err, ErrTextTooLong) {
+		t.Fatalf("a single line that lays out as more than %d rows: %v, want ErrTextTooLong", importTextLines, err)
+	}
+	if _, err := textToMarkdown(strings.Repeat("x", textRowRunes*importTextLines)); err != nil {
+		t.Fatalf("at the cap: %v", err)
+	}
+}
+
+func TestTheDelimiterIsSniffedPastATitleLineWithNone(t *testing.T) {
+	if d := sniffDelimiter("Quarterly report\nname\tqty\nbolt\t4\n"); d != '\t' {
+		t.Fatalf("delimiter = %q, want tab", d)
+	}
+}
+
+func TestASourceSmallerThanItsDeclaredSizeIsNamedNotPadded(t *testing.T) {
+	r, _ := BytesSource([]byte("a,b\n1,2\n"))
+	_, err := Import(context.Background(), r, 4096, "x.csv", ImportOptions{})
+	if !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("err = %v, want ErrSourceChanged", err)
+	}
+	if _, err := Import(context.Background(), r, -1, "x.csv", ImportOptions{}); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("a negative size: %v", err)
+	}
 }

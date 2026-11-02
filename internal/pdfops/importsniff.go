@@ -53,7 +53,7 @@ func sniffFamily(head []byte) Family {
 // looksLikeText: no NUL in the head. Markdown, plain text and CSV have no signature, so "is text" is the
 // only thing the bytes can be held to.
 func looksLikeText(head []byte) bool {
-	// A UTF-16 or UTF-32 text file (Notepad's "Unicode", a Windows CSV export) is full of NULs and starts with a
+	// A UTF-16 text file (Notepad's "Unicode", a Windows CSV export) is full of NULs and starts with a
 	// byte-order mark; LibreOffice converts it, so it is text.
 	for _, bom := range [][]byte{{0xFF, 0xFE}, {0xFE, 0xFF}} {
 		if bytes.HasPrefix(head, bom) {
@@ -90,6 +90,10 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: it is a packaged document but its name does not say which kind", ErrExtensionDisagrees)
 		}
 		if named.Family != fam {
+			if fam == FamilyOLE && named.Family == FamilyZip {
+				// A password-protected DOCX/XLSX/PPTX is an OLE compound file wrapping the encrypted package.
+				return Format{}, fmt.Errorf("%w: the name says %s, but the file is an older Office file — a password-protected document looks like this; remove the password and try again", ErrExtensionDisagrees, named.Label)
+			}
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are not", ErrExtensionDisagrees, named.Label)
 		}
 		return named, nil

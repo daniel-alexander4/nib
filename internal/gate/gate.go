@@ -82,6 +82,10 @@ func (g *Gate) acquire(ctx context.Context, bounded bool) (release func(), err e
 	defer g.queued.Add(-1)
 	select {
 	case g.slots <- struct{}{}:
+		if err := ctx.Err(); err != nil { // a slot and a cancel arriving together: the cancel wins, and the slot goes back
+			<-g.slots
+			return nil, err
+		}
 		return g.releaser(), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()

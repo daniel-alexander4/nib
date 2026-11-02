@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"image/gif"
 	"image/png"
@@ -93,6 +94,30 @@ func (j *rasterJob) charge(w, h int) error {
 	return nil
 }
 
+// importPixelBytes caps one picture's DECODED size in bytes: the pixel cap (200 Mpx) at the usual 4 bytes a pixel.
+// A 16-bit RGBA or CMYK picture is 8 and 4 bytes a pixel, so a pixel count alone lets one page cost twice that.
+const importPixelBytes = int64(maxImagePixels) * 4
+
+// bytesPerPixel is what the decoder allocates for each pixel of a picture in this colour model.
+func bytesPerPixel(m color.Model) int64 {
+	switch m {
+	case color.GrayModel:
+		return 1
+	case color.Gray16Model:
+		return 2
+	case color.RGBA64Model, color.NRGBA64Model:
+		return 8
+	}
+	return 4 // RGBA, NRGBA, CMYK, paletted-as-RGBA
+}
+
+func (j *rasterJob) chargeBytes(w, h int, bpp int64) error {
+	if int64(w)*int64(h)*bpp > importPixelBytes {
+		return fmt.Errorf("%w: it is %d×%d at %d bytes a pixel, and Nib opens pictures up to %d MiB decoded", ErrImagePixels, w, h, bpp, importPixelBytes>>20)
+	}
+	return nil
+}
+
 // page turns one picture into a page now and keeps only the page.
 func (j *rasterJob) page(p RasterPage, rotate int) error {
 	if err := j.ctx.Err(); err != nil {
@@ -153,7 +178,9 @@ func (j *rasterJob) addFile(data []byte) error {
 		switch {
 		case err != nil && (len(ifds) > 0 || errors.Is(err, ErrTooManyPages)):
 			return err // a chain that began and broke: opening its first page would lose the rest without a word
-		case err == nil && len(ifds) > 1:
+		case err == nil && (len(ifds) > 1 || ifds[0].off != tiffFirstOffset(data)):
+			// More than one page — or one real page behind a thumbnail the walk dropped: the decoder reads the FIRST
+			// directory, which would be the thumbnail.
 			return j.addTIFF(data, ifds)
 		}
 		// One directory — or a first one this walk cannot read, which the decoder then judges as it always has: the
@@ -373,6 +400,7 @@ type tiffPage struct {
 	comp       uint16
 	dpi        float64
 	reducedRes bool
+	bytesPerPx int64
 }
 
 // walkTIFF reads the IFD chain itself: x/image/tiff decodes the first image directory only, so a multi-page TIFF
@@ -497,7 +525,29 @@ func (t tiffAt) ReadAt(p []byte, at int64) (int, error) {
 	return n, nil
 }
 
+// tiffFirstOffset is the header's offset of the first directory, which tiff.Decode reads.
+func tiffFirstOffset(data []byte) uint32 {
+	if data[0] == 'M' {
+		return binary.BigEndian.Uint32(data[4:8])
+	}
+	return binary.LittleEndian.Uint32(data[4:8])
+}
+
 func (j *rasterJob) addTIFF(data []byte, pages []tiffPage) error {
+	var bo0 binary.ByteOrder = binary.LittleEndian
+	if data[0] == 'M' {
+		bo0 = binary.BigEndian
+	}
+	for i := range pages {
+		// The size that is charged is the DECODER's own reading of the directory it will decode, not the walk's:
+		// two readings of one directory (a repeated tag) must not let a small charge buy a large allocation.
+		cfg, err := tiff.DecodeConfig(io.NewSectionReader(tiffAt{data: data, off: pages[i].off, bo: bo0}, 0, int64(len(data))))
+		if err != nil {
+			return fmt.Errorf("pdfops: a page of this tiff could not be read: %w", err)
+		}
+		pages[i].w, pages[i].h = cfg.Width, cfg.Height
+		pages[i].bytesPerPx = bytesPerPixel(cfg.ColorModel)
+	}
 	for _, pg := range pages {
 		switch pg.comp {
 		case 0, 1, 3, 4, 5, 8, 32773, 32946: // none, G3, G4, LZW, deflate, PackBits — what the decoder has
@@ -505,6 +555,9 @@ func (j *rasterJob) addTIFF(data []byte, pages []tiffPage) error {
 			return fmt.Errorf("%w (compression %d)", ErrTIFFCompression, pg.comp)
 		}
 		if err := j.charge(pg.w, pg.h); err != nil {
+			return err
+		}
+		if err := j.chargeBytes(pg.w, pg.h, pg.bytesPerPx); err != nil {
 			return err
 		}
 	}
@@ -561,7 +614,7 @@ func CBZToDocument(ctx context.Context, data []byte, name string) ([]byte, error
 	}
 	sort.SliceStable(order, func(x, y int) bool { return naturalLess(files[order[x]].Name, files[order[y]].Name) })
 	for _, i := range order {
-		if err := ctx.Err(); err != nil {
+		if err := j.ctx.Err(); err != nil {
 			return nil, err
 		}
 		b, err := a.Read(files[i], importCBZEntryBytes)

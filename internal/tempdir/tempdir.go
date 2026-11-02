@@ -84,7 +84,35 @@ func Root() (string, error) {
 var (
 	claimMu sync.Mutex
 	claimed *Dir
+	// origTemp is what each temp variable held before Claim (nil: unset), for ChildEnv.
+	origTemp map[string]*string
 )
+
+// ChildEnv is the environment a process that OUTLIVES this one should start with: this process's own, with
+// the temp variables Claim redirected put back. A detached child (a Nib the watch launches, the user's browser)
+// that inherited the spill directory would lose it when Release removes it on our way out, and would nest its
+// own temp root under ours instead of the per-user one its sweep reads.
+func ChildEnv() []string {
+	claimMu.Lock()
+	defer claimMu.Unlock()
+	env := os.Environ()
+	if len(origTemp) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env)+len(origTemp))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if _, redirected := origTemp[k]; !redirected {
+			out = append(out, kv)
+		}
+	}
+	for k, v := range origTemp {
+		if v != nil {
+			out = append(out, k+"="+*v)
+		}
+	}
+	return out
+}
 
 // Claim makes a `nib-spill-…` directory the process's temporary directory (TMPDIR / TEMP), once, at
 // start and before any goroutine runs. It covers what Nib does not create itself — a multipart
@@ -105,6 +133,14 @@ func Claim() error {
 	keys := []string{"TMPDIR"}
 	if runtime.GOOS == "windows" {
 		keys = []string{"TMP", "TEMP"}
+	}
+	origTemp = map[string]*string{}
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			origTemp[k] = &v
+		} else {
+			origTemp[k] = nil
+		}
 	}
 	for _, k := range keys {
 		if err := os.Setenv(k, d.Path()); err != nil {
