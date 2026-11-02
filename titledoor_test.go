@@ -40,6 +40,8 @@ func TestEveryAuthoredDocumentGetsATitle(t *testing.T) {
 	exempt := map[string]string{
 		"internal/pdfops/office.go:ConvertDocToPDF": "a one-line forward to ConvertDocToPDFWith with no options. " +
 			"The title is the CALLER's (`convertImport` applies TitleFromName); a wrapper that titled would name the document twice.",
+		"internal/pdfops/importtext.go:textImport": "the plain-text and CSV producer (ADR-188); its caller `convertImport` applies " +
+			"TitleFromName to the result, and the other caller, ConvertDocToPDFWith, is itself a producer whose caller titles it.",
 		"internal/pdfops/importraster.go:page": "a one-page raster FRAGMENT of a native import; `rasterJob.finish` merges the pages " +
 			"and titles the document from the source's name, and the guard cannot see across two methods.",
 		"internal/pdfops/pdfops.go:RedactPages": "a one-page raster FRAGMENT, re-merged into the " +

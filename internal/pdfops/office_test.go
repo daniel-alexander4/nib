@@ -88,12 +88,12 @@ func TestConvertOfficeRejectsUnsupported(t *testing.T) {
 
 // TestSupportedOfficeExt is case- and dot-insensitive over the allowlist.
 func TestSupportedOfficeExt(t *testing.T) {
-	for _, ok := range []string{"docx", ".docx", ".DOCX", "Xlsx", ".odt", "csv", ".pptx"} {
+	for _, ok := range []string{"docx", ".docx", ".DOCX", "Xlsx", ".odt", ".pptx"} {
 		if !SupportedOfficeExt(ok) {
 			t.Errorf("SupportedOfficeExt(%q) = false, want true", ok)
 		}
 	}
-	for _, bad := range []string{"exe", ".pdf", "", ".sh", "docx.exe"} {
+	for _, bad := range []string{"exe", ".pdf", "", ".sh", "docx.exe", "csv", "txt"} { // csv and txt are native (ADR-188)
 		if SupportedOfficeExt(bad) {
 			t.Errorf("SupportedOfficeExt(%q) = true, want false", bad)
 		}

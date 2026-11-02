@@ -34,6 +34,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // Typography: the Base-14 core faces, which need no embedding and CANNOT be embedded.
@@ -470,7 +471,14 @@ type inliner struct {
 func (in *inliner) node(n ast.Node) {
 	switch t := n.(type) {
 	case *ast.Text:
-		in.addText(in.sub.text(string(t.Segment.Value(in.src))))
+		seg := t.Segment.Value(in.src)
+		if in.code == 0 {
+			// CommonMark: a backslash before ASCII punctuation is the punctuation, literally (`\*` prints `*`).
+			// The parser leaves the backslash in the segment; only a renderer resolves it. A code span's text is
+			// literal, backslashes and all.
+			seg = util.UnescapePunctuations(seg)
+		}
+		in.addText(in.sub.text(string(seg)))
 		if t.HardLineBreak() {
 			in.br()
 		} else if t.SoftLineBreak() {

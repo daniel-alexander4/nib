@@ -190,9 +190,14 @@ func TestTheTableViewsAgree(t *testing.T) {
 			t.Errorf("%s: an image the sniffer reads is opened by every route", f.Key)
 		}
 	}
-	for _, e := range []string{"docx", ".DOCX", "xlsx", "odp", "txt", "csv"} {
+	for _, e := range []string{"docx", ".DOCX", "xlsx", "odp"} {
 		if !SupportedOfficeExt(e) || !SupportedDocExt(e) {
 			t.Errorf("%q should convert through LibreOffice", e)
+		}
+	}
+	for _, e := range []string{"txt", "csv"} {
+		if SupportedOfficeExt(e) || !SupportedDocExt(e) {
+			t.Errorf("%q should convert natively, not through LibreOffice (ADR-188)", e)
 		}
 	}
 	for _, e := range []string{"md", ".Markdown"} {

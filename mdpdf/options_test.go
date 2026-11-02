@@ -138,3 +138,29 @@ func TestAnUnusableOptionIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestABackslashEscapeIsThePunctuationAndACodeSpanKeepsItsBackslash — P01.S03b. A CSV cell reaches the renderer as
+// escaped Markdown, and the parser leaves the backslash in its text segment: only the renderer resolves it.
+func TestABackslashEscapeIsThePunctuationAndACodeSpanKeepsItsBackslash(t *testing.T) {
+	got, _, err := convertOpts(t, "a \\*star\\* and \\_under\\_ and \\[x\\] and \\| bar\n", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "\\") {
+		t.Errorf("a CommonMark escape printed its backslash: %q", got)
+	}
+	for _, want := range []string{"*star*", "_under_", "[x]", "|"} {
+		if !strings.Contains(strings.ReplaceAll(got, " ", ""), want) {
+			t.Errorf("%q missing from %q", want, got)
+		}
+	}
+	code, _, err := convertOpts(t, "`C:\\temp\\*`\n", Options{})
+	if err != nil || !strings.Contains(code, "C:\\temp\\*") {
+		t.Errorf("a code span's backslashes are literal: %q, %v", code, err)
+	}
+	// In a table cell too: the shape the CSV door writes.
+	cell, _, err := convertOpts(t, "| a |\n| --- |\n| \\*x\\* \\| y |\n", Options{})
+	if err != nil || strings.Contains(cell, "\\") {
+		t.Errorf("a table cell printed a backslash: %q, %v", cell, err)
+	}
+}

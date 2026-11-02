@@ -85,7 +85,13 @@ func UnprintableMarkdown(data []byte) []rune {
 // SupportedDocExt reports whether ext converts to PDF via ConvertDocToPDF,
 // natively (Markdown) or through LibreOffice (office formats).
 func SupportedDocExt(ext string) bool {
-	return SupportedMarkdownExt(ext) || SupportedOfficeExt(ext)
+	return SupportedMarkdownExt(ext) || SupportedOfficeExt(ext) || supportedNativeTextExt(ext)
+}
+
+// supportedNativeTextExt is plain text or CSV, which Nib lays out itself (ADR-188).
+func supportedNativeTextExt(ext string) bool {
+	f, ok := FormatForExt(ext)
+	return ok && (f.Key == "txt" || f.Key == "csv")
 }
 
 // ConvertDocToPDF converts a non-PDF document to PDF. Markdown renders in pure
@@ -102,6 +108,12 @@ var ErrOptionsNeedMarkdown = errors.New("page size, margin, placeholders and ima
 // margin, and `{{key}}` placeholders (RelaxTax, ADR-183). Any option on a non-Markdown document is
 // ErrOptionsNeedMarkdown.
 func ConvertDocToPDFWith(ctx context.Context, data []byte, ext string, opts mdpdf.Options) ([]byte, error) {
+	if f, ok := FormatForExt(ext); ok && (f.Key == "txt" || f.Key == "csv") {
+		// Native (D10, ADR-188): one producer whichever door asks, so a fixture or a caller converting a .csv
+		// directly gets what Import gives.
+		pdf, _, err := textImport(data, f, ImportOptions{Markdown: opts})
+		return pdf, err
+	}
 	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil || opts.ImageDir != "") {
 		return nil, ErrOptionsNeedMarkdown
 	}

@@ -459,7 +459,7 @@ func runCorpus(t *testing.T) []runCorpusDoc {
 	}
 	docs := []runCorpusDoc{{"converted Markdown", md}, {"core-font pages", core}}
 	if LibreOfficeAvailable() {
-		lo, lerr := ConvertOfficeToPDF(context.Background(), []byte("A heading line\n\nA paragraph of ordinary prose that wraps across the page width so the converter emits several lines.\n"), "txt")
+		lo, lerr := ConvertOfficeToPDF(context.Background(), []byte(`{\rtf1\ansi A heading line\par\par A paragraph of ordinary prose that wraps across the page width so the converter emits several lines.\par}`), "rtf")
 		if lerr != nil {
 			t.Fatalf("LibreOffice is present and could not convert: %v", lerr)
 		}

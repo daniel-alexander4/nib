@@ -62,6 +62,9 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 			"and only for a CHOSEN language (ADR-033). Held upright by TestAConvertersLanguageDoesNotComeFromTheDocument " +
 			"and TestNibDoesNotReplaceAConvertersLanguage. This row replaces the handleOffice and cmdOffice rows: " +
 			"those doors no longer author, they call Import."},
+		"internal/pdfops/importtext.go:textImport": {none, "the plain-text and CSV producer (ADR-188), reached only from " +
+			"convertImport (which applies pdfops.SetLang when the request carries a language) and from ConvertDocToPDFWith's " +
+			"native branch for a caller with no language to give; it authors the page and leaves the catalog's language to its caller, as every producer does."},
 		"internal/pdfops/office.go:ConvertDocToPDF": {none, "a one-line forward to ConvertDocToPDFWith with no options. " +
 			"The language question belongs to its caller, `convertImport`, classified above; a wrapper that declared one would answer it twice."},
 		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +

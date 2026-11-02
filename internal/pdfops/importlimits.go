@@ -24,4 +24,16 @@ const (
 	importTextBytes = 20 << 20
 	// importSniffBytes is how much of the head the sniffer reads.
 	importSniffBytes = 8 << 10
+
+	// importTextLines caps a plain-text source's lines, taken before layout (P01.S03b; provisional until measured).
+	importTextLines = 40000
+	// importCSVRows caps a CSV's records, taken before layout (provisional until measured).
+	importCSVRows = 10000
+	// importCSVCells caps a CSV's cells (D14).
+	importCSVCells = 1000000
+	// csvMaxColumns is mdpdf's table width limit (maxTableCols), restated so a wide CSV is refused by name
+	// before a table is built; a test holds them equal.
+	csvMaxColumns = 24
+	// csvRowsPerTable is how many body rows one table carries: mdpdf refuses a table past 5000 rows in all.
+	csvRowsPerTable = 4000
 )

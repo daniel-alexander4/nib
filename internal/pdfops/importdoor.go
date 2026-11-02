@@ -245,6 +245,8 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = CBZToDocument(ctx, data, name)
 	case f.Image:
 		pdf, err = ImageToDocumentCtx(ctx, data, name)
+	case f.Key == "txt" || f.Key == "csv":
+		pdf, res.Unprintable, err = textImport(data, f, o)
 	default:
 		ext := "." + f.Exts[0]
 		if o.TypeExt != "" {
@@ -316,6 +318,10 @@ func refusalCause(err error) string {
 		return "cap:pixels"
 	case errors.Is(err, ErrTooManyPages):
 		return "cap:pages"
+	case errors.Is(err, ErrTextTooLong), errors.Is(err, ErrCSVTooLong), errors.Is(err, ErrCSVTooWide), errors.Is(err, ErrCSVTooManyCells):
+		return "cap:text"
+	case errors.Is(err, ErrCSVUnreadable):
+		return "unreadable"
 	case errors.Is(err, ErrNoPages):
 		return "no-pages"
 	case errors.Is(err, ErrTIFFCompression):
@@ -392,7 +398,7 @@ func ImportCountKeys() []string {
 // isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
 // maps itself, as opposed to a conversion that failed (ConversionError).
 func isNativeRefusal(err error) bool {
-	for _, t := range []error{ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrCorruptDocument, ErrConvertedTooLarge} {
+	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrCorruptDocument, ErrConvertedTooLarge} {
 		if errors.Is(err, t) {
 			return true
 		}

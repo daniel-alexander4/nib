@@ -19,7 +19,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 - `nib fill … --out-dir DIR` and `nib split … --out-dir DIR` replace files that are already there (exit 0) unless `--no-clobber` is given: then a name that already exists is exit 1, nothing is written, and no new file is written beside the refused ones.
 - `nib merge IN… -o OUT --bookmark-per-file` gives the result one top-level bookmark per input — titled from the file name without its extension (`stdin` for `-`; a repeat becomes `name (2)`) and pointing at that input's first page — with the input's own outline nested beneath it. It replaces the result's outline; without the flag a merge's outline is what it always was.
 - `nib author IN --fields F.json -o OUT` adds fillable fields, and `nib stamp IN --stamps F.json -o OUT` stamps many text lines and pictures in one call (both below).
-- `nib office IN -o OUT` (also `nib import`) fills Markdown templates and chooses the page (below).
+- `nib office IN -o OUT` (also `nib import`) fills Markdown templates and chooses the page (below). `.txt` and `.csv` convert natively (no LibreOffice): a CSV past 24 columns, 10,000 rows or a text past 40,000 lines is refused by name (ADR-188).
 - `nib flatten IN -o OUT` is the call that turns a filled form into a plain page (below).
 - A filled form has no `/XFA`. nib does not add or remove `/NeedAppearances`; the 2025 Form 1040 has none.
 

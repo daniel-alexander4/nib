@@ -202,10 +202,12 @@ func nativeFixtures(t *testing.T) map[string][]byte {
 		"gif": gf.Bytes(), "bmp": bm.Bytes(), "cbz": cz.Bytes(),
 		"png": testPNG(t, 24, 16), "jpeg": j.Bytes(), "tiff": tf.Bytes(), "webp": tinyWebP(t),
 		"markdown": []byte("# A title\n\nSome prose, with **bold** words.\n"),
+		"txt":      []byte("A plain line\n\tand an indented one\n"),
+		"csv":      []byte("name,qty\nbolt,4\nnut,9\n"),
 	}
 }
 
-var fixtureExt = map[string]string{"png": ".png", "jpeg": ".jpg", "tiff": ".tif", "webp": ".webp", "markdown": ".md", "gif": ".gif", "bmp": ".bmp", "cbz": ".cbz"}
+var fixtureExt = map[string]string{"png": ".png", "jpeg": ".jpg", "tiff": ".tif", "webp": ".webp", "markdown": ".md", "gif": ".gif", "bmp": ".bmp", "cbz": ".cbz", "txt": ".txt", "csv": ".csv"}
 
 // docData finds the open document by name and returns its bytes.
 func docData(srv *Server, name string) ([]byte, bool) {
