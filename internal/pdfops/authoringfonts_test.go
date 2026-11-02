@@ -34,7 +34,7 @@ const p4Markdown = "# A heading\n\nBody text with **bold**, *italic* and ***both
 // produced document's own font dictionaries, so a face nobody remembered shows up as the thing it
 // is: a font this document draws with and does not carry.
 func TestAuthoredMarkdownEmbedsEveryFontItDrawsWith(t *testing.T) {
-	pdf, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	pdf, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatalf("ConvertDocToPDF: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestADegradedConversionSaysSo(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(old) })
 
-	out, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	out, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatalf("the conversion failed instead of degrading: %v", err)
 	}

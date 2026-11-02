@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"net/url"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"path"
 )
@@ -71,27 +72,20 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	// extension included the query, so `report.docx?dl=1` was no type nib knows and the user
 	// was told the URL did not return a PDF (/pending 773).
 	name := urlDocName(req.URL)
-	// An image fetched by URL opens like any other — this route is one of the four
-	// `asOpenableDocument` exists for, and leaving it out would be the ADR-009 defect of a rule
-	// that reaches three sites and not the fourth. There is no path here to drop.
-	out, kind, cerr := asOpenableDocument(data, name)
-	switch {
-	case kind == openRefused:
-		httpError(w, http.StatusUnsupportedMediaType, "URL did not return a PDF")
-		return
-	case kind == openConvertible:
-		httpError(w, http.StatusUnsupportedMediaType, convertibleRefusal(name))
-		return
-	case cerr != nil:
-		httpError(w, http.StatusUnsupportedMediaType, cerr.Error())
+	// Fetched by URL opens like any other file — this route is one of the four doors `pdfops.Import` serves
+	// (ADR-009, D8), and leaving it out would be the defect of a rule that reaches three sites and not the
+	// fourth. There is no path here to drop.
+	src, size := pdfops.BytesSource(data)
+	res, ok := s.importOrRefuse(w, r.Context(), src, size, name, s.importOptions("url"))
+	if !ok {
 		return
 	}
-	data = out
+	data = res.PDF
 	// The name comes from the URL's own path, so an opened-by-URL document is not "Untitled"
 	// after a reload. Three of the five path-less producers were given a name and this was
 	// one of the two that were not — see document.name.
 	installed, cerr := s.addDocCapped(&document{
-		path: "", name: name, data: data, sig: sign.Verify(data),
+		path: "", name: res.Name, data: data, sig: sign.Verify(data),
 	})
 	if cerr != nil {
 		httpError(w, http.StatusConflict, cerr.Error())

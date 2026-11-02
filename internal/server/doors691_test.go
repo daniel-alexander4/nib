@@ -3,6 +3,8 @@
 package server
 
 import (
+	"context"
+	"nib/internal/pdfops"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -27,7 +29,11 @@ func TestAPathThatIsNotARegularFileIsRefusedWithoutBeingRead(t *testing.T) {
 	}
 	done := make(chan answer, 1)
 	go func() {
-		data, _, ref := readInstallablePDF(fifo)
+		res, ref := readInstallablePDF(context.Background(), fifo, pdfops.ImportOptions{Door: "path"})
+		var data []byte
+		if res != nil {
+			data = res.PDF
+		}
 		done <- answer{data, ref}
 	}()
 	select {
@@ -56,7 +62,7 @@ func TestAPathThatIsNotARegularFileIsRefusedWithoutBeingRead(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("SKIP (not a pass): no symlinks here: %v", err)
 	}
-	if _, _, ref := readInstallablePDF(link); ref != nil && ref.kind == refuseUnopenable {
+	if _, ref := readInstallablePDF(context.Background(), link, pdfops.ImportOptions{Door: "path"}); ref != nil && ref.kind == refuseUnopenable {
 		t.Errorf("a link to a regular file was refused as unopenable: %q", ref.msg)
 	}
 }

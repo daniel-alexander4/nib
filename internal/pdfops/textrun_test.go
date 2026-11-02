@@ -380,7 +380,7 @@ func TestTheRunReaderIsContained(t *testing.T) {
 		}
 	}
 
-	md, err := ConvertDocToPDF([]byte("# Heading\n\nA paragraph with **bold**.\n\n- one\n"), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph with **bold**.\n\n- one\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ type runCorpusDoc struct {
 // core-font page (WinAnsi), and LibreOffice when present (TrueType, hex strings, one-byte ToUnicode).
 func runCorpus(t *testing.T) []runCorpusDoc {
 	t.Helper()
-	md, err := ConvertDocToPDF([]byte("# A heading\n\nA paragraph that is long enough to wrap onto a second line when it is rendered at the default measure of the converter.\n\n- first item\n- second item with **bold** and *italic*\n"), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte("# A heading\n\nA paragraph that is long enough to wrap onto a second line when it is rendered at the default measure of the converter.\n\n- first item\n- second item with **bold** and *italic*\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func runCorpus(t *testing.T) []runCorpusDoc {
 	}
 	docs := []runCorpusDoc{{"converted Markdown", md}, {"core-font pages", core}}
 	if LibreOfficeAvailable() {
-		lo, lerr := ConvertOfficeToPDF([]byte("A heading line\n\nA paragraph of ordinary prose that wraps across the page width so the converter emits several lines.\n"), "txt")
+		lo, lerr := ConvertOfficeToPDF(context.Background(), []byte("A heading line\n\nA paragraph of ordinary prose that wraps across the page width so the converter emits several lines.\n"), "txt")
 		if lerr != nil {
 			t.Fatalf("LibreOffice is present and could not convert: %v", lerr)
 		}

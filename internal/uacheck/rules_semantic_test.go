@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -255,7 +256,7 @@ func TestTheFigureAndTableCasesAgreeWithVeraPDF(t *testing.T) {
 // `/ActualText` PASSES. Making the two consistent would be nib disagreeing with the oracle on a
 // document veraPDF accepts.
 func TestAFormulaNeedsAlternateTextAndTheEmptyCasesDiffer(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# A heading\n\nA paragraph of body text.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# A heading\n\nA paragraph of body text.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestAFormulaNeedsAlternateTextAndTheEmptyCasesDiffer(t *testing.T) {
 // The two clauses share one predicate, so this asserts BOTH — the defect was pre-existing in `7.3 t1`
 // and the extraction is what put the two halves side by side where the asymmetry was visible.
 func TestADanglingAlternateTextReferenceIsAbsent(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# A heading\n\nA paragraph of body text.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# A heading\n\nA paragraph of body text.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +366,7 @@ func TestADanglingAlternateTextReferenceIsAbsent(t *testing.T) {
 // scanning, so nib answered CannotCheck over a failure it had already read; `checkAlternateTextOn` now
 // scans first.
 func TestAFormulaWithoutAlternateTextFailsBesideAnUntypableElement(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\nAnother paragraph.\n\n- one\n- two\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph.\n\nAnother paragraph.\n\n- one\n- two\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 // taggedMarkdownPDF writes a converted Markdown document — tagged from its own structure — into dir.
 func taggedMarkdownPDF(t *testing.T, dir string) string {
 	t.Helper()
-	pdf, err := pdfops.ConvertDocToPDF([]byte("# A heading\n\nA paragraph of body text.\n\n- one\n- two\n"), ".md")
+	pdf, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# A heading\n\nA paragraph of body text.\n\n- one\n- two\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

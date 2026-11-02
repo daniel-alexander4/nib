@@ -25,8 +25,10 @@ import (
 	"nib/internal/browser"
 	"nib/internal/cli"
 	"nib/internal/instance"
+	"nib/internal/pdfops"
 	"nib/internal/safe"
 	"nib/internal/server"
+	"nib/internal/tempdir"
 	"nib/internal/vault"
 
 	"nib/internal/addrscope"
@@ -55,6 +57,8 @@ func run() int {
 	}
 	log.SetFlags(0)
 	log.SetPrefix("nib: ")
+	startTemp()
+	defer tempdir.Release()
 
 	// A recognized first argument is a headless subcommand: run it and exit
 	// without ever binding a port or opening a browser. Anything else (a PDF
@@ -269,6 +273,9 @@ func run() int {
 	// returning by a new door (ADR-009).
 	case <-s.IdleExit():
 	}
+	// The one teardown of what outlives a request: installs stop and every converter's process group is
+	// killed BEFORE the process leaves (ADR-185). Quit, idle exit and SIGTERM all reach here.
+	s.Shutdown()
 	s.DisarmSession() // tear down any armed co-signing listener before exiting
 	_ = srv.Close()
 	return code
@@ -421,4 +428,23 @@ func handedOff(cfgDir, path string) bool {
 		return true
 	}
 	return false
+}
+
+// startTemp claims the per-user temporary root as the process's temp directory and sweeps what a
+// Nib that did not get to clean up left in it (ADR-185). It runs first and for every invocation, the
+// command line included, because a crashed conversion is found by whichever Nib starts next. The
+// sweep removes only directories no live process holds and kills a recorded orphaned converter group;
+// a failure of either is logged and never stops Nib starting.
+func startTemp() {
+	if err := tempdir.Claim(); err != nil {
+		log.Printf("temporary files: %v", err)
+		return
+	}
+	n, err := tempdir.Sweep(tempdir.NewReaper(pdfops.ConverterExecutables()))
+	if err != nil {
+		log.Printf("temporary files: %v", err)
+	}
+	if n > 0 {
+		log.Printf("removed %d temporary director(ies) a previous run left behind", n)
+	}
 }

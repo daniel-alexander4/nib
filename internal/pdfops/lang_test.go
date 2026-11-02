@@ -182,13 +182,13 @@ func requireLibreOffice(t *testing.T) {
 // re-running the same ODT under `LANG=de_DE.UTF-8` yields `/Lang=(de-DE)`.
 func TestAConvertersLanguageDoesNotComeFromTheDocument(t *testing.T) {
 	requireLibreOffice(t)
-	de, err := ConvertOfficeToPDF(odtWithLang(t, "Guten Tag.", "de", "DE"), ".odt")
+	de, err := ConvertOfficeToPDF(context.Background(), odtWithLang(t, "Guten Tag.", "de", "DE"), ".odt")
 	if err != nil {
-		t.Fatalf("ConvertOfficeToPDF(de): %v", err)
+		t.Fatalf("ConvertOfficeToPDF(context.Background(), de): %v", err)
 	}
-	th, err := ConvertOfficeToPDF(odtWithLang(t, "Hello.", "th", "TH"), ".odt")
+	th, err := ConvertOfficeToPDF(context.Background(), odtWithLang(t, "Hello.", "th", "TH"), ".odt")
 	if err != nil {
-		t.Fatalf("ConvertOfficeToPDF(th): %v", err)
+		t.Fatalf("ConvertOfficeToPDF(context.Background(), th): %v", err)
 	}
 	gotDE, gotTH := catalogLang(t, de), catalogLang(t, th)
 	if gotDE == "" || gotTH == "" {
@@ -213,7 +213,7 @@ func TestAConvertersLanguageDoesNotComeFromTheDocument(t *testing.T) {
 func TestNibDoesNotReplaceAConvertersLanguage(t *testing.T) {
 	requireLibreOffice(t)
 	src := odtWithLang(t, "Guten Tag.", "de", "DE")
-	converted, err := ConvertDocToPDF(src, ".odt")
+	converted, err := ConvertDocToPDF(context.Background(), src, ".odt")
 	if err != nil {
 		t.Fatalf("ConvertDocToPDF: %v", err)
 	}

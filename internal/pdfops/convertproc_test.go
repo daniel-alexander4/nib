@@ -35,3 +35,29 @@ func TestTheWindowsTreeKillDoesNotComeFromPATH(t *testing.T) {
 		t.Errorf("with no SystemRoot the command is %q, want the bare name", bare)
 	}
 }
+
+func TestAConverterIsHandedAnAllowlistedEnvironment(t *testing.T) {
+	env := toolEnv([]string{
+		"PATH=/usr/bin", "HOME=/home/u", "LANG=en_GB.UTF-8", "LC_ALL=C", "XDG_CONFIG_HOME=/x", "FONTCONFIG_PATH=/f",
+		"HTTPS_PROXY=http://evil:3128", "http_proxy=http://evil:3128", "ALL_PROXY=x", "SSH_AUTH_SOCK=/s", "NIB_ADDR=127.0.0.1:1",
+		"AWS_SECRET_ACCESS_KEY=hunter2", "NOEQUALS", "=empty",
+	}, "/job")
+	got := map[string]string{}
+	for _, kv := range env {
+		i := strings.IndexByte(kv, '=')
+		got[kv[:i]] = kv[i+1:]
+	}
+	for _, k := range []string{"PATH", "HOME", "LANG", "LC_ALL", "XDG_CONFIG_HOME", "FONTCONFIG_PATH"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("%s was dropped; a converter needs it", k)
+		}
+	}
+	for _, k := range []string{"HTTPS_PROXY", "http_proxy", "ALL_PROXY", "SSH_AUTH_SOCK", "NIB_ADDR", "AWS_SECRET_ACCESS_KEY"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s reached the converter", k)
+		}
+	}
+	if got["TMPDIR"] != "/job" || got["TEMP"] != "/job" || got["TMP"] != "/job" {
+		t.Errorf("the job directory is not the converter's temp: %v", got)
+	}
+}

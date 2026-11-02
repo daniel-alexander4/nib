@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"nib/internal/tempdir"
 	"nib/mdpdf"
 )
 
@@ -89,8 +90,8 @@ func SupportedDocExt(ext string) bool {
 
 // ConvertDocToPDF converts a non-PDF document to PDF. Markdown renders in pure
 // Go and is always available; everything else goes through LibreOffice.
-func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
-	return ConvertDocToPDFWith(data, ext, mdpdf.Options{})
+func ConvertDocToPDF(ctx context.Context, data []byte, ext string) ([]byte, error) {
+	return ConvertDocToPDFWith(ctx, data, ext, mdpdf.Options{})
 }
 
 // ErrOptionsNeedMarkdown is a page size, margin or placeholder asked of a document LibreOffice converts: those are
@@ -100,7 +101,7 @@ var ErrOptionsNeedMarkdown = errors.New("page size, margin, placeholders and ima
 // ConvertDocToPDFWith is ConvertDocToPDF with the Markdown conversion's options (mdpdf.Options): the page, its
 // margin, and `{{key}}` placeholders (RelaxTax, ADR-183). Any option on a non-Markdown document is
 // ErrOptionsNeedMarkdown.
-func ConvertDocToPDFWith(data []byte, ext string, opts mdpdf.Options) ([]byte, error) {
+func ConvertDocToPDFWith(ctx context.Context, data []byte, ext string, opts mdpdf.Options) ([]byte, error) {
 	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil || opts.ImageDir != "") {
 		return nil, ErrOptionsNeedMarkdown
 	}
@@ -157,7 +158,7 @@ func ConvertDocToPDFWith(data []byte, ext string, opts mdpdf.Options) ([]byte, e
 		// cover the program. See dropCIDSets. (`tagMarkdown` runs the same tail itself.)
 		return embeddedFontsAreHonest(out), nil
 	}
-	return ConvertOfficeToPDF(data, ext)
+	return ConvertOfficeToPDF(ctx, data, ext)
 }
 
 var loCache toolCache
@@ -184,7 +185,7 @@ func LibreOfficeAvailable() bool { return libreOfficePath() != "" }
 // don't clash on the single-instance profile), then reads the produced PDF.
 // Returns ErrLibreOfficeMissing when LibreOffice is absent and ErrUnsupportedOffice
 // for an extension outside the allowlist.
-func ConvertOfficeToPDF(data []byte, ext string) ([]byte, error) {
+func ConvertOfficeToPDF(ctx context.Context, data []byte, ext string) ([]byte, error) {
 	if !SupportedOfficeExt(ext) {
 		return nil, ErrUnsupportedOffice
 	}
@@ -192,26 +193,33 @@ func ConvertOfficeToPDF(data []byte, ext string) ([]byte, error) {
 	if soffice == "" {
 		return nil, ErrLibreOfficeMissing
 	}
-	dir, err := os.MkdirTemp("", "nib-office-")
+	dir, err := tempdir.New("office")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer dir.Close()
 
 	// Name the input with its real extension so LibreOffice selects the right
 	// import filter; the basename is fixed so the output name is predictable.
 	clean := strings.ToLower(strings.TrimPrefix(ext, "."))
-	inPath := filepath.Join(dir, "in."+clean)
-	outDir := filepath.Join(dir, "out")
-	profile := filepath.Join(dir, "profile")
+	inPath := dir.Join("in." + clean)
+	outDir := dir.Join("out")
+	profile := dir.Join("profile")
 	if err := os.Mkdir(outDir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(inPath, data, 0o600); err != nil {
+	if err := dir.WriteFile("in."+clean, data); err != nil {
+		return nil, err
+	}
+	// The containment (officeprofile.go): the profile is seeded before LibreOffice first reads it.
+	if err := seedOfficeProfile(profile); err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), officeConvertTimeout)
+	// The caller's context, not Background (D9): a closed window or a Quit ends the conversion and kills its
+	// process tree. The two-minute budget is `officeConvertTimeout`, started by the gate at acquire for an
+	// import; a direct caller gets it here.
+	ctx, cancel := context.WithTimeout(ctx, officeConvertTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, soffice,
 		"--headless", "--nologo", "--nofirststartwizard",
@@ -219,7 +227,8 @@ func ConvertOfficeToPDF(data []byte, ext string) ([]byte, error) {
 		"--convert-to", "pdf", "--outdir", outDir,
 		inPath,
 	)
-	return runConvert(ctx, cmd, filepath.Join(outDir, "in.pdf"), "LibreOffice")
+	cmd.Env = toolEnv(os.Environ(), dir.Path())
+	return runConvert(ctx, cmd, filepath.Join(outDir, "in.pdf"), "LibreOffice", dir)
 }
 
 // fileURL spells a slash-separated local path as a `file:` URL, for LibreOffice's `-env:UserInstallation`

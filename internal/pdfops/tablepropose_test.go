@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -684,7 +685,7 @@ func ruledTableODT(t *testing.T) []byte {
 		`<text:p>After the table.</text:p>`
 	style := `<style:style style:name="C" style:family="table-cell">` +
 		`<style:table-cell-properties fo:border="0.5pt solid #000000" fo:padding="0.1cm"/></style:style>`
-	pdf, err := ConvertOfficeToPDF(odtDocument(t, style, body), "odt")
+	pdf, err := ConvertOfficeToPDF(context.Background(), odtDocument(t, style, body), "odt")
 	if err != nil {
 		t.Fatalf("LibreOffice is present and could not convert the ruled-table document: %v", err)
 	}

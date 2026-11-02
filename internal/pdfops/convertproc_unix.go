@@ -26,3 +26,6 @@ func killTreeOnCancel(cmd *exec.Cmd) {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
+
+// killGroup ends the group led by pid. The group is the one `killTreeOnCancel`'s Setpgid made.
+func killGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) }

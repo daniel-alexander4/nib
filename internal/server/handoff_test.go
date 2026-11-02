@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -154,7 +155,7 @@ func TestAHandoffGoesThroughTheOrdinaryInstallChecks(t *testing.T) {
 	c, _ := authedClient(t, ts)
 	srv.SetHandoffSecret("secret")
 
-	notPDF := filepath.Join(t.TempDir(), "notes.txt")
+	notPDF := filepath.Join(t.TempDir(), "mystery.xyz")
 	if err := os.WriteFile(notPDF, []byte("this is not a PDF at all"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +382,7 @@ func TestConcurrentHandoffsOfOnePathOpenOneDocument(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			f, err := srv.openHandedOff(path)
+			f, err := srv.openHandedOff(context.Background(), path)
 			if err != nil {
 				t.Errorf("hand-off refused: %v", err)
 				return

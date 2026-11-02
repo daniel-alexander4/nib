@@ -1,11 +1,9 @@
-diff --git a/langdoor_test.go b/langdoor_test.go
-index 3fce6dd..118d34a 100644
 --- a/langdoor_test.go
 +++ b/langdoor_test.go
-@@ -65,7 +65,7 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
- 			"pdfops.SetLang (whose LangTag door refuses anything it cannot declare); with no " +
- 			"--lang it carries, for handleOffice's reason. /pending 471. Named separately because " +
- 			"ADR-009 polices SITES, not packages."},
+@@ -64,7 +64,7 @@
+ 			"those doors no longer author, they call Import."},
+ 		"internal/pdfops/office.go:ConvertDocToPDF": {none, "a one-line forward to ConvertDocToPDFWith with no options. " +
+ 			"The language question belongs to its caller, `convertImport`, classified above; a wrapper that declared one would answer it twice."},
 -		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +
 +		"internal/server/export.go:handleAssemble": {declares, "raster pages with NO text in page " +
  			"content, so ua1 7.2 t34 does not fire on this output at all (measured 2026-09-11: a " +

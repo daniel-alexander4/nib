@@ -993,3 +993,5 @@ home today.
   — RelaxTax handoff: `NIB_HEADLESS=1` turns every non-verb into `unknown command`; every verb closes pdfcpu's config directory (measured: f1040 fill identical); a refused fill names the field and never the value.
 - [ADR-184](184-the-format-table-is-the-only-list-of-formats.md) — **the format table is the only list of the formats Nib imports**
   — PLAN-import-export P01.S01: `pdfops.Formats()` holds extension, MIME, tool and door per row; the pickers' `accept` come from `/api/status`, `listDir` and `nib.desktop` follow the `Door` rows; a census with a red proof fails a second list.
+- [ADR-185](185-one-import-function-and-the-temporary-files-it-leaves.md) — **one import function, and the temporary files and processes it owns**
+  — PLAN-import-export P01.S02a: `pdfops.Import` classifies by content and every open route calls it; `internal/tempdir` is the only temp door (kernel-lock liveness, swept at start); one `Shutdown` kills converters; a gate of two; LibreOffice's web fetches closed (the plan's mechanism measured and replaced); converters get an allowlisted environment and a memory watchdog.

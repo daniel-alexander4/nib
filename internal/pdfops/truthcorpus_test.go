@@ -68,7 +68,7 @@ func truthCorpus(t *testing.T) []runCorpusDoc {
 		return fmt.Sprintf(`<text:h text:outline-level="%d">%s</text:h>`, level, s)
 	}
 	convert := func(name, styles, body string) runCorpusDoc {
-		pdf, err := ConvertOfficeToPDF(odtDocument(t, styles, body), "odt")
+		pdf, err := ConvertOfficeToPDF(context.Background(), odtDocument(t, styles, body), "odt")
 		if err != nil {
 			t.Fatalf("truth corpus: LibreOffice is present and could not convert %q: %v", name, err)
 		}

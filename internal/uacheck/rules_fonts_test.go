@@ -33,7 +33,7 @@ func TestTheFontRulesAgreeWithWhatVeraPDFSaid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nSome prose.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nSome prose.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestUnicodeMappingHasNoInvisibleExemption(t *testing.T) {
 
 // TestACIDSetMustCoverEveryGlyphSlotNotEveryUsedGlyph — the population, measured.
 func TestACIDSetMustCoverEveryGlyphSlotNotEveryUsedGlyph(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nSome prose.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nSome prose.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func pageWithFont(fontDict, content string) []byte {
 // nib never read — possibly a CID font pdfcpu dropped, whose /CIDSet veraPDF does judge — was ignored and 7.21.4.2 t2
 // answered Pass. Every sibling font door refuses instead.
 func TestAnUnresolvedFontRefusesTheCIDSetClauseBesideOneThatResolved(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nSome prose.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nSome prose.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

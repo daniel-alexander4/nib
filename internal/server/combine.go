@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -13,6 +14,11 @@ import (
 // Combine works whether or not a document is already open. The files ride in as
 // repeated multipart "file" fields, in the user's chosen order.
 func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
+	release, ok := s.admitUpload(w, r)
+	if !ok {
+		return
+	}
+	defer release()
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -25,24 +31,29 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 	}
 	pdfs := make([][]byte, 0, len(headers))
 	for _, fh := range headers {
-		data, err := readFormFile(fh)
+		f, err := fh.Open()
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "could not read "+fh.Filename)
 			return
 		}
-		// An image is a page like any other: the same door that opens one converts it here, so
-		// its size rule is the opener's (ADR-009). A refused file is left as it came and Combine
-		// names it, as it always has; a convertible office file says where it is opened.
-		doc, kind, cerr := asOpenableDocument(data, fh.Filename)
+		// An image is a page like any other, and so is a Word document: the function that opens one converts
+		// it here, so its size rule is the opener's (ADR-009). A file Nib does not recognise is left as it came
+		// and Combine names it, as it always has; any other refusal is that function's sentence.
+		res, err := pdfops.Import(r.Context(), f, fh.Size, fh.Filename, s.combineOptions())
+		f.Close()
+		var doc []byte
 		switch {
-		case cerr != nil:
-			httpError(w, http.StatusBadRequest, fh.Filename+": "+cerr.Error())
+		case err == nil:
+			doc = res.PDF
+		case errors.Is(err, pdfops.ErrNotADocument):
+			if doc, err = readFormFile(fh); err != nil {
+				httpError(w, http.StatusBadRequest, "could not read "+fh.Filename)
+				return
+			}
+		default:
+			_, msg := importRefusal(err)
+			httpError(w, http.StatusBadRequest, fh.Filename+": "+msg)
 			return
-		case kind == openConvertible:
-			httpError(w, http.StatusBadRequest, fh.Filename+": "+convertibleRefusal(fh.Filename))
-			return
-		case kind == openRefused:
-			doc = data
 		}
 		pdfs = append(pdfs, doc)
 	}

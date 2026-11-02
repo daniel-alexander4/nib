@@ -169,7 +169,7 @@ func TestParagraphCountsMatchTheHandCheckedCorpus(t *testing.T) {
 				`<style:columns fo:column-count="2" fo:column-gap="0.5in"/></style:section-properties></style:style>`,
 			`<text:h text:outline-level="1">Two columns</text:h><text:section text:style-name="Sect1" text:name="S1">`+
 				p("First "+body)+p("Second "+body)+p("Third "+body)+p("Fourth "+body)+`</text:section>`)
-		pdf, err := ConvertOfficeToPDF(odt, "odt")
+		pdf, err := ConvertOfficeToPDF(context.Background(), odt, "odt")
 		if err != nil {
 			t.Fatalf("LibreOffice is present and could not convert the two-column fixture: %v", err)
 		}

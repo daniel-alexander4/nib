@@ -51,32 +51,19 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 			"here would be inventing one, which is what `none` exists to say. **If OCR is ever folded " +
 			"into this route** the classification changes with it, because the recognised text WOULD " +
 			"have a language and `pdfops.SetLang` is where it would be declared (/pending 400, 539)."},
+		"internal/pdfops/importdoor.go:convertImport": {told, "the ONE conversion door (ADR-185, D13): every route — the " +
+			"four opens, Import…, `nib office` — reaches ConvertDocToPDFWith here, and the Document language " +
+			"field (/pending 471) reaches pdfops.SetLang here when the request carries a language. The server's " +
+			"automatic open and Combine send none, so they declare nothing and an office conversion keeps " +
+			"LibreOffice's /Lang, which is the CONVERTING MACHINE's locale, not the document's (measured: DOCX " +
+			"declaring de-DE, th-TH and fr-FR and an ODT declaring fo:language=de all converted to the machine's " +
+			"locale); nib passes it through on purpose — stripping it would move the common case, where author " +
+			"and machine share a language, from one failing ua1 clause to three. The PDF/UA label is Markdown-only " +
+			"and only for a CHOSEN language (ADR-033). Held upright by TestAConvertersLanguageDoesNotComeFromTheDocument " +
+			"and TestNibDoesNotReplaceAConvertersLanguage. This row replaces the handleOffice and cmdOffice rows: " +
+			"those doors no longer author, they call Import."},
 		"internal/pdfops/office.go:ConvertDocToPDF": {none, "a one-line forward to ConvertDocToPDFWith with no options. " +
-			"The language question belongs to ITS callers, each classified in this table (handleOffice, cmdOffice); " +
-			"a wrapper that declared one would answer it twice."},
-		"internal/server/office.go:handleOffice": {told, "the Document language field (/pending 471, " +
-			"Dan's option B) sends `lang`, pre-filled with the machine's locale from navigator.language " +
-			"and changeable or clearable by the user; a value is declared through pdfops.SetLang. " +
-			"Cleared, the door carries, for this reason: an office conversion comes out of " +
-			"LibreOffice already carrying a /Lang, and nib passes it through. **It is NOT derived " +
-			"from the source document** — that was this slice's first answer and measurement " +
-			"refuted it: three DOCX files declaring w:lang de-DE, th-TH and fr-FR, and an ODT " +
-			"declaring fo:language=de in LibreOffice's OWN native format, all converted to " +
-			"/Lang=(en-US) on an en_US machine, and the same ODT under LANG=de_DE.UTF-8 converted " +
-			"to /Lang=(de-DE). The value is the CONVERTING MACHINE's locale. nib passes it " +
-			"through anyway, and that is a decision: stripping it would take a correct " +
-			"declaration off every document whose author and machine share a language — the " +
-			"common case — to avoid a wrong one where they do not, and would move this path from " +
-			"one failing ua1 clause to three. Correcting it needs someone who knows, which is the " +
-			"user, and that is the /pending item this slice files. Held upright by " +
-			"TestAConvertersLanguageDoesNotComeFromTheDocument and " +
-			"TestNibDoesNotReplaceAConvertersLanguage. The markdown branch of the same door gets " +
-			"no /Lang from anywhere — mdpdf is pure Go and was never told one."},
-		"internal/cli/commands.go:cmdOffice": {told, "the CLI half of the same door. `--lang` is " +
-			"the user saying what language the document is in, so it is declared through " +
-			"pdfops.SetLang (whose LangTag door refuses anything it cannot declare); with no " +
-			"--lang it carries, for handleOffice's reason. /pending 471. Named separately because " +
-			"ADR-009 polices SITES, not packages."},
+			"The language question belongs to its caller, `convertImport`, classified above; a wrapper that declared one would answer it twice."},
 		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +
 			"content, so ua1 7.2 t34 does not fire on this output at all (measured 2026-09-11: a " +
 			"titled raster document fails 5 t1, 6.2 t1, 7.1 t3 and 7.1 t11, and neither 7.2 " +

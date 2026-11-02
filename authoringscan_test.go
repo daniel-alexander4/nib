@@ -22,9 +22,10 @@ import (
 // authoringPrimitives are the three functions that make a PDF out of something that was not one.
 // Every document nib authors comes out of one of these.
 var authoringPrimitives = map[string]bool{
-	"CreateFromJSON":  true,
-	"ImagesToPDF":     true,
-	"ConvertDocToPDF": true,
+	"CreateFromJSON": true,
+	"ImagesToPDF":    true,
+	// (`ConvertDocToPDF`, the option-less forward, is not listed: it is a test-support wrapper whose callers are
+	// tests, and a primitive here must have a production site.)
 	// The same primitive with the Markdown options (page, margin, placeholders): `nib office` calls this one.
 	"ConvertDocToPDFWith": true,
 }
@@ -99,6 +100,11 @@ func scanAuthoringSites(t *testing.T) (sites []authoringSite, declaredIn map[str
 					return true
 				}
 				calls[name] = true
+				// Outside pdfops a conversion is reached through `pdfops.Import` (ADR-185), which calls
+				// ConvertDocToPDFWith inside `convertImport`; that is the site this guard classifies.
+				if name == "Import" && !inPdfops {
+					calledOutside["ConvertDocToPDFWith"]++
+				}
 				if !authoringPrimitives[name] {
 					return true
 				}

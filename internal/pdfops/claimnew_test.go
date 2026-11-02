@@ -24,7 +24,7 @@ import (
 // body's structure.
 func formHost(t *testing.T) []byte {
 	t.Helper()
-	pdf, err := ConvertDocToPDF([]byte("# A form\n\nPlease fill in the fields below.\n"), ".md")
+	pdf, err := ConvertDocToPDF(context.Background(), []byte("# A form\n\nPlease fill in the fields below.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

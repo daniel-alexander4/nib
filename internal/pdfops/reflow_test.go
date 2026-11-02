@@ -54,7 +54,7 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 		}
 		md.WriteString(".\n\n")
 	}
-	wrapped, err := ConvertDocToPDF([]byte(md.String()), ".md")
+	wrapped, err := ConvertDocToPDF(context.Background(), []byte(md.String()), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,3 +28,9 @@ func killTreeOnCancel(cmd *exec.Cmd) {
 		return cmd.Process.Kill()
 	}
 }
+
+// killGroup ends pid's tree with `taskkill /T`, as killTreeOnCancel does. Compiled and argv-tested only.
+func killGroup(pid int) {
+	name, args := taskkillCommand(os.Getenv("SystemRoot"), pid)
+	_ = exec.Command(name, args...).Run()
+}

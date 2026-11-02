@@ -176,7 +176,7 @@ func TestOpenRejectsNonPDFAndLeavesItIntact(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
-	notes := filepath.Join(t.TempDir(), "notes.txt")
+	notes := filepath.Join(t.TempDir(), "mystery.xyz")
 	original := []byte("not a pdf at all\n")
 	if err := os.WriteFile(notes, original, 0o600); err != nil {
 		t.Fatal(err)

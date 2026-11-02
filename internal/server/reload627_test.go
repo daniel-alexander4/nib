@@ -40,8 +40,8 @@ func TestReloadRefusesAFileThatBecameAnImage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handleReload(rec, req)
 
-	if rec.Code != http.StatusUnsupportedMediaType || !strings.Contains(rec.Body.String(), "now an image") {
-		t.Errorf("a reload of a path that now holds an image answered %d %q, want 415 naming the image",
+	if rec.Code != http.StatusUnsupportedMediaType || !strings.Contains(rec.Body.String(), "no longer a PDF") {
+		t.Errorf("a reload of a path that now holds an image answered %d %q, want 415 saying it is no longer a PDF",
 			rec.Code, rec.Body)
 	}
 	if !bytes.Equal(s.docBytes(a), pdf) {

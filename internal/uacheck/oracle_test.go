@@ -3,6 +3,7 @@ package uacheck
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"hash/crc32"
@@ -96,7 +97,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	// that kept the picture out (7.21.4.1 t1 reading NotApplicable over invisible-only text, where veraPDF passes)
 	// closed at P07.S02.
 	df, _, derr := pdfops.AuthorTaggedForm(w.pdf, textField)
-	md, merr := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
+	md, merr := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
 	mdt, terr := pdfops.SetTitle(md, "A named document")
 	mdl, lerr := pdfops.SetLang(mdt, "en")
 	st, serr := pdfops.StampWatermark(plain, "DRAFT", pdfops.WatermarkStyle{})
@@ -142,7 +143,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	for i := 0; i < 20; i++ {
 		long.WriteString("## Section\n\nA paragraph of ordinary prose, long enough to wrap across the measure of the page.\n\n- one\n- two\n\n")
 	}
-	nupSrc, nerr2 := pdfops.ConvertDocToPDF([]byte(long.String()), ".md")
+	nupSrc, nerr2 := pdfops.ConvertDocToPDF(context.Background(), []byte(long.String()), ".md")
 	var nup []byte
 	if nerr2 == nil {
 		nup, nerr2 = pdfops.NUp(nupSrc, 2, false)
@@ -339,7 +340,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			widgetMutation(t, describedForm(t), "contents-lang-on-element")},
 	)
 	if pdfops.LibreOfficeAvailable() {
-		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
+		lo, err := pdfops.ConvertOfficeToPDF(context.Background(), oracleODT(t), "odt")
 		if err != nil {
 			t.Fatalf("corpus: LibreOffice is present and could not convert the fixture: %v", err)
 		}
@@ -394,7 +395,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 // goes H1 → H3: the 7.4.2 t1 failure no product door writes since `/pending 487`.
 func headingSkipped(t *testing.T) []byte {
 	t.Helper()
-	md, err := pdfops.ConvertDocToPDF([]byte("# Top\n\n## Next\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Top\n\n## Next\n"), ".md")
 	if err != nil {
 		t.Fatalf("corpus: %v", err)
 	}

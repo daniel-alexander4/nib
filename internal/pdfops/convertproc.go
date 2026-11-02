@@ -3,6 +3,7 @@ package pdfops
 import (
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // taskkillCommand is the command that ends a converter's process tree on Windows: `taskkill /T`, which
@@ -25,4 +26,44 @@ func taskkillCommand(systemRoot string, pid int) (string, []string) {
 		name = filepath.Join(systemRoot, "System32", "taskkill.exe")
 	}
 	return name, []string{"/T", "/F", "/PID", strconv.Itoa(pid)}
+}
+
+// toolEnvKeys are the environment variables a converter is handed (ADR-185, D33, X11(d)). Everything else
+// is dropped: before this, no site set `cmd.Env`, so LibreOffice and Ghostscript inherited the whole of
+// Nib's — proxy settings (`HTTP(S)_PROXY`), `SSH_AUTH_SOCK`, `NIB_*`, tokens in the launching shell — for
+// a program that interprets a stranger's file. A prefix ending in `*` matches the family.
+//
+// HOME stays the real one on purpose: LibreOffice finds the person's installed fonts through it, and a
+// document laid out in a font the machine has should not change because it was imported. The throwaway
+// LibreOffice PROFILE (officeprofile.go) is what isolates its configuration. Declared: an isolated HOME is
+// the stricter answer and costs that fidelity; it is revisited when a converter that needs it arrives.
+var toolEnvKeys = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "LC_*", "TZ", "XDG_*", "FONTCONFIG_*",
+	// Windows: the interpreter and the profile roots LibreOffice and Ghostscript resolve from.
+	"SystemRoot", "SYSTEMDRIVE", "windir", "ComSpec", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+	"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData",
+}
+
+// toolEnv builds the environment a converter runs in: the allowlist above from the given environment (in
+// `KEY=value` form), plus TMPDIR / TEMP / TMP pointing into the job's own directory so the tool's scratch
+// files land where the sweep owns them (Y10). tmp may be empty for a tool run with no directory.
+func toolEnv(environ []string, tmp string) []string {
+	var out []string
+	for _, kv := range environ {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		for _, allow := range toolEnvKeys {
+			if strings.HasSuffix(allow, "*") && strings.HasPrefix(k, strings.TrimSuffix(allow, "*")) || strings.EqualFold(allow, k) {
+				out = append(out, kv)
+				break
+			}
+		}
+	}
+	if tmp != "" {
+		out = append(out, "TMPDIR="+tmp, "TEMP="+tmp, "TMP="+tmp)
+	}
+	return out
 }

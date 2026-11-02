@@ -54,7 +54,7 @@ func TestEveryDoorThatEmbedsAFaceIsAFunctionOfItsInputs(t *testing.T) {
 		name string
 		make func() ([]byte, error)
 	}{
-		{"authored Markdown", func() ([]byte, error) { return ConvertDocToPDF([]byte(p4Markdown), ".md") }},
+		{"authored Markdown", func() ([]byte, error) { return ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md") }},
 		{"a CreateFromJSON spec naming an embedded face", func() ([]byte, error) {
 			return CreateFromJSON([]byte(`{"pages":{"1":{"content":{"text":[{"value":"a page",` +
 				`"anchor":"TopLeft","position":[72,720],"font":{"name":"` + body + `","size":12}}]}}}}`))

@@ -186,7 +186,9 @@ var published = map[string][]string{
 	// beneath, where it stays visible instead of passing.
 	"pdfops.SignatureWidget": {"internal/pdfops/attachments.go"},
 	// The format table row: `formatViews` (server/auth.go) reads every field into the status answer the page builds `accept` from.
-	"pdfops.Format": {"internal/server/auth.go", "internal/pdfops/formats.go"}, // Door is read by IsDoorExt, which listDir and the desktop-file test use
+	// The import function's result (ADR-185): the doors read PDF, Name and Converted; the command line reads the two notes.
+	"pdfops.ImportResult": {"internal/server/server.go", "internal/server/handoff.go", "internal/cli/commands.go"},
+	"pdfops.Format":       {"internal/server/auth.go", "internal/pdfops/formats.go", "internal/pdfops/importsniff.go"}, // Door is read by IsDoorExt, which listDir and the desktop-file test use
 	// **Discovered only from 2026-09-01, by being EMBEDDED (/pending 347).** `WatermarkStyle` is
 	// exported and json-tagged and is only ever a parameter — `StampWatermark(pdf, text, st)` —
 	// so the "returned by an exported function" filter had never admitted it, and its four fields

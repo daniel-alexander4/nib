@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"os"
@@ -91,7 +92,7 @@ func TestAProgramsGlyphsReachWhereAnotherReaderSaysTheyDo(t *testing.T) {
 // measuring the same TEXT in the same face, which reaches the glyphs through the face's character map and not
 // through the codes the page shows.
 func TestAnAuthoredPagesPrintCarriesTheInkOfTheGlyphsItShows(t *testing.T) {
-	pdf, err := ConvertDocToPDF([]byte(inkProbeMarkdown), ".md")
+	pdf, err := ConvertDocToPDF(context.Background(), []byte(inkProbeMarkdown), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

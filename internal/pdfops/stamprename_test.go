@@ -35,7 +35,7 @@ func officeDocument(t *testing.T) []byte {
 		t.Skip("SKIP (not a pass): LibreOffice is absent, so no document carries a producer's own " +
 			"Liberation and /pending 494's clause is UNCHECKED in this run.")
 	}
-	pdf, err := ConvertOfficeToPDF([]byte(officeDocumentRTF), "rtf")
+	pdf, err := ConvertOfficeToPDF(context.Background(), []byte(officeDocumentRTF), "rtf")
 	if err != nil {
 		t.Skipf("SKIP (not a pass): LibreOffice could not build the fixture: %v", err)
 	}

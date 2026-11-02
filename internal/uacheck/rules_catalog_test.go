@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -259,7 +260,7 @@ func TestTheContentLanguageRuleResolvesEachPieceOfText(t *testing.T) {
 	// element, so the walk to an ancestor was never needed and removing it left the suite green.
 	// Converted Markdown nests (L → LI → LBody owns the MCID), so a /Lang on the top-level elements
 	// ONLY must reach the text through the ancestor chain.
-	md, err := pdfops.ConvertDocToPDF([]byte("- first item\n- second item\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("- first item\n- second item\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +765,7 @@ func TestEachPrefixClauseReadsItsOwnProperty(t *testing.T) {
 // Every row was run on veraPDF 1.30.2 first; the verdict is veraPDF's. nib used to trim and take the first
 // text run, then compare to the string "1" — four of these eight disagreed.
 func TestTheIdentificationPartIsAnIntegerOverTheWholeText(t *testing.T) {
-	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n"), ".md")
+	md, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

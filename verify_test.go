@@ -826,8 +826,22 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		"internal/browser/sysfolders_windows.go": "KnownFolderPath",
 		"internal/browser/sysfolders_other.go":   "xdgUserDir",
 		// The vault's cross-process lock (ADR-154): the kernel's own on both, never a marker file.
-		"internal/vault/filelock_other.go":   "unix.Flock",
-		"internal/vault/filelock_windows.go": "windows.LockFileEx",
+		// The primitive itself is `internal/filelock`'s since ADR-185 (the temp door shares it); the vault's
+		// siblings delegate to it.
+		"internal/vault/filelock_other.go":      "filelock.Try",
+		"internal/vault/filelock_windows.go":    "filelock.Try",
+		"internal/filelock/filelock_other.go":   "unix.Flock",
+		"internal/filelock/filelock_windows.go": "windows.LockFileEx",
+		// A converter's memory ceiling (ADR-185): Linux sums the group's resident set from /proc and lowers its
+		// priority; elsewhere the constant says the ceiling is unenforced and a sentence says so.
+		"internal/pdfops/rsswatch_linux.go": "PRIO_PGRP",
+		"internal/pdfops/rsswatch_other.go": "CeilingUnenforcedNote",
+		// The temp door (ADR-185): ownership from the stat on Unix, the ACL's declared gap on Windows; an
+		// orphaned converter group found in /proc on Linux, a declared gap (ReapSupported false) elsewhere.
+		"internal/tempdir/owner_unix.go":    "syscall.Stat_t",
+		"internal/tempdir/owner_windows.go": "declared gap",
+		"internal/tempdir/reap_linux.go":    "/proc",
+		"internal/tempdir/reap_other.go":    "ReapSupported",
 	}
 	for path, want := range must {
 		b, err := os.ReadFile(path)

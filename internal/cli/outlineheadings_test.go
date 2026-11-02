@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 // is what was edited.
 func TestOutlineProposeListsWhatTheHeadingsGiveAndSetWritesIt(t *testing.T) {
 	dir := t.TempDir()
-	pdf, err := pdfops.ConvertDocToPDF([]byte("# Alpha\n\nbody text\n\n## Beta\n\nbody text\n"), ".md")
+	pdf, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Alpha\n\nbody text\n\n## Beta\n\nbody text\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"encoding/xml"
 	"os"
 	"os/exec"
@@ -21,7 +22,7 @@ import (
 
 func taggedHost(t *testing.T) []byte {
 	t.Helper()
-	pdf, err := pdfops.ConvertDocToPDF([]byte("# A contract\n\nThe parties agree to the terms below.\n"), ".md")
+	pdf, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# A contract\n\nThe parties agree to the terms below.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

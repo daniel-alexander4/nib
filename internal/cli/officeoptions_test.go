@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
+	"nib/internal/testpdf"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,7 +92,7 @@ func TestOfficeRefusesWhatItCannotFillNamingTheKeyAndNotTheValue(t *testing.T) {
 	}
 	// A document LibreOffice converts takes none of these: refused before it is even looked for.
 	docx := filepath.Join(dir, "x.docx")
-	os.WriteFile(docx, []byte("PK not really"), 0o600)
+	os.WriteFile(docx, testpdf.MinimalDocx("x"), 0o600)
 	_, stderr, code := fillChild(t, "", "", "office", docx, "-o", o, "--page-size", "a4")
 	if code != 1 || !strings.Contains(stderr, "apply to Markdown only") {
 		t.Errorf("an option on a .docx: exit %d, %q", code, stderr)

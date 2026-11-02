@@ -25,7 +25,7 @@ import (
 // the value a new rule reads, and a variant with row headers written through the structure editor.
 func tableFigureCorpus(t *testing.T) []oracleDoc {
 	t.Helper()
-	src, err := pdfops.ConvertOfficeToPDF(tableFigureODT(t), "odt")
+	src, err := pdfops.ConvertOfficeToPDF(context.Background(), tableFigureODT(t), "odt")
 	if err != nil {
 		t.Fatalf("corpus: LibreOffice is present and could not convert the table-and-figure fixture: %v", err)
 	}

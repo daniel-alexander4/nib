@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1422,7 +1423,7 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 func TestNibsOwnNUpPassesAndItsFusedCarryFails(t *testing.T) {
 	md := "# N-up\n\n" + strings.Repeat("## Section\n\nA paragraph of ordinary prose, long enough to wrap "+
 		"across the measure of the page.\n\n- one\n- two\n\n", 20)
-	src, err := pdfops.ConvertDocToPDF([]byte(md), ".md")
+	src, err := pdfops.ConvertDocToPDF(context.Background(), []byte(md), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

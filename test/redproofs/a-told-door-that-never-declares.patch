@@ -1,13 +1,11 @@
-diff --git a/internal/cli/commands.go b/internal/cli/commands.go
-index c6c30ef..0e43a02 100644
---- a/internal/cli/commands.go
-+++ b/internal/cli/commands.go
-@@ -237,7 +237,7 @@ func cmdOffice(args []string) int {
- 	// document. Fatal rather than warned: a PDF written without the language asked for is exactly
- 	// the silent wrong answer the flag exists to prevent.
- 	if lang != "" {
--		if pdf, err = pdfops.SetLang(pdf, lang); err != nil {
-+		if _, err = pdfops.LangTag(lang); err != nil {
- 			errf("%v", err)
- 			return 1
+--- a/internal/pdfops/importdoor.go
++++ b/internal/pdfops/importdoor.go
+@@ -267,7 +267,7 @@
+ 		pdf = t
+ 	}
+ 	if o.Lang != "" {
+-		if pdf, err = SetLang(pdf, o.Lang); err != nil {
++		if _, err = LangTag(o.Lang); err != nil {
+ 			return nil, err
  		}
+ 		// The PDF/UA identification (ADR-033) — on nib's own Markdown conversion only, and only when the

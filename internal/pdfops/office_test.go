@@ -63,7 +63,7 @@ func TestConvertOfficeToPDF(t *testing.T) {
 	if !LibreOfficeAvailable() {
 		t.Skip("LibreOffice not installed; skipping office conversion")
 	}
-	out, err := ConvertOfficeToPDF(minimalDOCX(t, "Hello from Nib."), ".docx")
+	out, err := ConvertOfficeToPDF(context.Background(), minimalDOCX(t, "Hello from Nib."), ".docx")
 	if err != nil {
 		t.Fatalf("ConvertOfficeToPDF: %v", err)
 	}
@@ -78,11 +78,11 @@ func TestConvertOfficeToPDF(t *testing.T) {
 // TestConvertOfficeRejectsUnsupported: an extension outside the allowlist is
 // refused with ErrUnsupportedOffice and never reaches LibreOffice.
 func TestConvertOfficeRejectsUnsupported(t *testing.T) {
-	if _, err := ConvertOfficeToPDF([]byte("whatever"), ".exe"); err != ErrUnsupportedOffice {
-		t.Errorf("ConvertOfficeToPDF(.exe) error = %v, want ErrUnsupportedOffice", err)
+	if _, err := ConvertOfficeToPDF(context.Background(), []byte("whatever"), ".exe"); err != ErrUnsupportedOffice {
+		t.Errorf("ConvertOfficeToPDF(context.Background(), .exe) error = %v, want ErrUnsupportedOffice", err)
 	}
-	if _, err := ConvertOfficeToPDF([]byte("whatever"), ""); err != ErrUnsupportedOffice {
-		t.Errorf("ConvertOfficeToPDF(no ext) error = %v, want ErrUnsupportedOffice", err)
+	if _, err := ConvertOfficeToPDF(context.Background(), []byte("whatever"), ""); err != ErrUnsupportedOffice {
+		t.Errorf("ConvertOfficeToPDF(context.Background(), no ext) error = %v, want ErrUnsupportedOffice", err)
 	}
 }
 
@@ -102,7 +102,7 @@ func TestSupportedOfficeExt(t *testing.T) {
 
 // TestConvertDocMarkdown: Markdown converts natively — no LibreOffice, no skip.
 func TestConvertDocMarkdown(t *testing.T) {
-	out, err := ConvertDocToPDF([]byte("# Title\n\nBody with **bold** text.\n"), ".md")
+	out, err := ConvertDocToPDF(context.Background(), []byte("# Title\n\nBody with **bold** text.\n"), ".md")
 	if err != nil {
 		t.Fatalf("ConvertDocToPDF: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestConvertDocToPDFPrintsNonLatinMarkdown(t *testing.T) {
 		{"devanagari", "नमस्ते दुनिया", "NotoSansDevanagari"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := ConvertDocToPDF([]byte("# "+tc.text+"\n\n"+tc.text+"\n"), ".md")
+			out, err := ConvertDocToPDF(context.Background(), []byte("# "+tc.text+"\n\n"+tc.text+"\n"), ".md")
 			if err != nil {
 				t.Fatalf("ConvertDocToPDF: %v", err)
 			}

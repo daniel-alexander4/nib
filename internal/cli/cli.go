@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"nib/internal/addrscope"
 	"nib/internal/atomicfile"
+	"nib/internal/tempdir"
 	"os"
 	"sort"
 	"strings"
@@ -151,7 +152,7 @@ var statelessVerbs = map[string]bool{
 
 var privateConfig struct {
 	sync.Once
-	dir string
+	dir *tempdir.Dir
 }
 
 // usePrivateConfig points pdfcpu at a configuration directory private to this process (ADR-183): a verb never writes
@@ -169,18 +170,18 @@ var privateConfig struct {
 //
 // `api.EnsureDefaultConfigAt` is deprecated in v0.16.2 for `LoadConfiguration`, but it is the call that makes every
 // `model.NewDefaultConfiguration()` site in the tree answer from this root, and it must run before any is built — no
-// package-level variable builds one (`TestNoPackageLevelPdfcpuConfiguration`). The root is made under the temporary
-// directory; a killed process leaves its few hundred kilobytes of public fonts there, which is declared. If the root
+// package-level variable builds one (`TestNoPackageLevelPdfcpuConfiguration`). The root is a `tempdir` directory (ADR-185); a killed
+// process leaves its few hundred kilobytes of public fonts there until the next start's sweep removes them. If the root
 // cannot be made the configuration is disabled and text degrades to the core fonts, as it logs.
 func usePrivateConfig() {
 	privateConfig.Do(func() {
-		root, err := os.MkdirTemp("", "nib-pdfcpu-")
+		dir, err := tempdir.New("pdfcpu")
 		if err == nil {
-			if err = api.EnsureDefaultConfigAt(root); err == nil {
-				privateConfig.dir = root
+			if err = api.EnsureDefaultConfigAt(dir.Path()); err == nil {
+				privateConfig.dir = dir
 				return
 			}
-			os.RemoveAll(root)
+			dir.Close()
 		}
 		model.ConfigPath = "disable"
 	})
@@ -188,9 +189,9 @@ func usePrivateConfig() {
 
 // Cleanup removes the private configuration directory, if one was made. main calls it once Run has returned.
 func Cleanup() {
-	if privateConfig.dir != "" {
-		os.RemoveAll(privateConfig.dir)
-		privateConfig.dir = ""
+	if privateConfig.dir != nil {
+		privateConfig.dir.Close()
+		privateConfig.dir = nil
 	}
 }
 

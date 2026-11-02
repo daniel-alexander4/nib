@@ -274,7 +274,7 @@ func TestATaggedMarkdownDocumentPassesUA1(t *testing.T) {
 	// `tagMarkdown` directly, and P06 closed with criterion 1 met while nothing a user could reach
 	// called that function: `ConvertDocToPDF` returned untagged Markdown the whole time. A criterion's
 	// reader reads what users get.
-	tagged, err := ConvertDocToPDF([]byte(s02Markdown), ".md")
+	tagged, err := ConvertDocToPDF(context.Background(), []byte(s02Markdown), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestATaggedMarkdownDocumentPassesUA1(t *testing.T) {
 // a document that has content, and which IS tagged. Here the whole document is empty.
 func TestADocumentWithNothingInItClaimsNothing(t *testing.T) {
 	for _, src := range []string{"", "\n", "   \n\n", "<!-- a comment and nothing else -->\n"} {
-		pdf, err := ConvertDocToPDF([]byte(src), ".md")
+		pdf, err := ConvertDocToPDF(context.Background(), []byte(src), ".md")
 		if err != nil {
 			t.Fatalf("%q: an empty document is still a document, and the conversion failed: %v", src, err)
 		}

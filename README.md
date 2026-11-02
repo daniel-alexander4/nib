@@ -369,10 +369,25 @@ rather than the document's — a German contract converted on an English machine
 is declared English.
 
 Each conversion runs in its own temporary directory with an isolated LibreOffice
-profile and a timeout. As with Ghostscript, LibreOffice *interprets* the document
-(a large surface, and office files can carry macros — headless LibreOffice doesn't
-auto-run them at the default security level), so only convert files you'd open
-anyway. Fidelity is LibreOffice's: complex documents may not convert pixel-perfectly.
+profile, a timeout and a memory ceiling, and at most two run at once (the rest wait).
+As with Ghostscript, LibreOffice *interprets* the document (a large surface, and
+office files can carry macros — Nib's profile sets the macro security to its highest
+level and disables macro execution), so only convert files you'd open anyway.
+**A Word file's linked pictures and attached template make no web request while it
+converts** (measured with a local listener; LibreOffice's own defaults *do* make
+one, so Nib's profile routes its web requests to a closed local port). Other kinds
+of link in other formats (a spreadsheet's web functions, OLE links) were not
+tested, and a link to a file on this computer is not covered and is read as before. Fidelity is LibreOffice's: complex documents may not convert
+pixel-perfectly.
+
+The source file is never written: the conversion works on a copy in the temporary
+directory, and the result opens as a new document with no file behind it, so *Save*
+asks for a name. The copy is removed when the conversion ends. If Nib is killed
+mid-conversion (a crash or `kill -9`) the copy — which can hold a confidential
+document — stays in the system temporary directory until the next time Nib starts,
+which removes it; Quit, closing the last window and `SIGTERM` stop a running
+conversion and remove it at once. A Windows or macOS build cannot limit the
+converter's memory or find an orphaned converter after a crash; only Linux does.
 
 ### Circles & pills for multiple choice
 Choosing an option marks it the way a person would: a **circle** around a single

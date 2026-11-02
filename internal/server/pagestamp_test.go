@@ -140,7 +140,7 @@ func TestEveryPageStampFieldTheServerReadsIsOneTheClientSends(t *testing.T) {
 func TestOutlineProposeAnswersTheHeadingsAndWritesNothing(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
-	pdf, err := pdfops.ConvertDocToPDF([]byte("# Alpha\n\nbody text\n\n## Beta\n\nbody text\n"), ".md")
+	pdf, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Alpha\n\nbody text\n\n## Beta\n\nbody text\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

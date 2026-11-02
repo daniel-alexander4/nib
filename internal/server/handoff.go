@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -151,7 +152,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// file outlasts the launch's wait, and the launch then exits on `ErrHandOffUnanswered` trusting
 	// this instance to finish — so an install that stopped when its caller gave up would open the
 	// document nowhere, and a launch that did not trust it would open the document twice.
-	focused, err := s.openHandedOff(path)
+	focused, err := s.openHandedOff(context.WithoutCancel(r.Context()), path)
 	if err != nil {
 		s.answerHandoff(w, "refused", err.Error())
 		return
@@ -172,8 +173,13 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 //
 // Reports focused when path was found already open AT THE INSTALL and activated instead —
 // see addDocCappedOrFocus for why the caller's earlier focusPath is not enough.
-func (s *Server) openHandedOff(path string) (focused bool, err error) {
-	data, converted, ref := readInstallablePDF(path)
+func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, err error) {
+	// **A hand-off waits for the gate however long the queue is** (Y4): those files are already "opening" to
+	// the person who double-clicked them, so a full queue parks them and never refuses them. Its context is
+	// the caller's detached one — the launcher's 30 s wait must not cancel (and so kill) a conversion.
+	o := s.importOptions("handoff")
+	o.WaitForever = true
+	res, ref := readInstallablePDF(ctx, path, o)
 	if ref != nil {
 		// Its own wording, kept deliberately. This door is the OS handing Nib a file the
 		// user double-clicked, not a path anyone typed, so "file not found" would read as
@@ -181,29 +187,27 @@ func (s *Server) openHandedOff(path string) (focused bool, err error) {
 		// does not require every site to print the same sentence.
 		switch ref.kind {
 		case refuseTooLarge:
-			return false, errHandoff("that PDF is too large")
+			return false, errHandoff("that file is too large to open")
 		case refuseUnreadable:
 			return false, errHandoff("that file could not be read")
-		case refuseNotPDF:
-			return false, errHandoff("that file isn't a PDF")
-		case refuseConvertible:
+		case refuseImport:
 			// **Handled explicitly, because the `default` below would have swallowed it.** A new
 			// refusalKind does not fail to compile here — Go has no exhaustive switch — so it
 			// would have degraded to "that file could not be opened" for a document nib actually
 			// converts, and the drift would have passed every test. /pending 541 named this arm as
-			// the trap in its own fix.
-			return false, errHandoff(convertibleRefusal(filepath.Base(path)))
+			// the trap in its own fix. The sentence is `Import`'s own: one per cause.
+			return false, errHandoff(ref.msg)
 		default:
 			return false, errHandoff("that file could not be opened")
 		}
 	}
-	// **An image hand-off installs PATHLESS**, for the reason `readInstallablePDF` states: the
-	// bytes on disk are a PNG and the document is a PDF built from them, so a Save that wrote
-	// back through the path would destroy the file the OS just handed over. The name is kept,
-	// or a double-clicked photo opens as "Untitled".
-	doc := newPathDoc(path, data)
-	if converted {
-		doc = &document{path: "", name: filepath.Base(path), data: data, sig: sign.Verify(data)}
+	// **A converted hand-off installs PATHLESS**, for the reason `readInstallablePDF` states: the
+	// bytes on disk are a PNG or a .docx and the document is a PDF built from them, so a Save that
+	// wrote back through the path would destroy the file the OS just handed over. The name is kept
+	// (`<base>.pdf`, D11), or a double-clicked photo opens as "Untitled".
+	doc := newPathDoc(path, res.PDF)
+	if res.Converted {
+		doc = &document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF)}
 	}
 	_, focused, err = s.addDocCappedOrFocus(doc, path)
 	return focused, err
@@ -294,7 +298,7 @@ func (s *Server) drainPendingOpens() {
 		if s.docForPath(path) != nil {
 			continue
 		}
-		if _, err := s.openHandedOff(path); err != nil {
+		if _, err := s.openHandedOff(context.Background(), path); err != nil {
 			// Logged rather than surfaced: the user is at the unlock screen and has no
 			// place to receive it yet. The document simply does not appear, which is
 			// the same outcome as the refusal they would have seen while unlocked.

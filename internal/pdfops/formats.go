@@ -22,11 +22,26 @@ type Format struct {
 	Tool  MissingTool
 	// Image marks a raster image the open door reads by magic bytes (sniffImage) on all four routes.
 	Image bool
+	// Family is what the format's BYTES look like (D32): the table classifies by content, and an extension
+	// that disagrees with the sniffed family is a named refusal, except where bytes cannot say (text).
+	Family Family
 	// Door marks a format every route (path, upload, fetch, OS hand-off) opens as it stands today, with
 	// no second step. The folder listing and the .desktop file offer exactly these (and PDF); the rest
 	// arrive through Open & convert until the import door (P01.S02) makes them Door too.
 	Door bool
 }
+
+// Family is the kind of bytes a format is made of, as the sniffer (sniffFamily) can tell.
+type Family int
+
+const (
+	FamilyNone  Family = iota // not classified by bytes
+	FamilyImage               // a raster image, decided by sniffImage
+	FamilyText                // text: bytes cannot name the format, the extension does
+	FamilyZip                 // an OOXML or OpenDocument package
+	FamilyOLE                 // a legacy Office compound file
+	FamilyRTF                 // Rich Text
+)
 
 const (
 	mimeOOXML = "application/vnd.openxmlformats-officedocument."
@@ -34,25 +49,25 @@ const (
 )
 
 var formats = []Format{
-	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Door: true},
-	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Door: true},
-	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Door: true},
-	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Door: true},
+	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Door: true, Family: FamilyImage},
 
-	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}},
+	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}, Family: FamilyText},
 
-	{Key: "doc", Label: "Word (.doc)", Exts: []string{"doc"}, MIME: []string{"application/msword"}, Tool: ToolLibreOffice},
-	{Key: "docx", Label: "Word", Exts: []string{"docx"}, MIME: []string{mimeOOXML + "wordprocessingml.document"}, Tool: ToolLibreOffice},
-	{Key: "odt", Label: "OpenDocument text", Exts: []string{"odt"}, MIME: []string{mimeODF + "text"}, Tool: ToolLibreOffice},
-	{Key: "rtf", Label: "Rich Text", Exts: []string{"rtf"}, MIME: []string{"application/rtf"}, Tool: ToolLibreOffice},
-	{Key: "txt", Label: "Plain text", Exts: []string{"txt"}, MIME: []string{"text/plain"}, Tool: ToolLibreOffice},
-	{Key: "xls", Label: "Excel (.xls)", Exts: []string{"xls"}, MIME: []string{"application/vnd.ms-excel"}, Tool: ToolLibreOffice},
-	{Key: "xlsx", Label: "Excel", Exts: []string{"xlsx"}, MIME: []string{mimeOOXML + "spreadsheetml.sheet"}, Tool: ToolLibreOffice},
-	{Key: "ods", Label: "OpenDocument spreadsheet", Exts: []string{"ods"}, MIME: []string{mimeODF + "spreadsheet"}, Tool: ToolLibreOffice},
-	{Key: "csv", Label: "CSV", Exts: []string{"csv"}, MIME: []string{"text/csv"}, Tool: ToolLibreOffice},
-	{Key: "ppt", Label: "PowerPoint (.ppt)", Exts: []string{"ppt"}, MIME: []string{"application/vnd.ms-powerpoint"}, Tool: ToolLibreOffice},
-	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice},
-	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice},
+	{Key: "doc", Label: "Word (.doc)", Exts: []string{"doc"}, MIME: []string{"application/msword"}, Tool: ToolLibreOffice, Family: FamilyOLE},
+	{Key: "docx", Label: "Word", Exts: []string{"docx"}, MIME: []string{mimeOOXML + "wordprocessingml.document"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "odt", Label: "OpenDocument text", Exts: []string{"odt"}, MIME: []string{mimeODF + "text"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "rtf", Label: "Rich Text", Exts: []string{"rtf"}, MIME: []string{"application/rtf"}, Tool: ToolLibreOffice, Family: FamilyRTF},
+	{Key: "txt", Label: "Plain text", Exts: []string{"txt"}, MIME: []string{"text/plain"}, Tool: ToolLibreOffice, Family: FamilyText},
+	{Key: "xls", Label: "Excel (.xls)", Exts: []string{"xls"}, MIME: []string{"application/vnd.ms-excel"}, Tool: ToolLibreOffice, Family: FamilyOLE},
+	{Key: "xlsx", Label: "Excel", Exts: []string{"xlsx"}, MIME: []string{mimeOOXML + "spreadsheetml.sheet"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "ods", Label: "OpenDocument spreadsheet", Exts: []string{"ods"}, MIME: []string{mimeODF + "spreadsheet"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "csv", Label: "CSV", Exts: []string{"csv"}, MIME: []string{"text/csv"}, Tool: ToolLibreOffice, Family: FamilyText},
+	{Key: "ppt", Label: "PowerPoint (.ppt)", Exts: []string{"ppt"}, MIME: []string{"application/vnd.ms-powerpoint"}, Tool: ToolLibreOffice, Family: FamilyOLE},
+	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 }
 
 // Formats returns a copy of the table, so no caller can edit the one list.

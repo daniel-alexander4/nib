@@ -22,7 +22,7 @@ import (
 // file name, and declared in a language.
 func labelReady(t *testing.T, md string) []byte {
 	t.Helper()
-	pdf, err := ConvertDocToPDF([]byte(md), ".md")
+	pdf, err := ConvertDocToPDF(context.Background(), []byte(md), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestLabelUARefusesEachMissingConditionByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	noLang, err := ConvertDocToPDF([]byte("# Notes\n\nA paragraph.\n"), ".md")
+	noLang, err := ConvertDocToPDF(context.Background(), []byte("# Notes\n\nA paragraph.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestLabelUARefusesEachMissingConditionByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	noTitle, err := ConvertDocToPDF([]byte("# Notes\n\nA paragraph.\n"), ".md")
+	noTitle, err := ConvertDocToPDF(context.Background(), []byte("# Notes\n\nA paragraph.\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

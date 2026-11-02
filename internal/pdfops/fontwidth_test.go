@@ -244,7 +244,7 @@ func TestTheWidthCensusOverTheCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	md, err := ConvertDocToPDF([]byte("# Heading\n\nA paragraph with **bold** and *italic*.\n\n- one\n"), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph with **bold** and *italic*.\n\n- one\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestTheWidthCensusOverTheCorpus(t *testing.T) {
 		pdf  []byte
 	}{{"core-font page", core}, {"converted Markdown", md}}
 	if LibreOfficeAvailable() {
-		lo, lerr := ConvertOfficeToPDF([]byte("A heading\n\nA paragraph of ordinary prose.\n"), "txt")
+		lo, lerr := ConvertOfficeToPDF(context.Background(), []byte("A heading\n\nA paragraph of ordinary prose.\n"), "txt")
 		if lerr != nil {
 			t.Fatalf("LibreOffice is present and could not convert: %v", lerr)
 		}

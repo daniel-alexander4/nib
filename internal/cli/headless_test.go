@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,8 +62,15 @@ func childRun(t *testing.T, env []string, args ...string) (dirs [3]string, code 
 func empty(t *testing.T, dir string) {
 	t.Helper()
 	var found []string
+	// Nib's own per-user temp root (`nib-<uid>`, internal/tempdir, ADR-185) is created in a temp directory by
+	// any verb that makes a scratch directory and stays, empty, for the next one; what must not be there is
+	// anything INSIDE it. Its children are still found.
+	root := filepath.Join(dir, "nib")
+	if uid := os.Getuid(); uid >= 0 {
+		root = filepath.Join(dir, "nib-"+strconv.Itoa(uid))
+	}
 	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && p != dir {
+		if err == nil && p != dir && p != root {
 			found = append(found, p)
 		}
 		return nil

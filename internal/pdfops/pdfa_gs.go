@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/tempdir"
 )
 
 // The general, vector-preserving PDF/A path: shell out to an installed Ghostscript.
@@ -74,16 +74,16 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 	if xfa, err := pdfread.ReadXFA(pdf); err == nil && xfa == pdfread.XFADynamic {
 		return nil, pdfread.ErrDynamicXFA
 	}
-	dir, err := os.MkdirTemp("", "nib-pdfa-")
+	dir, err := tempdir.New("pdfa")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer dir.Close()
 
-	inPath := filepath.Join(dir, "in.pdf")
-	outPath := filepath.Join(dir, "out.pdf")
-	iccPath := filepath.Join(dir, "srgb.icc")
-	defPath := filepath.Join(dir, "pdfa_def.ps")
+	inPath := dir.Join("in.pdf")
+	outPath := dir.Join("out.pdf")
+	iccPath := dir.Join("srgb.icc")
+	defPath := dir.Join("pdfa_def.ps")
 	for _, w := range []struct {
 		path string
 		data []byte
@@ -104,13 +104,14 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 		"-sOutputFile="+outPath,
 		defPath, inPath,
 	)
-	return runConvert(ctx, cmd, outPath, "Ghostscript")
+	cmd.Env = toolEnv(os.Environ(), dir.Path())
+	return runConvert(ctx, cmd, outPath, "Ghostscript", dir)
 }
 
 // runConvert runs a prepared external-converter command and reads the file it
 // was told to produce — the run/timeout/stderr-tail plumbing Ghostscript and
 // LibreOffice share, kept in one place so fixes land in both.
-func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string) ([]byte, error) {
+func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *tempdir.Dir) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	// **The timeout has to end the conversion, not only the process nib started** (`/pending 503`).
@@ -121,11 +122,45 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string) ([]byt
 	// escaped the tree and still holds the pipe.
 	killTreeOnCancel(cmd)
 	cmd.WaitDelay = convertWaitDelay
-	if err := cmd.Run(); err != nil {
+	// **Started, registered, then waited on — not `Run`** (ADR-185). A cancel is not the only way a
+	// converter's owner ends: Quit, the idle exit and SIGTERM do not cancel this context, so the group is
+	// registered for `KillConverters`, and its id is written beside the input so a sweep after a crash can
+	// find what the crash orphaned.
+	if convertersClosed() {
+		return nil, ErrShuttingDown
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("%s could not convert this document: %s", tool, execErrTail(stderr.String(), err))
+	}
+	forget, rerr := registerConverter(cmd.Process.Pid)
+	if rerr != nil {
+		killGroup(cmd.Process.Pid)
+		_ = cmd.Wait()
+		return nil, rerr
+	}
+	defer forget()
+	if dir != nil {
+		_ = dir.RecordGroup(cmd.Process.Pid) // best-effort: it only helps a sweep after a crash
+	}
+	// The memory ceiling (R7, Y5): a watchdog over the group, never an address-space limit. A kill reads as a
+	// refusal that names the ceiling, not as a converter that "could not convert".
+	stopWatch := watchMemory(cmd.Process.Pid, converterMemoryCeiling, memoryTick)
+	defer func() { stopWatch() }()
+	waitErr := cmd.Wait()
+	if killed, _ := stopWatch(); killed {
+		return nil, ErrConverterOverMemory
+	}
+	if err := waitErr; err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("%s timed out converting this document", tool)
 		}
 		return nil, fmt.Errorf("%s could not convert this document: %s", tool, execErrTail(stderr.String(), err))
+	}
+	// **Sized by `stat` before it is read** (D31(3)): a converter's output is its own, and reading a
+	// file of whatever size it chose into memory is how a 5 GiB result becomes a 5 GiB heap.
+	fi, serr := os.Stat(outPath)
+	if serr == nil && fi.Size() > maxConvertedBytes {
+		return nil, ErrConvertedTooLarge
 	}
 	out, err := os.ReadFile(outPath)
 	if err != nil || len(out) == 0 {
@@ -133,6 +168,24 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string) ([]byt
 	}
 	return out, nil
 }
+
+// converterMemoryCeiling is the resident-set ceiling for one converter's process group. PROVISIONAL, set
+// from the measurement P01.S02a records (importrss_test.go) with stated headroom.
+const converterMemoryCeiling = 3 << 30
+
+// memoryTick is how often the watchdog samples. A sample reads /proc, so it is not made faster than a
+// converter can allocate a gigabyte.
+const memoryTick = 250 * time.Millisecond
+
+// ErrConverterOverMemory is a converter ended for exceeding its memory ceiling.
+var ErrConverterOverMemory = errors.New("the converter used more memory than Nib allows, so it was stopped")
+
+// maxConvertedBytes bounds what a converter may hand back. The server's open cap (`maxPDFBytes`, ADR-008)
+// is the same figure and is still applied where the document is installed; this one stops the read.
+const maxConvertedBytes = 200 << 20
+
+// ErrConvertedTooLarge is a converter whose output is past maxConvertedBytes.
+var ErrConvertedTooLarge = errors.New("the converted document is too large to open")
 
 // pdfaDefPS builds the PDF/A definition Ghostscript needs to attach the sRGB
 // OutputIntent. It references the vendored ICC at iccPath, which the caller

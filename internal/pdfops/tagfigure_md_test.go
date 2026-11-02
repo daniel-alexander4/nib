@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -34,7 +35,7 @@ func figureDir(t *testing.T) string {
 func TestAMarkdownImageIsTaggedAsAFigureWithItsDescription(t *testing.T) {
 	dir := figureDir(t)
 	md := "# Report\n\nIntro text.\n\n![The firm's logo](logo.png)\n\nMiddle text.\n\n![](logo.png)\n\nEnd.\n"
-	out, err := ConvertDocToPDFWith([]byte(md), ".md", mdpdf.Options{ImageDir: dir})
+	out, err := ConvertDocToPDFWith(context.Background(), []byte(md), ".md", mdpdf.Options{ImageDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestAMarkdownImageIsTaggedAsAFigureWithItsDescription(t *testing.T) {
 		t.Errorf("pictures in the output: %d, %v", len(files), err)
 	}
 	// Without ImageDir the same document converts with no picture, as before.
-	plain, err := ConvertDocToPDF([]byte(md), ".md")
+	plain, err := ConvertDocToPDF(context.Background(), []byte(md), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestAMarkdownImageIsTaggedAsAFigureWithItsDescription(t *testing.T) {
 		t.Errorf("a conversion without ImageDir embedded %d picture(s)", len(files))
 	}
 	// Options on a LibreOffice document, including ImageDir, are refused.
-	if _, err := ConvertDocToPDFWith([]byte("x"), ".docx", mdpdf.Options{ImageDir: dir}); err == nil {
+	if _, err := ConvertDocToPDFWith(context.Background(), []byte("x"), ".docx", mdpdf.Options{ImageDir: dir}); err == nil {
 		t.Error("ImageDir on a .docx was accepted")
 	}
 }
@@ -92,7 +93,7 @@ func TestAMarkdownImageDocumentConformsToPDFUA(t *testing.T) {
 		t.Skip("SKIP (not a pass): veraPDF is absent, so the conformance of a picture is UNMEASURED here")
 	}
 	dir := figureDir(t)
-	pdf, err := ConvertDocToPDFWith([]byte("# Title\n\nSome text.\n\n![A described picture](logo.png)\n\n![](logo.png)\n\nMore text.\n"), ".md", mdpdf.Options{ImageDir: dir})
+	pdf, err := ConvertDocToPDFWith(context.Background(), []byte("# Title\n\nSome text.\n\n![A described picture](logo.png)\n\n![](logo.png)\n\nMore text.\n"), ".md", mdpdf.Options{ImageDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}

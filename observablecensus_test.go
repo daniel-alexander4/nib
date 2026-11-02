@@ -192,6 +192,8 @@ var inPackageOnlyRecorded = []string{
 	// pdfops.Format.Door (ADR-184): read by IsDoorExt inside the table's package; `listDir` and the desktop-file test ask that door,
 	// not the field — the rule ("what every route opens") lives once, beside the table (ADR-009).
 	"pdfops.Format.Door",
+	// pdfops.Format.Family (ADR-185): read by `classify`, the sniffer's one decision, inside the table's package.
+	"pdfops.Format.Family",
 	// ceremony.Anchor  // shape declared internal, with a reason
 	"ceremony.Anchor.Ceremony", // /pending 686: read by VerifyAgainst, the one door
 	"ceremony.Anchor.Convener",

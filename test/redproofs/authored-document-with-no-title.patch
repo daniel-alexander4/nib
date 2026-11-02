@@ -1,14 +1,15 @@
---- a/internal/server/office.go
-+++ b/internal/server/office.go
-@@ -47,10 +47,7 @@
- 		// The converted document's title is the source document's name — the one thing here that
- 		// identifies it, and what the user already calls it. Best-effort, and the door guarantees
- 		// it: a failed metadata write must not turn a conversion that succeeded into a 400.
--		var terr error
--		if pdf, terr = pdfops.TitleFromName(pdf, header.Filename); terr != nil {
--			log.Printf("office: %v", terr)
--		}
-+		_ = header.Filename
+--- a/internal/pdfops/importdoor.go
++++ b/internal/pdfops/importdoor.go
+@@ -261,11 +261,7 @@
  	}
- 	if err != nil {
- 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
+ 	// The converted document's title is the source's name — best-effort, and the door guarantees it: a failed
+ 	// metadata write must not turn a conversion that succeeded into a refusal.
+-	if t, terr := TitleFromName(pdf, name); terr != nil {
+-		log.Printf("import: %v", terr)
+-	} else {
+-		pdf = t
+-	}
++	_ = name
+ 	if o.Lang != "" {
+ 		if pdf, err = SetLang(pdf, o.Lang); err != nil {
+ 			return nil, err

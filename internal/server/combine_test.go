@@ -122,13 +122,15 @@ func TestCombineTakesImagesThroughTheOpenersDoor(t *testing.T) {
 		}
 	}
 
-	if resp, _ := post([2]any{"a.png", testPNG(t, 8, 8)}, [2]any{"notes.txt", []byte("not a document")}); resp.StatusCode == http.StatusOK {
-		t.Error("a text file was combined; the opener refuses it and Combine must too")
+	if resp, _ := post([2]any{"a.png", testPNG(t, 8, 8)}, [2]any{"mystery.xyz", []byte("not a document")}); resp.StatusCode == http.StatusOK {
+		t.Error("a file Nib has no route for was combined; the opener refuses it and Combine must too")
 	}
 	resp, body = post([2]any{"a.png", testPNG(t, 8, 8)}, [2]any{"report.docx", []byte("PK\x03\x04")})
 	var refusal struct{ Error string }
 	json.Unmarshal([]byte(body), &refusal)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(refusal.Error, "report.docx") || !strings.Contains(refusal.Error, "Open & convert to PDF") {
-		t.Errorf("an office file = %d %q, want 400 naming it and the route that converts it", resp.StatusCode, refusal.Error)
+	// An office file is converted by the SAME function that opens it (D8), so a package that is not one is
+	// refused with that function's sentence, naming the file.
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(refusal.Error, "report.docx") || !strings.Contains(refusal.Error, "package") {
+		t.Errorf("a corrupt office file = %d %q, want 400 naming it and the opener's own refusal", resp.StatusCode, refusal.Error)
 	}
 }

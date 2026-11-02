@@ -18,6 +18,7 @@ import (
 	"nib/internal/rendezvous"
 	"nib/internal/safe"
 	"nib/internal/sign"
+	"nib/internal/tempdir"
 	"nib/internal/udpmux"
 	"runtime"
 	"strings"
@@ -114,12 +115,13 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 	m := udpmux.New(pc)
 	defer m.Close()
 
-	dir, err := os.MkdirTemp("", "nib-rendezvous-*")
+	scratch, err := tempdir.New("rendezvous")
 	if err != nil {
 		fmt.Fprintf(errw, "cannot make a scratch directory: %v\n", err)
 		return 1
 	}
-	defer os.RemoveAll(dir)
+	defer scratch.Close()
+	dir := scratch.Path()
 
 	// A scratch directory, deliberately, not ~/nib. This command must not write a node
 	// cache into the user's home as a side effect of being run once to answer a question

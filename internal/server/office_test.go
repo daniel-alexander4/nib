@@ -79,8 +79,8 @@ func TestOfficeHandler(t *testing.T) {
 	}
 }
 
-// TestOfficeHandlerRejectsUnsupported: a non-office upload is refused with 400
-// before any conversion is attempted.
+// TestOfficeHandlerRejectsUnsupported: a file Nib has no route for is refused with 415 — the same status
+// and sentence every open route gives it, because one function decides (D8) — before any conversion.
 func TestOfficeHandlerRejectsUnsupported(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
@@ -88,8 +88,8 @@ func TestOfficeHandlerRejectsUnsupported(t *testing.T) {
 	body, ct := officeForm(t, "malware.exe", []byte("MZ..."))
 	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", ct, body)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("office on a .exe status = %d, want 400", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("office on a .exe status = %d, want 415", resp.StatusCode)
 	}
 }
 

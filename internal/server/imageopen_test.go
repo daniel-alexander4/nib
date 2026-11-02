@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"hash/crc32"
 	"image"
@@ -66,7 +67,7 @@ func TestAPathOpenedImageIsPathlessSoSaveCannotDestroyIt(t *testing.T) {
 	}
 	var found *document
 	for _, d := range srv.docs {
-		if d.name == "screenshot.png" {
+		if d.name == "screenshot.pdf" {
 			found = d
 		}
 	}
@@ -94,7 +95,7 @@ func TestAPathOpenedImageIsPathlessSoSaveCannotDestroyIt(t *testing.T) {
 // TestANonImageNonPDFIsStillRefusedWithTheExistingSentence — the acceptance's fourth clause.
 //
 // The new route must widen what opens, not what is accepted. A text file named `.png` reaches the
-// sniff and is refused by its CONTENT, with the sentence the route already printed.
+// sniff and is refused by its CONTENT: the name says an image and the bytes are not one.
 func TestANonImageNonPDFIsStillRefusedWithTheExistingSentence(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
@@ -107,8 +108,8 @@ func TestANonImageNonPDFIsStillRefusedWithTheExistingSentence(t *testing.T) {
 	if code != http.StatusUnsupportedMediaType {
 		t.Fatalf("code = %d, want 415 — a file is judged by its bytes, never its extension (body %s)", code, body)
 	}
-	if !bytes.Contains([]byte(body), []byte("isn't a PDF")) {
-		t.Errorf("the refusal reads %q; the existing sentence is what a user of this route already knows", body)
+	if !bytes.Contains([]byte(body), []byte("disagree")) {
+		t.Errorf("the refusal reads %q; a name that says PNG over text must say the two disagree", body)
 	}
 }
 
@@ -142,27 +143,28 @@ func TestAnImageTooLargeToDecodeIsRefusedWithItsOwnSentence(t *testing.T) {
 	}
 }
 
-// TestAConvertibleDocumentIsRefusedByNAMEnotByTheWrongSentence — /pending 541.
+// TestADocumentIsJudgedByItsBytesAndItsNameTogether — D32, replacing /pending 541's refusal by name.
 //
-// A `.docx` reaching this route was refused with "that file isn't a PDF": true, useless, and
-// **identical whether or not LibreOffice is installed**, so it read as a missing-converter problem
-// when it is a routing one. nib converts that type through Open & convert to PDF…, and the server
-// is in a position to say so — it holds the name, and `pdfops.SupportedDocExt` is the same
-// predicate `/api/office` routes on.
-func TestAConvertibleDocumentIsRefusedByNAMEnotByTheWrongSentence(t *testing.T) {
+// A `.docx` reaching an open route used to be refused as "convertible, through another door": true,
+// and useless, which is why the door became the same function everywhere (D8). Now the open route
+// converts it; what is refused is a file whose BYTES contradict its name or are not what its name says.
+// Text with a Markdown name is a document; a "docx" that is not a package is refused by name; nothing
+// Nib has a route for is refused plainly.
+func TestADocumentIsJudgedByItsBytesAndItsNameTogether(t *testing.T) {
 	ts, _ := startServerWith(t)
 	c, csrf := authedClient(t, ts)
 	dir := t.TempDir()
 
 	for _, c2 := range []struct {
-		name       string
-		body       []byte
-		wantSaysNo bool // true: the plain not-a-PDF sentence is correct for it
+		name string
+		body []byte
+		code int
+		says string
 	}{
-		{"report.docx", []byte("PK\x03\x04 not really a docx, but the NAME is what routes"), false},
-		{"notes.md", []byte("# A heading\n\nSome prose.\n"), false},
-		{"sheet.xlsx", []byte("PK\x03\x04"), false},
-		{"mystery.bin", []byte("\x00\x01\x02 nothing nib opens"), true},
+		{"report.docx", []byte("PK\x03\x04 not really a docx"), http.StatusUnsupportedMediaType, "package"},
+		{"sheet.xlsx", []byte("plain text"), http.StatusUnsupportedMediaType, "disagree"},
+		{"notes.md", []byte("# A heading\n\nSome prose.\n"), http.StatusOK, ""},
+		{"mystery.bin", []byte("\x00\x01\x02 nothing nib opens"), http.StatusUnsupportedMediaType, "isn't a PDF"},
 	} {
 		t.Run(c2.name, func(t *testing.T) {
 			p := filepath.Join(dir, c2.name)
@@ -170,26 +172,11 @@ func TestAConvertibleDocumentIsRefusedByNAMEnotByTheWrongSentence(t *testing.T) 
 				t.Fatal(err)
 			}
 			code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: p})
-			if code != http.StatusUnsupportedMediaType {
-				t.Fatalf("code = %d, want 415 (body %s)", code, body)
+			if code != c2.code {
+				t.Fatalf("code = %d, want %d (body %s)", code, c2.code, body)
 			}
-			plain := bytes.Contains([]byte(body), []byte("isn't a PDF"))
-			if c2.wantSaysNo {
-				if !plain {
-					t.Errorf("a file nib has no route for was refused with %q; the plain sentence is "+
-						"the right one for it", body)
-				}
-				return
-			}
-			if plain {
-				t.Errorf("%s was refused with %q. nib converts that type through another door, and "+
-					"this sentence is both true and useless — it is the same one a user gets for a "+
-					"file nib cannot open at all", c2.name, body)
-			}
-			// "convert to PDF", not the full label: Go's JSON encoder escapes & as \u0026, so
-			// matching the label verbatim asserts the encoding rather than the sentence.
-			if !bytes.Contains([]byte(body), []byte("convert to PDF")) {
-				t.Errorf("the refusal for %s reads %q and names no route the user can take", c2.name, body)
+			if c2.says != "" && !bytes.Contains([]byte(body), []byte(c2.says)) {
+				t.Errorf("the refusal reads %q, want it to say %q", body, c2.says)
 			}
 		})
 	}
@@ -207,7 +194,7 @@ func TestTheUploadRouteDecidesThroughTheSameDoorAsThePathRoute(t *testing.T) {
 	c, csrf := authedClient(t, ts)
 	dir := t.TempDir()
 
-	for _, name := range []string{"report.docx", "notes.md", "mystery.bin"} {
+	for _, name := range []string{"report.docx", "sheet.xlsx", "mystery.bin"} {
 		body := []byte("PK\x03\x04 or whatever; the name is what routes")
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, body, 0o644); err != nil {
@@ -252,14 +239,13 @@ func uploadForBody(t *testing.T, c *http.Client, csrf, base, name string, body [
 	return strings.TrimSpace(string(out))
 }
 
-// TestTheHandOffSpeaksForAConvertibleDocumentRatherThanFallingThrough — 541's named trap.
+// TestTheHandOffSpeaksForARefusedDocumentRatherThanFallingThrough — 541's named trap, kept.
 //
-// `openHandedOff` switches on `ref.kind` with a `default` arm, and Go has no exhaustive switch —
-// so a new `refusalKind` does not fail to compile there. It would silently degrade to "that file
-// could not be opened" for a document nib actually converts, and every existing test would still
-// pass. The item that proposed this kind called that arm "the trap in this item", which is why the
-// arm gets an assertion of its own rather than being assumed correct because it was written.
-func TestTheHandOffSpeaksForAConvertibleDocumentRatherThanFallingThrough(t *testing.T) {
+// `openHandedOff` switches on `ref.kind` with a `default` arm, and Go has no exhaustive switch — so a
+// new `refusalKind` does not fail to compile there. It would silently degrade to "that file could not be
+// opened" for a document Nib actually has an opinion about, and every existing test would still pass.
+// The import kind gets an arm of its own and the arm gets an assertion: the sentence is `Import`'s.
+func TestTheHandOffSpeaksForARefusedDocumentRatherThanFallingThrough(t *testing.T) {
 	_, srv := startServerWith(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "handed-over.docx")
@@ -268,18 +254,17 @@ func TestTheHandOffSpeaksForAConvertibleDocumentRatherThanFallingThrough(t *test
 	}
 
 	// The hand-off's own door, not the HTTP route: that is the surface with the `default` arm.
-	_, err := srv.openHandedOff(p)
+	_, err := srv.openHandedOff(context.Background(), p)
 	if err == nil {
-		t.Fatal("the hand-off accepted a .docx as a document")
+		t.Fatal("the hand-off accepted a corrupt .docx as a document")
 	}
 	got := err.Error()
 	if strings.Contains(got, "could not be opened") {
 		t.Errorf("the hand-off fell through to its default arm: %q. That is the sentence for a file "+
-			"nothing could read, and this is a document nib converts — the new kind reached the "+
-			"default rather than an arm of its own", got)
+			"nothing could read, and this is a refusal with a cause of its own", got)
 	}
-	if !strings.Contains(got, "convert to PDF") {
-		t.Errorf("the hand-off says %q and names no route the user can take", got)
+	if !strings.Contains(got, "package") {
+		t.Errorf("the hand-off says %q and not the import function's own sentence", got)
 	}
 }
 
@@ -307,7 +292,7 @@ func TestOpenRecentRecordsTheIMAGEsPathNotTheDocumentsEmptyOne(t *testing.T) {
 	srv.mu.Lock()
 	var doc *document
 	for _, d := range srv.docs {
-		if d.name == "receipt.png" {
+		if d.name == "receipt.pdf" {
 			doc = d
 		}
 	}

@@ -133,6 +133,19 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(Record).Hops": "finding — /pending 443. Deleted once as dead and restored: its only use " +
 			"is a stimulus floor in record_test.go requiring a 3-party roster to report 2 hops " +
 			"before any hop-mapping assertion runs.",
+		// ADR-185 (P01.S02a): the import door's test seams. The gate's acquire/depth readers are what its own and the
+		// server's gate tests drive; production reaches the gate only through Run/RunWait.
+		"(*Gate).Acquire":     "test-only — the bare slot grab; production takes a slot through Run, which adds the budget and the admit check.",
+		"(*Gate).AcquireWait": "test-only — the unbounded grab, driven by the gate's tests; production uses RunWait.",
+		"(*Gate).Held":        "test-only — slots in use, read by the gate and server tests (a leaked slot is the defect they hold).",
+		"(*Gate).Queued":      "test-only — queue depth, read by the gate and server tests.",
+		"ConvertDocToPDF":     "test-support — the option-less forward to ConvertDocToPDFWith; ~40 tests in four packages build a converted fixture with it.",
+		"SupportedDocExt":     "test-only — every open route decides through pdfops.Import now (ADR-185); the predicate survives for the format table's own tests.",
+		"ImportCountKeys":     "test-only — the sorted counter keys, read by the per-door census.",
+		"LiveConverters":      "test-only — registered converter groups, read by the shutdown and gate tests.",
+		"MinimalDocx":         "test-support — the smallest Word package LibreOffice converts, for tests that need a real conversion.",
+		"PackageOfSize":       "test-support — the size-targeted hostile input of the memory instrument.",
+		"DocxWithImages":      "test-support — the picture-heavy input of the memory instrument.",
 		"SignatureWidgets": "test-only — the structural half of 'is a signature block actually on " +
 			"the page'. Its own doc says the rendered half needs pdf.js and belongs at tier 3, so " +
 			"production has nothing to ask it.",

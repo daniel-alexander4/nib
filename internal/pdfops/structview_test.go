@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -38,7 +39,7 @@ func tableAndFigureODT(t *testing.T) []byte {
 		`<text:p><draw:frame draw:name="img1" text:anchor-type="as-char" svg:width="2cm" svg:height="1.5cm">` +
 		`<draw:image xlink:href="Pictures/a.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>` +
 		`<svg:title>A grey square</svg:title></draw:frame></text:p>`
-	pdf, err := ConvertOfficeToPDF(odtDocument(t, "", body, odtPicture{"Pictures/a.png", "image/png", pic.Bytes()}), "odt")
+	pdf, err := ConvertOfficeToPDF(context.Background(), odtDocument(t, "", body, odtPicture{"Pictures/a.png", "image/png", pic.Bytes()}), "odt")
 	if err != nil {
 		t.Fatalf("LibreOffice is present and could not convert the table-and-figure document: %v", err)
 	}

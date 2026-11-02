@@ -30,18 +30,18 @@ func TestOpenURLReadsTheTypeFromThePathNotTheQuery(t *testing.T) {
 		return resp.StatusCode, readBody(t, resp)
 	}
 
-	// The control: with no query the convertible refusal was always reached.
-	if code, body := open(src.URL + "/report.docx"); code != http.StatusUnsupportedMediaType || !strings.Contains(body, ".docx through") {
-		t.Fatalf("control: a .docx URL with no query answered %d %q, want the convertible refusal", code, body)
+	// The control: with no query the .docx NAME is read, and the contents are not a package — the opener's own
+	// refusal, which names the contradiction. (Before the import door this was a "convertible" refusal.)
+	if code, body := open(src.URL + "/report.docx"); code != http.StatusUnsupportedMediaType || !strings.Contains(body, "disagree") {
+		t.Fatalf("control: a .docx URL with no query answered %d %q, want the name/contents refusal", code, body)
 	}
 	code, body := open(src.URL + "/report.docx?dl=1")
-	if code != http.StatusUnsupportedMediaType || !strings.Contains(body, ".docx through") {
-		t.Errorf("a .docx URL with a query answered %d %q, want the same convertible refusal — the "+
-			"type was read from the query", code, body)
+	if code != http.StatusUnsupportedMediaType || !strings.Contains(body, "disagree") {
+		t.Errorf("a .docx URL with a query answered %d %q, want the same refusal — the type was read from the query", code, body)
 	}
-	// And a query does not MAKE something convertible.
-	if code, body := open(src.URL + "/report?name=x.docx"); !strings.Contains(body, "did not return a PDF") {
-		t.Errorf("a URL whose QUERY ends in .docx answered %d %q, want the not-a-PDF refusal", code, body)
+	// And a query does not MAKE something convertible: with no type in the path, the text is not a document.
+	if code, body := open(src.URL + "/report?name=x.docx"); code != http.StatusUnsupportedMediaType || !strings.Contains(body, "isn't a PDF") {
+		t.Errorf("a URL whose QUERY ends in .docx answered %d %q, want the not-a-document refusal", code, body)
 	}
 }
 

@@ -346,21 +346,18 @@ func cmdOffice(args []string) int {
 		return code
 	}
 	ext := filepath.Ext(in)
+	typeExt := ""
 	if typ != "" {
 		switch strings.ToLower(strings.TrimPrefix(typ, ".")) {
 		case "md", "markdown":
-			ext = ".md"
+			ext, typeExt = ".md", ".md"
 		default:
 			errf("--type is md or markdown (%q is neither)", typ)
 			return 1
 		}
 	}
-	if !pdfops.SupportedDocExt(ext) {
-		if ext == "" && in == "-" {
-			errf("a document read from stdin needs --type md")
-		} else {
-			errf("unsupported document type %q — give a Markdown, Word, Excel, PowerPoint, or OpenDocument file", ext)
-		}
+	if ext == "" && in == "-" {
+		errf("a document read from stdin needs --type md")
 		return 1
 	}
 	if in == "-" && setFile == "-" {
@@ -381,36 +378,15 @@ func cmdOffice(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	// Warn BEFORE the conversion becomes a record. pdfcpu maps a rune it cannot encode to
-	// a SPACE rather than erroring, so a name or a heading silently loses characters in a
-	// perfectly valid PDF — there is nothing to catch afterwards, which is why this is a
-	// warning at the point of conversion rather than an error anywhere.
-	//
-	// A warning, not a refusal: a document with one unprintable rune is still worth
-	// converting, and the person running the command is the one who can judge that. On
-	// stderr, so `nib office in.md -o -` piped to a file still emits a clean PDF.
-	//
-	// **Markdown only, and the extension is what says so** (`/pending 491`). The scan decodes its
-	// argument as text; a DOCX, XLSX, ODT or PPTX is a ZIP, so every office conversion warned
-	// about the compressed bytes — a one-line German ODT that converted perfectly reported *"163
-	// character(s) cannot be printed"*. A warning that fires on every office document is one
-	// nobody reads on the Markdown document where it is true. The office path has no such loss to
-	// report either way: LibreOffice renders with its own fonts, not the pool this asks about.
-	if pdfops.SupportedMarkdownExt(ext) {
-		if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
-			errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
-				len(bad), mdpdf.FormatRunes(bad))
-		}
-	}
-	pdf, err := pdfops.ConvertDocToPDFWith(data, ext, opts)
-	if err == nil {
-		// The source file's name is the title. Best-effort and warned about, never fatal: the
-		// conversion the user asked for has already succeeded by this point.
-		var terr error
-		if pdf, terr = pdfops.TitleFromName(pdf, in); terr != nil {
-			errf("warning: %v", terr)
-		}
-	}
+	// **One function turns a document into a PDF** (ADR-185, D8): the same `pdfops.Import` the window's four
+	// open routes call, so the language, the PDF/UA label and the missing-tool sentence cannot differ between
+	// the command line and the window. The person running the command said what language this is
+	// (`/pending 471`), so it is CHOSEN: it replaces the converter's /Lang, and a Markdown conversion earns
+	// the PDF/UA identification (`/pending 486`, ADR-033).
+	src, size := pdfops.BytesSource(data)
+	res, err := pdfops.Import(context.Background(), src, size, in, pdfops.ImportOptions{
+		Door: "cli", Lang: lang, LangChosen: lang != "", Markdown: opts, TypeExt: typeExt,
+	})
 	if err != nil {
 		if tool, ok := pdfops.MissingToolFor(err); ok {
 			errf("%s — install it from %s to convert office documents (Markdown needs no converter)",
@@ -420,26 +396,19 @@ func cmdOffice(args []string) int {
 		}
 		return 1
 	}
-	// The person running the command said what language this is — `/pending 471`. It replaces the
-	// converter's /Lang, which is the machine's locale rather than a determination about the
-	// document. Fatal rather than warned: a PDF written without the language asked for is exactly
-	// the silent wrong answer the flag exists to prevent.
-	if lang != "" {
-		if pdf, err = pdfops.SetLang(pdf, lang); err != nil {
-			errf("%v", err)
-			return 1
-		}
-		// A Markdown conversion with a language someone named earns the PDF/UA identification (`/pending
-		// 486`, ADR-033). A refusal is a note, not a failure: the PDF asked for is written either way.
-		if pdfops.SupportedMarkdownExt(ext) {
-			if labelled, lerr := pdfops.LabelUA(pdf, true); lerr == nil {
-				pdf = labelled
-			} else {
-				errf("note: not labelled PDF/UA: %v", lerr)
-			}
-		}
+	// Warn that the conversion LOST characters: pdfcpu maps a rune it cannot encode to a SPACE rather than
+	// erroring, so a name or a heading silently loses them in a perfectly valid PDF. A warning, not a refusal
+	// — the person running the command can judge it — and on stderr, so `nib office in.md -o -` piped to a
+	// file still emits a clean PDF. Markdown only: an office document renders with LibreOffice's own fonts
+	// (`/pending 491`).
+	if len(res.Unprintable) > 0 {
+		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
+			len(res.Unprintable), mdpdf.FormatRunes(res.Unprintable))
 	}
-	return writeOut(out, pdf)
+	if res.LabelRefused != nil {
+		errf("note: not labelled PDF/UA: %v", res.LabelRefused)
+	}
+	return writeOut(out, res.PDF)
 }
 
 // sanitize runs both scrubs the GUI's Secure tab offers: active content first,

@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestTheStructureRulesAgreeWithWhatP06Measured(t *testing.T) {
 	if err != nil || !tagged {
 		t.Fatalf("setup: AuthorTaggedForm tagged=%v: %v", tagged, err)
 	}
-	markdown, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
+	markdown, err := pdfops.ConvertDocToPDF(context.Background(), []byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

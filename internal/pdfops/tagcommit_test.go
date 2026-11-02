@@ -114,7 +114,7 @@ func TestTheCommitRefusesWhatItCannotDescribeHonestly(t *testing.T) {
 	}
 	p := proposeFor(t, untagged)
 
-	tagged, err := ConvertDocToPDF([]byte(commitFixtureMarkdown), ".md")
+	tagged, err := ConvertDocToPDF(context.Background(), []byte(commitFixtureMarkdown), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}

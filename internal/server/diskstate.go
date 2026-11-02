@@ -2,7 +2,9 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"net/http"
+	"nib/internal/pdfops"
 	"os"
 
 	"nib/internal/sign"
@@ -254,23 +256,26 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// Up to maxPDFBytes of file I/O, deliberately outside s.mu — a syscall under the global
 	// server mutex serializes every route behind it, and on a network mount a hung read
 	// becomes a hung process.
-	data, converted, ref := readInstallablePDF(path)
+	// PDF only: a document keeps a path because the file WAS a PDF, and a file that has since become an
+	// image or a Word document must not be converted over it (/pending 627).
+	o := s.importOptions("reload")
+	o.PDFOnly = true
+	res, ref := readInstallablePDF(r.Context(), path, o)
 	if ref != nil {
+		if ref.kind == refuseImport && errors.Is(ref.err, pdfops.ErrNotAPDF) {
+			httpError(w, http.StatusUnsupportedMediaType,
+				"that file is no longer a PDF, so Nib has not reloaded it — open it again to work on a copy of it")
+			return
+		}
 		httpError(w, ref.status, ref.msg)
 		return
 	}
-	// **A file that has BECOME an image is refused, not converted** (/pending 627). A document
-	// keeps a path only when the file was a PDF at the open — an image is installed pathless
-	// (`readInstallablePDF`, `openHandedOff`) — so `converted` here means the file was replaced
-	// by an image since. Committing the conversion would leave a PDF in memory over a path that
-	// holds an image, with a baseline stamped from that image: Save would see no change on disk
-	// and write the PDF over it. This route cannot drop the path as the opens do, because the
-	// document keeps its id and its path is written once.
-	if converted {
-		httpError(w, http.StatusUnsupportedMediaType,
-			"that file is now an image, not a PDF, so Nib has not reloaded it — open the image to work on a copy of it")
-		return
-	}
+	data := res.PDF
+	// **A file that has BECOME something other than a PDF is refused, not converted** (/pending 627): see
+	// PDFOnly above. Committing a conversion would leave a PDF in memory over a path that holds an image or
+	// a Word document, with a baseline stamped from that file: Save would see no change on disk and write the
+	// PDF over it. This route cannot drop the path as the opens do, because the document keeps its id and its
+	// path is written once.
 	// The baseline is stamped from the bytes this reload just read, and stamped BEFORE the
 	// commit rather than after it. Doing it afterwards would hash doc.data a second time
 	// under the lock for the same answer; doing it before means a file rewritten again in

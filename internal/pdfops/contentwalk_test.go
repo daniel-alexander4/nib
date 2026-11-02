@@ -47,7 +47,7 @@ func pageStreams(t *testing.T, pdf []byte) [][]byte {
 // content streams round-trips perfectly and proves nothing, and `pageStreams` skips empty ones — so
 // the total has to be non-trivial or the whole test is vacuous.
 func TestEveryRealPageRoundTripsByteIdentically(t *testing.T) {
-	md, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatalf("build nib's own output: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestEveryRealPageRoundTripsByteIdentically(t *testing.T) {
 // load-bearing — so that if a later change makes nib emit plain ASCII strings again, the coverage
 // loss is announced rather than silent.
 func TestNibsOwnOutputStillCarriesTheBinaryThisGuards(t *testing.T) {
-	md, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestNibsOwnOutputStillCarriesTheBinaryThisGuards(t *testing.T) {
 // to the parse that produced the stream, so a later slice can walk every page without thinking
 // about it. A precise threshold would be a flaky test about this machine.
 func TestTheCostOfAWalkIsMeasured(t *testing.T) {
-	md, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestTheCostOfAWalkIsMeasured(t *testing.T) {
 // BenchmarkTokenizeARealPage is the measurement the acceptance clause asks for — on a real page
 // from nib's own output, not on a synthetic string.
 func BenchmarkTokenizeARealPage(b *testing.B) {
-	md, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func BenchmarkTokenizeARealPage(b *testing.B) {
 // BenchmarkReadAPageForComparison is what a walk is cheap RELATIVE TO. Without it the number above
 // is a figure with no scale, and "cheap" is an adjective rather than a measurement.
 func BenchmarkReadAPageForComparison(b *testing.B) {
-	md, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	md, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		b.Fatal(err)
 	}

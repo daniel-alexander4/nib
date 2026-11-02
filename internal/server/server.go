@@ -10,6 +10,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -56,12 +57,19 @@ const maxPDFBytes = 200 << 20 // 200 MiB
 //	defer cleanup()
 func parseMultipart(w http.ResponseWriter, r *http.Request, max int64) (cleanup func(), ok bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, max)
-	if err := r.ParseMultipartForm(max); err != nil {
+	// **Small in memory, the rest on disk** (ADR-185, D31(3)). `ParseMultipartForm(max)` kept up to `max`
+	// (200 MiB) in RAM and the caller's `io.ReadAll` copied it again; the overflow now goes to the spill
+	// directory `tempdir.Claim` made the process's temp dir, where it is swept if Nib dies. The total is
+	// still bounded by the MaxBytesReader above.
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
 		httpError(w, http.StatusBadRequest, "could not parse upload")
 		return nil, false
 	}
 	return func() { _ = r.MultipartForm.RemoveAll() }, true
 }
+
+// multipartMemory is how much of an upload is held in memory before it spills to disk.
+const multipartMemory = 8 << 20
 
 // maxFieldBody caps the body of a route that reads a few short form fields and no file.
 const maxFieldBody = 1 << 16
@@ -240,6 +248,10 @@ type Server struct {
 	// idleExit is D2's answer for THIS process: did it launch a browser, and is it therefore
 	// waiting for a window at all. Set once at startup through `ArmIdleExit`; read by P01.S04.
 	idleExit atomic.Bool
+	// shuttingDown is set by Shutdown (ADR-185); the install door refuses once it is.
+	shuttingDown atomic.Bool
+	// queuedUpload is the declared bytes of upload bodies admitted and not yet finished (admitUpload).
+	queuedUpload atomic.Int64
 	// idle is P01.S04's grace and its two cancel counters (D4).
 	idle idleExitTimer
 	// dl is the one release download this process will run, broadcast to every window (ADR-039).
@@ -855,11 +867,10 @@ const (
 	refuseUnopenable refusalKind = iota // missing, or a directory
 	refuseTooLarge
 	refuseUnreadable
-	refuseNotPDF
-	// refuseConvertible is a document nib opens by ANOTHER route (`/api/office`), named by its
-	// extension. It is separate from refuseNotPDF because the two want different sentences and
-	// only one of them is a dead end. /pending 541.
-	refuseConvertible
+	// refuseImport is `pdfops.Import` refusing the file: not a document, a name that contradicts the
+	// bytes, a cap, a missing tool, the queue. ONE kind for all of them — the cause and its sentence are
+	// the function's (D8), so no door keeps a refusal of its own.
+	refuseImport
 )
 
 // pathRefusal is readInstallablePDF's typed refusal. `status` and `msg` are the HTTP
@@ -869,6 +880,7 @@ type pathRefusal struct {
 	kind   refusalKind
 	status int
 	msg    string
+	err    error // the import error behind refuseImport, for errors.Is
 }
 
 // readInstallablePDF is THE door onto "this file may become a document" (ADR-009).
@@ -883,10 +895,10 @@ type pathRefusal struct {
 // **The size check reads the STAT, never the bytes.** A 4 GiB file must be refused
 // without being read into memory first, so the order here is load-bearing rather than
 // stylistic — reversing it turns the cap from a guard into an OOM.
-func readInstallablePDF(path string) (data []byte, converted bool, ref *pathRefusal) {
+func readInstallablePDF(ctx context.Context, path string, o pdfops.ImportOptions) (res *pdfops.ImportResult, ref *pathRefusal) {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
-		return nil, false, &pathRefusal{refuseUnopenable, http.StatusNotFound, "file not found"}
+		return nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
 	}
 	// **Only a regular file is read** (/pending 691 R6-5). A FIFO, a socket or a device passes the
 	// stat with size 0, so it cleared the cap above it — and `os.ReadFile` on a FIFO with no
@@ -894,38 +906,25 @@ func readInstallablePDF(path string) (data []byte, converted bool, ref *pathRefu
 	// a command line hung `/api/status` and every later launch with it. The stat follows links, so
 	// a link to a real file still opens.
 	if !info.Mode().IsRegular() {
-		return nil, false, &pathRefusal{refuseUnopenable, http.StatusNotFound, "not a file that can be opened"}
+		return nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "not a file that can be opened"}
 	}
-	if info.Size() > maxPDFBytes {
-		return nil, false, &pathRefusal{refuseTooLarge, http.StatusRequestEntityTooLarge, "PDF exceeds size limit"}
-	}
-	raw, err := os.ReadFile(path)
+	// A path-opened document reports canSave, so a non-PDF installed with its path would be
+	// overwritten with PDF bytes by the next Save — the one open surface where getting this wrong
+	// destroys the file. **Everything that is not a PDF is converted by `pdfops.Import` and comes back
+	// `Converted`, and the caller drops the path**: the bytes on disk are a PNG or a .docx and the
+	// document in memory is a PDF, so a Save that wrote back would destroy the original (L1).
+	res, err = openPath(ctx, path, info.Size(), filepath.Base(path), o)
 	if err != nil {
-		return nil, false, &pathRefusal{refuseUnreadable, http.StatusInternalServerError, "could not read file"}
+		status, msg := importRefusal(err)
+		switch {
+		case errors.Is(err, pdfops.ErrImportTooLarge):
+			return nil, &pathRefusal{kind: refuseTooLarge, status: status, msg: msg, err: err}
+		case isImportRefusal(err):
+			return nil, &pathRefusal{kind: refuseImport, status: status, msg: msg, err: err}
+		}
+		return nil, &pathRefusal{kind: refuseUnreadable, status: http.StatusInternalServerError, msg: "could not read file", err: err}
 	}
-	// A path-opened document reports canSave, so a non-PDF installed here would be
-	// overwritten with PDF bytes by the next Save — the one open surface where getting
-	// this wrong destroys the file.
-	//
-	// **An image is converted and the path is DROPPED**, which is that same hazard met rather
-	// than avoided: the bytes on disk are a PNG and the document in memory is a PDF, so a Save
-	// that wrote back would destroy the original. `converted` is what the caller uses to
-	// install it pathless, exactly as an office conversion already is.
-	out, kind, cerr := asOpenableDocument(raw, filepath.Base(path))
-	switch kind {
-	case openRefused:
-		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, "that file isn't a PDF"}
-	case openConvertible:
-		// **A different refusal, because it is a different problem.** "that file isn't a PDF" is
-		// true of a .docx and useless: nib converts that type, through another door, and the same
-		// sentence appeared whether or not LibreOffice was installed. /pending 541.
-		return nil, false, &pathRefusal{refuseConvertible, http.StatusUnsupportedMediaType,
-			convertibleRefusal(filepath.Base(path))}
-	}
-	if cerr != nil {
-		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, cerr.Error()}
-	}
-	return out, kind == openConverted, nil
+	return res, nil
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -937,11 +936,12 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Clean(req.Path)
-	data, converted, ref := readInstallablePDF(path)
+	res, ref := readInstallablePDF(r.Context(), path, s.importOptions("path"))
 	if ref != nil {
 		httpError(w, ref.status, ref.msg)
 		return
 	}
+	data := res.PDF
 	// Adds rather than replaces (P06.S01): opening a second file leaves the first
 	// open and reachable through the tab strip. Before this, setDoc emptied the whole
 	// registry while the client re-pointed only the ACTIVE view — so with an arrival
@@ -965,11 +965,11 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	// finds the document this call just added and every open reports true.
 	dup := s.docForPath(path) != nil
 	doc := newPathDoc(path, data)
-	if converted {
+	if res.Converted {
 		// Pathless, so canSave is false and Save routes to Save As. The NAME still comes from
-		// the file the user picked, or the tab reads "Untitled" for a document they just opened
-		// by name.
-		doc = &document{path: "", name: filepath.Base(path), data: data, sig: sign.Verify(data)}
+		// the file the user picked (`<base>.pdf`, D11), or the tab reads "Untitled" for a
+		// document they just opened by name.
+		doc = &document{path: "", name: res.Name, data: data, sig: sign.Verify(data)}
 		dup = false
 	}
 	installed, err := s.addDocCapped(doc)
@@ -987,6 +987,11 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 // document has no server-side path, so it can be filled and re-downloaded but
 // not saved in place.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	release, ok := s.admitUpload(w, r)
+	if !ok {
+		return
+	}
+	defer release()
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -998,36 +1003,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	data, err := io.ReadAll(file)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "could not read upload")
+	// No path here, so nothing can be overwritten — but an unreadable "document" still leaves the
+	// viewer stuck on "Loading…" with no explanation. **This route decides through the same function
+	// as the other three** (ADR-009, D8): `pdfops.Import` says what the file is and converts it, and
+	// the upload — a spilled temporary file, read only now — is its ReaderAt.
+	res, ok := s.importOrRefuse(w, r.Context(), file, header.Size, header.Filename, s.importOptions("upload"))
+	if !ok {
 		return
 	}
-	// No path here, so nothing can be overwritten — but an unreadable "document"
-	// still leaves the viewer stuck on "Loading…" with no explanation.
-	// **This route decides through the same door as the path route, and used to decide for
-	// itself.** `readInstallablePDF` is "THE door onto 'this file may become a document'"
-	// (ADR-009) and `handleUpload` had copied its check — so the door had a declared population
-	// of three and a fourth site that had drifted from it. It cannot CALL that function (it
-	// stats a path and there is none here), but the decision is `asOpenableDocument`'s and is
-	// now shared. /pending 541.
-	out, kind, cerr := asOpenableDocument(data, header.Filename)
-	switch {
-	case kind == openRefused:
-		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
-		return
-	case kind == openConvertible:
-		httpError(w, http.StatusUnsupportedMediaType, convertibleRefusal(header.Filename))
-		return
-	case cerr != nil:
-		httpError(w, http.StatusUnsupportedMediaType, cerr.Error())
-		return
-	}
-	data = out // an image arrives converted; there is no path here to drop
 	// The uploaded filename is recorded ON the document, so /api/docs and a reload report
 	// it too. It used to be patched onto this one response and stored nowhere.
 	installed, err := s.addDocCapped(&document{
-		path: "", name: header.Filename, data: data, sig: sign.Verify(data),
+		path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF),
 	})
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
@@ -1654,6 +1641,9 @@ func (s *Server) addDocCappedOrFocus(doc *document, path string) (installed *doc
 
 // addDocCappedLocked is addDocCapped's body. Caller holds s.mu.
 func (s *Server) addDocCappedLocked(doc *document) (*document, error) {
+	if s.shuttingDown.Load() {
+		return nil, errShuttingDown
+	}
 	if err := s.roomForLocked(len(doc.data)); err != nil {
 		return nil, err
 	}

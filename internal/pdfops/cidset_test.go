@@ -55,7 +55,7 @@ func TestNothingNibEmbedsAFontIntoCarriesACIDSet(t *testing.T) {
 		make func() ([]byte, error)
 	}{
 		{"authored Markdown", func() ([]byte, error) {
-			return ConvertDocToPDF([]byte(p4Markdown), ".md")
+			return ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 		}},
 		{"a CreateFromJSON spec naming an embedded face", func() ([]byte, error) {
 			body, _, embedded := AuthoredTextFaces()
@@ -137,7 +137,7 @@ func TestPdfcpuStillWritesTheCIDSetTheDoorRemoves(t *testing.T) {
 // PDF/A-2b. That is a claim about a standard, which is exactly the kind this repo does not take on
 // trust: the reference validator says so here, on a document that went through the door.
 func TestDroppingCIDSetsKeepsPDFAConformance(t *testing.T) {
-	pdf, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	pdf, err := ConvertDocToPDF(context.Background(), []byte(p4Markdown), ".md")
 	if err != nil {
 		t.Fatalf("ConvertDocToPDF: %v", err)
 	}

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"context"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // their column, every row the same length even with an empty cell, and the text still found.
 func TestAMarkdownTableIsTaggedAsATable(t *testing.T) {
 	md := "Intro.\n\n| Item | Qty | Price |\n|:-----|:---:|------:|\n| Pens | 12 | 3.50 |\n| Paper |  | 1.00 |\n\nAfter.\n"
-	out, err := ConvertDocToPDF([]byte(md), ".md")
+	out, err := ConvertDocToPDF(context.Background(), []byte(md), ".md")
 	if err != nil {
 		t.Fatal(err)
 	}
