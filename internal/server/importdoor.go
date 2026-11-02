@@ -60,7 +60,7 @@ func importRefusal(err error) (status int, msg string) {
 	switch {
 	case errors.As(err, &room):
 		return http.StatusConflict, room.Error()
-	case errors.Is(err, pdfops.ErrImportTooLarge), errors.Is(err, pdfops.ErrConvertedTooLarge):
+	case errors.Is(err, pdfops.ErrImportTooLarge), errors.Is(err, pdfops.ErrConvertedTooLarge), errors.Is(err, pdfops.ErrTooManyPages):
 		return http.StatusRequestEntityTooLarge, err.Error()
 	case errors.Is(err, pdfops.ErrConverterOverMemory):
 		return http.StatusUnprocessableEntity, err.Error()
@@ -71,7 +71,8 @@ func importRefusal(err error) (status int, msg string) {
 	case errors.Is(err, context.Canceled):
 		return http.StatusRequestTimeout, "the conversion was cancelled"
 	case errors.Is(err, pdfops.ErrNotADocument), errors.Is(err, pdfops.ErrCorruptDocument), errors.Is(err, pdfops.ErrNotText), errors.Is(err, pdfops.ErrNotAPDF),
-		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused):
+		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused),
+		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels):
 		return http.StatusUnsupportedMediaType, err.Error()
 	}
 	if tool, ok := pdfops.MissingToolFor(err); ok {
@@ -116,6 +117,7 @@ func isImportRefusal(err error) bool {
 	for _, target := range []error{
 		pdfops.ErrImportTooLarge, pdfops.ErrConvertedTooLarge, pdfops.ErrConverterOverMemory, pdfops.ErrOptionsNeedMarkdown, gate.ErrQueueFull, pdfops.ErrShuttingDown, context.DeadlineExceeded, context.Canceled,
 		pdfops.ErrNotADocument, pdfops.ErrCorruptDocument, pdfops.ErrNotText, pdfops.ErrNotAPDF, pdfops.ErrExtensionDisagrees, pdfops.ErrArchiveRefused,
+		pdfops.ErrImagePixels, pdfops.ErrTooManyPages, pdfops.ErrNoPages, pdfops.ErrTIFFCompression,
 	} {
 		if errors.Is(err, target) {
 			return true

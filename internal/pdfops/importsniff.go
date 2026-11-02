@@ -1,12 +1,13 @@
 package pdfops
 
 import (
-	"archive/zip"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"nib/internal/ziputil"
 )
 
 // The sniffer (D32): bytes decide what a file is, and the name decides only what bytes cannot say.
@@ -111,31 +112,11 @@ func classify(head []byte, name string) (Format, error) {
 // OpenDocument file a `mimetype` member naming its own type. Returns ErrArchiveRefused or
 // ErrExtensionDisagrees; a corrupt directory is ErrNotADocument-like "could not be read".
 func inspectPackage(r io.ReaderAt, size int64, f Format) error {
-	zr, err := zip.NewReader(r, size)
-	if zr == nil || (err != nil && !errors.Is(err, zip.ErrInsecurePath)) {
-		return fmt.Errorf("%w: the %s could not be read as a package", ErrCorruptDocument, f.Label)
+	a, err := ziputil.Open(r, size, packageLimits)
+	if err != nil {
+		return packageRefusal(err, f)
 	}
-	// An insecure member name is not a refusal for a package LibreOffice reads itself; it IS one in the CBZ
-	// extractor that writes members out (S03). The reader's own verdict is kept out of the way here.
-	if len(zr.File) > importArchiveEntries {
-		return fmt.Errorf("%w: it declares %d parts, and Nib opens up to %d", ErrArchiveRefused, len(zr.File), importArchiveEntries)
-	}
-	var total, packed uint64
-	seen := map[string]bool{}
-	for _, m := range zr.File {
-		if seen[m.Name] {
-			return fmt.Errorf("%w: it names the part %q twice", ErrArchiveRefused, m.Name)
-		}
-		seen[m.Name] = true
-		total += m.UncompressedSize64
-		packed += m.CompressedSize64
-		if total > importDecodedBytes {
-			return fmt.Errorf("%w: it expands to more than %d MiB", ErrArchiveRefused, importDecodedBytes>>20)
-		}
-	}
-	if total > importRatioFloor && packed > 0 && total/packed > importRatioMax {
-		return fmt.Errorf("%w: it expands %d to one", ErrArchiveRefused, total/packed)
-	}
+	seen := a.Names()
 	switch f.Key {
 	case "docx":
 		return wantPart(seen, f, "word/")
@@ -144,9 +125,26 @@ func inspectPackage(r io.ReaderAt, size int64, f Format) error {
 	case "pptx":
 		return wantPart(seen, f, "ppt/")
 	case "odt", "ods", "odp":
-		return wantMimetype(zr, f)
+		return wantMimetype(a, f)
 	}
 	return nil
+}
+
+// packageLimits are D14's archive caps for a document package a converter reads by itself.
+var packageLimits = ziputil.Limits{
+	Entries:             importArchiveEntries,
+	DecodedBytes:        importDecodedBytes,
+	RatioFloor:          importRatioFloor,
+	RatioMax:            importRatioMax,
+	TolerateUnsafeNames: true,
+}
+
+// packageRefusal names an archive door's refusal as the import door's own sentinel.
+func packageRefusal(err error, f Format) error {
+	if errors.Is(err, ziputil.ErrUnreadable) {
+		return fmt.Errorf("%w: the %s could not be read as a package", ErrCorruptDocument, f.Label)
+	}
+	return fmt.Errorf("%w: %v", ErrArchiveRefused, err)
 }
 
 func wantPart(seen map[string]bool, f Format, prefix string) error {
@@ -161,17 +159,15 @@ func wantPart(seen map[string]bool, f Format, prefix string) error {
 	return fmt.Errorf("%w: the name says %s, but the package holds no %s part", ErrExtensionDisagrees, f.Label, strings.TrimSuffix(prefix, "/"))
 }
 
-func wantMimetype(zr *zip.Reader, f Format) error {
-	for _, m := range zr.File {
+func wantMimetype(a *ziputil.Archive, f Format) error {
+	for _, m := range a.Files() {
 		if m.Name != "mimetype" {
 			continue
 		}
-		rc, err := m.Open()
+		b, err := a.Read(m, 256)
 		if err != nil {
 			break
 		}
-		b, _ := io.ReadAll(io.LimitReader(rc, 256))
-		rc.Close()
 		got := strings.TrimSpace(string(b))
 		for _, want := range f.MIME {
 			if got == want {

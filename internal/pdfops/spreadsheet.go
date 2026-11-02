@@ -6,8 +6,9 @@ import (
 	"encoding/csv"
 	"encoding/xml"
 	"fmt"
-	"hash/crc32"
 	"strings"
+
+	"nib/internal/ziputil"
 )
 
 // A grid of cell text (rows of columns) extracted from a PDF page's table by the
@@ -62,42 +63,13 @@ func GridToCSV(grid [][]string) ([]byte, error) {
 // uncompressed "mimetype" entry to be first in the package; the rest are ordinary
 // deflated parts.
 func GridToODS(grid [][]string) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	// mimetype MUST be the first entry, stored uncompressed, with its size/CRC in the
-	// local header (no data descriptor) so an ODF reader can sniff it at byte 38.
-	// CreateRaw (not Create) is required — Create streams with a data-descriptor flag
-	// that zeroes the local-header size, which strict readers (LibreOffice) reject.
-	mtBytes := []byte(odsMimetype)
-	mt, err := zw.CreateRaw(&zip.FileHeader{
-		Name:               "mimetype",
-		Method:             zip.Store,
-		CRC32:              crc32.ChecksumIEEE(mtBytes),
-		CompressedSize64:   uint64(len(mtBytes)),
-		UncompressedSize64: uint64(len(mtBytes)),
+	// mimetype MUST be the first entry and stored (ziputil writes it with CreateRaw, so an ODF reader can sniff it
+	// at byte 38); the rest are ordinary deflated parts.
+	return ziputil.Write([]ziputil.Entry{
+		{Name: "mimetype", Data: []byte(odsMimetype), Store: true},
+		{Name: "META-INF/manifest.xml", Data: []byte(odsManifestXML)},
+		{Name: "content.xml", Data: []byte(odsContentXML(grid))},
 	})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := mt.Write(mtBytes); err != nil {
-		return nil, err
-	}
-	for _, p := range []struct{ name, body string }{
-		{"META-INF/manifest.xml", odsManifestXML},
-		{"content.xml", odsContentXML(grid)},
-	} {
-		w, err := zw.Create(p.name)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := w.Write([]byte(p.body)); err != nil {
-			return nil, err
-		}
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // odsContentXML builds the ODF body: one <table:table-row> per grid row, a

@@ -997,3 +997,5 @@ home today.
   — PLAN-import-export P01.S02a: `pdfops.Import` classifies by content and every open route calls it; `internal/tempdir` is the only temp door (kernel-lock liveness, swept at start); one `Shutdown` kills converters; a gate of two; LibreOffice's web fetches closed (the plan's mechanism measured and replaced); converters get an allowlisted environment and a memory watchdog.
 - [ADR-186](186-the-window-is-told-an-import-once-by-the-route-that-did-it.md) — **the window is told an import once, by the route that did it**
   — PLAN-import-export P01.S02b: `importedFrom` on the importing route's own answer and the hand-off event, never on `/api/docs`; one polite `#importNotice`; the Open group is Open & Import.
+- [ADR-187](187-an-archive-is-opened-through-one-door-and-a-cap-refuses.md) — **an archive is opened through one door, and a cap refuses**
+  — PLAN-import-export P01.S03a: `internal/ziputil` reads under limits before decompressing and writes stored-first members; a census fails a file that opens `archive/zip` itself; GIF, BMP, multi-page TIFF and CBZ become pages through one budget, and every cap refuses by name.

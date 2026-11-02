@@ -41,7 +41,7 @@ func TestListDirOffersWhatTheDoorsOpen(t *testing.T) {
 	ts, _ := startServer(t)
 	c, _ := authedClient(t, ts)
 	dir := t.TempDir()
-	for _, n := range []string{"a.pdf", "B.PNG", "c.jpeg", "d.tif", "e.webp", "f.docx", "g.md", "h.txt", "i.gif"} {
+	for _, n := range []string{"a.pdf", "B.PNG", "c.jpeg", "d.tif", "e.webp", "f.docx", "g.md", "h.txt", "i.gif", "j.bmp", "k.cbz"} {
 		os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644)
 	}
 	resp, err := c.Get(ts.URL + "/api/listdir?path=" + dir)
@@ -55,7 +55,7 @@ func TestListDirOffersWhatTheDoorsOpen(t *testing.T) {
 	for _, f := range info.Files {
 		got = append(got, f.Name)
 	}
-	if strings.Join(got, ",") != "B.PNG,a.pdf,c.jpeg,d.tif,e.webp" {
+	if strings.Join(got, ",") != "B.PNG,a.pdf,c.jpeg,d.tif,e.webp,i.gif,j.bmp,k.cbz" {
 		t.Errorf("listed %v", got)
 	}
 }

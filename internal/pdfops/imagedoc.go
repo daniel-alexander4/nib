@@ -2,10 +2,9 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"image"
 	_ "image/jpeg" // registers the JPEG decoder for image.DecodeConfig
 	_ "image/png"  // and PNG
 	// TIFF and WebP are registered by pdfcpu's own imports, which nib already depends on:
@@ -73,6 +72,8 @@ const (
 	formatJPEG imageFormat = "jpeg"
 	formatTIFF imageFormat = "tiff"
 	formatWebP imageFormat = "webp"
+	formatGIF  imageFormat = "gif"
+	formatBMP  imageFormat = "bmp"
 )
 
 // sniffImage reports the format from the leading bytes.
@@ -100,6 +101,10 @@ func sniffImage(data []byte) (imageFormat, bool) {
 	// part of the identity, which is why this is two checks rather than one prefix.
 	case len(data) >= 12 && bytes.HasPrefix(data, []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
 		return formatWebP, true
+	case looksLikeGIF(data):
+		return formatGIF, true
+	case looksLikeBMP(data):
+		return formatBMP, true
 	}
 	return "", false
 }
@@ -257,60 +262,19 @@ func rotationFor(orientation int) (deg int, expressible bool) {
 // It returns ErrNotAnImage when the bytes are not an image at all, so a caller can tell that from a
 // conversion that failed on an image it did recognise.
 func ImageToDocument(data []byte, name string) ([]byte, error) {
-	format, ok := sniffImage(data)
-	if !ok {
+	return ImageToDocumentCtx(context.Background(), data, name)
+}
+
+// ImageToDocumentCtx is ImageToDocument under a caller's context, which ends a long multi-page import between
+// pages. A GIF becomes a page per frame, a BMP a page, a TIFF a page per image directory (P01.S03a).
+func ImageToDocumentCtx(ctx context.Context, data []byte, name string) ([]byte, error) {
+	if _, ok := sniffImage(data); !ok {
 		return nil, ErrNotAnImage
 	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("pdfops: this %s could not be read: %w", format, err)
+	j, cancel := newRasterJob(ctx)
+	defer cancel()
+	if err := j.addFile(data); err != nil {
+		return nil, err
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 {
-		return nil, fmt.Errorf("pdfops: this %s declares a %d×%d image, which has no size", format, cfg.Width, cfg.Height)
-	}
-	if px := int64(cfg.Width) * int64(cfg.Height); px > maxImagePixels {
-		return nil, fmt.Errorf("pdfops: this image is %d×%d — %d megapixels, and nib opens images up to %d",
-			cfg.Width, cfg.Height, px/1_000_000, maxImagePixels/1_000_000)
-	}
-
-	dpi := 0.0
-	switch format {
-	case formatPNG:
-		dpi = pngDPI(data)
-	case formatJPEG:
-		dpi = jpegDPI(data)
-	case formatTIFF, formatWebP:
-		// **Declared, not overlooked.** TIFF carries XResolution/ResolutionUnit and WebP carries no
-		// density at all; neither is read, so both take the 96 dpi default. Reading TIFF's tags is
-		// a second IFD walk for a format nib opens rarely, and the cost of the default is a page
-		// sized as a screenshot would be — recoverable by the user, unlike a wrong aspect.
-	}
-	if dpi <= 0 {
-		dpi = defaultDPI
-	}
-
-	page := RasterPage{
-		Image: data,
-		W:     float64(cfg.Width) / dpi * 72,
-		H:     float64(cfg.Height) / dpi * 72,
-	}
-	out, err := ImagesToPDF([]RasterPage{page})
-	if err != nil {
-		return nil, fmt.Errorf("pdfops: this %s could not be made into a page: %w", format, err)
-	}
-
-	if titled, terr := TitleFromName(out, name); terr == nil {
-		out = titled // never costs the caller the document: on failure the untitled one stands
-	}
-
-	if format == formatJPEG {
-		if deg, expressible := rotationFor(jpegOrientation(data)); expressible && deg != 0 {
-			rotated, rerr := Rotate(out, nil, deg)
-			if rerr != nil {
-				return nil, fmt.Errorf("pdfops: this JPEG's orientation could not be applied: %w", rerr)
-			}
-			out = rotated
-		}
-	}
-	return out, nil
+	return j.finish(name)
 }

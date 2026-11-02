@@ -148,7 +148,7 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 	if f.Family == FamilyText && size > importTextBytes {
 		return nil, ErrImportTooLarge
 	}
-	if f.Family == FamilyZip {
+	if f.Family == FamilyZip && f.Key != "cbz" { // a CBZ is opened by its own producer, under the stricter archive limits
 		if err := inspectPackage(src, size, f); err != nil {
 			return nil, err
 		}
@@ -241,8 +241,10 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 	var pdf []byte
 	var err error
 	switch {
+	case f.Key == "cbz":
+		pdf, err = CBZToDocument(ctx, data, name)
 	case f.Image:
-		pdf, err = ImageToDocument(data, name)
+		pdf, err = ImageToDocumentCtx(ctx, data, name)
 	default:
 		ext := "." + f.Exts[0]
 		if o.TypeExt != "" {
@@ -254,7 +256,7 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = ConvertDocToPDFWith(ctx, data, ext, o.Markdown)
 	}
 	if err != nil {
-		if _, tool := MissingToolFor(err); tool || errors.Is(err, ErrShuttingDown) || ctx.Err() != nil {
+		if _, tool := MissingToolFor(err); tool || errors.Is(err, ErrShuttingDown) || ctx.Err() != nil || isNativeRefusal(err) {
 			return nil, err
 		}
 		return nil, &ConversionError{Format: f.Key, Image: f.Image, Err: err}
@@ -310,6 +312,14 @@ func refusalCause(err error) string {
 		return "cap:memory"
 	case errors.Is(err, ErrArchiveRefused):
 		return "cap:archive"
+	case errors.Is(err, ErrImagePixels):
+		return "cap:pixels"
+	case errors.Is(err, ErrTooManyPages):
+		return "cap:pages"
+	case errors.Is(err, ErrNoPages):
+		return "no-pages"
+	case errors.Is(err, ErrTIFFCompression):
+		return "tiff-compression"
 	case errors.Is(err, ErrExtensionDisagrees):
 		return "extension-disagrees"
 	case errors.Is(err, ErrNotText):
@@ -377,4 +387,15 @@ func ImportCountKeys() []string {
 	}
 	sort.Strings(ks)
 	return ks
+}
+
+// isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
+// maps itself, as opposed to a conversion that failed (ConversionError).
+func isNativeRefusal(err error) bool {
+	for _, t := range []error{ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrCorruptDocument, ErrConvertedTooLarge} {
+		if errors.Is(err, t) {
+			return true
+		}
+	}
+	return false
 }

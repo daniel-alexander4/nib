@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"go/token"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"io"
 	"mime/multipart"
@@ -25,6 +27,7 @@ import (
 	"syscall"
 	"testing"
 
+	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
 
 	"nib/internal/pdfops"
@@ -182,13 +185,27 @@ func nativeFixtures(t *testing.T) map[string][]byte {
 	if err := tiff.Encode(&tf, img, nil); err != nil {
 		t.Fatal(err)
 	}
+	var gf, bm, cz bytes.Buffer
+	if err := gif.Encode(&gf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := bmp.Encode(&bm, img); err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(&cz)
+	for _, n := range []string{"p1.png", "p2.png"} {
+		w, _ := zw.Create(n)
+		w.Write(testPNG(t, 24, 16))
+	}
+	zw.Close()
 	return map[string][]byte{
+		"gif": gf.Bytes(), "bmp": bm.Bytes(), "cbz": cz.Bytes(),
 		"png": testPNG(t, 24, 16), "jpeg": j.Bytes(), "tiff": tf.Bytes(), "webp": tinyWebP(t),
 		"markdown": []byte("# A title\n\nSome prose, with **bold** words.\n"),
 	}
 }
 
-var fixtureExt = map[string]string{"png": ".png", "jpeg": ".jpg", "tiff": ".tif", "webp": ".webp", "markdown": ".md"}
+var fixtureExt = map[string]string{"png": ".png", "jpeg": ".jpg", "tiff": ".tif", "webp": ".webp", "markdown": ".md", "gif": ".gif", "bmp": ".bmp", "cbz": ".cbz"}
 
 // docData finds the open document by name and returns its bytes.
 func docData(srv *Server, name string) ([]byte, bool) {

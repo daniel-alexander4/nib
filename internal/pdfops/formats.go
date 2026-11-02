@@ -54,6 +54,10 @@ var formats = []Format{
 	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Door: true, Family: FamilyImage},
 	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Door: true, Family: FamilyImage},
 
+	{Key: "gif", Label: "GIF image", Exts: []string{"gif"}, MIME: []string{"image/gif"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "bmp", Label: "BMP image", Exts: []string{"bmp"}, MIME: []string{"image/bmp"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "cbz", Label: "Comic book archive (CBZ)", Exts: []string{"cbz"}, MIME: []string{"application/vnd.comicbook+zip", "application/x-cbz"}, Door: true, Family: FamilyZip},
+
 	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}, Family: FamilyText},
 
 	{Key: "doc", Label: "Word (.doc)", Exts: []string{"doc"}, MIME: []string{"application/msword"}, Tool: ToolLibreOffice, Family: FamilyOLE},
