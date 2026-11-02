@@ -592,11 +592,11 @@ function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
   loAvailable = !!st.libreoffice;
-  // Markdown converts natively, so the button always shows; without LibreOffice
-  // the picker is scoped to what the server can actually convert.
-  els.officeInput.accept = loAvailable
-    ? '.md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp'
-    : '.md,.markdown';
+  // Both pickers' `accept` are built from the server's format table (pdfops.Formats) — no list of
+  // extensions lives in the page. The import picker drops a format whose tool this machine lacks.
+  const fmts = Array.isArray(st.formats) ? st.formats : [];
+  els.officeInput.accept = fmts.filter((f) => f.available && !f.image).flatMap((f) => f.exts.map((e) => '.' + e)).join(',');
+  els.combineInput.accept = ['application/pdf', ...fmts.filter((f) => f.image).flatMap((f) => f.mime)].join(',');
   // ...and SAY so, which the narrowed picker never did: a user with a .docx met the missing
   // converter as their file not appearing in the dialog, with nothing naming the reason. Both
   // elements are authored hidden in index.html, so a machine that has LibreOffice never sees

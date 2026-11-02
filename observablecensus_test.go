@@ -189,6 +189,9 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 // `internalShapes` with reasons — an opaque token and an inward parameter carrier — so their fields
 // are in this list because the per-field question is narrower than the rule.
 var inPackageOnlyRecorded = []string{
+	// pdfops.Format.Door (ADR-184): read by IsDoorExt inside the table's package; `listDir` and the desktop-file test ask that door,
+	// not the field — the rule ("what every route opens") lives once, beside the table (ADR-009).
+	"pdfops.Format.Door",
 	// ceremony.Anchor  // shape declared internal, with a reason
 	"ceremony.Anchor.Ceremony", // /pending 686: read by VerifyAgainst, the one door
 	"ceremony.Anchor.Convener",

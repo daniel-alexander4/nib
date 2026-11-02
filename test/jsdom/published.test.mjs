@@ -53,6 +53,8 @@ const PACKAGES = ['internal/server', 'internal/instance'];
 // a read of each of its fields. A field counts as read when some reader mentions it as a
 // property — `.historyEvicted` in JS, `.HistoryEvicted` in Go.
 const PUBLISHED = [
+  // The format table (P01.S01, ADR-184): the page builds both pickers' `accept` from it.
+  { type: 'formatView', readers: ['web/app.js'] },
   { type: 'docResponse', readers: ['web/app.js'] },
   // The accessibility report (P07.S06). The verdict travels as a word, not uacheck's integer.
   { type: 'uaReportResponse', readers: ['web/app.js'] },
@@ -349,7 +351,6 @@ const UNREAD_KNOWN = {
   // entry had the argument already written — "a field consumed by the code that sets it has no
   // consumer at the far end, which is the whole property here" — and it sat as a park rather than
   // as a fix. It is now a local in the handler, so there is nothing on the wire to read.
-  'imageMeta.mime': 'the image library lists id/name/builtin and the client shows an <img src="/api/images/{id}">, which needs no mime. Informational in a listing API; harmless, and named so it is a decision rather than an oversight.',
   // **`sessionStatus.diagnosis` was here and is GONE — read since /pending 349 (v1.117.309).**
   //
   // Its entry read "rendered by P06 (the ceremony panel), unbuilt", and that reason was wrong

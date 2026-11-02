@@ -277,7 +277,7 @@
       <button id="openMenuItem">Open…</button>
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
       <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
-      <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
+      <input id="officeInput" type="file" hidden />
       <!-- Shown only when the server could not find LibreOffice (`applyStatus`). Until now the
            absence was communicated by the file picker quietly narrowing to Markdown, so a user
            with a .docx met it as their file simply not appearing in the dialog.
@@ -1983,7 +1983,7 @@
       <div id="combineList" class="combinelist"></div>
       <div class="sigbtns">
         <button id="combineAddBtn">Add files…</button>
-        <input id="combineInput" type="file" accept="application/pdf,image/png,image/jpeg,image/tiff,image/webp" multiple hidden />
+        <input id="combineInput" type="file" multiple hidden />
         <span class="grow"></span>
         <button id="combineCancel">Cancel</button>
         <button id="combineGo" class="primary" disabled>Combine</button>

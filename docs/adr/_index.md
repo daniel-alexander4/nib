@@ -991,3 +991,5 @@ home today.
   — `/pending 929`: entries from the bookmarks (else the headings), physical numbers shifted by the block, `/PageLabels` carried, artifacts only so a tagged document gains no untagged content; not links, and why.
 - [ADR-183](183-a-program-can-call-nib-without-the-app-or-a-trace.md) — **a program can call nib without starting the app, writing a configuration or hearing a value back**
   — RelaxTax handoff: `NIB_HEADLESS=1` turns every non-verb into `unknown command`; every verb closes pdfcpu's config directory (measured: f1040 fill identical); a refused fill names the field and never the value.
+- [ADR-184](184-the-format-table-is-the-only-list-of-formats.md) — **the format table is the only list of the formats Nib imports**
+  — PLAN-import-export P01.S01: `pdfops.Formats()` holds extension, MIME, tool and door per row; the pickers' `accept` come from `/api/status`, `listDir` and `nib.desktop` follow the `Door` rows; a census with a red proof fails a second list.

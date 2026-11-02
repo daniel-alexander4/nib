@@ -63,7 +63,7 @@ export const BOOT_ROUTES = {
   // which keeps the default written down in exactly one place.
   // The page's credentials (ADR-053): the launch-key trade, for a boot whose URL carries `#k=`.
   '/api/launch': { csrf: 'test-csrf' },
-  '/api/status': { state: 'ready', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false, advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true } },
+  '/api/status': { state: 'ready', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false, formats: [{ key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true }, { key: 'markdown', label: 'Markdown', exts: ['md', 'markdown'], mime: ['text/markdown'], available: true }, { key: 'docx', label: 'Word', exts: ['docx'], mime: ['application/x'], available: false }], advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true } },
   '/api/images': [],
   '/api/recent': [],
   // Asked for whenever the launch state is shown (ADR-085). Empty: nothing to resume.

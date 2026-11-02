@@ -278,6 +278,35 @@ type statusResponse struct {
 	Version               string                       `json:"version"`                         // running build, shown in the About dialog
 	Ghostscript           bool                         `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
 	LibreOffice           bool                         `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
+	// Formats is the format table (pdfops.Formats), the one list the pickers' `accept` is built from.
+	Formats []formatView `json:"formats"`
+}
+
+// formatView is one row of the format table as the page reads it. It names no tool and no link (ADR-039): the per-tool
+// notices of D24 add a key when the page has a reader for it.
+type formatView struct {
+	Key       string   `json:"key"`
+	Label     string   `json:"label"`
+	Exts      []string `json:"exts"`
+	MIME      []string `json:"mime"`
+	Available bool     `json:"available"`
+	Image     bool     `json:"image,omitempty"`
+}
+
+// formatViews renders the table for the status answer; availability is asked once per tool, not per row.
+func formatViews() []formatView {
+	avail := map[pdfops.MissingTool]bool{}
+	var out []formatView
+	for _, f := range pdfops.Formats() {
+		ok, seen := avail[f.Tool]
+		if !seen {
+			ok = pdfops.FormatAvailable(f)
+			avail[f.Tool] = ok
+		}
+		v := formatView{Key: f.Key, Label: f.Label, Exts: f.Exts, MIME: f.MIME, Available: ok, Image: f.Image}
+		out = append(out, v)
+	}
+	return out
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -288,6 +317,7 @@ func (s *Server) currentStatus() statusResponse {
 	st.Version = s.version
 	st.Ghostscript = pdfops.GhostscriptAvailable()
 	st.LibreOffice = pdfops.LibreOfficeAvailable()
+	st.Formats = formatViews()
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""
 	st.UpdateCheckLocked = !envAllows
 	st.AutoUpdate = envAllows

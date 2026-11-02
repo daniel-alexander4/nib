@@ -49,32 +49,19 @@ var ErrUnsupportedOffice = errors.New("unsupported office document type")
 
 const officeConvertTimeout = 2 * time.Minute
 
-// OfficeExtensions is the set of input formats offered for conversion (lowercase,
-// no leading dot). Kept to the common word-processor / spreadsheet / presentation
-// formats LibreOffice handles well.
-var OfficeExtensions = []string{
-	"doc", "docx", "odt", "rtf", "txt",
-	"xls", "xlsx", "ods", "csv",
-	"ppt", "pptx", "odp",
-}
-
 // SupportedOfficeExt reports whether ext (any case, with or without a leading dot)
-// is an office format Nib will convert.
+// is an office format Nib will convert through LibreOffice: a row of the format table
+// (formats.go) whose tool is LibreOffice.
 func SupportedOfficeExt(ext string) bool {
-	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
-	for _, e := range OfficeExtensions {
-		if e == ext {
-			return true
-		}
-	}
-	return false
+	f, ok := FormatForExt(ext)
+	return ok && f.Tool == ToolLibreOffice
 }
 
 // SupportedMarkdownExt reports whether ext (any case, with or without a leading
 // dot) is Markdown, which converts natively — no LibreOffice needed.
 func SupportedMarkdownExt(ext string) bool {
-	ext = strings.ToLower(strings.TrimPrefix(ext, "."))
-	return ext == "md" || ext == "markdown"
+	f, ok := FormatForExt(ext)
+	return ok && f.Key == "markdown"
 }
 
 // UnprintableMarkdown reports the runes in a Markdown source that the conversion CANNOT

@@ -337,7 +337,7 @@ func cmdOffice(args []string) int {
 	fs.StringVar(&imageDir, "image-dir", "", "Markdown only: embed local images (![alt](file.png), PNG or JPEG) from this folder; a source that is not a relative path under it (a URL, an absolute path, ..) is refused. Without it images are skipped")
 	fs.StringVar(&setFile, "set-file", "", "Markdown only: a JSON object of KEY: \"VALUE\" strings for the placeholders; - reads it from stdin (--set overrides it)")
 	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG] [--type md] [--page-size a4] [--margin PT] [--set KEY=VALUE] [--set-file F.json] [--image-dir DIR]  (also: nib import)",
-		"Convert a document (.md/.docx/.xlsx/.odt/.pptx/…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
+		"Convert a document (Markdown, Word, Excel, PowerPoint, OpenDocument…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}

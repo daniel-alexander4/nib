@@ -412,7 +412,7 @@ Exit criteria:
 - No list of extensions exists outside the format table (a source census, L5).
 - `nib import IN -o OUT.pdf` converts the same set (`nib office` becomes its alias).
 
-#### P01.S01 — The format table
+#### P01.S01 — The format table *(done 2026-11-01, v2.29.0)*
 Scope: one table in `pdfops` — sniff, extensions, MIME, producer, tool, import and export flags — read by the open door, `listDir` filters, the picker's `accept`, and the `.desktop` MimeType. Refs: D2, L5.
 Acceptance:
 - `SupportedOfficeExt`, `SupportedMarkdownExt` and the image sniff lists are views of the table; `TestTheFormatTableIsTheOnlyList` fails on a second list.
@@ -421,7 +421,8 @@ Acceptance:
   `listDir`'s PDF-only filter (`saveas.go:116`) and `build/nib.desktop`'s `MimeType` (generated); the census scans `web/` and `build/` as well as Go.
   Nine sites list extensions today (`office.go:55,75`, `imagedoc.go:83` by magic, the three literals, `listDir`, `.desktop`).
   **(Stages 4–6 pins)** The table classifies by magic bytes (D32). `.desktop`'s `MimeType` is generated; macOS and Windows file association ship nothing today (`build/nib.desktop:9`, `nfpm.yaml:34`) and are a **declared gap**, so "double-click imports" is a Linux behaviour until scheduled. Guards, one per sync rule and written in the same commit as the rule: table → page `accept`, table → per-tool notices, table → `.desktop`, Format-line reasons, `X-Nib-Export` keys → status wording, `MapText` style fields in the JSON-name test. The owners of the three lists (formats, tools, Format-line labels) are named in `CLAUDE.md` in the same commit.
-Tasks: *(written at slice-grill time)*
+**Built (v2.29.0, ADR-184).** `pdfops.Formats()` (formats.go) holds today's rows only — a row arrives with its producer (GIF/BMP/CBZ in S03, Group 2 in P04). `Door` marks formats every route opens now (the four images); `listDir` and `build/nib.desktop` follow `Door`, so Office/Markdown join the desktop file when S02 routes them. The census (`TestTheFormatTableIsTheOnlyList`) has a planted-list red proof and six named exemptions. **Declared limits:** magic-byte classification of every row (D32) is S02a's; the table → per-tool notices, Format-line reasons and `X-Nib-Export` guards belong to the slices that create those rules; the status view names no tool yet (the jsdom published-fields scan refuses a field with no reader). CLAUDE.md names the owner of the format list (below).
+Tasks: T01 table + views; T02 status + pickers; T03 listDir + desktop; T04 census + red proof.
 
 #### P01.S02 — Open imports *(cut once, 2026-11-01, into S02a and S02b)*
 **Refs (plan-review pin W35):** S02a — D8, D9, D11, D13, D14, D31, D32, D33, D35, L1; S02b — D1, D6, D12, D24, D35, L2. (D15 is P01.S03's.)

@@ -113,7 +113,7 @@ func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 		child := dirEntry{Name: name, Path: filepath.Join(p, name)}
 		if e.IsDir() {
 			resp.Dirs = append(resp.Dirs, child)
-		} else if strings.EqualFold(filepath.Ext(name), ".pdf") {
+		} else if strings.EqualFold(filepath.Ext(name), ".pdf") || pdfops.IsDoorExt(filepath.Ext(name)) {
 			resp.Files = append(resp.Files, child)
 		}
 	}
