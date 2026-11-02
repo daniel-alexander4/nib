@@ -185,6 +185,9 @@ var markdownForEveryNodeKind = map[string]string{
 	"AutoLink":        "<https://example.com>\n",
 	"Image":           "![an image](nowhere.png)\n",
 	"RawHTML":         "Inline <b>raw html</b> here.\n",
+	// goldmark's GFM table extension (`*east.Table`, its own package): a header row, an alignment row and body rows,
+	// one empty cell so the row stays regular.
+	"Table": "| Item | Qty | Price |\n|:-----|:---:|------:|\n| Pens | 12 | 3.50 |\n| Paper |  | 1.00 |\n",
 }
 
 func TestTheLabelFixtureCoversEveryNodeKindMdpdfRenders(t *testing.T) {
@@ -194,7 +197,7 @@ func TestTheLabelFixtureCoversEveryNodeKindMdpdfRenders(t *testing.T) {
 	}
 	caseLines := strings.Join(regexp.MustCompile(`(?m)^\s*case [^\n]*`).FindAllString(string(src), -1), "\n")
 	var kinds []string
-	for _, m := range regexp.MustCompile(`\*ast\.([A-Za-z]+)`).FindAllStringSubmatch(caseLines, -1) {
+	for _, m := range regexp.MustCompile(`\*e?ast\.([A-Za-z]+)`).FindAllStringSubmatch(caseLines, -1) {
 		kinds = append(kinds, m[1])
 	}
 	sort.Strings(kinds)

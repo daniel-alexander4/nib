@@ -102,6 +102,12 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   token. `{{=key}}` is the escape (`!` is not usable: it splits Markdown text nodes). The tag path falls back to an untagged render on a tagging
   failure, but a placeholder refusal is returned at once. `--set`/`--set-file` errors name keys, never values. Tables and images are NOT built:
   they are renderer and tagging work with their own increments.
+- **GFM tables in the Markdown conversion** (RelaxTax B5, increment I2; `mdpdf/table.go`). goldmark's table extension is on; `table()` sizes
+  columns by their words (natural width when the table fits, else the page shared by what each column can give up), wraps each cell, draws
+  rules as boxes (artifacts, as a thematic break's is) and makes every cell its own block with `Role{Table, Row, Head}`; the tagger nests
+  `Table > TR > TH/TD` from consecutive blocks (`tagOnePage`), scopes `TH` through `withTableAttribute`, and an empty cell draws a lone space
+  so the row stays regular. Measured: veraPDF 1.30.2 accepts the table snippet in the every-construct conformance census. Refused rather than
+  drawn wrongly: over 24 columns, over 5,000 rows, a row taller than a page. Declared: a table that crosses a page does not repeat its header.
 
 ## Declared
 

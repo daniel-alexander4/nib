@@ -47,6 +47,8 @@ const (
 	// It is its own kind because PDF/UA wants it as `/Lbl` beside the item's `/LBody`, and because
 	// it is the one run whose text is not in the source document at all.
 	RoleMarker
+	// RoleTableCell is the text of one GFM table cell; `Role.Table`, `Role.Row` and `Role.Head` say which.
+	RoleTableCell
 )
 
 func (k RoleKind) String() string {
@@ -63,6 +65,8 @@ func (k RoleKind) String() string {
 		return "quote"
 	case RoleMarker:
 		return "marker"
+	case RoleTableCell:
+		return "tablecell"
 	}
 	return "?"
 }
@@ -87,4 +91,9 @@ type Role struct {
 	// draw order and only ever asks *"is this the same block as the last one"*. A path would be a
 	// second tree to keep in step with the first.
 	Block int
+	// Table is the ordinal (from 1) of the table a RoleTableCell run belongs to, and Row its row within it (from 0);
+	// Head says the row is the header, whose cells are TH. Zero and false for everything else. Cells of one row
+	// are consecutive blocks, which is all the tagger needs to nest Table > TR > TH/TD in draw order.
+	Table, Row int
+	Head       bool
 }

@@ -57,6 +57,11 @@ func structTypeFor(r mdpdf.Role) string {
 		return "P"
 	case mdpdf.RoleCode:
 		return "P"
+	case mdpdf.RoleTableCell:
+		if r.Head {
+			return "TH"
+		}
+		return "TD"
 	}
 	return "P"
 }
@@ -217,6 +222,10 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	edit := contentstream.NewEdit(src)
 	var listRef, itemRef *types.IndirectRef
 	listLevel := 0
+	// A table's cells arrive as consecutive blocks carrying their table and row (mdpdf.Role): a new table starts
+	// a Table, a new row a TR under it, and each cell is a TH or TD under the row. Any other block closes the table.
+	var tableRef, rowRef *types.IndirectRef
+	curTable, curRow := 0, -1
 
 	for i := 0; i < len(roles); {
 		// Every run of this block.
@@ -233,6 +242,25 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 			listRef, itemRef, listLevel = nil, nil, 0
 		}
 		var parent *types.IndirectRef
+		if role.Kind == mdpdf.RoleTableCell {
+			if tableRef == nil || role.Table != curTable {
+				tr, terr := addGroupingElement(ctx, tree, "Table", nil)
+				if terr != nil {
+					return terr
+				}
+				tableRef, rowRef, curTable, curRow = tr, nil, role.Table, -1
+			}
+			if rowRef == nil || role.Row != curRow {
+				rr, rerr := addGroupingElement(ctx, tree, "TR", tableRef)
+				if rerr != nil {
+					return rerr
+				}
+				rowRef, curRow = rr, role.Row
+			}
+			parent = rowRef
+		} else {
+			tableRef, rowRef, curTable, curRow = nil, nil, 0, -1
+		}
 		if inList {
 			if listRef == nil {
 				lr, lerr := addGroupingElement(ctx, tree, "L", nil)
@@ -254,6 +282,14 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		mcid, elemRef, aerr := addMarkedElementUnder(ctx, tree, pageNr, structTypeFor(role), parent)
 		if aerr != nil {
 			return aerr
+		}
+		if role.Kind == mdpdf.RoleTableCell && role.Head {
+			// The header row heads its columns (PDF/UA 7.5): Scope through the one writer of a Table attribute.
+			hd, derr := ctx.DereferenceDict(*elemRef)
+			if derr != nil || hd == nil {
+				return fmt.Errorf("pdfops: the header cell just written does not resolve: %v", derr)
+			}
+			hd["A"] = withTableAttribute(ctx, hd["A"], "Scope", types.Name("Column"))
 		}
 		// **The element owns every run of its block.** A paragraph that wraps to four lines is four
 		// runs and ONE element with four MCIDs — which is the distinction P06.S01's `Block` ordinal

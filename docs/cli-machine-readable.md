@@ -114,4 +114,5 @@ stdout. The options below are **Markdown only**; on a document LibreOffice conve
   (`{{na*me*}}`). Nothing is written. Limits: a `--set-file` of 1 MiB, 10,000 keys, a value of 64 KiB.
 - `--page-size letter|a4|legal` (portrait; default letter) and `--margin POINTS` (all four sides; default 72, one inch) choose the page; a margin that
   leaves under 144 points of page to write on is refused.
-- Not here yet, pinned on `PLAN-import-export.md` P01.S03: GFM tables and local images in Markdown, and placeholders in DOCX or ODT.
+- **GFM tables** (`| a | b |` with a `|---|---|` row) are laid out as a grid: columns sized to their text and wrapped to fit the page, a rule round every cell, the header row bold, the alignment row (`:--`, `:-:`, `--:`) honoured. Every cell is tagged — `Table` > `TR` > `TH` (Scope Column) / `TD` — an empty cell is still a cell, and a row never splits across pages (a table that does not fit continues on the next page, without its header repeated). Refused, exit 1: more than 24 columns, more than 5,000 rows, or a row taller than a page.
+- Not here yet, pinned on `PLAN-import-export.md` P01.S03: local images in Markdown, and placeholders in DOCX or ODT.

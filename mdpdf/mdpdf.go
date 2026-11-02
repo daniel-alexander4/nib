@@ -31,6 +31,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -234,11 +236,14 @@ func convert(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, *l
 	if err := refuseAbsurdNesting(md); err != nil {
 		return nil, nil, err
 	}
-	doc := goldmark.New().Parser().Parse(text.NewReader(md))
+	doc := goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(md))
 	r := &renderer{src: md, l: newLayout(faces, g), fonts: fallbacks, f: faces, sub: &substituter{vars: opts.Vars}}
 	r.blocks(doc, 0, nil)
 	if r.sub.err != nil {
 		return nil, nil, r.sub.err
+	}
+	if r.err != nil {
+		return nil, nil, r.err
 	}
 	spec, err := r.l.spec()
 	if err != nil {
@@ -263,6 +268,8 @@ type renderer struct {
 	listDepth  int
 	quoteDepth int
 	sub        *substituter // placeholders (Options.Vars); nil-safe
+	tables     int          // tables laid out so far, the ordinal a cell's Role carries
+	err        error        // the first layout refusal (a table too wide, too long or too tall)
 }
 
 // maxNestDepth bounds container nesting BEFORE the document is parsed.
@@ -397,6 +404,8 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		r.l.rule(indent)
 	case *ast.HTMLBlock:
 		// Raw HTML is not rendered.
+	case *east.Table:
+		r.table(t, indent)
 	default:
 		if n.HasChildren() {
 			r.blocks(n, indent, marker)
@@ -406,9 +415,15 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 
 // inline collects the inline content of a block into styled words.
 // headSize > 0 sets the heading base size (headings render bold).
-func (r *renderer) inline(n ast.Node, headSize int) []word {
+func (r *renderer) inline(n ast.Node, headSize int) []word { return r.inlineStyled(n, headSize, false) }
+
+// inlineStyled is inline with the whole run set bold when bold is true (a table's header cells).
+func (r *renderer) inlineStyled(n ast.Node, headSize int, bold bool) []word {
 	r.sub.checkSplit(n, r.src)
 	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts, f: r.f, sub: r.sub}
+	if bold {
+		in.bold++
+	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		in.node(c)
 	}
