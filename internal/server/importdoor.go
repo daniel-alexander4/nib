@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"nib/internal/gate"
@@ -168,4 +169,13 @@ func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request) (release fu
 		// The deadline was sized for THIS body; a kept-alive connection must not carry it into the next request.
 		_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	}, true
+}
+
+// importedBase is the source name the window says it imported from — the file's base name — when res is a
+// conversion, and "" for a PDF that came as it was (nothing was imported, so nothing is announced).
+func importedBase(res *pdfops.ImportResult, name string) string {
+	if res == nil || !res.Converted {
+		return ""
+	}
+	return filepath.Base(name)
 }

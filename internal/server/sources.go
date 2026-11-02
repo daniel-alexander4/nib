@@ -85,11 +85,13 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	// after a reload. Three of the five path-less producers were given a name and this was
 	// one of the two that were not — see document.name.
 	installed, cerr := s.addDocCapped(&document{
-		path: "", name: res.Name, data: data, sig: sign.Verify(data),
+		path: "", name: res.Name, data: data, sig: sign.Verify(data), imported: importedBase(res, name),
 	})
 	if cerr != nil {
 		httpError(w, http.StatusConflict, cerr.Error())
 		return
 	}
-	writeJSON(w, s.docResponse(installed))
+	resp := s.docResponse(installed)
+	resp.ImportedFrom = installed.imported
+	writeJSON(w, resp)
 }

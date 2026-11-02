@@ -129,8 +129,13 @@ type document struct {
 	// defaults reverted to "document". That is the second half of the very defect
 	// /api/docs was built to fix: it restored their REACHABILITY and not their identity.
 	name string
-	data []byte
-	sig  sign.Status
+	// imported is the base name of the file this document was converted from, or "" for a document that is a PDF
+	// as it came (ADR-185, S02b). It is NOT what names the tab (that is `name`, `<base>.pdf`), it is what the window
+	// says once when the import happens, and it rides only on the answer of the route that did the import —
+	// never on `/api/docs`, or a second window would announce every import again (Y1).
+	imported string
+	data     []byte
+	sig      sign.Status
 	// rev counts the installs of `data` since this document was registered: 0 as opened, +1 at every
 	// write of `data`. Written only by `install` (ADR-146), under s.mu; sent as docResponse.Rev and
 	// echoed by the routes that commit a client's posted bytes. See commitMutation.
@@ -757,6 +762,9 @@ type docResponse struct {
 	// the routes that post a PDF of its own, so a commit built on bytes the document no longer holds
 	// is refused. Omitted at 0, which is what an absent field reads as.
 	Rev uint64 `json:"rev,omitempty"`
+	// ImportedFrom is the source file's name when THIS answer is the one that imported it (open, upload, URL,
+	// Import…). Set by those routes after docResponse, so `/api/docs`, a reload and every later answer omit it.
+	ImportedFrom string `json:"importedFrom,omitempty"`
 
 	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
 	// from "you have not edited this document" — states that canUndo:false reports
@@ -969,7 +977,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		// Pathless, so canSave is false and Save routes to Save As. The NAME still comes from
 		// the file the user picked (`<base>.pdf`, D11), or the tab reads "Untitled" for a
 		// document they just opened by name.
-		doc = &document{path: "", name: res.Name, data: data, sig: sign.Verify(data)}
+		doc = &document{path: "", name: res.Name, data: data, sig: sign.Verify(data), imported: filepath.Base(path)}
 		dup = false
 	}
 	installed, err := s.addDocCapped(doc)
@@ -980,6 +988,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
 	resp := s.docResponse(installed)
 	resp.SameFileOpen = dup
+	resp.ImportedFrom = installed.imported
 	writeJSON(w, resp)
 }
 
@@ -1014,13 +1023,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// The uploaded filename is recorded ON the document, so /api/docs and a reload report
 	// it too. It used to be patched onto this one response and stored nowhere.
 	installed, err := s.addDocCapped(&document{
-		path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF),
+		path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF), imported: importedBase(res, header.Filename),
 	})
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, s.docResponse(installed))
+	resp := s.docResponse(installed)
+	resp.ImportedFrom = installed.imported
+	writeJSON(w, resp)
 }
 
 // handleClose puts the open document down without quitting: setDoc(nil) drops the

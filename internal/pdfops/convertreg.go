@@ -24,7 +24,29 @@ var converters = struct {
 	mu     sync.Mutex
 	groups map[int]struct{}
 	closed bool
+	// starting counts converters between "allowed to start" and "registered": KillConverters waits for it to reach
+	// zero, so a process started in the instant a shutdown begins is registered before the sweep of the registry
+	// rather than killed by its own goroutine after Nib has already exited.
+	starting int
 }{groups: map[int]struct{}{}}
+
+// beginStart is asked before a converter is started. It refuses once KillConverters has run and otherwise
+// holds the shutdown off until endStart.
+func beginStart() error {
+	converters.mu.Lock()
+	defer converters.mu.Unlock()
+	if converters.closed {
+		return ErrShuttingDown
+	}
+	converters.starting++
+	return nil
+}
+
+func endStart() {
+	converters.mu.Lock()
+	converters.starting--
+	converters.mu.Unlock()
+}
 
 // registerConverter records a converter group (its leader's pid) and returns the function that
 // forgets it. It refuses once KillConverters has run.
@@ -40,13 +62,6 @@ func registerConverter(pid int) (forget func(), err error) {
 		delete(converters.groups, pid)
 		converters.mu.Unlock()
 	}, nil
-}
-
-// convertersClosed reports whether KillConverters has run.
-func convertersClosed() bool {
-	converters.mu.Lock()
-	defer converters.mu.Unlock()
-	return converters.closed
 }
 
 // LiveConverters reports how many converter groups are registered. For the shutdown test and the
@@ -65,6 +80,18 @@ const killWait = time.Second
 func KillConverters() int {
 	converters.mu.Lock()
 	converters.closed = true
+	converters.mu.Unlock()
+	// A converter that was allowed to start before the flag flipped is registered within microseconds of Start;
+	// wait (bounded) for those so the snapshot below holds it.
+	for deadline := time.Now().Add(killWait); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		converters.mu.Lock()
+		n := converters.starting
+		converters.mu.Unlock()
+		if n == 0 {
+			break
+		}
+	}
+	converters.mu.Lock()
 	pids := make([]int, 0, len(converters.groups))
 	for pid := range converters.groups {
 		pids = append(pids, pid)

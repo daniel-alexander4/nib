@@ -17,13 +17,20 @@ import (
 // handoffEvent is one hand-off as a window hears it: which of the route's outcomes.
 type handoffEvent struct {
 	Result string `json:"result"` // opened | focused | queued | refused
+	// Reason is the sentence for a refusal — the import function's own, including the missing-tool one (Y12) —
+	// so the window says why instead of "Nib may be full". Empty for every other result.
+	Reason string `json:"reason,omitempty"`
+	// ImportedFrom is the source's file name when an "opened" hand-off was a conversion; the window says so once.
+	ImportedFrom string `json:"importedFrom,omitempty"`
 }
 
 // handoffNote is one hand-off as the server keeps it. The sequence is the server's own, so two
 // identical outcomes are two events; the page has no use for it and it never reaches the wire.
 type handoffNote struct {
-	seq    uint64
-	result string
+	seq          uint64
+	result       string
+	reason       string
+	importedFrom string
 }
 
 // handoffKept bounds the events held for a stream that is mid-write when several arrive. It is the
@@ -51,10 +58,10 @@ type handoffPush struct {
 }
 
 // announce records one hand-off and wakes every window's stream.
-func (p *handoffPush) announce(result string) {
+func (p *handoffPush) announce(result, reason, importedFrom string) {
 	p.mu.Lock()
 	p.seq++
-	p.recent = append(p.recent, handoffNote{seq: p.seq, result: result})
+	p.recent = append(p.recent, handoffNote{seq: p.seq, result: result, reason: reason, importedFrom: importedFrom})
 	if len(p.recent) > handoffKept {
 		p.recent = p.recent[len(p.recent)-handoffKept:]
 	}
@@ -143,7 +150,7 @@ func (s *Server) ExpectNoWindow() { s.push.arrived() }
 // gets in — the launch overlay says so in as many words — so it cannot be answered by a window the
 // user may not be looking at. **A refusal needs a window that is actually open**, because the
 // refusal is a sentence and a window still on its way was never told it.
-func (s *Server) windowHas(result string) (surfaced bool) {
+func (s *Server) windowHas(result, reason, importedFrom string) (surfaced bool) {
 	if result == "window" {
 		s.push.expect()
 		return false
@@ -151,7 +158,7 @@ func (s *Server) windowHas(result string) (surfaced bool) {
 	n := s.windows.n.Load()
 	switch {
 	case n > 0:
-		s.push.announce(result)
+		s.push.announce(result, reason, importedFrom)
 		log.Printf("%s %s (%d open)", handoffTakenMsg, result, n)
 		return true
 	case result != "refused" && s.push.expected():

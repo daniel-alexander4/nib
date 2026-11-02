@@ -295,7 +295,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       // Since v1.124.0 the file lifecycle is a set of sidebar CARDS rather than toolbar groups,
       // so Open… is behind a header exactly as it is for a user. `card()` also handles the
       // sidebar being shut, which it is below 900px.
-      await this.card('Open a Document');
+      await this.card('Open & Import');
       await page.click('#openMenuItem');
       await page.fill('#pathInput', file);
       // **Which view was in front before the press, so the wait below is for a DIFFERENT one** (/pending 475).

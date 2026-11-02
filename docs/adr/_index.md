@@ -995,3 +995,5 @@ home today.
   — PLAN-import-export P01.S01: `pdfops.Formats()` holds extension, MIME, tool and door per row; the pickers' `accept` come from `/api/status`, `listDir` and `nib.desktop` follow the `Door` rows; a census with a red proof fails a second list.
 - [ADR-185](185-one-import-function-and-the-temporary-files-it-leaves.md) — **one import function, and the temporary files and processes it owns**
   — PLAN-import-export P01.S02a: `pdfops.Import` classifies by content and every open route calls it; `internal/tempdir` is the only temp door (kernel-lock liveness, swept at start); one `Shutdown` kills converters; a gate of two; LibreOffice's web fetches closed (the plan's mechanism measured and replaced); converters get an allowlisted environment and a memory watchdog.
+- [ADR-186](186-the-window-is-told-an-import-once-by-the-route-that-did-it.md) — **the window is told an import once, by the route that did it**
+  — PLAN-import-export P01.S02b: `importedFrom` on the importing route's own answer and the hand-off event, never on `/api/docs`; one polite `#importNotice`; the Open group is Open & Import.

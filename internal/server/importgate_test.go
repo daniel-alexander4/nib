@@ -171,7 +171,7 @@ func TestAHandoffBacklogIsNeverRefusedForALongQueue(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := srv.openHandedOff(context.Background(), p)
+			_, _, err := srv.openHandedOff(context.Background(), p)
 			errs <- err
 		}()
 	}

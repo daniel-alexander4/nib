@@ -4419,6 +4419,13 @@ async function installOpened(meta) {
   }
   // A document the user just opened is what she asked to see, so a page in front yields.
   if (opened) leaveAppPage();
+  // The route that imported it says so, and only that route does (`importedFrom` is on its own answer and
+  // on no later one), so a reload or a second window never repeats it. ADR-185.
+  if (opened && meta && meta.importedFrom) {
+    const v = views.find((x) => x.docMeta && meta.id && x.docMeta.id === meta.id);
+    if (v) v.importedFrom = meta.importedFrom;
+    noteImported(meta.importedFrom, meta.id, meta.tagged);
+  }
   return opened;
 }
 
@@ -4471,7 +4478,11 @@ function adoptHandedOff(ask = false) {
 // user is not in (measured in Chrome app mode, covered and minimised). So the title is marked until
 // the window is next focused, which is what a taskbar shows.
 function applyHandoffEvent(ev) {
-  if (ev.result === 'refused' || ev.result === 'queued') toast(HANDOFF_NOTICES['handoff-' + ev.result]);
+  // A refusal says WHY in the import function's own words (Y12): a missing tool, a name that contradicts the
+  // contents, a cap. Without a reason it is the old generic sentence.
+  if (ev.result === 'refused' && ev.reason) toast(ev.reason, 9000);
+  else if (ev.result === 'refused' || ev.result === 'queued') toast(HANDOFF_NOTICES['handoff-' + ev.result]);
+  if (ev.result === 'opened' && ev.importedFrom) noteImported(ev.importedFrom, '', true);
   if (ev.result === 'opened' || ev.result === 'focused') adoptHandedOff(ev.result === 'focused');
   if (!document.hasFocus()) {
     document.title = '● ' + baseTitle;
@@ -14693,6 +14704,56 @@ function reflectLostNotice(m) {
 //
 // A function and not a table at module level: a document's answer is reflected while this file is still loading,
 // before a `const` down here would exist.
+// --- the import notice (ADR-185, S02b; D6, D12, W28, W31, Y12) ----------------------------------------------
+// A file that was not a PDF became one: say so once, in a polite region, with nothing moved. The words are
+// ONE function so the batch form ("Imported 3 files") and the single form cannot drift, and a document is
+// announced once per window — keyed on the server epoch and the document id (ids are monotonic per process,
+// not across restarts, W31) in sessionStorage, with a short in-page fallback where storage throws.
+const importedSeen = new Set();
+let importedBatch = [];
+let importedUntagged = false;
+let importedTimer = 0;
+function importNoticeWords(names, untagged) {
+  if (names.length === 1) {
+    // What is known of the result, from the document's own answer and never assumed (Y12): a conversion is
+    // not tagged for screen readers unless the answer says it is.
+    return `Imported ${names[0]} as a PDF. Save writes a PDF; use Export for other formats.` +
+      (untagged ? ' It has no tags for screen readers yet.' : '');
+  }
+  return `Imported ${names.length} files as PDFs. Save writes a PDF; use Export for other formats.`;
+}
+// importKey is how a document is remembered as announced. A hand-off event carries no id, so it is keyed by
+// the name and the moment — it is delivered to a window once, and this only absorbs a stream replay.
+function importKey(name, id) { return id || `ev:${name}`; }
+function noteImported(name, id, tagged) {
+  const key = importKey(name, id);
+  if (importedSeen.has(key)) return;
+  importedSeen.add(key);
+  try {
+    const seen = JSON.parse(sessionStorage.getItem('nib.imported') || '[]');
+    if (seen.includes(key)) return;
+    seen.push(key);
+    sessionStorage.setItem('nib.imported', JSON.stringify(seen.slice(-100)));
+  } catch { /* storage refused: the in-page set above still holds for this load */ }
+  importedBatch.push(name);
+  importedUntagged = !tagged; // `tagged` is omitted when false, so absent means untagged; a hand-off event passes none and says nothing
+  // Coalesced: imports landing within a moment of each other are one sentence (a hand-off backlog).
+  clearTimeout(importedTimer);
+  importedTimer = setTimeout(showImportNotice, 400);
+}
+function showImportNotice() {
+  const box = document.getElementById('importNotice');
+  const names = importedBatch;
+  importedBatch = [];
+  if (!box || !names.length) return;
+  document.getElementById('importNoticeText').textContent = importNoticeWords(names, importedUntagged);
+  box.hidden = false;
+}
+els.importNoticeDismiss = $('importNoticeDismiss');
+if (els.importNoticeDismiss) els.importNoticeDismiss.onclick = () => { document.getElementById('importNotice').hidden = true; };
+els.importNoticeExport = $('importNoticeExport');
+if (els.importNoticeExport) els.importNoticeExport.onclick = () => goCard('file', 'Export & Print');
+
 function xfaNoticeWords(state) {
   switch (state) {
     case 'static':
@@ -16974,7 +17035,7 @@ const SIGN_STEPS = [
     done: () => profileFilled, go: () => goCard('markup', 'Detect & Fill Fields') },
 
   { label: 'Open the document', phase: 'Prepare the document', need: 'required', hint: null,
-    done: () => !!view.pdfDocument, go: () => goCard('file', 'Open a Document') },
+    done: () => !!view.pdfDocument, go: () => goCard('file', 'Open & Import') },
   { label: 'Detect and fill form fields', need: 'optional', hint: 'Only if it is a form',
     done: null, go: () => goCard('markup', 'Detect & Fill Fields') },
   { label: 'Mark it up', need: 'optional', hint: 'Notes, highlights, shapes, text edits',
@@ -17621,7 +17682,10 @@ async function quitNib() {
       : 'a co-signing session is still armed');
   }
   for (const v of editedViews()) {
-    lose.push(`“${v.originalName || 'an untitled document'}” has unsaved changes`);
+    // A converted tab was never saved as a PDF anywhere: name the file it came from (Y12).
+    lose.push(v.importedFrom
+      ? `“${v.importedFrom}” was converted and its PDF isn't saved`
+      : `“${v.originalName || 'an untitled document'}” has unsaved changes`);
   }
   if (lose.length && !confirm(`Quit Nib? ${lose.join(', and ')}. Quitting ends ${lose.length > 1 ? 'them' : 'it'}.`)) {
     return;

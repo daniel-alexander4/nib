@@ -47,11 +47,12 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	}
 	// Present the converted PDF under the source name with a .pdf extension. Recorded ON
 	// the document, so /api/docs and a reload report it too — see document.name.
-	installed, cerr := s.addDocCapped(&document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF)})
+	installed, cerr := s.addDocCapped(&document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF), imported: importedBase(res, header.Filename)})
 	if cerr != nil {
 		httpError(w, http.StatusConflict, cerr.Error())
 		return
 	}
 	resp := s.docResponse(installed)
+	resp.ImportedFrom = installed.imported
 	writeJSON(w, resp)
 }

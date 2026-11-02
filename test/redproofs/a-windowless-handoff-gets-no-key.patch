@@ -1,13 +1,12 @@
-diff --git a/internal/server/handoff.go b/internal/server/handoff.go
 --- a/internal/server/handoff.go
 +++ b/internal/server/handoff.go
-@@ -52,6 +52,9 @@
+@@ -53,6 +53,9 @@
  // the launch does next and what the open windows hear.
- func (s *Server) answerHandoff(w http.ResponseWriter, result, reason string) {
+ func (s *Server) answerHandoff(w http.ResponseWriter, result, reason, importedFrom string) {
  	launch := s.MintLaunchKey()
 +	if result == "window" {
 +		launch = ""
 +	}
- 	writeJSON(w, handoffResponse{Result: result, Reason: reason, Launch: launch, Surfaced: s.windowHas(result)})
+ 	writeJSON(w, handoffResponse{Result: result, Reason: reason, Launch: launch, Surfaced: s.windowHas(result, reason, importedFrom)})
  }
  

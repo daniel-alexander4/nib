@@ -273,10 +273,10 @@
            the mode panes, and no CSS covers the case). In a column the CARD is the disclosure,
            so a dropdown inside a collapsed card would be a second disclosure for the same
            items — the pattern the accordion replaced. -->
-      <div class="tbgroup" data-label="Open a Document" data-fold="1">
+      <div class="tbgroup" data-label="Open &amp; Import" data-fold="1">
       <button id="openMenuItem">Open…</button>
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
-      <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
+      <button id="officeOpenBtn" title="Import a Markdown, Word, Excel, PowerPoint or OpenDocument file as a PDF, choosing its language (Word, Excel and the like need LibreOffice)">Import…</button>
       <input id="officeInput" type="file" hidden />
       <!-- Shown only when the server could not find LibreOffice (`applyStatus`). Until now the
            absence was communicated by the file picker quietly narrowing to Markdown, so a user
@@ -1398,6 +1398,14 @@
            sentence in the first: it says something else — that there is a form here Nib does not show, and what
            Nib will do or has done about it — and is dismissed on its own. Same role/polite reasoning as its
            neighbours; a page-level notice and never a dialog, because nothing here needs an answer. -->
+      <!-- An import was done (ADR-185, S02b): a file that is not a PDF became one. A polite status region and not
+           #sessionNotice (role="alert"): nothing here needs an answer and nothing moves focus. One notice for a batch
+           ("Imported 3 files"). Its words are authored in app.js's importNoticeWords, the one place that says it. -->
+      <div id="importNotice" role="status" aria-live="polite" hidden>
+        <span id="importNoticeText"></span>
+        <button id="importNoticeExport" type="button">Show Export</button>
+        <button id="importNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       <div id="xfaNotice" role="status" aria-live="polite" hidden>
         <span id="xfaNoticeText"></span>
         <button id="xfaNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>

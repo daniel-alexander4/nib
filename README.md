@@ -331,10 +331,16 @@ document is a PDF built from it, so **Save** downloads a PDF copy to your browse
 replacing your original; use **File → Save a Copy** to choose its name and place.
 
 ### Open an office or Markdown document
-**File → Open & convert to PDF…** opens a Markdown, Word, Excel, PowerPoint, or
-OpenDocument file (`.md/.markdown`, `.docx/.doc/.odt/.rtf/.txt`,
-`.xlsx/.xls/.ods/.csv`, `.pptx/.ppt/.odp`) by converting it to PDF — it then
-becomes the open document, ready to mark up, fill, sign, or save.
+**File → Open** (or dragging a file in, or double-clicking one) takes a Markdown, Word,
+Excel, PowerPoint, or OpenDocument file (`.md/.markdown`, `.docx/.doc/.odt/.rtf/.txt`,
+`.xlsx/.xls/.ods/.csv`, `.pptx/.ppt/.odp`) as well as a PDF: a file that is not a PDF is
+**imported** — converted to a PDF that opens as a new document, ready to mark up, fill,
+sign, or save. Nib says so once ("Imported report.docx as a PDF. Save writes a PDF; use
+Export for other formats."). **File → Import…** is the same with a choice of the document's
+language. A converted document has no file behind it, so *Save* asks for a name and your
+original is never written. Open Recent lists the *path* of an imported file; opening it
+again imports it again. A file whose name and contents disagree (a "`.docx`" that is a
+picture) is refused with a sentence that says so.
 
 **Markdown converts natively**, in pure Go, with no external tool: headings,
 emphasis, lists, blockquotes, and code blocks render as crisp selectable text
@@ -358,7 +364,7 @@ nib office notes.md -o notes.pdf
 nib office vertrag.docx -o vertrag.pdf --lang de
 ```
 
-In the app, the **Document language** list beside *Open & convert to PDF…* does the
+In the app, the **Document language** list beside *Import…* does the
 same: it starts at this computer's language, and whatever it names is declared on
 the converted document; set it to *not specified* to declare nothing new.
 

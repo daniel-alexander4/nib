@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -16,6 +17,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"nib/internal/testpdf"
 	"os"
 	"path/filepath"
 	"sort"
@@ -255,7 +257,7 @@ func TestEveryNativeFormatIsTheSameDocumentAtEveryDoor(t *testing.T) {
 		viaURL, _ := docData(srv, want)
 		srv.setDoc(nil)
 		// hand-off
-		if _, err := srv.openHandedOff(context.Background(), p); err != nil {
+		if _, _, err := srv.openHandedOff(context.Background(), p); err != nil {
 			t.Fatalf("%s: hand-off door: %v", key, err)
 		}
 		viaHandoff, _ := docData(srv, want)
@@ -475,5 +477,69 @@ func TestQueuedUploadBytesAreBoundedAndGivenBack(t *testing.T) {
 	releases[0]()
 	if _, ok := srv.admitUpload(httptest.NewRecorder(), mk(200<<20)); !ok {
 		t.Fatal("a finished upload did not give its bytes back")
+	}
+}
+
+// ---- the window is told once, by the route that imported ------------------------------------------
+
+// TestOnlyTheRouteThatImportedSaysSoAndDocsNever — Y1. `importedFrom` rides on the answer of the open,
+// upload, URL and Import… routes; `/api/docs` (which a second window reads) never carries it, or every
+// window that joined later would announce every import again.
+func TestOnlyTheRouteThatImportedSaysSoAndDocsNever(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	_ = srv
+	body := testPNG(t, 24, 16)
+	out := uploadForBody(t, c, csrf, ts.URL, "photo.png", body)
+	var got struct {
+		ImportedFrom string `json:"importedFrom"`
+		Name         string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.ImportedFrom != "photo.png" || got.Name != "photo.pdf" {
+		t.Fatalf("upload answered %s (%v), want importedFrom photo.png and name photo.pdf", out, err)
+	}
+	// A PDF is not an import.
+	pdf, _ := testpdf.Text("plain")
+	if out := uploadForBody(t, c, csrf, ts.URL, "plain.pdf", pdf); strings.Contains(out, "importedFrom") {
+		t.Fatalf("a PDF upload claims to have been imported: %s", out)
+	}
+	res, err := c.Get(ts.URL + "/api/docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	docs, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(docs), "importedFrom") {
+		t.Fatalf("/api/docs carries importedFrom: %s", docs)
+	}
+}
+
+// A hand-off that converted tells the open windows what it converted; one that was refused tells them why,
+// in the import function's own words (Y12), not "Nib may be full".
+func TestAHandoffEventCarriesWhatWasImportedOrWhyItWasRefused(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, _ := authedClient(t, ts)
+	srv.SetHandoffSecret("secret")
+	srv.windows.n.Store(1) // a window is open, so the hand-off is announced to it
+	dir := t.TempDir()
+	good := filepath.Join(dir, "scan.png")
+	os.WriteFile(good, testPNG(t, 8, 8), 0o600)
+	bad := filepath.Join(dir, "broken.docx")
+	os.WriteFile(bad, []byte("PK\x03\x04broken"), 0o600)
+	if code, out := handoffTo(t, ts, c, "secret", good); code != http.StatusOK || out.Result != "opened" {
+		t.Fatalf("hand-off of an image = %d %+v", code, out)
+	}
+	if code, out := handoffTo(t, ts, c, "secret", bad); code != http.StatusOK || out.Result != "refused" {
+		t.Fatalf("hand-off of a broken docx = %d %+v", code, out)
+	}
+	evs := srv.push.since(0)
+	if len(evs) != 2 {
+		t.Fatalf("%d hand-off events, want 2", len(evs))
+	}
+	if evs[0].result != "opened" || evs[0].importedFrom != "scan.png" {
+		t.Errorf("first event %+v, want opened from scan.png", evs[0])
+	}
+	if evs[1].result != "refused" || !strings.Contains(evs[1].reason, "package") {
+		t.Errorf("second event %+v, want a refusal that says why", evs[1])
 	}
 }

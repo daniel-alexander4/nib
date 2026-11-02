@@ -51,9 +51,9 @@ type handoffResponse struct {
 
 // answerHandoff writes the route's answer: the ONE place a hand-off's outcome is turned into what
 // the launch does next and what the open windows hear.
-func (s *Server) answerHandoff(w http.ResponseWriter, result, reason string) {
+func (s *Server) answerHandoff(w http.ResponseWriter, result, reason, importedFrom string) {
 	launch := s.MintLaunchKey()
-	writeJSON(w, handoffResponse{Result: result, Reason: reason, Launch: launch, Surfaced: s.windowHas(result)})
+	writeJSON(w, handoffResponse{Result: result, Reason: reason, Launch: launch, Surfaced: s.windowHas(result, reason, importedFrom)})
 }
 
 // SetHandoffSecret tells the server which secret authorises POST /api/handoff. Empty
@@ -116,7 +116,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Path == "" {
-		s.answerHandoff(w, "window", "")
+		s.answerHandoff(w, "window", "", "")
 		return
 	}
 	// Canonicalise ONCE, here, so the comparison below and the install below see the same
@@ -134,7 +134,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// brings the tab forward (`adoptHandedOff`, /pending 914). This check only spares the file read: the AUTHORITATIVE one
 	// is inside openHandedOff's install, under the hold that registers (/pending 590).
 	if s.focusPath(path) {
-		s.answerHandoff(w, "focused", "")
+		s.answerHandoff(w, "focused", "", "")
 		return
 	}
 
@@ -145,23 +145,23 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// never opens. queuePendingOpen therefore re-checks under the SAME lock adoptVault
 	// sets the vault under, and reports false when there is nothing left to wait for.
 	if !unlocked && s.queuePendingOpen(path) {
-		s.answerHandoff(w, "queued", "")
+		s.answerHandoff(w, "queued", "", "")
 		return
 	}
 	// **The request's context is deliberately NOT honoured from here on** (/pending 783). A large
 	// file outlasts the launch's wait, and the launch then exits on `ErrHandOffUnanswered` trusting
 	// this instance to finish — so an install that stopped when its caller gave up would open the
 	// document nowhere, and a launch that did not trust it would open the document twice.
-	focused, err := s.openHandedOff(context.WithoutCancel(r.Context()), path)
+	focused, imported, err := s.openHandedOff(context.WithoutCancel(r.Context()), path)
 	if err != nil {
-		s.answerHandoff(w, "refused", err.Error())
+		s.answerHandoff(w, "refused", err.Error(), "")
 		return
 	}
 	if focused {
-		s.answerHandoff(w, "focused", "")
+		s.answerHandoff(w, "focused", "", "")
 		return
 	}
-	s.answerHandoff(w, "opened", "")
+	s.answerHandoff(w, "opened", "", imported)
 }
 
 // openHandedOff installs a path through the SAME machinery an ordinary open uses —
@@ -173,7 +173,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 //
 // Reports focused when path was found already open AT THE INSTALL and activated instead —
 // see addDocCappedOrFocus for why the caller's earlier focusPath is not enough.
-func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, err error) {
+func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, imported string, err error) {
 	// **A hand-off waits for the gate however long the queue is** (Y4): those files are already "opening" to
 	// the person who double-clicked them, so a full queue parks them and never refuses them. Its context is
 	// the caller's detached one — the launcher's 30 s wait must not cancel (and so kill) a conversion.
@@ -187,18 +187,18 @@ func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, 
 		// does not require every site to print the same sentence.
 		switch ref.kind {
 		case refuseTooLarge:
-			return false, errHandoff("that file is too large to open")
+			return false, "", errHandoff("that file is too large to open")
 		case refuseUnreadable:
-			return false, errHandoff("that file could not be read")
+			return false, "", errHandoff("that file could not be read")
 		case refuseImport:
 			// **Handled explicitly, because the `default` below would have swallowed it.** A new
 			// refusalKind does not fail to compile here — Go has no exhaustive switch — so it
 			// would have degraded to "that file could not be opened" for a document nib actually
 			// converts, and the drift would have passed every test. /pending 541 named this arm as
 			// the trap in its own fix. The sentence is `Import`'s own: one per cause.
-			return false, errHandoff(ref.msg)
+			return false, "", errHandoff(ref.msg)
 		default:
-			return false, errHandoff("that file could not be opened")
+			return false, "", errHandoff("that file could not be opened")
 		}
 	}
 	// **A converted hand-off installs PATHLESS**, for the reason `readInstallablePDF` states: the
@@ -207,10 +207,14 @@ func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, 
 	// (`<base>.pdf`, D11), or a double-clicked photo opens as "Untitled".
 	doc := newPathDoc(path, res.PDF)
 	if res.Converted {
-		doc = &document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF)}
+		doc = &document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF), imported: filepath.Base(path)}
+		imported = doc.imported
 	}
 	_, focused, err = s.addDocCappedOrFocus(doc, path)
-	return focused, err
+	if err != nil {
+		imported = ""
+	}
+	return focused, imported, err
 }
 
 type errHandoff string
@@ -298,7 +302,7 @@ func (s *Server) drainPendingOpens() {
 		if s.docForPath(path) != nil {
 			continue
 		}
-		if _, err := s.openHandedOff(context.Background(), path); err != nil {
+		if _, _, err := s.openHandedOff(context.Background(), path); err != nil {
 			// Logged rather than surfaced: the user is at the unlock screen and has no
 			// place to receive it yet. The document simply does not appear, which is
 			// the same outcome as the refusal they would have seen while unlocked.

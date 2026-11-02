@@ -622,7 +622,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// A launch handed this instance a document (ADR-086). Every one is sent, by sequence: the
 		// emit-on-difference rule above would swallow the second of two identical outcomes.
 		for _, ev := range s.push.since(lastHandoff) {
-			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result})
+			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom})
 			if hoErr != nil {
 				return
 			}

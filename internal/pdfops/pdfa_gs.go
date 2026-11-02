@@ -126,13 +126,15 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *t
 	// converter's owner ends: Quit, the idle exit and SIGTERM do not cancel this context, so the group is
 	// registered for `KillConverters`, and its id is written beside the input so a sweep after a crash can
 	// find what the crash orphaned.
-	if convertersClosed() {
-		return nil, ErrShuttingDown
+	if err := beginStart(); err != nil {
+		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		endStart()
 		return nil, fmt.Errorf("%s could not convert this document: %s", tool, execErrTail(stderr.String(), err))
 	}
 	forget, rerr := registerConverter(cmd.Process.Pid)
+	endStart()
 	if rerr != nil {
 		killGroup(cmd.Process.Pid)
 		_ = cmd.Wait()

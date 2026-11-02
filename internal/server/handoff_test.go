@@ -382,7 +382,7 @@ func TestConcurrentHandoffsOfOnePathOpenOneDocument(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			f, err := srv.openHandedOff(context.Background(), path)
+			f, _, err := srv.openHandedOff(context.Background(), path)
 			if err != nil {
 				t.Errorf("hand-off refused: %v", err)
 				return
