@@ -43,6 +43,9 @@ func textOperatorSpans(src []byte) []opSpan {
 type drawingGroup struct {
 	opSpan
 	showsText bool
+	// drawsImage is set when the group paints an XObject (`Do`): what mdpdf draws a picture with, and the only thing in
+	// its output that does, so a Markdown picture's group is found by it.
+	drawsImage bool
 }
 
 // drawingGroups is the one walk over a content stream's top-level groups, text and not. The groups that
@@ -52,7 +55,7 @@ type drawingGroup struct {
 func drawingGroups(src []byte) []drawingGroup {
 	toks := contentstream.Tokenize(src)
 	var out []drawingGroup
-	depth, start, showsText := 0, -1, false
+	depth, start, showsText, drawsImage := 0, -1, false, false
 	for _, tk := range toks {
 		if tk.Kind != contentstream.Operator {
 			continue
@@ -60,14 +63,14 @@ func drawingGroups(src []byte) []drawingGroup {
 		switch string(tk.Bytes(src)) {
 		case "q":
 			if depth == 0 {
-				start, showsText = tk.Start, false
+				start, showsText, drawsImage = tk.Start, false, false
 			}
 			depth++
 		case "Q":
 			depth--
 			if depth == 0 && start >= 0 {
-				out = append(out, drawingGroup{opSpan{start, tk.End}, showsText})
-				start, showsText = -1, false
+				out = append(out, drawingGroup{opSpan{start, tk.End}, showsText, drawsImage})
+				start, showsText, drawsImage = -1, false, false
 			}
 			if depth < 0 {
 				// Unbalanced input: refuse to guess at a structure the stream does not have.
@@ -76,6 +79,10 @@ func drawingGroups(src []byte) []drawingGroup {
 		case "Tj", "TJ", "'", "\"":
 			if depth > 0 {
 				showsText = true
+			}
+		case "Do":
+			if depth > 0 {
+				drawsImage = true
 			}
 		}
 	}

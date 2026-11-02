@@ -24,6 +24,9 @@ package mdpdf
 type Structure struct {
 	// Pages holds one entry per page, each a list of roles in the order the runs were drawn.
 	Pages [][]Role
+	// Figures is, per page, the pictures drawn there in draw order, each with its place in the page's reading order.
+	// Empty unless Options.ImageDir was set.
+	Figures [][]Figure
 }
 
 // RoleKind is the structural element a run belongs to.

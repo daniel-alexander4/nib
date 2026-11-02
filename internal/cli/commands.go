@@ -325,7 +325,7 @@ func composeUAReport(pdf []byte, rep uacheck.Report, refusals []string) (table, 
 // `nib import` is the same command (PLAN-import-export D15).
 func cmdOffice(args []string) int {
 	fs := flag.NewFlagSet("nib office", flag.ContinueOnError)
-	var out, lang, typ, pageSize, setFile string
+	var out, lang, typ, pageSize, setFile, imageDir string
 	var margin float64
 	var sets stringList
 	outFlag(fs, &out)
@@ -334,8 +334,9 @@ func cmdOffice(args []string) int {
 	fs.StringVar(&pageSize, "page-size", "", "Markdown only: letter (default), a4 or legal, portrait")
 	fs.Float64Var(&margin, "margin", 0, "Markdown only: the margin on all four sides, in points (default 72, one inch)")
 	fs.Var(&sets, "set", "Markdown only: fill {{KEY}} in the text with VALUE (repeatable): --set KEY=VALUE. Values are text, never markup; a key the template uses and no value covers is an error naming the key; {{=KEY}} prints {{KEY}} literally; code blocks are literal")
+	fs.StringVar(&imageDir, "image-dir", "", "Markdown only: embed local images (![alt](file.png), PNG or JPEG) from this folder; a source that is not a relative path under it (a URL, an absolute path, ..) is refused. Without it images are skipped")
 	fs.StringVar(&setFile, "set-file", "", "Markdown only: a JSON object of KEY: \"VALUE\" strings for the placeholders; - reads it from stdin (--set overrides it)")
-	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG] [--type md] [--page-size a4] [--margin PT] [--set KEY=VALUE] [--set-file F.json]  (also: nib import)",
+	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG] [--type md] [--page-size a4] [--margin PT] [--set KEY=VALUE] [--set-file F.json] [--image-dir DIR]  (also: nib import)",
 		"Convert a document (.md/.docx/.xlsx/.odt/.pptx/…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -366,7 +367,7 @@ func cmdOffice(args []string) int {
 		errf("the document and --set-file cannot both be - : stdin is one stream")
 		return 1
 	}
-	opts := mdpdf.Options{PageSize: pageSize, Margin: margin}
+	opts := mdpdf.Options{PageSize: pageSize, Margin: margin, ImageDir: imageDir}
 	if len(sets) > 0 || setFile != "" {
 		vars, err := placeholderValues(setFile, sets)
 		if err != nil {

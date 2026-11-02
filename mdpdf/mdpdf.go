@@ -166,7 +166,12 @@ func ConvertStructuredWithOptions(md []byte, base *Faces, fallbacks []Font, opts
 	if err != nil {
 		return nil, Structure{}, err
 	}
-	st := Structure{Pages: make([][]Role, len(l.runs))}
+	st := Structure{Pages: make([][]Role, len(l.runs)), Figures: make([][]Figure, len(l.runs))}
+	for i, page := range l.figs {
+		for _, f := range page {
+			st.Figures[i] = append(st.Figures[i], Figure{Before: f.before, Alt: f.alt})
+		}
+	}
 	for i, page := range l.runs {
 		st.Pages[i] = make([]Role, len(page))
 		for j, r := range page {
@@ -237,7 +242,7 @@ func convert(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, *l
 		return nil, nil, err
 	}
 	doc := goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(md))
-	r := &renderer{src: md, l: newLayout(faces, g), fonts: fallbacks, f: faces, sub: &substituter{vars: opts.Vars}}
+	r := &renderer{src: md, l: newLayout(faces, g), fonts: fallbacks, f: faces, sub: &substituter{vars: opts.Vars}, imageDir: opts.ImageDir}
 	r.blocks(doc, 0, nil)
 	if r.sub.err != nil {
 		return nil, nil, r.sub.err
@@ -269,6 +274,8 @@ type renderer struct {
 	quoteDepth int
 	sub        *substituter // placeholders (Options.Vars); nil-safe
 	tables     int          // tables laid out so far, the ordinal a cell's Role carries
+	imageDir   string       // Options.ImageDir: where local images are read from; "" skips them
+	nImages    int          // images placed so far, against maxImages
 	err        error        // the first layout refusal (a table too wide, too long or too tall)
 }
 
@@ -348,14 +355,17 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		r.l.gap(0.8 * float64(sty.size))
 		defer r.withRole(Role{Kind: RoleHeading, Level: lvl})()
 		r.l.para(r.inline(n, sty.size), indent, marker, sty.leading())
+		r.figures(n, indent)
 		r.l.gap(4)
 	case *ast.Paragraph:
 		defer r.withRole(r.textRole())()
 		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
+		r.figures(n, indent)
 		r.l.gap(paraGap)
 	case *ast.TextBlock: // paragraph inside a tight list item
 		defer r.withRole(r.textRole())()
 		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
+		r.figures(n, indent)
 		r.l.gap(tightGap)
 	case *ast.List:
 		num := t.Start
@@ -594,7 +604,7 @@ func (l *layout) spec() ([]byte, error) {
 			})
 		}
 		boxes := l.boxes[i]
-		if len(texts) == 0 && len(boxes) == 0 {
+		if len(texts) == 0 && len(boxes) == 0 && len(l.figs[i]) == 0 {
 			// pdfcpu rejects empty page content, so a blank page draws something. **A box, never
 			// text** (`/pending 504`): the page's text operators must be exactly its runs, one
 			// each, because `Structure` describes them by position. A lone-space run here was a
@@ -604,6 +614,13 @@ func (l *layout) spec() ([]byte, error) {
 			boxes = []box{{x: l.g.mx, y: l.g.top()}}
 		}
 		content["text"] = texts
+		if figs := l.figs[i]; len(figs) > 0 {
+			var im []any
+			for _, f := range figs {
+				im = append(im, map[string]any{"src": f.path, "pos": []any{f.x, f.y}, "width": f.w, "height": f.h})
+			}
+			content["image"] = im
+		}
 		if len(boxes) > 0 {
 			var bx []any
 			for _, b := range boxes {

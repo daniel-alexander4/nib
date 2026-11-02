@@ -126,7 +126,7 @@ func tagMarkdownWith(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font, opts 
 	// not routed*.
 	pdf = embeddedFontsAreHonest(pdf)
 	nestHeadingLevels(st.Pages)
-	return tagFromRoles(pdf, st.Pages, "tagMarkdown")
+	return tagFromRolesAndFigures(pdf, st.Pages, st.Figures, "tagMarkdown")
 }
 
 // TagAuthoredPages tags pages nib drew itself from text it composed — the co-sign readme, the ceremony
@@ -160,6 +160,12 @@ var errAuthoredAlreadyTagged = errors.New("pdfops: TagAuthoredPages tags pages n
 // does not hold, and a page with no list would be left undescribed under a tree that claims the
 // document — so a count mismatch is refused rather than tagging the pages the two happen to share.
 func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error) {
+	return tagFromRolesAndFigures(pdf, pages, nil, door)
+}
+
+// tagFromRolesAndFigures is tagFromRoles for a document that also draws pictures (mdpdf.Options.ImageDir): figures is,
+// per page, those pictures in draw order with their place in reading order and their description. nil means none.
+func tagFromRolesAndFigures(pdf []byte, pages [][]mdpdf.Role, figures [][]mdpdf.Figure, door string) ([]byte, error) {
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		if len(pages) != ctx.PageCount {
 			return fmt.Errorf("pdfops: %s was given roles for %d pages of a %d-page document", door, len(pages), ctx.PageCount)
@@ -170,7 +176,11 @@ func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error)
 			return terr
 		}
 		for p := 1; p <= ctx.PageCount; p++ {
-			if err := tagOnePage(ctx, tree, p, pages[p-1]); err != nil {
+			var figs []mdpdf.Figure
+			if p-1 < len(figures) {
+				figs = figures[p-1]
+			}
+			if err := tagOnePage(ctx, tree, p, pages[p-1], figs); err != nil {
 				return err
 			}
 		}
@@ -199,7 +209,7 @@ func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error)
 // The runs arrive in draw order with a block ordinal; consecutive runs sharing an ordinal are one
 // element with several MCIDs, and a change of ordinal starts a new one. List items additionally
 // group: a run of `Lbl`/`LBody` blocks at one depth becomes one `L` holding an `LI` per pair.
-func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.Role) error {
+func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.Role, figures []mdpdf.Figure) error {
 	d, _, err := tree.page(ctx, pageNr)
 	if err != nil {
 		return err
@@ -220,6 +230,42 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	// No early return for a page with no text (`/pending 504`): what such a page draws — a rule, or
 	// mdpdf's blank-page placeholder — still has to be marked an artifact below.
 	edit := contentstream.NewEdit(src)
+	groups := drawingGroups(src)
+	var imageGroups []int // indexes into groups of the ones that paint a picture, in draw order
+	for gi, g := range groups {
+		if g.drawsImage {
+			imageGroups = append(imageGroups, gi)
+		}
+	}
+	if len(imageGroups) != len(figures) {
+		return fmt.Errorf("pdfops: page %d paints %d picture(s) and the structure describes %d — refusing to tag content by position when the two do not correspond", pageNr, len(imageGroups), len(figures))
+	}
+	figured := map[int]bool{} // groups that became a Figure, so the artifact sweep leaves them
+	nextFig := 0
+	emitFigure := func() error {
+		f, g := figures[nextFig], groups[imageGroups[nextFig]]
+		nextFig++
+		if f.Alt == "" {
+			return nil // decorative: the artifact sweep below marks it
+		}
+		mcid, elemRef, err := addMarkedElementUnder(ctx, tree, pageNr, "Figure", nil)
+		if err != nil {
+			return err
+		}
+		d, derr := ctx.DereferenceDict(*elemRef)
+		if derr != nil || d == nil {
+			return fmt.Errorf("pdfops: the figure just written does not resolve: %v", derr)
+		}
+		esc, eerr := types.EscapedUTF16String(f.Alt)
+		if eerr != nil {
+			return eerr
+		}
+		d["Alt"] = types.StringLiteral(*esc)
+		figured[g.start] = true
+		edit.InsertBefore(g.start, []byte(fmt.Sprintf("/Figure <</MCID %d>> BDC\n", mcid)))
+		edit.InsertBefore(g.end, []byte("\nEMC"))
+		return nil
+	}
 	var listRef, itemRef *types.IndirectRef
 	listLevel := 0
 	// A table's cells arrive as consecutive blocks carrying their table and row (mdpdf.Role): a new table starts
@@ -228,6 +274,12 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	curTable, curRow := 0, -1
 
 	for i := 0; i < len(roles); {
+		// A picture drawn before this block's first run comes first in reading order.
+		for nextFig < len(figures) && figures[nextFig].Before <= i {
+			if ferr := emitFigure(); ferr != nil {
+				return ferr
+			}
+		}
 		// Every run of this block.
 		j := i
 		for j < len(roles) && roles[j].Block == roles[i].Block {
@@ -311,11 +363,17 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		i = j
 	}
 
+	for nextFig < len(figures) {
+		if ferr := emitFigure(); ferr != nil {
+			return ferr
+		}
+	}
+
 	// **What draws and says nothing is an artifact** — a thematic break's rule is a filled box with no
 	// text. Left unmarked it is content neither tagged nor an artifact, and veraPDF fails 7.1 t3 over it
 	// (measured on a labelled conversion: the one mdpdf construct that failed). Same edit, same walk.
-	for _, g := range drawingGroups(src) {
-		if !g.showsText {
+	for _, g := range groups {
+		if !g.showsText && !figured[g.start] {
 			edit.InsertBefore(g.start, []byte("/Artifact BMC\n"))
 			edit.InsertBefore(g.end, []byte("\nEMC"))
 		}

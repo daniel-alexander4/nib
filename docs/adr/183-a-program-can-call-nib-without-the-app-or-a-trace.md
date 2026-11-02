@@ -108,6 +108,15 @@ a message. Audited against v2.16.9; each claim below was re-measured before it w
   `Table > TR > TH/TD` from consecutive blocks (`tagOnePage`), scopes `TH` through `withTableAttribute`, and an empty cell draws a lone space
   so the row stays regular. Measured: veraPDF 1.30.2 accepts the table snippet in the every-construct conformance census. Refused rather than
   drawn wrongly: over 24 columns, over 5,000 rows, a row taller than a page. Declared: a table that crosses a page does not repeat its header.
+- **Local images in the Markdown conversion** (RelaxTax B5, increment I3; `mdpdf/images.go`). Opt-in by `Options.ImageDir` / `--image-dir`, so a
+  document with web badges converts as before. One door, `resolveImage`, reads a source: a relative path that stays under the folder (symlinks
+  resolved on both sides), a regular PNG or JPEG, within byte, pixel and count caps — a URL, scheme, absolute path, `..` and a link out are
+  refused by name, with the source as the template wrote it. A picture is placed after its paragraph, scaled down, and recorded per page in
+  `Structure.Figures` with its reading-order position; the tagger matches those to the `Do` groups in the page's content (`drawingGroup.drawsImage`),
+  checks the counts agree as it does for text, makes a described picture a `Figure` with `/Alt` and leaves an undescribed one to the artifact
+  sweep (ADR-122: never a Figure with no description). Measured: veraPDF 1.30.2 accepts a document with one of each. pdfcpu reads the file
+  itself after nib has checked it, so a swap between the check and the read by another process of the same user is declared, not closed.
+  Not placed: images inside a table cell, and an image mid-paragraph keeps its paragraph's text first.
 
 ## Declared
 

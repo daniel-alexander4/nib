@@ -21,6 +21,11 @@ type Options struct {
 	// is an error (*MissingPlaceholderError), never a literal `{{key}}`. `{{=key}}` is the escape and prints the
 	// literal `{{key}}`. Fenced and indented code blocks are literal. A nil map leaves braces alone, as before.
 	Vars map[string]string
+	// ImageDir turns local images ON when it is set: `![alt](file.png)` embeds a PNG or JPEG from this folder, scaled down
+	// to the page, and refuses (*ImageRefusedError) anything that is not a relative path staying under it — a URL, a
+	// data: or file: reference, an absolute path, `..`, a link out, another format, or a file over the caps. Unset, images
+	// are skipped, as they always were, so a document with web badges converts as before.
+	ImageDir string
 }
 
 // MissingPlaceholderError is a template that names a key no value was given for. It carries the key and never a value.

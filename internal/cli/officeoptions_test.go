@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,5 +113,45 @@ func TestPlaceholderValuesRefuseWhatTheyCannotCarry(t *testing.T) {
 	json.Unmarshal(b, &m)
 	if v, err := placeholderValues("", []string{"a=1", "a=2"}); err != nil || v["a"] != "2" {
 		t.Errorf("a later --set must win: %v %v", v, err)
+	}
+}
+
+// TestOfficeEmbedsLocalImagesOnlyFromTheFolderItIsGiven — I3. --image-dir turns local images on; without it they are
+// skipped as before; a source outside the folder, or a URL, is refused by name.
+func TestOfficeEmbedsLocalImagesOnlyFromTheFolderItIsGiven(t *testing.T) {
+	dir := t.TempDir()
+	im := image.NewRGBA(image.Rect(0, 0, 120, 60))
+	var b bytes.Buffer
+	png.Encode(&b, im)
+	os.WriteFile(filepath.Join(dir, "logo.png"), b.Bytes(), 0o600)
+	md := filepath.Join(dir, "t.md")
+	os.WriteFile(md, []byte("# T\n\n![Our logo](logo.png)\n\nText.\n"), 0o600)
+	out := filepath.Join(dir, "o.pdf")
+
+	count := func(args ...string) (int, string, int) {
+		_, stderr, code := fillChild(t, "", "", append([]string{"office", md, "-o", out}, args...)...)
+		if code != 0 {
+			return 0, stderr, code
+		}
+		pdf, _ := os.ReadFile(out)
+		files, err := pdfops.ExtractImageFiles(pdf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(files), stderr, code
+	}
+	if n, stderr, code := count("--image-dir", dir); code != 0 || n != 1 {
+		t.Fatalf("with --image-dir: %d picture(s), exit %d, %s", n, code, stderr)
+	}
+	if n, _, code := count(); code != 0 || n != 0 {
+		t.Errorf("without --image-dir: %d picture(s), exit %d, want none (skipped, as before)", n, code)
+	}
+	os.WriteFile(md, []byte("![x](https://example.com/a.png)\n"), 0o600)
+	if _, stderr, code := count("--image-dir", dir); code != 1 || !strings.Contains(stderr, "https://example.com/a.png") || !strings.Contains(stderr, "link") {
+		t.Errorf("a URL: exit %d, %q, want 1 naming the source", code, stderr)
+	}
+	os.WriteFile(md, []byte("![x](../t.png)\n"), 0o600)
+	if _, stderr, code := count("--image-dir", dir); code != 1 || !strings.Contains(stderr, "climbs") {
+		t.Errorf("a .. path: exit %d, %q", code, stderr)
 	}
 }

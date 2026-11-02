@@ -229,8 +229,9 @@ type box struct {
 type layout struct {
 	runs  [][]run // one slice per page
 	boxes [][]box
-	y     float64 // current baseline cursor on the last page
-	g     geom    // the page and its margins, chosen per document (Options)
+	figs  [][]figure // pictures per page, in the order they are drawn (Options.ImageDir)
+	y     float64    // current baseline cursor on the last page
+	g     geom       // the page and its margins, chosen per document (Options)
 	// f is the base face set, so code blocks measure and draw in the same monospace face
 	// the rest of the document was configured with rather than a package constant.
 	f faceSet
@@ -264,6 +265,7 @@ func newLayout(f faceSet, g geom) *layout {
 func (l *layout) newPage() {
 	l.runs = append(l.runs, nil)
 	l.boxes = append(l.boxes, nil)
+	l.figs = append(l.figs, nil)
 	l.y = l.g.top()
 }
 

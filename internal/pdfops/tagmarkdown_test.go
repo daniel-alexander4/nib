@@ -252,7 +252,7 @@ func TestTaggingRefusesWhenTheStructureAndTheStREAMDisagree(t *testing.T) {
 		if terr != nil {
 			return terr
 		}
-		return tagOnePage(ctx, tree, 1, short)
+		return tagOnePage(ctx, tree, 1, short, nil)
 	})
 	if err == nil {
 		t.Fatal("tagging accepted a structure describing one fewer run than the page draws — " +

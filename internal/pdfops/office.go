@@ -108,13 +108,13 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 
 // ErrOptionsNeedMarkdown is a page size, margin or placeholder asked of a document LibreOffice converts: those are
 // Markdown's, and silently ignoring them would hand back a document that is not what was asked for.
-var ErrOptionsNeedMarkdown = errors.New("page size, margin and placeholders apply to Markdown only; this document is converted by LibreOffice, which sets its own")
+var ErrOptionsNeedMarkdown = errors.New("page size, margin, placeholders and images apply to Markdown only; this document is converted by LibreOffice, which sets its own")
 
 // ConvertDocToPDFWith is ConvertDocToPDF with the Markdown conversion's options (mdpdf.Options): the page, its
 // margin, and `{{key}}` placeholders (RelaxTax, ADR-183). Any option on a non-Markdown document is
 // ErrOptionsNeedMarkdown.
 func ConvertDocToPDFWith(data []byte, ext string, opts mdpdf.Options) ([]byte, error) {
-	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil) {
+	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil || opts.ImageDir != "") {
 		return nil, ErrOptionsNeedMarkdown
 	}
 	if SupportedMarkdownExt(ext) {
@@ -155,7 +155,8 @@ func ConvertDocToPDFWith(data []byte, ext string, opts mdpdf.Options) ([]byte, e
 		// A template the conversion refuses is the answer, not a tagging failure to paper over with a second render.
 		var missing *mdpdf.MissingPlaceholderError
 		var split *mdpdf.SplitPlaceholderError
-		if errors.As(terr, &missing) || errors.As(terr, &split) {
+		var refused *mdpdf.ImageRefusedError
+		if errors.As(terr, &missing) || errors.As(terr, &split) || errors.As(terr, &refused) {
 			return nil, terr
 		}
 		log.Printf("markdown: the document converted but could not be tagged, so it is returned "+
