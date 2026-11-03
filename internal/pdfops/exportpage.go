@@ -85,6 +85,7 @@ var exportImageBytes, exportImageTotal, exportImagePixels = int64(MaxExportImage
 
 // ExportFigure is a picture a page draws, at its place.
 type ExportFigure struct {
+	userBox [4]float64
 	// Rect is the picture as drawn, in the page map's fractions of the displayed page (ADR-088).
 	Rect MapRect
 	// Before is how many of the page's paragraphs come before it.
@@ -99,12 +100,28 @@ type ExportFigure struct {
 	Placeholder string
 }
 
+// ExportBlock is one thing on a page in reading order, as the proposal reads it (ADR-121, ADR-122): a heading, a
+// paragraph, a list item, a table or a picture. Role is the proposal's: H1-H6, P, LI, Table or Figure.
+type ExportBlock struct {
+	Role string
+	// Marker is a list item's label as drawn; List numbers the list it belongs to (consecutive items share one).
+	Marker string
+	List   int
+	// Paragraph is the text of a heading, paragraph or list item; Table and Figure index into the page's Tables and
+	// Figures for those roles, and are -1 otherwise.
+	Paragraph ExportParagraph
+	Table     int
+	Figure    int
+}
+
 // ExportPage is one page read for the document model.
 type ExportPage struct {
 	Page       int
 	Paragraphs []ExportParagraph
 	Tables     []ExportTable
 	Figures    []ExportFigure
+	// Blocks are the page's paragraphs, tables and pictures in the proposal's order and with its roles.
+	Blocks []ExportBlock
 	// NoText says the page draws no glyph.
 	NoText bool
 	// Unsupported is the layout limits the grouping reported (D19), never a refusal.
@@ -112,18 +129,42 @@ type ExportPage struct {
 	// UnstyledLines counts lines that fell back to one plain span; DroppedLinks the links not carried, by cause.
 	UnstyledLines int
 	DroppedLinks  map[string]int
+	// Visibility counts the text left out because a reader could not see it (exportvis.go).
+	Visibility ExportVisibility
 	// SkippedImages counts pictures drawn and not offered as figures: "artifact" (decoration the author marked) and
 	// "small" (under figureMinSide).
 	SkippedImages map[string]int
 }
 
+// ExportDoc is a document read for the model: its pages and what the catalog says of the whole.
+type ExportDoc struct {
+	// Lang is the catalog's `/Lang`, or "".
+	Lang  string
+	Pages []ExportPage
+}
+
 // ExportPages reads pages of pdf (nil or empty: every page) for the document model. Pictures are extracted in one pass
 // over the pages that draw any, each object once however often it is drawn.
 func ExportPages(pdf []byte, pages []int) ([]ExportPage, error) {
+	d, err := ExportRead(pdf, pages)
+	return d.Pages, err
+}
+
+// ExportRead is ExportPages with the catalog's language: the document is validated once.
+func ExportRead(pdf []byte, pages []int) (ExportDoc, error) {
 	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
-		return nil, err
+		return ExportDoc{}, err
 	}
+	lang := ""
+	if cat, cerr := ctx.Catalog(); cerr == nil && cat != nil {
+		lang = readLang(ctx.XRefTable, cat["Lang"])
+	}
+	out, err := exportPagesIn(ctx, pdf, pages)
+	return ExportDoc{Lang: lang, Pages: out}, err
+}
+
+func exportPagesIn(ctx *model.Context, pdf []byte, pages []int) ([]ExportPage, error) {
 	if len(pages) == 0 {
 		for p := 1; p <= ctx.PageCount; p++ {
 			pages = append(pages, p)
@@ -131,16 +172,18 @@ func ExportPages(pdf []byte, pages []int) ([]ExportPage, error) {
 	}
 	budget := newFormWalkBudget(len(pages))
 	var out []ExportPage
+	var reads []pageRead
 	var withPictures []int
 	for _, p := range pages {
 		if err := pageInDocument(p, ctx.PageCount); err != nil {
 			return nil, err
 		}
 		pg := pageAt(ctx, nil, p)
-		ep, err := exportPageIn(ctx, pg, p, budget)
+		ep, pr, err := exportPageIn(ctx, pg, p, budget)
 		if err != nil {
 			return nil, err
 		}
+		reads = append(reads, pr)
 		for _, f := range ep.Figures {
 			if f.Placeholder == "" {
 				withPictures = append(withPictures, p)
@@ -148,6 +191,19 @@ func ExportPages(pdf []byte, pages []int) ([]ExportPage, error) {
 			}
 		}
 		out = append(out, ep)
+	}
+	// The roles are the proposer's, over the document's pages together: a heading's level is set against the body size
+	// of them all (ADR-122's rule, `proposeFromLayouts`), and the layouts are the visible ones.
+	layouts := make([]pageLayout, len(reads))
+	for i := range reads {
+		layouts[i] = reads[i].l
+	}
+	prop := proposeFromLayouts(layouts)
+	for _, el := range prop.elements {
+		if el.page < 1 || el.page > len(reads) || el.parent != -1 {
+			continue // a table's rows and cells are the Table's
+		}
+		reads[el.page-1].block(&out[el.page-1], el)
 	}
 	if len(withPictures) > 0 {
 		if err := joinPictures(pdf, withPictures, out); err != nil {
@@ -157,16 +213,50 @@ func ExportPages(pdf []byte, pages []int) ([]ExportPage, error) {
 	return out, nil
 }
 
-func exportPageIn(ctx *model.Context, pg pdfread.Page, page int, budget *formWalkBudget) (ExportPage, error) {
+// pageRead is what a page's blocks are built from once the proposer has spoken.
+type pageRead struct {
+	l     pageLayout
+	sp    displaySpace
+	links PageLinkSet
+}
+
+// block adds the proposed element el to ep as an ExportBlock, joined to the layout by position and box.
+func (pr pageRead) block(ep *ExportPage, el proposedElement) {
+	b := ExportBlock{Role: el.role, Marker: el.marker, List: el.list, Table: -1, Figure: -1}
+	switch {
+	case el.role == "Table":
+		if el.tableIdx < 1 || el.tableIdx > len(ep.Tables) {
+			return
+		}
+		b.Table = el.tableIdx - 1
+	case el.role == figureRole:
+		for i, f := range ep.Figures {
+			if f.userBox == el.box && f.Rect == pr.sp.rect(el.box) {
+				b.Figure = i
+				break
+			}
+		}
+		if b.Figure < 0 {
+			return
+		}
+	default:
+		unstyled := 0
+		b.Paragraph = exportParagraph(pr.sp, pr.links, el.lines, el.running, &unstyled)
+		ep.UnstyledLines += unstyled
+	}
+	ep.Blocks = append(ep.Blocks, b)
+}
+
+func exportPageIn(ctx *model.Context, pg pdfread.Page, page int, budget *formWalkBudget) (ExportPage, pageRead, error) {
 	ep := ExportPage{Page: page}
-	l, images, err := readPageExportLayout(ctx, pg, budget)
+	l, images, vis, err := readPageExportLayout(ctx, pg, budget)
 	if err != nil {
-		return ep, err
+		return ep, pageRead{}, err
 	}
 	links := pageLinksIn(ctx, pg)
 	ep.DroppedLinks = links.Dropped
 	sp := newDisplaySpace(pg)
-	ep.NoText, ep.Unsupported = l.noText, l.unsupported
+	ep.NoText, ep.Unsupported, ep.Visibility = l.noText, l.unsupported, vis
 	for _, p := range l.paragraphs {
 		ep.Paragraphs = append(ep.Paragraphs, exportParagraph(sp, links, p.lines, p.running, &ep.UnstyledLines))
 	}
@@ -197,7 +287,8 @@ func exportPageIn(ctx *model.Context, pg pdfread.Page, page int, budget *formWal
 			skip("small")
 			continue
 		}
-		f := ExportFigure{Rect: sp.rect(im.box), Before: tablePlace(l.paragraphs, im.box), ObjNr: im.objNr}
+		f := ExportFigure{Rect: sp.rect(im.box), Before: tablePlace(l.paragraphs, im.box), ObjNr: im.objNr, userBox: im.box}
+		l.figures = append(l.figures, pageFigure{box: im.box, span: im.span, before: f.Before})
 		switch {
 		case im.objNr == 0:
 			f.Placeholder = PlaceholderInline
@@ -208,7 +299,7 @@ func exportPageIn(ctx *model.Context, pg pdfread.Page, page int, budget *formWal
 		}
 		ep.Figures = append(ep.Figures, f)
 	}
-	return ep, nil
+	return ep, pageRead{l: l, sp: sp, links: links}, nil
 }
 
 // exportParagraph cuts lines into styled spans, joined by one space as `textParagraph.text` joins them.

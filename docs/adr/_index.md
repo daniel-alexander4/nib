@@ -1007,3 +1007,5 @@ home today.
   — PLAN-import-export P02.S03a: `MapText.Bold/Italic` from descriptor then name; `PageLinks` carries http/https/mailto, counts the rest by cause; the Print flag is not read.
 - [ADR-191](191-a-picture-is-carried-only-as-the-page-shows-it-and-a-span-is-cut-where-the-line-was-joined.md) — **a picture is carried only as the page shows it, and a span is cut where the line was joined**
   — PLAN-import-export P02.S03b: `ExportPages` — styled spans cut at `joinRuns`' recorded offsets, figures joined to bytes or a named placeholder read from the image dictionary.
+- [ADR-192](192-the-model-reads-only-what-a-reader-sees-and-the-trees-page-is-taken-only-when-it-accounts-for-the-words.md) — **the model reads only what a reader sees, and a page takes the author's tree only when the tree accounts for its words**
+  — PLAN-import-export P02.S03c: `docmodel` + `docmodel/read`; draw sequence and OFF layers in the walker; tree-vs-proposal per page; scan page as its picture; the writers-cannot-reach-a-reader census.

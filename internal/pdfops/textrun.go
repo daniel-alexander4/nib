@@ -99,6 +99,11 @@ type textRun struct {
 	// art is the `/Artifact` sequence the run was drawn in — its index into `pageRuns.artifacts`, plus one — and 0
 	// for a run in none, or read by a reader that keeps no drawings (`readPageDrawings`, ADR-125).
 	art int
+	// seq is the run's place in the page's draw order, 1-based and shared with the shapes and images (`runWalker.draws`):
+	// a later opaque mark covers an earlier one. layerOff says optional content that is OFF in the default configuration
+	// holds it (`ocState`); translucent that a `gs` set a state dictionary before it (alpha, blend, a soft mask).
+	seq                   int
+	layerOff, translucent bool
 	// replaced is whether the run was drawn inside a sequence carrying replacement text (`mcFrame.replaced`):
 	// readers report that text instead of these glyphs, so rewriting the glyphs alone leaves the old words readable.
 	replaced bool
@@ -175,6 +180,35 @@ func baselineTurns(m runMatrix) bool {
 
 // reversedCharsTag is the marked-content tag for show strings set in the reverse of reading order.
 const reversedCharsTag = "ReversedChars"
+
+// layerOff is whether the mark being drawn is in optional content that is OFF.
+func (w *runWalker) layerOff() bool {
+	n := len(w.mcStack)
+	return n > 0 && w.mcStack[n-1].off
+}
+
+// ocOff is whether o — an `/OC` value — names content that is OFF; the layer state is read on first use.
+func (w *runWalker) ocOff(o types.Object) bool {
+	if o == nil {
+		return false
+	}
+	if w.layers == nil {
+		w.layers = newOcState(w.xt)
+	}
+	return w.layers.objectOff(o)
+}
+
+// propertyOff is whether the named property list of res is an OFF layer (`/OC /name BDC`).
+func (w *runWalker) propertyOff(name string, res types.Dict) bool {
+	if res == nil {
+		return false
+	}
+	props, err := w.xt.DereferenceDict(res["Properties"])
+	if err != nil || props == nil {
+		return false
+	}
+	return w.ocOff(props[name])
+}
 
 // inReversedChars reports whether a `ReversedChars` sequence is open.
 func (w *runWalker) inReversedChars() bool {
@@ -592,6 +626,10 @@ type runWalker struct {
 	// fontLoads counts `loadRunFont` calls — the observable the cache is measured by.
 	fontLoads int
 	runs      []textRun
+	// draws counts the marks drawn so far — runs, painted pieces, images — so each carries its place in draw order.
+	draws int
+	// layers is resolved on first use (`layerOff`).
+	layers *ocState
 	// mcStack is the marked-content sequences open at this point of the walk, innermost last. Shared
 	// across a page and the forms it draws, because a `BDC` around a `Do` tags what the form draws.
 	// Pushed only through `push`, which carries what the questions asked per show need, so none of them
@@ -633,6 +671,8 @@ type mcFrame struct {
 	// opensArt says this frame is the one that opened it. Set only while drawings are kept (`openArtifact`).
 	art      int
 	opensArt bool
+	// off is whether this frame or any below it is optional content that is OFF (`ocState`).
+	off bool
 }
 
 // artifactSeq is one `/Artifact` marked-content sequence — the outermost, where one is opened inside another —
@@ -707,6 +747,7 @@ func (w *runWalker) push(v, seq int, replaced, props, reversed bool) {
 		f.replaced = f.replaced || below.replaced
 		f.props = f.props || below.props
 		f.reversed = f.reversed || below.reversed
+		f.off = below.off
 	}
 	if v != -1 {
 		f.force = i
@@ -1335,6 +1376,13 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 			// A property list with no MCID: `entry` is -1 only for a `BDC` that is not an `/Artifact` and names none.
 			w.push(entry, seq, replaced, opener >= 0 && entry == -1, reversed)
+			if os := last(2); os != nil {
+				if tag, ok := os[0].name(src); ok && tag == "OC" {
+					if pn, ok := os[1].name(src); ok && w.propertyOff(pn, res) {
+						w.mcStack[len(w.mcStack)-1].off = true
+					}
+				}
+			}
 			if w.keepDrawings {
 				at := tok.Start
 				if opener >= 0 {
@@ -1358,6 +1406,12 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "Do":
 			if os := last(1); os != nil {
 				if name, ok := os[0].name(src); ok {
+					// An XObject in an OFF layer (`/OC` in its own dictionary) is drawn inside a frame that says so.
+					off := w.xobjectOff(res, name)
+					if off {
+						w.push(-1, -1, false, false, false)
+						w.mcStack[len(w.mcStack)-1].off = true
+					}
 					if w.drawForm(res, name, gs, depth, visiting) {
 						w.markDrawsForm()
 						if w.keepDrawings {
@@ -1365,6 +1419,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 						}
 					} else if nr, cause, ok := w.imageObject(res, name); ok {
 						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0, nr, cause)
+					}
+					if off {
+						w.mcStack = w.mcStack[:len(w.mcStack)-1]
+						w.seqOpen = w.seqOpen[:len(w.seqOpen)-1]
 					}
 				}
 			}
@@ -1453,6 +1511,8 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	run.text = string(text)
 	run.width = advance * scale
 	run.widthSrc = weakest
+	w.draws++
+	run.seq, run.layerOff, run.translucent = w.draws, w.layerOff(), gs.extGState
 	w.runs = append(w.runs, run)
 }
 

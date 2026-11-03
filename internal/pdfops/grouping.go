@@ -146,15 +146,17 @@ func readPageTableLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWal
 
 // readPageExportLayout is readPageTableLayout that also hands back every image the page draws, as the export model
 // reads them (exportpage.go): the same grouping door, with no Figure rule applied.
-func readPageExportLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, []drawnImage, error) {
+func readPageExportLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, []drawnImage, ExportVisibility, error) {
 	pr, err := readPageShapes(ctx, pg, shared...)
 	if err != nil {
-		return pageLayout{}, nil, err
+		return pageLayout{}, nil, ExportVisibility{}, err
 	}
+	// What a reader would not see is not read (exportvis.go, D30): the layout is grouped from the visible runs only.
+	vis := visibleRuns(&pr, visibleBoxOf(pg))
 	if pr.noText {
-		return pageLayout{noText: true}, pr.images, nil
+		return pageLayout{noText: true}, pr.images, vis, nil
 	}
-	return groupRunsAndTables(pr.runs, pr.shapes), pr.images, nil
+	return groupRunsAndTables(pr.runs, pr.shapes), pr.images, vis, nil
 }
 
 // pageFigure is an image the page draws that a Figure is proposed for (ADR-122).

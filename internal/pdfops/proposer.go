@@ -72,6 +72,11 @@ type proposedElement struct {
 	// alt is the description a reviewer gave a Figure. The proposer sets none: nothing here can say what a
 	// picture shows.
 	alt string
+	// running says the element came from a running header or footer; tableIdx is, on a Table, one more than its index
+	// in the page layout's `tables`. The export model (exportpage.go) joins an element to the layout it came from by
+	// these and by a Figure's box, never by text.
+	running  bool
+	tableIdx int
 }
 
 // tableRoles are the roles of a table's own elements; cellRoles the two a cell may have.
@@ -135,7 +140,9 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 					box: b.figure.box, boxed: true, figure: b.figure.span})
 				return
 			}
+			at := len(out.elements)
 			out.elements = appendTable(out.elements, page, *b.table)
+			out.elements[at].tableIdx = b.tIdx + 1
 			inList = false
 		}
 		for pi, par := range l.paragraphs {
@@ -145,7 +152,7 @@ func proposeFromLayouts(layouts []pageLayout) proposal {
 			}
 			for _, piece := range splitAtListMarkers(par) {
 				first := piece.lines[0]
-				el := proposedElement{page: page, column: piece.column, text: piece.text(), lines: piece.lines, list: -1, parent: -1}
+				el := proposedElement{page: page, column: piece.column, text: piece.text(), lines: piece.lines, list: -1, parent: -1, running: par.running}
 				switch m := listMarker(first); {
 				case m != "":
 					if !inList {
@@ -179,6 +186,8 @@ type pageBlock struct {
 	figure pageFigure
 	// before is how many of the page's paragraphs are proposed before it.
 	before int
+	// tIdx is the table's index in the layout's `tables`.
+	tIdx int
 }
 
 // pageBlocks is a page's tables and figures in the order they are proposed.
@@ -194,7 +203,7 @@ func pageBlocks(l pageLayout) []pageBlock {
 	reached := 0
 	for i := range l.tables {
 		reached = max(reached, l.tables[i].before)
-		blocks = append(blocks, pageBlock{table: &l.tables[i], before: reached})
+		blocks = append(blocks, pageBlock{table: &l.tables[i], before: reached, tIdx: i})
 	}
 	figures := append([]pageFigure(nil), l.figures...)
 	sort.SliceStable(figures, func(i, j int) bool {

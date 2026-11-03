@@ -242,6 +242,10 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 	// grouping identifiers stay forbidden to an exempt file, so a second grouping written there still
 	// fails.
 	exempt := map[string]map[string]string{
+		"exportvis.go": {
+			"textRun":  "the export reader drops the runs a reader could not see (covered, off the page, in an OFF layer) before the grouping door groups what is left; it groups nothing (ADR-192)",
+			"pageRuns": "the same filter takes the page's read runs, shapes and images and hands them back (ADR-192)",
+		},
 		"tagcommit.go": {
 			"textRun":      "the commit matches a reviewed proposal's runs to the page's own by span and text before bracketing them (P08.S06a)",
 			"readPageRuns": "the commit re-reads each page it writes, so a proposal that no longer matches is refused instead of tagging the wrong bytes",

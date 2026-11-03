@@ -163,8 +163,9 @@ var published = map[string][]string{
 	"pdfops.PageMap": {"web/detect.js", "test/accuracy/accuracy.mjs"},
 	// PLAN-import-export P02.S03a: a page's links, read today by pagelinks_test.go and by the document model at S03c.
 	"pdfops.PageLink": {"internal/pdfops/pagelinks_test.go"},
-	// PLAN-import-export P02.S03b: the export model's page read, judged by exportpage_test.go until S03c consumes it.
-	"pdfops.ExportPage":   {"internal/pdfops/exportpage_test.go"},
+	// PLAN-import-export P02.S03b/c: the export model's page read, consumed by the document model reader (ADR-192).
+	"pdfops.ExportPage":   {"internal/docmodel/read/read.go"},
+	"pdfops.ExportDoc":    {"internal/docmodel/read/read.go"},
 	"pdfops.PageLinkSet":  {"internal/pdfops/pagelinks_test.go"},
 	"server.handoffEvent": {"web/app.js"},
 	"server.armRequest":   {"web/app.js", "build/ceremonyrepro.sh"},
@@ -496,7 +497,6 @@ var internalShapes = map[string]string{
 	// does, in the same package; no reader outside it exists yet and none is claimed.
 	"pdfops.PageLink":    "in-package until P02.S03c (document model)",
 	"pdfops.PageLinkSet": "in-package until P02.S03c (document model)",
-	"pdfops.ExportPage":  "in-package until P02.S03c (document model)",
 	// **`Anchor` crosses the package boundary as an OPAQUE TOKEN, which is the case the rule is
 	// wrong about rather than a missing reader.** `internal/server/delivery.go:1215,1736,2060`
 	// derive one from an invitation and hand it straight to `VerifyAgainst`. Named search for a

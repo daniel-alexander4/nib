@@ -30,6 +30,11 @@ type pageShape struct {
 	// whiteFill is a rectangle whose INSIDE is painted white, whatever its outline is painted with: the ground a form
 	// lays under a blank (ADR-096). A white piece with whiteFill is that ground and nothing else.
 	whiteFill bool
+	// seq is the piece's place in the page's draw order (shared with runs and images); layerOff that it is in OFF
+	// optional content; translucent that a `gs` state dictionary was applied (alpha, blend, a soft mask); clipped that
+	// a clipping path is known to cut it (PLAN-import-export X6). Only an opaque, unclipped piece covers what is below.
+	seq                            int
+	layerOff, translucent, clipped bool
 }
 
 // shapePath gathers the current path's pieces between the operator that starts it and the one that paints it.
@@ -128,6 +133,8 @@ func (w *runWalker) keepPieces(p *shapePath, gs runGState, stroked, filled, clos
 		}
 		s.stroked, s.filled, s.lw, s.white = stroked, filled && s.rect, lw, white
 		s.whiteFill = s.filled && isWhitePaint(gs.fill)
+		w.draws++
+		s.seq, s.layerOff, s.translucent, s.clipped = w.draws, w.layerOff(), gs.extGState, !boxWithin(s.box, gs.clip)
 		w.shapes = append(w.shapes, s)
 	}
 	*p = shapePath{}
@@ -170,4 +177,9 @@ func paintLightness(op string) (float64, bool) {
 		return (0.299*(1-v[3]) + 0.587*(1-v[2]) + 0.114*(1-v[1])) * k, true
 	}
 	return 0, false
+}
+
+// boxWithin says b lies inside clip — the walk's known clip box, unbounded until a `W` narrows it.
+func boxWithin(b, clip [4]float64) bool {
+	return b[0] >= clip[0] && b[1] >= clip[1] && b[2] <= clip[2] && b[3] <= clip[3]
 }

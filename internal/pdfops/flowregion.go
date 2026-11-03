@@ -92,6 +92,8 @@ func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm b
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
 		}
+		w.draws++
+		im.seq, im.layerOff, im.translucent, im.clipped = w.draws, w.layerOff(), gs.extGState, !boxWithin(b.box, gs.clip)
 		w.images = append(w.images, im)
 	}
 }
@@ -167,6 +169,10 @@ type drawnImage struct {
 	// cause is why a writer cannot carry the picture's bytes as the page shows them, read from the image dictionary
 	// ("" when nothing in it says so): a stencil, a mask, a soft mask, a filter or colour space off the allowlist.
 	cause string
+	// seq, layerOff, translucent and clipped are as on `pageShape`: the image's place in draw order and whether anything
+	// stops it covering what is below.
+	seq                            int
+	layerOff, translucent, clipped bool
 }
 
 // imageCause reads the allowlist (P02.S03b, D18) from an image dictionary, so a picture is named before any
@@ -569,4 +575,24 @@ func clipTo(clip [4]float64, p markBox, pending bool) ([4]float64, bool) {
 		return [4]float64{0, 0, 0, 0}, false
 	}
 	return [4]float64{math.Max(clip[0], p.box[0]), math.Max(clip[1], p.box[1]), math.Min(clip[2], p.box[2]), math.Min(clip[3], p.box[3])}, false
+}
+
+// xobjectOff is whether the XObject res names carries an `/OC` entry that is an OFF layer.
+func (w *runWalker) xobjectOff(res types.Dict, name string) bool {
+	if res == nil {
+		return false
+	}
+	xobjs, err := w.xt.DereferenceDict(res["XObject"])
+	if err != nil || xobjs == nil {
+		return false
+	}
+	obj, ok := xobjs[name]
+	if !ok {
+		return false
+	}
+	sd, _, err := w.xt.DereferenceStreamDict(obj)
+	if err != nil || sd == nil {
+		return false
+	}
+	return w.ocOff(sd.Dict["OC"])
 }
