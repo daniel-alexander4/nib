@@ -9,8 +9,10 @@ import (
 
 	"nib/internal/docmodel"
 	"nib/internal/docmodel/read"
+	"nib/internal/docwrite/docx"
 	"nib/internal/docwrite/html"
 	"nib/internal/docwrite/markdown"
+	"nib/internal/docwrite/odt"
 	"nib/internal/docwrite/text"
 	"nib/internal/sign"
 )
@@ -23,11 +25,18 @@ const maxExportFactList = maxRevisionFactList
 // writer. The window's Format line is the same three, from the format table's `exports` rows (W10).
 var exportFormats = map[string]struct {
 	mime  string
-	write func(docmodel.Document) []byte
+	write func(docmodel.Document) ([]byte, error)
 }{
-	"md":   {"text/markdown; charset=utf-8", markdown.Write},
-	"html": {"text/html; charset=utf-8", html.Write},
-	"txt":  {"text/plain; charset=utf-8", text.Write},
+	"md":   {"text/markdown; charset=utf-8", plain(markdown.Write)}, // ADR-194 writes
+	"html": {"text/html; charset=utf-8", plain(html.Write)},
+	"txt":  {"text/plain; charset=utf-8", plain(text.Write)},                                        // ADR-194 writes
+	"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.Write}, // ADR-194 writes
+	"odt":  {"application/vnd.oasis.opendocument.text", odt.Write},                                  // ADR-194 writes
+}
+
+// plain lifts a writer that cannot fail into the route's shape.
+func plain(f func(docmodel.Document) []byte) func(docmodel.Document) ([]byte, error) {
+	return func(d docmodel.Document) ([]byte, error) { return f(d), nil }
 }
 
 // exportPage is one flagged page in the header.
@@ -97,8 +106,8 @@ func exportTitle(s string) string {
 	return t
 }
 
-// handleExportDocument answers POST /api/export/document?format=md|html|txt&title=&redactionsPending=: the open
-// document as a Markdown, HTML or text file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
+// handleExportDocument answers POST /api/export/document?format=md|html|txt|docx|odt&title=&redactionsPending=: the open
+// document as a Markdown, HTML, text, Word or OpenDocument file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
 // what it did not carry in X-Nib-Export (D23). It reads the server's copy: overlay marks and typed field values the
 // window has not baked are not in it (W8), and the window says so on the Format line. 422 names a refusal about the
 // document; 409 is ADR-004's "not that document" and also the document having changed while it was read.
@@ -109,7 +118,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	format, known := exportFormats[r.URL.Query().Get("format")]
 	if !known {
-		httpError(w, http.StatusBadRequest, "format must be md, html or txt")
+		httpError(w, http.StatusBadRequest, "format must be md, html, txt, docx or odt")
 		return
 	}
 	unapplied, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("redactionsPending")))
@@ -128,7 +137,11 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
 		return
 	}
-	body := format.write(model)
+	body, err := format.write(model)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not write the document")
+		return
+	}
 	if len(body) == 0 {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has no text or pictures to export", "cause": "empty"})
 		return

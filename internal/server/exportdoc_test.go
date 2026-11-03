@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"nib/internal/docwrite/wtest"
 	"nib/internal/testpdf"
 )
 
@@ -65,7 +66,7 @@ func TestTheExportRouteRefusesByCause(t *testing.T) {
 	ts, _ := startServerWith(t)
 	c, csrf := authedClient(t, ts)
 	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", exportFixture(t, "covered"))
-	if code, _, _ := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=docx"); code != 400 {
+	if code, _, _ := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=rtf"); code != 400 {
 		t.Errorf("an unknown format = %d, want 400", code)
 	}
 	if code, _, _ := exportDocument(t, ts.URL, c, csrf, "e1-9999", "format=md"); code != 409 {
@@ -127,4 +128,28 @@ func mustBlankPDF(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestTheExportRouteWritesWordAndOpenDocumentPackages(t *testing.T) {
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", exportFixture(t, "covered"))
+	for format, want := range map[string]struct{ mime, member string }{
+		"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word/document.xml"},
+		"odt":  {"application/vnd.oasis.opendocument.text", "content.xml"},
+	} {
+		code, body, h := exportDocument(t, ts.URL, c, csrf, dr.ID, "format="+format+"&title=Quarterly")
+		if code != 200 || h.Get("Content-Type") != want.mime {
+			t.Fatalf("%s: %d %q", format, code, h.Get("Content-Type"))
+		}
+		pkg := wtest.Open(t, body)
+		pkg.WellFormed(t)
+		xmlText := string(pkg.Files[want.member])
+		if !strings.Contains(xmlText, "visible heading") || strings.Contains(xmlText, "secret under the box") {
+			t.Errorf("%s: the covered text rule (D30) does not hold in the package:\n%s", format, xmlText)
+		}
+		if h.Get("X-Nib-Export") == "" {
+			t.Errorf("%s: no X-Nib-Export", format)
+		}
+	}
 }

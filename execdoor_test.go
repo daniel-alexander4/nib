@@ -65,6 +65,7 @@ func TestEveryProcessNibStartsIsDeclared(t *testing.T) {
 		"internal/browser/browser.go":            {"launches the user's own browser window and its handoff", false},
 		"internal/browser/openfolder.go":         {"asks the desktop to open a folder (xdg-open / open / explorer)", false},
 		"internal/pdfops/convertproc_windows.go": {"`taskkill` ends a converter's process tree on Windows (compiled and argv-tested only)", false},
+		"internal/docwrite/wtest/wtest.go":       {"the writers' tests open a written package in LibreOffice, headless, to confirm the XML oracle (ADR-194); test support only, skipped where soffice is absent", true},
 		"internal/browser/raise.go":              {"asks the window manager to raise the window", false},
 		"internal/cli/watchopen.go":              {"`nib watch` re-launches nib on a file that changed", false},
 	}

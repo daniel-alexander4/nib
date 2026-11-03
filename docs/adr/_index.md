@@ -1011,3 +1011,5 @@ home today.
   — PLAN-import-export P02.S03c: `docmodel` + `docmodel/read`; draw sequence and OFF layers in the walker; tree-vs-proposal per page; scan page as its picture; the writers-cannot-reach-a-reader census.
 - [ADR-193](193-document-as-writes-markdown-html-and-text-from-the-model-through-one-route-and-says-what-it-left-out.md) — **Document as… writes Markdown, HTML and text from the model through one route, and says what it left out**
   — PLAN-import-export P02.S04: `/api/export/document`, `ExportFacts`, the three writers behind `docmodel.Clean` and one escape door each.
+- [ADR-194](194-word-and-opendocument-text-are-written-as-flowing-packages-through-the-zip-door-and-one-xml-escape-door.md) — **Word and OpenDocument text are written as flowing packages through the zip door and one XML escape door**
+  — PLAN-import-export P03.S01: `docwrite/docx` and `docwrite/odt` over `ziputil.Write` and `xmlw.Esc`; spans laid on a grid once; judged by parsing the XML and, where present, a LibreOffice read-back.

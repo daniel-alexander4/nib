@@ -685,13 +685,13 @@ test('Reduce counts its pages on its button, and Cancel stops the render and kee
 });
 
 // ── Document as… (ADR-193): one button, three formats, the server's bytes, its facts in words ──────
-test('Document as… offers Markdown, a web page and plain text, and writes the SELECTED format\'s bytes', async () => {
+test('Document as… offers Markdown, a web page, plain text, Word and OpenDocument, and writes the SELECTED format\'s bytes', async () => {
   written.length = 0;
   docFacts = JSON.stringify({ source: 'tree', droppedLinks: 3, placeholderImages: 1, flaggedPages: [{ page: 4, cause: 'layout' }], scannedPages: [2] });
   $('exportDocBtn').click();
   await settle();
   assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
-  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)']);
+  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)', 'Word (.docx)', 'OpenDocument text (.odt)']);
   assert.equal($('saveAsName').value, 'stranger.md');
   const note = $('saveAsNote').textContent;
   assert.match(note, /3 links to other pages or places became plain text/);
@@ -706,6 +706,29 @@ test('Document as… offers Markdown, a web page and plain text, and writes the 
   assert.equal(written.length, 1);
   assert.equal(written[0].name, 'stranger.html');
   assert.equal(written[0].bytes, 'DOC-AS-html', 'the bytes written are not the selected format\'s');
+});
+
+test('Document as… asks for Word and OpenDocument by their own word and keeps their extension', async () => {
+  written.length = 0;
+  docFacts = JSON.stringify({ v: 1, source: 'tree' });
+  $('exportDocBtn').click();
+  await settle();
+  assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
+  $('saveAsFormat').selectedIndex = 3;
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  assert.equal($('saveAsName').value, 'stranger.docx');
+  assert.match($('saveAsNote').textContent, /Editable in Word/);
+  assert.match($('saveAsNote').textContent, /page layout is not/);
+  await save();
+  assert.equal(written[0].bytes, 'DOC-AS-docx');
+  written.length = 0;
+  $('exportDocBtn').click();
+  await settle();
+  $('saveAsFormat').selectedIndex = 4;
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  assert.equal($('saveAsName').value, 'stranger.odt');
+  await save();
+  assert.equal(written[0].bytes, 'DOC-AS-odt');
 });
 
 test('Document as… says in the server\'s words why there is nothing to export, and opens no dialog', async () => {

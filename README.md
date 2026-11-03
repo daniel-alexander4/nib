@@ -1349,8 +1349,10 @@ changed and why the rest did not. If a target cannot be met by pictures alone it
 points at Compress. On the command line, `nib shrink IN -o OUT [--level N | --target 1MB]`.
 
 **Pull the contents out** (File → Export & Print): **Document as…** saves the document's words as
-Markdown, a web page (one HTML file, pictures inside it) or plain text, in reading order, with headings,
-lists, tables, bold, italic and web links kept where the document has them; **Pictures in the document
+Markdown, a web page (one HTML file, pictures inside it), plain text, a Word document (.docx) or an
+OpenDocument text (.odt), in reading order, with headings, lists, tables, bold, italic and web links kept
+where the document has them (Word and OpenDocument also keep the pictures; the page layout is not kept, the
+text reflows); **Pictures in the document
 (ZIP)** bundles the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
 re-encoded as PNG/TIFF. Scanned (image-only) pages are read (OCR) first, which adds a text layer to them.
 Text a reader could not see — under a box, off the page, in a hidden layer — is left out, and the Save

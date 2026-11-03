@@ -131,6 +131,7 @@ var exemptLists = []string{
 	`case "image/jpeg", "image/png", "image/tiff":`, // mdpdf/packet.go: a standalone package that cannot import internal/pdfops; what it can append
 	`ADR-189 writes`,                                // app.js: the pictures Pages as images WRITES (the browser's and the server's encoders), not documents imported
 	`"golang.org/x/image/bmp"`,                      // pageimages.go: the encoders it imports (bmp, gif, png) — what Nib writes
+	`ADR-194 writes`,                                // Document as…'s Format line and route: the files Nib WRITES (Markdown, HTML, text, Word, OpenDocument), not documents imported
 	`one('xlsx'`,                                    // the table EXPORT's Format line: output spreadsheets, not documents imported
 }
 

@@ -10595,6 +10595,8 @@ const EXPORT_KEEPS = {
   md: 'Headings, lists, tables, bold, italic and web links are kept. Pictures become a line naming them.',
   html: 'Headings, lists, tables, bold, italic, web links and pictures are kept, in one file.',
   txt: 'Plain words in reading order, one table row to a line. No styles, links or pictures.',
+  docx: 'Editable in Word. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
+  odt: 'Editable in LibreOffice and other OpenDocument programs. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
 };
 
 // exportReport is what the export did not carry, in words (D28): one function over `X-Nib-Export`'s counts. Every key
@@ -10658,9 +10660,11 @@ els.exportDocBtn.onclick = async () => {
     },
   });
   openSaveAs(null, exportName + '.md', 'Export the document as…', [
-    one('md', 'Markdown (.md)', '.md'),
+    one('md', 'Markdown (.md)', '.md'), // ADR-194 writes
     one('html', 'Web page (.html)', '.html'),
-    one('txt', 'Plain text (.txt)', '.txt'),
+    one('txt', 'Plain text (.txt)', '.txt'), // ADR-194 writes
+    one('docx', 'Word (.docx)', '.docx'), // ADR-194 writes
+    one('odt', 'OpenDocument text (.odt)', '.odt'), // ADR-194 writes
   ]);
 };
 
