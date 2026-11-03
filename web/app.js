@@ -8925,8 +8925,8 @@ function enableStampGestures(f, el, handle) {
     el.setPointerCapture(e.pointerId);
     activeGestures.add(end);
   };
-  el.addEventListener('pointerdown', begin(f.drag));
-  handle.addEventListener('pointerdown', begin(f.resize));
+  el.addEventListener('pointerdown', begin('drag'));
+  handle.addEventListener('pointerdown', begin('resize'));
   el.addEventListener('pointermove', (e) => {
     if (!mode) return;
     const pv = owner.viewer.getPageView(f.page - 1);
@@ -10602,6 +10602,8 @@ const EXPORT_KEEPS = {
 function exportReport(f) {
   const n = (v) => (typeof v === 'number' ? v : 0);
   const s = [];
+  // A version this window does not know is said, never read as 'nothing was left out' (Y3).
+  if (f.v !== 1) s.push('This report comes from a different version of Nib and may be incomplete.');
   const pages = (list) => (list.length > 5 ? list.slice(0, 5).join(', ') + ' and more' : list.join(', '));
   if (f.signed) s.push('Signatures are not carried; the file is a new, unsigned document.');
   if (n(f.unappliedRedactions)) s.push(plural(n(f.unappliedRedactions), 'redaction box', 'redaction boxes') + ' you drew but did not apply — those words ARE in this file.');

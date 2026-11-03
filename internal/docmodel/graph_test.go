@@ -9,7 +9,7 @@ import (
 // The writers cannot reach a PDF (PLAN-import-export D16, R8): the model and every `internal/docwrite/*` package may
 // not import, even transitively, a package that reads one. The census is over the transitive closure (`go list -deps`),
 // so a helper that re-exports a reader is caught too.
-var pdfReaders = []string{"nib/internal/pdfops", "nib/internal/pdfread", "nib/internal/uacheck"}
+var pdfReaders = []string{"nib/internal/pdfops", "nib/internal/pdfread", "nib/internal/uacheck", "github.com/pdfcpu/pdfcpu/pkg/api", "nib/internal/sign", "nib/internal/ceremony"}
 
 // deps is every package pkg imports, directly or not.
 func deps(t *testing.T, pkg string) []string {

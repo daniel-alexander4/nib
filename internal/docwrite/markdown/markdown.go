@@ -142,6 +142,9 @@ func block(b docmodel.Block) string {
 		if t == "" {
 			return ""
 		}
+		if strings.HasSuffix(t, "#") && !strings.HasSuffix(t, "\\#") {
+			t = t[:len(t)-1] + "\\#" // a trailing "#" would read as a closing sequence and vanish
+		}
 		return strings.Repeat("#", l) + " " + t
 	case docmodel.ListItem:
 		t := spans(b.Spans)
@@ -152,7 +155,7 @@ func block(b docmodel.Block) string {
 		if n := docmodel.OneLine(b.Marker); isNumber(n) {
 			m = n
 		}
-		return strings.Repeat("    ", max(b.Level-1, 0)) + m + " " + t
+		return strings.Repeat("    ", max(b.Level-1, 0)) + m + " " + lineStart(t)
 	case docmodel.Table:
 		return table(b)
 	case docmodel.Figure:
@@ -196,22 +199,42 @@ func table(b docmodel.Block) string {
 	if cols == 0 {
 		return ""
 	}
-	var lines []string
-	for i, r := range b.Rows {
+	var grid [][]string
+	carry := map[int]int{} // column -> rows still covered by a cell above that spans down
+	for _, r := range b.Rows {
 		cells := make([]string, 0, cols)
+		// skip fills the columns a cell from an earlier row still covers: the row simply has no cell there, and
+		// without the filler every later cell would slide one column left under the wrong header.
+		skip := func() {
+			for carry[len(cells)] > 0 {
+				carry[len(cells)]--
+				cells = append(cells, "")
+			}
+		}
 		for _, c := range r {
+			skip()
 			var ps []string
 			for _, p := range c.Paragraphs {
 				if s := spans(p); s != "" {
 					ps = append(ps, s)
 				}
 			}
+			at := len(cells)
 			cells = append(cells, strings.Join(ps, "<br>"))
 			// A merged cell fills the columns it spans with empty cells: GFM has no span.
 			for k := 1; k < c.ColSpan; k++ {
 				cells = append(cells, "")
 			}
+			for k := 0; c.RowSpan > 1 && k < max(c.ColSpan, 1); k++ {
+				carry[at+k] = c.RowSpan - 1
+			}
 		}
+		skip()
+		cols = max(cols, len(cells))
+		grid = append(grid, cells)
+	}
+	var lines []string
+	for i, cells := range grid {
 		for len(cells) < cols {
 			cells = append(cells, "")
 		}

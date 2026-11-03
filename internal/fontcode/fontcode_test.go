@@ -338,6 +338,8 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 		// A WRITER of test documents, not a reader: the fixture CMaps /pending 675's loop tests hand to pdfcpu.
 		// Named in ADR-055, which added it.
 		"testpdf.cmap": "writes the fixture CMaps /pending 675's /UseCMap loop and chain are built from (ADR-055)",
+		// The export fixture set (ADR-190, P02.S03a): one hand-built font whose /ToUnicode is a fixture, never a reading.
+		"testpdf.(package level)": "writes the /ToUnicode CMap of the Hebrew export fixture in testpdf.ExportSet (ADR-190)",
 		// A WRITER too: the carried CMaps' packed tables written out as programs, which this package then reads
 		// like any embedded CMap. Named in ADR-117, which added it.
 		"cmapres.write": "writes a carried CMap's packed table out as the program fontcode reads (ADR-117)",

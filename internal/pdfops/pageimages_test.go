@@ -231,3 +231,23 @@ func TestAnUndecodablePagePictureIsNamedAndAResolutionNeverBecomesGarbage(t *tes
 		t.Fatalf("a nonsense width broke the file: %v", err)
 	}
 }
+
+func TestAPageWithTransparencyIsWhiteInTheGIFAndTheBMPToo(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4)) // fully transparent
+	var b bytes.Buffer
+	png.Encode(&b, img)
+	for _, f := range []PageImageFormat{PageImagesGIF, PageImagesBMP} {
+		res, err := EncodePageImages(f, [][]byte{b.Bytes()}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		im, _, err := image.Decode(bytes.NewReader(res.Data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, g, bl, _ := im.At(1, 1).RGBA()
+		if r>>8 != 255 || g>>8 != 255 || bl>>8 != 255 {
+			t.Errorf("%v: a transparent pixel came out %d,%d,%d, not white", f, r>>8, g>>8, bl>>8)
+		}
+	}
+}

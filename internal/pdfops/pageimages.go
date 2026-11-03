@@ -94,6 +94,15 @@ func decodePage(j *rasterJob, data []byte) (image.Image, error) {
 	if err := j.charge(cfg.Width, cfg.Height); err != nil {
 		return nil, err
 	}
+	// The decoder allocates by the colour model, not the pixel count: a 16-bit page is twice an 8-bit one.
+	var bpp int64 = 4
+	switch cfg.ColorModel {
+	case color.RGBA64Model, color.NRGBA64Model, color.Gray16Model:
+		bpp = 8
+	}
+	if err := j.chargeBytes(cfg.Width, cfg.Height, bpp); err != nil {
+		return nil, err
+	}
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("pdfops: %w: %v", ErrPageImageUnreadable, err)
@@ -127,6 +136,12 @@ func packOnePage(format PageImageFormat, data []byte) (PageImageResult, error) {
 	if err != nil {
 		return PageImageResult{}, err
 	}
+	// A page is opaque: a transparent pixel must land on white, not on the nearest palette entry (black), as the
+	// TIFF writer already does.
+	flat := image.NewRGBA(img.Bounds())
+	draw.Draw(flat, flat.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	draw.Draw(flat, flat.Bounds(), img, img.Bounds().Min, draw.Over)
+	img = flat
 	var buf bytes.Buffer
 	switch format {
 	case PageImagesBMP:

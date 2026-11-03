@@ -41,18 +41,19 @@ type exportPage struct {
 // `docmodel.Report`, and the one struct the window's wording table is checked against. Source is "tree", "proposal" or
 // "mixed". Signed says the file the export was read from carried a signature: the export is a new, unsigned document.
 type ExportFacts struct {
+	V                   int          `json:"v"`
 	Source              string       `json:"source"`
-	DroppedLinks        int          `json:"droppedLinks,omitempty"`
-	PlaceholderImages   int          `json:"placeholderImages,omitempty"`
-	FlaggedPages        []exportPage `json:"flaggedPages,omitempty"`
-	ScannedPages        []int        `json:"scannedPages,omitempty"`
-	CoveredText         int          `json:"coveredText,omitempty"`
-	HiddenText          int          `json:"hiddenText,omitempty"`
-	OffPage             int          `json:"offPage,omitempty"`
-	UnreadGlyphs        int          `json:"unreadGlyphs,omitempty"`
-	Signed              bool         `json:"signed,omitempty"`
-	UnappliedRedactions int          `json:"unappliedRedactions,omitempty"`
-	Truncated           bool         `json:"truncated,omitempty"`
+	DroppedLinks        int          `json:"droppedLinks"`
+	PlaceholderImages   int          `json:"placeholderImages"`
+	FlaggedPages        []exportPage `json:"flaggedPages"`
+	ScannedPages        []int        `json:"scannedPages"`
+	CoveredText         int          `json:"coveredText"`
+	HiddenText          int          `json:"hiddenText"`
+	OffPage             int          `json:"offPage"`
+	UnreadGlyphs        int          `json:"unreadGlyphs"`
+	Signed              bool         `json:"signed"`
+	UnappliedRedactions int          `json:"unappliedRedactions"`
+	Truncated           bool         `json:"truncated"`
 }
 
 func sum(m map[string]int) (n int) {
@@ -65,7 +66,7 @@ func sum(m map[string]int) (n int) {
 // factsOf projects the reader's Report onto the header.
 func factsOf(rep docmodel.Report, signed bool, unapplied int) ExportFacts {
 	f := ExportFacts{
-		Source: rep.Source, DroppedLinks: sum(rep.DroppedLinks), PlaceholderImages: sum(rep.Placeholders),
+		V: 1, FlaggedPages: []exportPage{}, ScannedPages: []int{}, Source: rep.Source, DroppedLinks: sum(rep.DroppedLinks), PlaceholderImages: sum(rep.Placeholders),
 		CoveredText: rep.CoveredText + rep.MaybeCovered, HiddenText: rep.HiddenText + rep.HiddenLayer, OffPage: rep.OffPage,
 		UnreadGlyphs: rep.UnreadGlyphs, Signed: signed, UnappliedRedactions: unapplied,
 	}

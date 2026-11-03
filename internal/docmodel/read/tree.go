@@ -105,7 +105,12 @@ func treeBlocks(t pdfops.StructureTree) (map[int][]docmodel.Block, map[*docmodel
 			var nested []int
 			descendants(i, "L", func(k int) { nested = append(nested, k) })
 			for _, k := range nested {
-				own = strings.Replace(own, els[k].Text, "", 1)
+				if t := els[k].Text; t != "" {
+					// The nested list sits after the item's own words: take the LAST occurrence, not the first.
+					if at := strings.LastIndex(own, t); at >= 0 {
+						own = own[:at] + own[at+len(t):]
+					}
+				}
 			}
 			marker := ""
 			for _, k := range e.Kids {
