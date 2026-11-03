@@ -383,7 +383,7 @@ level and disables macro execution), so only convert files you'd open anyway.
 converts** (measured with a local listener; LibreOffice's own defaults *do* make
 one, so Nib's profile routes its web requests to a closed local port). Other kinds
 of link in other formats (a spreadsheet's web functions, OLE links) were not
-tested, and a link to a file on this computer is not covered and is read as before. Fidelity is LibreOffice's: complex documents may not convert
+tested. **A Word, Excel, PowerPoint or OpenDocument file that names a file on this computer, a network share or a path outside itself is refused before LibreOffice sees it**: Nib reads the package's link lists in memory and turns it away, naming the first such link (web links and mail links are fine, and so is anything the file carries itself; a link inside a field code or a formula is not read). I tried five such links in LibreOffice 24.2 (a section source, a table source, a linked sub-document, an include field, a spreadsheet web function) and none of them printed the local file's text, so this is a precaution and not a fix for a leak I found. The older binary formats (.doc, .xls, .ppt) and RTF are not packages and are not checked. Fidelity is LibreOffice's: complex documents may not convert
 pixel-perfectly.
 
 The source file is never written: the conversion works on a copy in the temporary

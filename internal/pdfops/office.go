@@ -201,6 +201,10 @@ func ConvertOfficeToPDF(ctx context.Context, data []byte, ext string) ([]byte, e
 	if !SupportedOfficeExt(ext) {
 		return nil, ErrUnsupportedOffice
 	}
+	// The package names nothing outside itself (X11(a)): before the tool lookup, so the refusal never depends on it.
+	if err := scanPackageReferences(data); err != nil {
+		return nil, err
+	}
 	soffice := libreOfficePath()
 	if soffice == "" {
 		return nil, ErrLibreOfficeMissing

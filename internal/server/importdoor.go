@@ -72,7 +72,7 @@ func importRefusal(err error) (status int, msg string) {
 	case errors.Is(err, context.Canceled):
 		return http.StatusRequestTimeout, "the conversion was cancelled"
 	case errors.Is(err, pdfops.ErrNotADocument), errors.Is(err, pdfops.ErrCorruptDocument), errors.Is(err, pdfops.ErrNotText), errors.Is(err, pdfops.ErrNotAPDF),
-		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused),
+		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused), errors.Is(err, pdfops.ErrPackageNamesOutside),
 		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrCSVUnreadable):
 		return http.StatusUnsupportedMediaType, err.Error()
 	}
@@ -117,7 +117,7 @@ func isImportRefusal(err error) bool {
 	}
 	for _, target := range []error{
 		pdfops.ErrImportTooLarge, pdfops.ErrConvertedTooLarge, pdfops.ErrConverterOverMemory, pdfops.ErrOptionsNeedMarkdown, gate.ErrQueueFull, pdfops.ErrShuttingDown, context.DeadlineExceeded, context.Canceled,
-		pdfops.ErrNotADocument, pdfops.ErrCorruptDocument, pdfops.ErrNotText, pdfops.ErrNotAPDF, pdfops.ErrExtensionDisagrees, pdfops.ErrArchiveRefused,
+		pdfops.ErrNotADocument, pdfops.ErrCorruptDocument, pdfops.ErrNotText, pdfops.ErrNotAPDF, pdfops.ErrExtensionDisagrees, pdfops.ErrArchiveRefused, pdfops.ErrPackageNamesOutside,
 		pdfops.ErrImagePixels, pdfops.ErrTooManyPages, pdfops.ErrNoPages, pdfops.ErrTIFFCompression,
 	} {
 		if errors.Is(err, target) {

@@ -1017,3 +1017,5 @@ home today.
   — PLAN-import-export P03.S03: `html.XHTML` and `docwrite/epub` over `ziputil.Write`; a content-hash `urn:uuid` and a constant `dcterms:modified`; `epubcheck` not run.
 - [ADR-196](196-a-table-meets-one-bound-in-the-model-and-no-writer-is-trusted-to-have-its-own.md) — **A table meets one bound in the model, and no writer is trusted to have its own**
   — PLAN-import-export P03 phase close: `docmodel.BoundTable`, spans clamped before they are summed, a wide or huge table written as lines of text and reported; shared writer rules moved to `xmlw`.
+- [ADR-197](197-a-package-that-names-a-location-outside-itself-is-refused-before-the-converter-sees-it.md) — **A package that names a location outside itself is refused before the converter sees it**
+  — PLAN-import-export P04.S01: `scanPackageReferences` in the one LibreOffice door; local references refused, web and mail links allowed; the plan's six leak controls did not reproduce.

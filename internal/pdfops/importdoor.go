@@ -333,6 +333,8 @@ func refusalCause(err error) string {
 		return "cap:memory"
 	case errors.Is(err, ErrArchiveRefused):
 		return "cap:archive"
+	case errors.Is(err, ErrPackageNamesOutside):
+		return "names-outside"
 	case errors.Is(err, ErrImagePixels):
 		return "cap:pixels"
 	case errors.Is(err, ErrTooManyPages):
@@ -417,7 +419,7 @@ func ImportCountKeys() []string {
 // isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
 // maps itself, as opposed to a conversion that failed (ConversionError).
 func isNativeRefusal(err error) bool {
-	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrCorruptDocument, ErrConvertedTooLarge} {
+	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge} {
 		if errors.Is(err, t) {
 			return true
 		}
