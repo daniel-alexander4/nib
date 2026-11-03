@@ -1056,7 +1056,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		tok := toks[i]
 		switch tok.Kind {
 		case contentstream.InlineImage:
-			w.markImage(markInlineImage, gs, opSpan{tok.Start, tok.End}, depth > 0)
+			w.markImage(markInlineImage, gs, opSpan{tok.Start, tok.End}, depth > 0, 0, "")
 			continue
 		case contentstream.Whitespace:
 			continue
@@ -1363,8 +1363,8 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 						if w.keepDrawings {
 							w.countPiece(true)
 						}
-					} else if w.drawsImage(res, name) {
-						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0)
+					} else if nr, cause, ok := w.imageObject(res, name); ok {
+						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0, nr, cause)
 					}
 				}
 			}

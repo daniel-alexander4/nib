@@ -45,6 +45,8 @@ type textLine struct {
 	y      float64
 	size   float64 // the largest run size on the line
 	text   string
+	// starts is where, in text, each of runs begins (a byte offset): how an export cuts the line into styled spans.
+	starts []int
 }
 
 // textParagraph is consecutive lines in one column that the rule does not break.
@@ -140,6 +142,19 @@ func readPageTableLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWal
 	l := groupRunsAndTables(pr.runs, pr.shapes)
 	placeFigures(&l, pr.images)
 	return l, nil
+}
+
+// readPageExportLayout is readPageTableLayout that also hands back every image the page draws, as the export model
+// reads them (exportpage.go): the same grouping door, with no Figure rule applied.
+func readPageExportLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, []drawnImage, error) {
+	pr, err := readPageShapes(ctx, pg, shared...)
+	if err != nil {
+		return pageLayout{}, nil, err
+	}
+	if pr.noText {
+		return pageLayout{noText: true}, pr.images, nil
+	}
+	return groupRunsAndTables(pr.runs, pr.shapes), pr.images, nil
 }
 
 // pageFigure is an image the page draws that a Figure is proposed for (ADR-122).
@@ -547,7 +562,12 @@ func lineSegments(runs []textRun) []textLine {
 	out := make([]textLine, len(lines))
 	for i, l := range lines {
 		out[i] = *l
+		lead := len(out[i].text) - len(strings.TrimLeftFunc(out[i].text, unicode.IsSpace))
 		out[i].text = strings.TrimSpace(out[i].text)
+		out[i].starts = append([]int(nil), l.starts...)
+		for k, st := range out[i].starts {
+			out[i].starts[k] = min(max(st-lead, 0), len(out[i].text))
+		}
 	}
 	return out
 }
@@ -722,7 +742,7 @@ func joinRuns(rs []textRun, reach float64, g *pageGutters) []*textLine {
 			lines[at] = l
 		}
 		if best == nil {
-			place(&textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text})
+			place(&textLine{runs: []textRun{r}, x0: r.x, x1: r.x + r.width, y: r.y, size: r.size, text: r.text, starts: []int{0}})
 			continue
 		}
 		// A line that was only its opening mark takes the baseline of the text that follows it, and its place among the
@@ -736,6 +756,7 @@ func joinRuns(rs []textRun, reach float64, g *pageGutters) []*textLine {
 		if separatesWords(r.x-best.x1, em) && !strings.HasSuffix(best.text, " ") && !strings.HasPrefix(r.text, " ") {
 			best.text += " "
 		}
+		best.starts = append(best.starts, len(best.text))
 		best.text += r.text
 		best.runs = append(best.runs, r)
 		best.x1 = math.Max(best.x1, r.x+r.width)

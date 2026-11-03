@@ -1005,3 +1005,5 @@ home today.
   — PLAN-import-export P02.S01: GIF, BMP, multi-page TIFF, CBZ and ZIP through `pdfops.EncodePageImages`; WebP only where the canvas writes it, else listed with its reason; a per-format note; Split by bookmarks / page range move to Split Pages.
 - [ADR-190](190-style-and-links-are-read-by-the-page-map-and-a-link-is-the-one-the-runs-centre-is-in.md) — **style and links are additive reads, and a link is the one a run's centre is in**
   — PLAN-import-export P02.S03a: `MapText.Bold/Italic` from descriptor then name; `PageLinks` carries http/https/mailto, counts the rest by cause; the Print flag is not read.
+- [ADR-191](191-a-picture-is-carried-only-as-the-page-shows-it-and-a-span-is-cut-where-the-line-was-joined.md) — **a picture is carried only as the page shows it, and a span is cut where the line was joined**
+  — PLAN-import-export P02.S03b: `ExportPages` — styled spans cut at `joinRuns`' recorded offsets, figures joined to bytes or a named placeholder read from the image dictionary.

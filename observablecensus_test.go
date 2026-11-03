@@ -190,6 +190,11 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 // are in this list because the per-field question is narrower than the rule.
 var inPackageOnlyRecorded = []string{
 	// pdfops.PageLink / PageLinkSet (P02.S03a): read by pagelinks_test.go only until the document model (P02.S03c) consumes them.
+	// pdfops.ExportPage and its parts (P02.S03b): read by exportpage_test.go only until the document model (P02.S03c) consumes them.
+	"pdfops.ExportPage.Page", "pdfops.ExportPage.Paragraphs", "pdfops.ExportPage.Tables", "pdfops.ExportPage.Figures",
+	"pdfops.ExportPage.NoText", "pdfops.ExportPage.Unsupported", "pdfops.ExportPage.UnstyledLines",
+	"pdfops.ExportPage.DroppedLinks", "pdfops.ExportPage.SkippedImages",
+
 	"pdfops.PageLink.Rect",
 	"pdfops.PageLink.URI",
 	"pdfops.PageLinkSet.Dropped",

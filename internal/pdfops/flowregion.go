@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfread"
@@ -76,7 +77,7 @@ func (w *runWalker) markPath(p markBox, gs runGState, stroked bool) {
 
 // markImage records an image: it fills the unit square under the CTM (ISO 32000-1 §8.3.4). span is the image's own
 // operator — `Do` with its operand, or the whole of `BI … EI` — and inForm says it is drawn by a form's stream.
-func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm bool) {
+func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm bool, objNr int, cause string) {
 	if !w.keepMarks && !w.keepDrawings {
 		return
 	}
@@ -87,7 +88,7 @@ func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm b
 	}
 	if w.keepShapes || w.keepDrawings {
 		im := drawnImage{box: b.box, span: span, inForm: inForm, artifact: w.inArtifact(),
-			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm)}
+			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm), plain: plainBox(gs.ctm), objNr: objNr, cause: cause}
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
 		}
@@ -158,6 +159,65 @@ type drawnImage struct {
 	// upright says box IS the image: the CTM turns it by a whole number of quarter turns, mirrored or not. Under
 	// any other matrix the image is a parallelogram and box only what bounds it.
 	upright bool
+	// plain says the image is drawn as stored: no turn, no mirror (a, d > 0, b = c = 0). Only a plain image's bytes
+	// are the picture on the page; any other placement is a placeholder in an export (P02.S03b).
+	plain bool
+	// objNr is the image XObject's object number, or 0 for an inline image (which has none).
+	objNr int
+	// cause is why a writer cannot carry the picture's bytes as the page shows them, read from the image dictionary
+	// ("" when nothing in it says so): a stencil, a mask, a soft mask, a filter or colour space off the allowlist.
+	cause string
+}
+
+// imageCause reads the allowlist (P02.S03b, D18) from an image dictionary, so a picture is named before any
+// extraction runs — pdfcpu's extraction refuses a page over one stencil it cannot render.
+func imageCause(xt *model.XRefTable, d types.Dict) string {
+	if b, ok := d["ImageMask"].(types.Boolean); ok && bool(b) {
+		return "stencil-mask"
+	}
+	if d["Mask"] != nil {
+		return "masked"
+	}
+	if d["SMask"] != nil {
+		return "soft-masked"
+	}
+	filters := ""
+	switch f := d["Filter"].(type) {
+	case types.Name:
+		filters = f.Value()
+	case types.Array:
+		for _, e := range f {
+			if n, ok := e.(types.Name); ok {
+				filters += " " + n.Value()
+			}
+		}
+	}
+	if strings.Contains(filters, "JPX") || strings.Contains(filters, "CCITT") || strings.Contains(filters, "JBIG2") {
+		return "filter"
+	}
+	cs := d["ColorSpace"]
+	if o, err := xt.Dereference(cs); err == nil && o != nil {
+		cs = o
+	}
+	switch c := cs.(type) {
+	case types.Name:
+		if c.Value() == "DeviceGray" || c.Value() == "DeviceRGB" || c.Value() == "CalGray" || c.Value() == "CalRGB" {
+			return ""
+		}
+	case types.Array:
+		if len(c) > 0 {
+			if n, ok := c[0].(types.Name); ok && (n.Value() == "ICCBased" || n.Value() == "Indexed" || n.Value() == "CalRGB" || n.Value() == "CalGray") {
+				return ""
+			}
+		}
+	}
+	return "colour-space"
+}
+
+// plainBox says whether m draws the unit square upright and unmirrored.
+func plainBox(m runMatrix) bool {
+	tol := 1e-6 * math.Max(math.Max(math.Abs(m[0]), math.Abs(m[1])), math.Max(math.Abs(m[2]), math.Abs(m[3])))
+	return math.Abs(m[1]) <= tol && math.Abs(m[2]) <= tol && m[0] > 0 && m[3] > 0
 }
 
 // uprightBox says whether the unit square under m is a rectangle with its sides along the axes.
@@ -214,23 +274,36 @@ func (w *runWalker) markForm(sd *types.StreamDict, gs runGState) {
 
 // drawsImage says whether name, in res, is an image XObject.
 func (w *runWalker) drawsImage(res types.Dict, name string) bool {
+	_, _, ok := w.imageObject(res, name)
+	return ok
+}
+
+// imageObject says whether name, in res, is an image XObject, and its object number (0 when the entry is direct).
+func (w *runWalker) imageObject(res types.Dict, name string) (int, string, bool) {
 	if (!w.keepMarks && !w.keepDrawings) || res == nil {
-		return false
+		return 0, "", false
 	}
 	xobjs, err := w.xt.DereferenceDict(res["XObject"])
 	if err != nil || xobjs == nil {
-		return false
+		return 0, "", false
 	}
 	obj, ok := xobjs[name]
 	if !ok {
-		return false
+		return 0, "", false
 	}
 	sd, _, err := w.xt.DereferenceStreamDict(obj)
 	if err != nil || sd == nil {
-		return false
+		return 0, "", false
 	}
 	st := sd.Dict.NameEntry("Subtype")
-	return st != nil && *st == "Image"
+	if st == nil || *st != "Image" {
+		return 0, "", false
+	}
+	nr := 0
+	if ir, ok := obj.(types.IndirectRef); ok {
+		nr = ir.ObjectNumber.Value()
+	}
+	return nr, imageCause(w.xt, sd.Dict), true
 }
 
 // flowRegion is what lies below paragraph pi of a page.

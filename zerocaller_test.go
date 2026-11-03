@@ -91,9 +91,13 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
-		"PageLinks":   "gated — PLAN-import-export.md P02.S03c. The document model reads links through pageLinksIn; this is the by-bytes door beside MapPage.",
-		"ExportSet":   "gated — PLAN-import-export.md P02.S03c. The export oracle's fixtures; today only pdfops' own test reads them.",
-		"FormatMIMEs": "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
+		"PageLinks":             "gated — PLAN-import-export.md P02.S03c. The document model reads links through pageLinksIn; this is the by-bytes door beside MapPage.",
+		"ExportPages":           "gated — PLAN-import-export.md P02.S03c. The document model's page read; only exportpage_test.go reads it today.",
+		"PlaceholderCounts":     "gated — PLAN-import-export.md P02.S03c. What an export says it could not carry; the model's notice reads it.",
+		"ExportPictures":        "gated — PLAN-import-export.md P02.S03c. The pictures fixtures; today only pdfops' own test reads them.",
+		"ExportPictureTwoPages": "gated — PLAN-import-export.md P02.S03c. One image on two pages; today only pdfops' own test reads it.",
+		"ExportSet":             "gated — PLAN-import-export.md P02.S03c. The export oracle's fixtures; today only pdfops' own test reads them.",
+		"FormatMIMEs":           "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
 		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +
 			"compare the signature block a party was shown with the one embedded (ADR-158, /pending 367).",
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
