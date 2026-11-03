@@ -76,7 +76,7 @@ test('File has no Close control, and the Export card is eight buttons', async ()
   const shown = await page.evaluate(() => [...document.querySelectorAll('#sbFunctions .tbgroup.open > button')]
     .filter((b) => b.getBoundingClientRect().height > 0).map((b) => b.textContent.trim()));
   assert.deepEqual(shown, [
-    'Print…', 'Pages as images…', 'Pictures in the document (ZIP)', 'Document text (.txt)',
+    'Print…', 'Pages as images…', 'Pictures in the document (ZIP)', 'Document as…',
     'This page\'s table…', 'Form data…',
   ]);
 });

@@ -1348,12 +1348,16 @@ they are, a picture that would not get smaller is left, and the result says how 
 changed and why the rest did not. If a target cannot be met by pictures alone it says so and
 points at Compress. On the command line, `nib shrink IN -o OUT [--level N | --target 1MB]`.
 
-**Pull the contents out** (File → Export & Print): **Document text (.txt)** dumps the
-document's text layer to a plain-text file, and **Pictures in the document (ZIP)** bundles
-the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
-re-encoded as PNG/TIFF. Text extraction reads the text layer; scanned
-(image-only) pages are read (OCR) first, which adds a text layer to them, and
-complex multi-column layouts may not preserve reading order.
+**Pull the contents out** (File → Export & Print): **Document as…** saves the document's words as
+Markdown, a web page (one HTML file, pictures inside it) or plain text, in reading order, with headings,
+lists, tables, bold, italic and web links kept where the document has them; **Pictures in the document
+(ZIP)** bundles the pictures inside the PDF into a zip — JPEGs come out as-is, other images are
+re-encoded as PNG/TIFF. Scanned (image-only) pages are read (OCR) first, which adds a text layer to them.
+Text a reader could not see — under a box, off the page, in a hidden layer — is left out, and the Save
+dialog says how much, along with the links, pictures and pages it could not carry. It exports the saved
+document: what you have placed, typed or drawn and not saved is not in it, and a redaction box you have not
+applied does not hide anything (Nib asks first). A signed document exports as a new, unsigned file. The
+export names itself from the name you confirm, never from the PDF's own title or its path.
 
 **Pages as images…** (File → Export & Print) saves a page, or every page, as pictures, and the
 Save dialog's **Format** line chooses the kind: *this page* as PNG, JPEG, WebP (where your browser

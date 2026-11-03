@@ -49,8 +49,11 @@ let docsNow = null;
 let redactAnswer = { status: 200, body: {} };
 let profile = {};
 let peers = [];
+// The document export (ADR-193): the server's answer, which a test sets; the default is a Markdown file with no report.
+let exportAnswer = () => new Response('# words', { status: 200, headers: { 'X-Nib-Export': '{"source":"proposal"}' } });
 const h = await boot({
   routes: {
+    '/api/export/document': () => exportAnswer(),
     '/api/open': () => nextOpen,
     '/api/ocr/pages': () => {
       asked++;
@@ -524,26 +527,28 @@ test('Cancel in the search dialog stops the read: nothing is sent and nothing is
   assert.doesNotMatch(toastText(), /match\(es\) marked/, 'a cancelled search marked matches');
 });
 
-test('Document text reads the scanned pages first; with no text at all it says so and saves nothing', async () => {
+test('Document as… reads the scanned pages first; with no text at all it says so and saves nothing', async () => {
   await open('n.pdf', ['typed', ''], [2], ['typed', 'now read']);
   $('saveAsModal').hidden = true;
-  $('exportTextBtn').click();
+  $('exportDocBtn').click();
   await settle(80);
   assert.ok(posted, 'the text export did not read the scanned page: nothing was sent to /api/ocr');
   assert.deepEqual(pagesOf(posted), [2], 'the text export did not read the scanned page');
   assert.equal($('saveAsModal').hidden, false, 'the export was not offered after the read');
   $('saveAsCancel').click();
   await open('n2.pdf', ['', ''], []);
-  $('exportTextBtn').click();
+  exportAnswer = () => new Response('{"error":"This document has no text or pictures to export","cause":"empty"}', { status: 422 });
+  $('exportDocBtn').click();
   await settle(40);
   assert.equal(recognised.length, 0);
-  assert.equal($('saveAsModal').hidden, true, 'an empty text file was offered for a document with no text');
-  assert.equal(toastText(), 'This document has no text to export');
+  assert.equal($('saveAsModal').hidden, true, 'an empty file was offered for a document with nothing to export');
+  assert.equal(toastText(), 'This document has no text or pictures to export');
+  exportAnswer = () => new Response('# words', { status: 200, headers: { 'X-Nib-Export': '{"source":"proposal"}' } });
   // Stopped: nothing is exported — not even the text the document already had.
   await open('n3.pdf', ['typed', ''], [2], ['typed', 'now read']);
   let release;
   gate = new Promise((r) => { release = r; });
-  $('exportTextBtn').click();
+  $('exportDocBtn').click();
   await settle(40);
   assert.equal(seenWhileReading, 'Reading 1 scanned page first…');
   $('readingStop').click();
@@ -554,7 +559,7 @@ test('Document text reads the scanned pages first; with no text at all it says s
   // Refused (signed, and the user says no): the text there is is still exported, and the door has said what was left out.
   await open('n4.pdf', ['typed', ''], [2], null, { signature: { state: 'valid' } });
   h.setConfirmAnswer(false);
-  $('exportTextBtn').click();
+  $('exportDocBtn').click();
   await settle(40);
   assert.equal(toastText(), 'Page 2 is a scan and was not read, so the signature stands.');
   assert.equal($('saveAsModal').hidden, false, 'a signed document\'s own text could not be exported because one page is a scan');
@@ -1011,4 +1016,30 @@ test('a live co-sign asks about a redaction box not yet applied before anything 
   assert.deepEqual(h.calls.slice(before).map((c) => c.url).filter((u) => /cosign|session/.test(u)), [],
     'the user said No and the co-sign went ahead');
   h.setConfirmAnswer(true);
+});
+
+test('Document as… with an unapplied redaction box asks first, and sends nothing on Cancel (X8)', async () => {
+  await open('x8.pdf', ['a secret here'], []);
+  await search('secret');
+  assert.match(toastText(), /^1 match\(es\) marked/, 'setup: nothing is marked');
+  let asked = 0;
+  const wasExport = exportAnswer;
+  exportAnswer = () => { asked++; return wasExport(); };
+  $('saveAsModal').hidden = true;
+  h.confirms.length = 0; h.setConfirmAnswer(false);
+  $('exportDocBtn').click();
+  await settle(40);
+  assert.equal(h.confirms.length, 1, 'stimulus: no confirm was asked');
+  assert.match(h.confirms[0], /WILL appear in the export/);
+  assert.equal(asked, 0, 'a request was sent after Cancel');
+  assert.equal($('saveAsModal').hidden, true);
+  // Export anyway: the count rides to the server so it can echo it.
+  h.setConfirmAnswer(true);
+  $('exportDocBtn').click();
+  await settle(40);
+  assert.equal(asked, 1, 'Export anyway sent no request');
+  assert.equal($('saveAsModal').hidden, false);
+  $('saveAsCancel').click();
+  exportAnswer = wasExport;
+  h.setConfirmAnswer(false);
 });

@@ -146,8 +146,9 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 42: `handleOutlinePropose` (/pending 910) reads the open document's headings for the outline editor — read-only,
 	// `handleTagsPropose`'s shape.
 	// 43: `handleShrinkPictures` (/pending 908) reads the open document's bytes and answers a smaller copy — `handleOptimize`'s shape.
-	if resolveSites != 43 {
-		t.Errorf("expected 43 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 44: `handleExportDocument` (ADR-193) reads the open document's bytes and answers a Markdown, HTML or text file — `handleDocumentRevision`'s shape.
+	if resolveSites != 44 {
+		t.Errorf("expected 44 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

@@ -97,6 +97,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"ExportPictures":        "gated — PLAN-import-export.md P02.S03c. The pictures fixtures; today only pdfops' own test reads them.",
 		"ExportPictureTwoPages": "gated — PLAN-import-export.md P02.S03c. One image on two pages; today only pdfops' own test reads it.",
 		"ExportSet":             "gated — PLAN-import-export.md P02.S03c. The export oracle's fixtures; today only pdfops' own test reads them.",
+		"Hostile":               "test-support — the writers' hostile hand-built model (internal/docwrite/wtest); the three writers' tests read it (ADR-193).",
 		"ExportModelSet":        "test-support — the document model reader's fixtures (visibility, tree against proposal); docmodel/read's tests read them (ADR-192).",
 		"FormatMIMEs":           "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
 		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +

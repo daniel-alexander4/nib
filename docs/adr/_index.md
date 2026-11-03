@@ -1009,3 +1009,5 @@ home today.
   — PLAN-import-export P02.S03b: `ExportPages` — styled spans cut at `joinRuns`' recorded offsets, figures joined to bytes or a named placeholder read from the image dictionary.
 - [ADR-192](192-the-model-reads-only-what-a-reader-sees-and-the-trees-page-is-taken-only-when-it-accounts-for-the-words.md) — **the model reads only what a reader sees, and a page takes the author's tree only when the tree accounts for its words**
   — PLAN-import-export P02.S03c: `docmodel` + `docmodel/read`; draw sequence and OFF layers in the walker; tree-vs-proposal per page; scan page as its picture; the writers-cannot-reach-a-reader census.
+- [ADR-193](193-document-as-writes-markdown-html-and-text-from-the-model-through-one-route-and-says-what-it-left-out.md) — **Document as… writes Markdown, HTML and text from the model through one route, and says what it left out**
+  — PLAN-import-export P02.S04: `/api/export/document`, `ExportFacts`, the three writers behind `docmodel.Clean` and one escape door each.

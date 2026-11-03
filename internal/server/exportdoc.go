@@ -1,0 +1,153 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+
+	"nib/internal/docmodel"
+	"nib/internal/docmodel/read"
+	"nib/internal/docwrite/html"
+	"nib/internal/docwrite/markdown"
+	"nib/internal/docwrite/text"
+	"nib/internal/sign"
+)
+
+// maxExportFactList caps each list X-Nib-Export carries, so a hostile file cannot grow the header past what a browser
+// accepts; a capped list says so (`truncated`). The same bound as X-Nib-Revision's.
+const maxExportFactList = maxRevisionFactList
+
+// exportFormats is the one list of document formats the route writes: the query word, the content type, and the
+// writer. The window's Format line is the same three, from the format table's `exports` rows (W10).
+var exportFormats = map[string]struct {
+	mime  string
+	write func(docmodel.Document) []byte
+}{
+	"md":   {"text/markdown; charset=utf-8", markdown.Write},
+	"html": {"text/html; charset=utf-8", html.Write},
+	"txt":  {"text/plain; charset=utf-8", text.Write},
+}
+
+// exportPage is one flagged page in the header.
+type exportPage struct {
+	Page  int    `json:"page"`
+	Cause string `json:"cause"`
+}
+
+// ExportFacts is what the X-Nib-Export header says about an export (PLAN-import-export W11, D23, D28). Integers, enums
+// and page numbers only — never a name, a value or a word of the document (W3) — built field by field from
+// `docmodel.Report`, and the one struct the window's wording table is checked against. Source is "tree", "proposal" or
+// "mixed". Signed says the file the export was read from carried a signature: the export is a new, unsigned document.
+type ExportFacts struct {
+	Source              string       `json:"source"`
+	DroppedLinks        int          `json:"droppedLinks,omitempty"`
+	PlaceholderImages   int          `json:"placeholderImages,omitempty"`
+	FlaggedPages        []exportPage `json:"flaggedPages,omitempty"`
+	ScannedPages        []int        `json:"scannedPages,omitempty"`
+	CoveredText         int          `json:"coveredText,omitempty"`
+	HiddenText          int          `json:"hiddenText,omitempty"`
+	OffPage             int          `json:"offPage,omitempty"`
+	UnreadGlyphs        int          `json:"unreadGlyphs,omitempty"`
+	Signed              bool         `json:"signed,omitempty"`
+	UnappliedRedactions int          `json:"unappliedRedactions,omitempty"`
+	Truncated           bool         `json:"truncated,omitempty"`
+}
+
+func sum(m map[string]int) (n int) {
+	for _, v := range m {
+		n += v
+	}
+	return n
+}
+
+// factsOf projects the reader's Report onto the header.
+func factsOf(rep docmodel.Report, signed bool, unapplied int) ExportFacts {
+	f := ExportFacts{
+		Source: rep.Source, DroppedLinks: sum(rep.DroppedLinks), PlaceholderImages: sum(rep.Placeholders),
+		CoveredText: rep.CoveredText + rep.MaybeCovered, HiddenText: rep.HiddenText + rep.HiddenLayer, OffPage: rep.OffPage,
+		UnreadGlyphs: rep.UnreadGlyphs, Signed: signed, UnappliedRedactions: unapplied,
+	}
+	for _, p := range rep.FlaggedPages {
+		f.FlaggedPages = append(f.FlaggedPages, exportPage{Page: p.Page, Cause: p.Cause})
+	}
+	f.ScannedPages = append(f.ScannedPages, rep.ScannedPages...)
+	sort.Ints(f.ScannedPages)
+	if len(f.FlaggedPages) > maxExportFactList {
+		f.FlaggedPages, f.Truncated = f.FlaggedPages[:maxExportFactList], true
+	}
+	if len(f.ScannedPages) > maxExportFactList {
+		f.ScannedPages, f.Truncated = f.ScannedPages[:maxExportFactList], true
+	}
+	return f
+}
+
+// exportTitle is the name the user confirmed, folded to one line and capped; else the literal "Document" (X9). It is
+// never the PDF's /Title and never a source path.
+func exportTitle(s string) string {
+	t := docmodel.OneLine(s)
+	if r := []rune(t); len(r) > 200 {
+		t = string(r[:200])
+	}
+	if t == "" {
+		return "Document"
+	}
+	return t
+}
+
+// handleExportDocument answers POST /api/export/document?format=md|html|txt&title=&redactionsPending=: the open
+// document as a Markdown, HTML or text file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
+// what it did not carry in X-Nib-Export (D23). It reads the server's copy: overlay marks and typed field values the
+// window has not baked are not in it (W8), and the window says so on the Format line. 422 names a refusal about the
+// document; 409 is ADR-004's "not that document" and also the document having changed while it was read.
+func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	format, known := exportFormats[r.URL.Query().Get("format")]
+	if !known {
+		httpError(w, http.StatusBadRequest, "format must be md, html or txt")
+		return
+	}
+	unapplied, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("redactionsPending")))
+	if err != nil || unapplied < 0 {
+		unapplied = 0
+	}
+	var data []byte
+	var rev uint64
+	if !s.snapshotRegistered(w, doc, func() { data, rev = doc.data, doc.rev }) {
+		return
+	}
+	// doc.data is replaced wholesale and never mutated in place (document.install), so the slice is safe to read
+	// outside the lock; `rev` says whether it was replaced while we read.
+	model, err := read.Read(data, read.Options{Title: exportTitle(r.URL.Query().Get("title"))})
+	if err != nil {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
+		return
+	}
+	body := format.write(model)
+	if len(body) == 0 {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has no text or pictures to export", "cause": "empty"})
+		return
+	}
+	moved := false
+	if !s.snapshotRegistered(w, doc, func() { moved = doc.rev != rev }) {
+		return
+	}
+	if moved {
+		httpError(w, http.StatusConflict, "the document changed while it was being read; export again")
+		return
+	}
+	hdr, err := json.Marshal(factsOf(model.Report, sign.HasSignatureBlob(data), unapplied))
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not describe the export")
+		return
+	}
+	w.Header().Set("X-Nib-Export", string(hdr))
+	w.Header().Set("Content-Type", format.mime)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write(body)
+}

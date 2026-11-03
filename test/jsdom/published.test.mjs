@@ -88,6 +88,9 @@ const PUBLISHED = [
   // surface for a document that came back (P03.S02), parked below until it does.
   { type: 'revisionFacts', readers: ['web/app.js'] },
   { type: 'revisionRefusal', readers: ['web/app.js'] },
+  // P02.S04 (ADR-193): X-Nib-Export. `exportReport` words every field, and the page entries' `page` and `cause`'s page list.
+  { type: 'ExportFacts', readers: ['web/app.js'] },
+  { type: 'exportPage', readers: ['web/app.js'] },
   // This machine's ceremony copy (P03.S03): `ceremonyCopyLines` words all three facts — ended, signed, extends — and
   // `CEREMONY_COPY_REFUSED` the 422's cause.
   { type: 'ceremonyCopyFacts', readers: ['web/app.js'] },

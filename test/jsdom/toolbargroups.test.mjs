@@ -222,7 +222,7 @@ test('the Export & Print card is one button per thing exported', () => {
   assert.ok(card, 'there is no Export & Print card');
   const ids = [...card.querySelectorAll('button')].map((b) => b.id);
   assert.deepEqual(ids, [
-    'printBtn', 'exportPagesBtn', 'exportImagesBtn', 'exportTextBtn',
+    'printBtn', 'exportPagesBtn', 'exportImagesBtn', 'exportDocBtn',
     'exportTableBtn', 'exportFormBtn',
   ], 'the Export & Print card is not the six buttons ADR-189 names, in its order. An export with more than one format is ONE button and the Save dialog\'s Format line chooses — a per-format button is the fifteen-button card coming back');
   // The certificate is a real button in Secure, not a forwarding twin of one in File.

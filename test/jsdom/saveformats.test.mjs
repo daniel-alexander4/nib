@@ -33,6 +33,8 @@ let existing = new Set();  // names /api/write answers 412 for until `overwrite`
 let formAnswer = null;     // a Response the form-data route gives instead of the format's bytes
 let tableAnswer = null;    // likewise for /api/table
 let calls = [];
+let docAnswer = null;      // a Response the document export gives instead of the format's bytes
+let docFacts = '{"source":"proposal"}';
 const formatOf = () => new URL('http://x' + calls.at(-1).url.replace(/^https?:\/\/[^/]+/, '')).searchParams.get('format');
 
 const h = await boot({
@@ -47,6 +49,8 @@ const h = await boot({
     '/api/table': () => tableAnswer || new Response('TABLE-AS-' + formatOf(), { status: 200 }),
     '/api/form-data': () => formAnswer || new Response('FORM-AS-' + formatOf(), { status: 200 }),
     '/api/assemble': () => new Response('PICTURES', { status: 200 }),
+    '/api/extract-images': () => new Response('ZIPPED', { status: 200, headers: { 'X-Image-Count': '2' } }),
+    '/api/export/document': () => docAnswer || new Response('DOC-AS-' + formatOf(), { status: 200, headers: { 'X-Nib-Export': docFacts } }),
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/write': async (opts) => {
       const f = opts.body;
@@ -112,17 +116,17 @@ test.afterEach(async () => {
 // ── A save with no formats is the dialog it always was ──────────────────────
 test('an export with one format shows no Format line and writes its bytes', async () => {
   written.length = 0;
-  $('exportTextBtn').click();
+  $('exportImagesBtn').click();
   await settle();
-  assert.equal($('saveAsModal').hidden, false, 'stimulus: the text export opened no save dialog');
+  assert.equal($('saveAsModal').hidden, false, 'stimulus: the pictures export opened no save dialog');
   assert.equal($('saveAsFormatRow').hidden, true, 'a save with one format shows a Format line');
-  assert.equal($('saveAsName').value, 'ledger.txt');
+  assert.equal($('saveAsName').value, 'ledger-images.zip');
   assert.equal($('saveAsStatus').textContent, '');
   await save();
   assert.equal(written.length, 1, 'the save wrote nothing');
-  assert.equal(written[0].name, 'ledger.txt');
+  assert.equal(written[0].name, 'ledger-images.zip');
   assert.equal(written[0].dir, '/home/someone/nib');
-  assert.match(written[0].bytes, /Name Amount/, 'the bytes written are not the document\'s text');
+  assert.equal(written[0].bytes, 'ZIPPED', 'the bytes written are not the pictures');
   assert.equal($('saveAsModal').hidden, true, 'the dialog stayed open after a save that worked');
 });
 
@@ -132,12 +136,12 @@ test('a Format line left over from the last export is gone at the next ordinary 
   assert.equal($('saveAsFormatRow').hidden, false, 'stimulus: the table export showed no Format line');
   await cancel();
   written.length = 0;
-  $('exportTextBtn').click();
+  $('exportImagesBtn').click();
   await settle();
   assert.equal($('saveAsFormatRow').hidden, true, 'the Format line survived into a save that has one format');
   await save();
   assert.equal(written.length, 1);
-  assert.match(written[0].bytes, /Name Amount/, 'an ordinary save wrote the last export\'s bytes');
+  assert.equal(written[0].bytes, 'ZIPPED', 'an ordinary save wrote the last export\'s bytes');
 });
 
 // ── The dialog's shape ──────────────────────────────────────────────────────
@@ -678,4 +682,37 @@ test('Reduce counts its pages on its button, and Cancel stops the render and kee
   } finally {
     gate.restore();
   }
+});
+
+// ── Document as… (ADR-193): one button, three formats, the server's bytes, its facts in words ──────
+test('Document as… offers Markdown, a web page and plain text, and writes the SELECTED format\'s bytes', async () => {
+  written.length = 0;
+  docFacts = JSON.stringify({ source: 'tree', droppedLinks: 3, placeholderImages: 1, flaggedPages: [{ page: 4, cause: 'layout' }], scannedPages: [2] });
+  $('exportDocBtn').click();
+  await settle();
+  assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
+  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)']);
+  assert.equal($('saveAsName').value, 'stranger.md');
+  const note = $('saveAsNote').textContent;
+  assert.match(note, /3 links to other pages or places became plain text/);
+  assert.match(note, /1 picture could not be carried/);
+  assert.match(note, /Page 2 is a scan, exported as a picture/);
+  assert.match(note, /Page 4 was read as best it could/);
+  assert.match(note, /not saved is not in it/, 'the note does not say unsaved edits are not exported (W8)');
+  $('saveAsFormat').selectedIndex = 1;
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  assert.equal($('saveAsName').value, 'stranger.html');
+  await save();
+  assert.equal(written.length, 1);
+  assert.equal(written[0].name, 'stranger.html');
+  assert.equal(written[0].bytes, 'DOC-AS-html', 'the bytes written are not the selected format\'s');
+});
+
+test('Document as… says in the server\'s words why there is nothing to export, and opens no dialog', async () => {
+  docAnswer = new Response('{"error":"This document has no text or pictures to export","cause":"empty"}', { status: 422 });
+  $('exportDocBtn').click();
+  await settle();
+  docAnswer = null;
+  assert.equal($('saveAsModal').hidden, true);
+  assert.equal(toastText(), 'This document has no text or pictures to export');
 });

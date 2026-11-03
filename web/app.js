@@ -220,7 +220,7 @@ const els = {
   reducePictures: $('reducePictures'), reducePicLevel: $('reducePicLevel'), reducePicTarget: $('reducePicTarget'),
   reduceResult: $('reduceResult'), reduceGo: $('reduceGo'), reduceSave: $('reduceSave'), reduceCancel: $('reduceCancel'),
   exportPagesBtn: $('exportPagesBtn'),
-  exportImagesBtn: $('exportImagesBtn'), exportTextBtn: $('exportTextBtn'),
+  exportImagesBtn: $('exportImagesBtn'), exportDocBtn: $('exportDocBtn'),
   exportTableBtn: $('exportTableBtn'), exportFormBtn: $('exportFormBtn'),
   importXfdfBtn: $('importXfdfBtn'), importXfdfModal: $('importXfdfModal'), importXfdfPick: $('importXfdfPick'),
   importXfdfInput: $('importXfdfInput'), importXfdfStatus: $('importXfdfStatus'), importXfdfClose: $('importXfdfClose'),
@@ -8925,8 +8925,8 @@ function enableStampGestures(f, el, handle) {
     el.setPointerCapture(e.pointerId);
     activeGestures.add(end);
   };
-  el.addEventListener('pointerdown', begin('drag'));
-  handle.addEventListener('pointerdown', begin('resize'));
+  el.addEventListener('pointerdown', begin(f.drag));
+  handle.addEventListener('pointerdown', begin(f.resize));
   el.addEventListener('pointermove', (e) => {
     if (!mode) return;
     const pv = owner.viewer.getPageView(f.page - 1);
@@ -10586,26 +10586,80 @@ function canWriteWebP() {
   } catch (e) { return false; }
 }
 
-els.exportTextBtn.onclick = async () => {
-  // Export name captured at operation entry — see exportBase (D7).
-  const exportName = exportBase();
+// plural words a count: "1 link", "3 links".
+const plural = (n, one, many) => (n === 1 ? '1 ' + one : n + ' ' + many);
+
+// EXPORT_KEEPS is the one sentence per document format saying what it keeps (D28). The note under the Format line
+// is built from it and from exportReport below, so the two cannot disagree.
+const EXPORT_KEEPS = {
+  md: 'Headings, lists, tables, bold, italic and web links are kept. Pictures become a line naming them.',
+  html: 'Headings, lists, tables, bold, italic, web links and pictures are kept, in one file.',
+  txt: 'Plain words in reading order, one table row to a line. No styles, links or pictures.',
+};
+
+// exportReport is what the export did not carry, in words (D28): one function over `X-Nib-Export`'s counts. Every key
+// the server sends is read here (W11) and an absent or zero one says nothing.
+function exportReport(f) {
+  const n = (v) => (typeof v === 'number' ? v : 0);
+  const s = [];
+  const pages = (list) => (list.length > 5 ? list.slice(0, 5).join(', ') + ' and more' : list.join(', '));
+  if (f.signed) s.push('Signatures are not carried; the file is a new, unsigned document.');
+  if (n(f.unappliedRedactions)) s.push(plural(n(f.unappliedRedactions), 'redaction box', 'redaction boxes') + ' you drew but did not apply — those words ARE in this file.');
+  if (n(f.droppedLinks)) s.push(plural(n(f.droppedLinks), 'link', 'links') + ' to other pages or places became plain text.');
+  if (n(f.placeholderImages)) s.push(plural(n(f.placeholderImages), 'picture', 'pictures') + ' could not be carried.');
+  if (n(f.coveredText)) s.push(plural(n(f.coveredText), 'piece', 'pieces') + ' of text hidden under a shape was left out.');
+  if (n(f.hiddenText)) s.push(plural(n(f.hiddenText), 'piece', 'pieces') + ' of invisible text was left out.');
+  if (n(f.offPage)) s.push(plural(n(f.offPage), 'piece', 'pieces') + ' of text outside the page was left out.');
+  if (n(f.unreadGlyphs)) s.push(plural(n(f.unreadGlyphs), 'character', 'characters') + ' could not be read as text.');
+  const scanned = Array.isArray(f.scannedPages) ? f.scannedPages : [];
+  if (scanned.length) s.push('Page' + (scanned.length > 1 ? 's ' : ' ') + pages(scanned) + (scanned.length > 1 ? ' are' : ' is') + ' a scan, exported as a picture.');
+  const flagged = (Array.isArray(f.flaggedPages) ? f.flaggedPages : []).map((p) => p.page);
+  if (flagged.length) s.push('Page' + (flagged.length > 1 ? 's ' : ' ') + pages(flagged) + ' ' + (flagged.length > 1 ? 'were' : 'was') + ' read as best it could.');
+  if (f.truncated) s.push('The lists above are cut short.');
+  return s.join(' ');
+}
+
+// Document as… (D23, D28, ADR-193). One button; the format is the Save dialog's Format line. The document is read by
+// the server in ONE pass, at the press, for the default format — a document with nothing to export is refused in the
+// server's own words before any dialog, and the facts it reports are the same for every format. Scanned pages are read
+// first through the one door (ADR-106). The server reads ITS copy: what is placed, typed or drawn and not yet saved is
+// not in it, and the note says so (W8).
+els.exportDocBtn.onclick = async () => {
+  const exportName = exportBase(); // captured at entry (D7)
   const owner = view;
+  const opDoc = owner.docMeta;
   if (!owner.pdfDocument) return toast('Open a PDF first');
-  // Scanned pages are read first, through the one door (ADR-106): this used to save an empty file for a scan
-  // and say nothing about why. A read the user stopped, or a document no longer in front, exports nothing; a
-  // read that was refused or failed still exports the text there is, and the door has named the pages left out.
+  // X8: a redaction box that is not applied is not a redaction. The default button is Cancel.
+  const marks = owner.redactMarks.length;
+  if (marks && !confirm('These words WILL appear in the export: '
+    + plural(marks, 'redaction box', 'redaction boxes') + ' you drew ' + (marks === 1 ? 'has' : 'have')
+    + ' not been applied.\n\nChoose Cancel, apply the redactions, then export. Export anyway?')) return;
   const need = await ensureText(owner);
   if (need.outcome === 'cancelled' || need.outcome === 'gone') return;
-  // Best-effort dump of the document's text layer via pdf.js (see documentText:
-  // content-stream order, hasEOL newlines; a page with no text contributes
-  // nothing). Compare uses the same helper so the two stay in step.
-  const out = await documentText(owner.pdfDocument);
   if (owner !== view) return;
-  if (!out.trim()) {
-    if (need.go) toast('This document has no text to export');
-    return;
-  }
-  openSaveAs(new Blob([out], { type: 'text/plain' }), exportName + '.txt', 'Export text (.txt)');
+  const fetchAs = (format) => apiFetch('/api/export/document?' + ['format=' + format, 'title=' + encodeURIComponent(exportName),
+    'redactionsPending=' + marks].join('&'), { method: 'POST', docId: opDoc && opDoc.id });
+  const first = await fetchAs('md');
+  if (!first.ok) { toast(await errText(first, 'Could not export the document')); return; }
+  let facts = {};
+  try { facts = JSON.parse(first.headers.get('X-Nib-Export') || '{}'); } catch { facts = {}; }
+  const report = exportReport(facts);
+  const firstBlob = await first.blob();
+  const one = (format, label, ext) => ({
+    label, name: exportName + ext, ext,
+    note: EXPORT_KEEPS[format] + ' Anything you have placed, typed or drawn and not saved is not in it.' + (report ? ' ' + report : ''),
+    make: async () => {
+      if (format === 'md') return firstBlob;
+      const r = await fetchAs(format);
+      if (!r.ok) throw new Error(await errText(r, 'Could not export the document'));
+      return r.blob();
+    },
+  });
+  openSaveAs(null, exportName + '.md', 'Export the document as…', [
+    one('md', 'Markdown (.md)', '.md'),
+    one('html', 'Web page (.html)', '.html'),
+    one('txt', 'Plain text (.txt)', '.txt'),
+  ]);
 };
 
 function median(xs) {
@@ -14535,7 +14589,7 @@ const DOC_REQUIRED = [
   // Found by widening doccontrols' scan from the Edit pane to every pane (v1.120.0): all
   // three act on the open document and none was gated, so they were clickable with nothing
   // open — the same defect the drawing-row comment below records for Border/Note/Shapes.
-  'reduceBtn', 'exportImagesBtn', 'exportTextBtn',
+  'reduceBtn', 'exportImagesBtn', 'exportDocBtn',
   // The whole drawing row, not the first three of it (/pending 331). Border, Note,
   // Dropdown, Radio and Shapes sit beside Text/Highlight/Draw in the Edit tab and were
   // never added here, so they stayed clickable on a clean vault with nothing open —
