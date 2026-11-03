@@ -3,6 +3,7 @@ package docx
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -271,5 +272,28 @@ func TestDocxTablePropertiesAreInSchemaOrderAndNothingWrittenIsNil(t *testing.T)
 	out, _ = Write(big)
 	if strings.Contains(string(wtest.Open(t, out).Files["word/document.xml"]), `cy="-`) {
 		t.Error("extent overflowed")
+	}
+}
+
+func TestDocxCarriesAPictureAReaderCanDecode(t *testing.T) {
+	out, _ := Write(wtest.Hostile())
+	wtest.Open(t, out).DecodesAsPNG(t, "word/media/img-1.png")
+}
+
+func TestDocxPictureExtentStaysInsideWordsTwentyTwoInches(t *testing.T) {
+	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 100, Height: 20000}}}}
+	out, _ := Write(d)
+	doc := string(wtest.Open(t, out).Files["word/document.xml"])
+	i := strings.Index(doc, `<wp:extent cx="`)
+	if i < 0 {
+		t.Fatalf("no extent:\n%s", doc)
+	}
+	var cx, cy int64
+	if _, err := fmt.Sscanf(doc[i:], `<wp:extent cx="%d" cy="%d"`, &cx, &cy); err != nil {
+		t.Fatal(err)
+	}
+	const limit = 22 * 914400
+	if cx > limit || cy > limit || cy < 1 {
+		t.Errorf("extent %d x %d EMU passes Word's 22 inches (%d)", cx, cy, limit)
 	}
 }

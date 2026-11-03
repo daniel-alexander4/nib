@@ -320,7 +320,7 @@ func (w *writer) figure(blk docmodel.Block) {
 	w.picMan = append(w.picMan, `<manifest:file-entry manifest:full-path="`+name+`" manifest:media-type="`+mt+`"/>`)
 	wd, ht := 3.0, 2.0
 	if im.Width > 0 && im.Height > 0 {
-		wd, ht = float64(min(im.Width, 20000))/pxPerIn, float64(min(im.Height, 20000))/pxPerIn
+		wd, ht = float64(min(im.Width, xmlw.MaxPx))/pxPerIn, float64(min(im.Height, xmlw.MaxPx))/pxPerIn
 		if wd > maxInch {
 			ht, wd = ht*maxInch/wd, maxInch
 		}

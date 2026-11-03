@@ -137,6 +137,8 @@ type Report struct {
 	SkippedImages map[string]int
 	// UnstyledLines counts lines whose style could not be cut and are one plain span.
 	UnstyledLines int
+	// TablesAsText counts tables past the bounds in bound.go, written as one line per row.
+	TablesAsText int
 }
 
 // Document is the model.

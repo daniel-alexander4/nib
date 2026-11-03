@@ -6,42 +6,17 @@ package html
 import (
 	"encoding/base64"
 	stdhtml "html"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"nib/internal/docmodel"
+	"nib/internal/docwrite/xmlw"
 )
 
 const style = `body{font-family:system-ui,sans-serif;line-height:1.5;max-width:50rem;margin:2rem auto;padding:0 1rem}` +
 	`table{border-collapse:collapse}td,th{border:1px solid #888;padding:.25rem .5rem;vertical-align:top}img{max-width:100%;height:auto}`
 
 func esc(s string) string { return stdhtml.EscapeString(docmodel.Clean(s)) }
-
-func safeLink(u string) bool {
-	p, err := url.Parse(u)
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(p.Scheme) {
-	case "http", "https", "mailto":
-		return true
-	}
-	return false
-}
-
-// langTag is a catalog /Lang kept only when it is a plain BCP 47 shape; anything else is "und".
-func langTag(l string) string {
-	if l == "" || len(l) > 35 {
-		return "und"
-	}
-	for _, c := range l {
-		if !(c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
-			return "und"
-		}
-	}
-	return l
-}
 
 func dirAttr(d string) string {
 	if d == "rtl" {
@@ -90,18 +65,18 @@ func (r *render) void(tag string) string {
 
 // Write is the document as HTML5.
 func Write(doc docmodel.Document) []byte {
-	title := docmodel.OneLine(doc.Meta.Title)
-	if title == "" {
-		title = "Document"
-	}
+	title := xmlw.Title(doc.Meta)
 	var b strings.Builder
-	b.WriteString("<!DOCTYPE html>\n<html lang=\"" + esc(langTag(doc.Meta.Lang)) + "\"" + dirAttr(doc.Meta.Dir) + ">\n<head>\n")
+	b.WriteString("<!DOCTYPE html>\n<html lang=\"" + esc(xmlw.LangTag(doc.Meta.Lang)) + "\"" + dirAttr(doc.Meta.Dir) + ">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\">\n")
 	b.WriteString("<meta name=\"generator\" content=\"Nib\">\n")
 	b.WriteString("<title>" + esc(title) + "</title>\n<style>" + style + "</style>\n</head>\n<body>\n")
 	r := &render{}
 	r.blocks(doc.Blocks)
+	if r.b.Len() == 0 {
+		return nil // nothing to write: the route answers "empty" for every format alike
+	}
 	b.WriteString(r.b.String())
 	b.WriteString("</body>\n</html>\n")
 	return []byte(b.String())
@@ -120,7 +95,7 @@ func spans(sp []docmodel.Span) string {
 		if s.Italic {
 			t = "<em>" + t + "</em>"
 		}
-		if s.Link != "" && safeLink(s.Link) {
+		if s.Link != "" && xmlw.SafeLink(s.Link) {
 			t = "<a href=\"" + esc(s.Link) + "\" rel=\"noopener noreferrer\">" + t + "</a>"
 		}
 		b.WriteString(t)
@@ -173,7 +148,7 @@ func (r *render) blocks(bs []docmodel.Block) {
 					open[len(open)-1].liOpen = true
 				}
 				tag := "ul"
-				if len(open) == depth-1 && numbered(blk.Marker) {
+				if len(open) == depth-1 && xmlw.Numbered(blk.Marker) {
 					tag = "ol"
 				}
 				b.WriteString("<" + tag + dirAttr(blk.Dir) + ">\n")
@@ -192,11 +167,6 @@ func (r *render) blocks(bs []docmodel.Block) {
 		}
 	}
 	closeTo(0)
-}
-
-func numbered(m string) bool {
-	m = strings.TrimSpace(m)
-	return len(m) > 1 && (m[len(m)-1] == '.' || m[len(m)-1] == ')') && m[0] >= '0' && m[0] <= '9'
 }
 
 // plainLine is a heading's spans as one line of text.
@@ -218,7 +188,7 @@ func (r *render) figure(blk docmodel.Block) {
 	if alt == "" {
 		alt = "picture on page " + strconv.Itoa(blk.Page)
 	}
-	mime := map[string]string{"jpg": "image/jpeg", "png": "image/png"}[im.Ext]
+	mime := xmlw.MIME(im.Ext)
 	if len(im.Data) == 0 || mime == "" {
 		b.WriteString("<p><em>[Picture: " + esc(alt) + "]</em></p>\n")
 		return

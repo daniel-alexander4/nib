@@ -163,3 +163,13 @@ func TestNestedListsSitInsideTheirParentItem(t *testing.T) {
 		t.Errorf("the web page nests its lists wrongly:\n%s", page)
 	}
 }
+
+func TestHTMLWithNothingToWriteIsNilAndTakesTheSharedLanguageRule(t *testing.T) {
+	if out := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1}}}); out != nil {
+		t.Errorf("a model of one blank paragraph wrote %d bytes, want nil", len(out))
+	}
+	page := string(Write(docmodel.Document{Meta: docmodel.Meta{Lang: "a--b"}, Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "x"}}}}}))
+	if !strings.Contains(page, `<html lang="und"`) {
+		t.Errorf("a malformed language reached the page:\n%s", page)
+	}
+}

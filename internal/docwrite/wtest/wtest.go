@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +20,17 @@ import (
 	"nib/internal/docmodel"
 	"nib/internal/ziputil"
 )
+
+// onePixelPNG is a PNG a decoder opens: the writers are shown to carry a picture a reader can draw, not four bytes of magic.
+func onePixelPNG() []byte {
+	var b bytes.Buffer
+	im := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	im.Set(0, 0, color.RGBA{R: 200, A: 255})
+	if err := png.Encode(&b, im); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
 
 func sp(t string) []docmodel.Span { return []docmodel.Span{{Text: t}} }
 
@@ -43,7 +57,7 @@ func Hostile() docmodel.Document {
 				{{Paragraphs: [][]docmodel.Span{sp("a"), sp("a2")}, ColSpan: 1, RowSpan: 1}, {Paragraphs: [][]docmodel.Span{sp("<img src=x onerror=1>")}, ColSpan: 1, RowSpan: 1}},
 			}},
 			{Kind: docmodel.Figure, Page: 3, Image: &docmodel.Image{Alt: `Scanned page 3 "quoted" <b>`, Placeholder: "mask"}},
-			{Kind: docmodel.Figure, Page: 3, Image: &docmodel.Image{Alt: "a dot", Ext: "png", Data: []byte{0x89, 'P', 'N', 'G'}}},
+			{Kind: docmodel.Figure, Page: 3, Image: &docmodel.Image{Alt: "a dot", Ext: "png", Data: onePixelPNG(), Width: 1, Height: 1}},
 			{Kind: docmodel.Paragraph, Page: 3, Dir: "rtl", Spans: sp("שלום עולם")},
 		},
 	}
@@ -160,4 +174,39 @@ func ReadBack(got string, want []string) (extra int, ok bool) {
 		}
 	}
 	return len(fields) - len(want), i == len(want)
+}
+
+// EpubCheck runs the W3C validator over a written package and fails on any error it reports. It skips, saying so by
+// name, where `epubcheck` is absent: the confirmatory run is "not run", never the writer (D22). The package is written
+// to t.TempDir and nothing is fetched.
+func EpubCheck(t *testing.T, data []byte) {
+	t.Helper()
+	bin, err := exec.LookPath("epubcheck")
+	if err != nil {
+		t.Skip("epubcheck is not installed: the EPUB validator run is NOT RUN (the XML oracle ran)")
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "book.epub")
+	if err := os.WriteFile(in, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, in)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "LANG=C.UTF-8", "TMPDIR=" + dir}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("epubcheck: %v\n%s", err, out)
+	}
+}
+
+// DecodesAsPNG fails unless the named member is a PNG a decoder opens: "the picture is kept" is shown with a picture.
+func (p Package) DecodesAsPNG(t testing.TB, name string) {
+	t.Helper()
+	b, ok := p.Files[name]
+	if !ok {
+		t.Fatalf("no member %q in %v", name, p.Order)
+	}
+	if _, err := png.Decode(bytes.NewReader(b)); err != nil {
+		t.Errorf("%s does not decode as a PNG: %v", name, err)
+	}
 }

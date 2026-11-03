@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"nib/internal/docmodel"
 	"reflect"
 	"strings"
 	"testing"
@@ -152,5 +153,11 @@ func TestTheExportRouteWritesWordAndOpenDocumentPackages(t *testing.T) {
 		if h.Get("X-Nib-Export") == "" {
 			t.Errorf("%s: no X-Nib-Export", format)
 		}
+	}
+}
+
+func TestTheExportFactsCarryTheTablesWrittenAsText(t *testing.T) {
+	if f := factsOf(docmodel.Report{TablesAsText: 2}, false, 0); f.TablesAsText != 2 {
+		t.Errorf("TablesAsText = %d, want 2", f.TablesAsText)
 	}
 }

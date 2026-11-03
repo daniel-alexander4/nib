@@ -62,6 +62,7 @@ type ExportFacts struct {
 	HiddenText          int          `json:"hiddenText"`
 	OffPage             int          `json:"offPage"`
 	UnreadGlyphs        int          `json:"unreadGlyphs"`
+	TablesAsText        int          `json:"tablesAsText"`
 	Signed              bool         `json:"signed"`
 	UnappliedRedactions int          `json:"unappliedRedactions"`
 	Truncated           bool         `json:"truncated"`
@@ -79,7 +80,7 @@ func factsOf(rep docmodel.Report, signed bool, unapplied int) ExportFacts {
 	f := ExportFacts{
 		V: 1, FlaggedPages: []exportPage{}, ScannedPages: []int{}, Source: rep.Source, DroppedLinks: sum(rep.DroppedLinks), PlaceholderImages: sum(rep.Placeholders),
 		CoveredText: rep.CoveredText + rep.MaybeCovered, HiddenText: rep.HiddenText + rep.HiddenLayer, OffPage: rep.OffPage,
-		UnreadGlyphs: rep.UnreadGlyphs, Signed: signed, UnappliedRedactions: unapplied,
+		UnreadGlyphs: rep.UnreadGlyphs, TablesAsText: rep.TablesAsText, Signed: signed, UnappliedRedactions: unapplied,
 	}
 	for _, p := range rep.FlaggedPages {
 		f.FlaggedPages = append(f.FlaggedPages, exportPage{Page: p.Page, Cause: p.Cause})

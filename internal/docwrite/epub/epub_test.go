@@ -375,3 +375,12 @@ func TestEPUBNavigationNamesEachHeadingByItsOwnTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestEPUBPassesEpubcheck(t *testing.T) {
+	out, _ := Write(wtest.Hostile())
+	wtest.EpubCheck(t, out)
+}
+
+func TestEPUBCarriesAPictureAReaderCanDecode(t *testing.T) {
+	write(t, wtest.Hostile()).DecodesAsPNG(t, "OEBPS/images/img-1.png")
+}

@@ -3,6 +3,7 @@ package odt
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -265,5 +266,27 @@ func TestODTNothingWrittenIsNilAndAFlatPictureKeepsAHeight(t *testing.T) {
 	out, _ := Write(d)
 	if strings.Contains(string(wtest.Open(t, out).Files["content.xml"]), `svg:height="0.000in"`) {
 		t.Error("a zero-height frame")
+	}
+}
+
+func TestODTCarriesAPictureAReaderCanDecode(t *testing.T) {
+	out, _ := Write(wtest.Hostile())
+	wtest.Open(t, out).DecodesAsPNG(t, "Pictures/img-1.png")
+}
+
+func TestODTPictureHeightStaysInsideTwentyTwoInches(t *testing.T) {
+	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 100, Height: 20000}}}}
+	out, _ := Write(d)
+	doc := string(wtest.Open(t, out).Files["content.xml"])
+	i := strings.Index(doc, `svg:height="`)
+	if i < 0 {
+		t.Fatalf("no height:\n%s", doc)
+	}
+	var h float64
+	if _, err := fmt.Sscanf(doc[i:], `svg:height="%fin"`, &h); err != nil {
+		t.Fatal(err)
+	}
+	if h > 22.001 {
+		t.Errorf("height %.3f in passes 22", h)
 	}
 }

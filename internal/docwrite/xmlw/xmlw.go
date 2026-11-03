@@ -86,6 +86,9 @@ func Title(m docmodel.Meta) string {
 	return "Document"
 }
 
+// MaxPx is the longest side a written picture may have, in 96-dpi pixels: 22 inches, Word's own extent limit.
+const MaxPx = 22 * 96
+
 // MIME is the media type of a carried picture's extension, "" for one a writer does not carry.
 func MIME(ext string) string { return map[string]string{"jpg": "image/jpeg", "png": "image/png"}[ext] }
 
@@ -98,14 +101,21 @@ type Cell struct {
 	Restart bool
 }
 
-// MaxSpan caps a cell's column and row span, so a hostile tag cannot make a writer emit billions of covered cells.
-const MaxSpan = 256
+// MaxSpan caps a cell's column and row span; the bound is docmodel's, and the reader applies it with the width and cell
+// bounds, so a writer here only re-asks for a hand-built model.
+const MaxSpan = docmodel.MaxSpan
 
-func heldTo[H interface{ ~struct{ rows, span int } }](m map[int]H) int {
+type hold struct {
+	rows, span int
+	row, cell  int // where the cell that began it sits in the output, so a cancelled hold can say how far it got
+	covers     int // covers emitted so far
+}
+
+func heldTo(m map[int]hold) int {
 	last := 0
 	for c, h := range m {
-		if r := struct{ rows, span int }(h); r.rows > 0 {
-			last = max(last, c+r.span)
+		if h.rows > 0 {
+			last = max(last, c+h.span)
 		}
 	}
 	return last
@@ -114,11 +124,12 @@ func heldTo[H interface{ ~struct{ rows, span int } }](m map[int]H) int {
 // Grid lays a table's rows out on columns: a cell that spans rows leaves one Covered cell in each row below, at the
 // column it begins and with its column span, so a format that wants every grid position written (DOCX `vMerge`, ODF
 // covered cells) gets them. A cell that spans columns is one cell; its covered positions to the right are the writer's.
+// A cell whose columns run over a column a row span from above still holds ends that hold: the cell that began it keeps
+// only the rows it has covered so far, so no stray cover is written under a cell that does not restart.
 func Grid(rows [][]docmodel.Cell) [][]Cell {
-	type hold struct{ rows, span int }
 	var out [][]Cell
 	under := map[int]hold{} // column a span begins at -> what is left of it
-	for _, r := range rows {
+	for ri, r := range rows {
 		var line []Cell
 		col := 0
 		fill := func() {
@@ -128,6 +139,7 @@ func Grid(rows [][]docmodel.Cell) [][]Cell {
 					return
 				}
 				h.rows--
+				h.covers++
 				under[col] = h
 				line = append(line, Cell{Covered: true, Cell: docmodel.Cell{ColSpan: h.span, RowSpan: 1}})
 				col += h.span
@@ -137,9 +149,16 @@ func Grid(rows [][]docmodel.Cell) [][]Cell {
 			fill()
 			c.ColSpan = min(max(c.ColSpan, 1), MaxSpan)
 			c.RowSpan = min(max(c.RowSpan, 1), MaxSpan)
+			// Holds this cell's columns run over end here.
+			for k, h := range under {
+				if h.rows > 0 && k > col && k < col+c.ColSpan {
+					cut(out, ri, line, h)
+					delete(under, k)
+				}
+			}
 			line = append(line, Cell{Cell: c, Restart: c.RowSpan > 1})
 			if c.RowSpan > 1 {
-				under[col] = hold{rows: c.RowSpan - 1, span: c.ColSpan}
+				under[col] = hold{rows: c.RowSpan - 1, span: c.ColSpan, row: ri, cell: len(line) - 1}
 			}
 			col += c.ColSpan
 		}
@@ -157,4 +176,15 @@ func Grid(rows [][]docmodel.Cell) [][]Cell {
 		out = append(out, line)
 	}
 	return out
+}
+
+// cut shortens the cell that began a hold to the rows it covered. The cell is in an earlier row of out, or in the row
+// being built (line) when it began there.
+func cut(out [][]Cell, ri int, line []Cell, h hold) {
+	target := line
+	if h.row < ri {
+		target = out[h.row]
+	}
+	target[h.cell].RowSpan = 1 + h.covers
+	target[h.cell].Restart = h.covers > 0
 }

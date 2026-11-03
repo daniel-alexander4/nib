@@ -330,7 +330,7 @@ func (w *writer) figure(blk docmodel.Block) {
 	w.rels = append(w.rels, rel{id: id, typ: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image", target: "media/" + name})
 	cx, cy := fallbackW, fallbackH
 	if im.Width > 0 && im.Height > 0 {
-		iw, ih := min(im.Width, 20000), min(im.Height, 20000) // Word's own extent limit is 22 inches
+		iw, ih := min(im.Width, xmlw.MaxPx), min(im.Height, xmlw.MaxPx) // Word's own extent limit is 22 inches each way
 		cx, cy = iw*emuPerPx, ih*emuPerPx
 		if cx > maxWidth {
 			cy = int(int64(cy) * maxWidth / int64(cx))

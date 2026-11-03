@@ -1015,3 +1015,5 @@ home today.
   — PLAN-import-export P03.S01: `docwrite/docx` and `docwrite/odt` over `ziputil.Write` and `xmlw.Esc`; spans laid on a grid once; judged by parsing the XML and, where present, a LibreOffice read-back.
 - [ADR-195](195-an-epub-is-the-web-pages-body-as-xhtml-in-a-package-and-its-identity-is-the-contents.md) — **An EPUB is the web page's body as XHTML in a package, and its identity is the content's**
   — PLAN-import-export P03.S03: `html.XHTML` and `docwrite/epub` over `ziputil.Write`; a content-hash `urn:uuid` and a constant `dcterms:modified`; `epubcheck` not run.
+- [ADR-196](196-a-table-meets-one-bound-in-the-model-and-no-writer-is-trusted-to-have-its-own.md) — **A table meets one bound in the model, and no writer is trusted to have its own**
+  — PLAN-import-export P03 phase close: `docmodel.BoundTable`, spans clamped before they are summed, a wide or huge table written as lines of text and reported; shared writer rules moved to `xmlw`.

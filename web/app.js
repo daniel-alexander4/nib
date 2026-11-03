@@ -10616,6 +10616,7 @@ function exportReport(f) {
   if (n(f.hiddenText)) s.push(plural(n(f.hiddenText), 'piece', 'pieces') + ' of invisible text was left out.');
   if (n(f.offPage)) s.push(plural(n(f.offPage), 'piece', 'pieces') + ' of text outside the page was left out.');
   if (n(f.unreadGlyphs)) s.push(plural(n(f.unreadGlyphs), 'character', 'characters') + ' could not be read as text.');
+  if (n(f.tablesAsText)) s.push(plural(n(f.tablesAsText), 'table', 'tables') + ' too large to keep as a table ' + (n(f.tablesAsText) === 1 ? 'is' : 'are') + ' written as lines of text, one line per row.');
   const scanned = Array.isArray(f.scannedPages) ? f.scannedPages : [];
   if (scanned.length) s.push('Page' + (scanned.length > 1 ? 's ' : ' ') + pages(scanned) + (scanned.length > 1 ? ' are' : ' is') + ' a scan, exported as a picture.');
   const flagged = (Array.isArray(f.flaggedPages) ? f.flaggedPages : []).map((p) => p.page);

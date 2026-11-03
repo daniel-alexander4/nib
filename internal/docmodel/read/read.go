@@ -92,6 +92,7 @@ func Read(pdf []byte, opts Options) (docmodel.Document, error) {
 		for k, n := range ep.DroppedLinks {
 			rep.DroppedLinks[k] += n
 		}
+		blocks = boundTables(blocks, rep)
 		for i := range blocks {
 			blocks[i].Page = ep.Page
 			if blocks[i].Dir == "" {
@@ -419,4 +420,21 @@ func majorityDir(blocks []docmodel.Block) string {
 		return "rtl"
 	}
 	return "ltr"
+}
+
+// boundTables is the ONE place a table meets docmodel's bounds, for the tree's tables and the proposal's alike.
+func boundTables(blocks []docmodel.Block, rep *docmodel.Report) []docmodel.Block {
+	var out []docmodel.Block
+	for _, b := range blocks {
+		if b.Kind != docmodel.Table {
+			out = append(out, b)
+			continue
+		}
+		bs, asText := docmodel.BoundTable(b)
+		if asText {
+			rep.TablesAsText++
+		}
+		out = append(out, bs...)
+	}
+	return out
 }

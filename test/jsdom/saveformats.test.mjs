@@ -687,7 +687,7 @@ test('Reduce counts its pages on its button, and Cancel stops the render and kee
 // ── Document as… (ADR-193): one button, three formats, the server's bytes, its facts in words ──────
 test('Document as… offers Markdown, a web page, plain text, Word and OpenDocument, and writes the SELECTED format\'s bytes', async () => {
   written.length = 0;
-  docFacts = JSON.stringify({ source: 'tree', droppedLinks: 3, placeholderImages: 1, flaggedPages: [{ page: 4, cause: 'layout' }], scannedPages: [2] });
+  docFacts = JSON.stringify({ source: 'tree', droppedLinks: 3, placeholderImages: 1, tablesAsText: 2, flaggedPages: [{ page: 4, cause: 'layout' }], scannedPages: [2] });
   $('exportDocBtn').click();
   await settle();
   assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
@@ -696,6 +696,7 @@ test('Document as… offers Markdown, a web page, plain text, Word and OpenDocum
   const note = $('saveAsNote').textContent;
   assert.match(note, /3 links to other pages or places became plain text/);
   assert.match(note, /1 picture could not be carried/);
+  assert.match(note, /2 tables too large to keep as a table are written as lines of text, one line per row/);
   assert.match(note, /Page 2 is a scan, exported as a picture/);
   assert.match(note, /Page 4 was read as best it could/);
   assert.match(note, /not saved is not in it/, 'the note does not say unsaved edits are not exported (W8)');

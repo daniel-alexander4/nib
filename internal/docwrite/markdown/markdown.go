@@ -4,11 +4,11 @@
 package markdown
 
 import (
-	"net/url"
 	"strconv"
 	"strings"
 
 	"nib/internal/docmodel"
+	"nib/internal/docwrite/xmlw"
 )
 
 // Write is the document as Markdown, or nil for a document with no block. A picture is a bracketed line naming it: a
@@ -77,18 +77,6 @@ func linkTarget(u string) string {
 	return b.String()
 }
 
-func safeLink(u string) bool {
-	p, err := url.Parse(u)
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(p.Scheme) {
-	case "http", "https", "mailto":
-		return true
-	}
-	return false
-}
-
 // spans renders styled text. A marker hugs its text, so the whitespace at either edge of a styled span moves outside.
 func spans(sp []docmodel.Span) string {
 	var b strings.Builder
@@ -110,7 +98,7 @@ func spans(sp []docmodel.Span) string {
 		} else if s.Italic {
 			e = "*" + e + "*"
 		}
-		if s.Link != "" && safeLink(s.Link) {
+		if s.Link != "" && xmlw.SafeLink(s.Link) {
 			e = "[" + e + "](" + linkTarget(s.Link) + ")"
 		}
 		if lead {
@@ -152,7 +140,7 @@ func block(b docmodel.Block) string {
 			return ""
 		}
 		m := "-"
-		if n := docmodel.OneLine(b.Marker); isNumber(n) {
+		if n := docmodel.OneLine(b.Marker); xmlw.Numbered(n) {
 			m = n
 		}
 		return strings.Repeat("    ", max(b.Level-1, 0)) + m + " " + lineStart(t)
@@ -169,19 +157,6 @@ func block(b docmodel.Block) string {
 		return "*[Picture: " + escape(alt) + "]*"
 	}
 	return lineStart(spans(b.Spans))
-}
-
-// isNumber is a marker that is a number followed by "." or ")" — the only markers Markdown renders as an ordered item.
-func isNumber(m string) bool {
-	if len(m) < 2 || (m[len(m)-1] != '.' && m[len(m)-1] != ')') {
-		return false
-	}
-	for _, c := range m[:len(m)-1] {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func table(b docmodel.Block) string {
