@@ -1003,3 +1003,5 @@ home today.
   — PLAN-import-export P01.S03b: no LibreOffice for `.txt`/`.csv`; literal cells (mdpdf now resolves backslash escapes); 40,000 lines / 10,000 rows measured.
 - [ADR-189](189-pages-as-images-has-one-encoder-for-each-format-and-the-splits-leave-export.md) — **pages as images has one encoder for each format, and the splits leave Export**
   — PLAN-import-export P02.S01: GIF, BMP, multi-page TIFF, CBZ and ZIP through `pdfops.EncodePageImages`; WebP only where the canvas writes it, else listed with its reason; a per-format note; Split by bookmarks / page range move to Split Pages.
+- [ADR-190](190-style-and-links-are-read-by-the-page-map-and-a-link-is-the-one-the-runs-centre-is-in.md) — **style and links are additive reads, and a link is the one a run's centre is in**
+  — PLAN-import-export P02.S03a: `MapText.Bold/Italic` from descriptor then name; `PageLinks` carries http/https/mailto, counts the rest by cause; the Print flag is not read.

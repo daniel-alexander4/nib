@@ -160,7 +160,10 @@ var published = map[string][]string{
 	"instance.Reply": {"cmd/nib/main.go"},
 	// ADR-088, the page map. Read today by the accuracy harness, which scores detection and redaction against it;
 	// the client becomes a reader when detection and search are driven from it.
-	"pdfops.PageMap":      {"web/detect.js", "test/accuracy/accuracy.mjs"},
+	"pdfops.PageMap": {"web/detect.js", "test/accuracy/accuracy.mjs"},
+	// PLAN-import-export P02.S03a: a page's links, read today by pagelinks_test.go and by the document model at S03c.
+	"pdfops.PageLink":     {"internal/pdfops/pagelinks_test.go"},
+	"pdfops.PageLinkSet":  {"internal/pdfops/pagelinks_test.go"},
 	"server.handoffEvent": {"web/app.js"},
 	"server.armRequest":   {"web/app.js", "build/ceremonyrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention
@@ -487,6 +490,10 @@ var excluded = map[string]string{
 // is an edit to `published`, which is the right one: this is a claim about the TABLE, and the
 // table is the only thing the scan reads.
 var internalShapes = map[string]string{
+	// PLAN-import-export P02.S03a: a page's links. Only pagelinks_test.go reads them until the document model (P02.S03c)
+	// does, in the same package; no reader outside it exists yet and none is claimed.
+	"pdfops.PageLink":    "in-package until P02.S03c (document model)",
+	"pdfops.PageLinkSet": "in-package until P02.S03c (document model)",
 	// **`Anchor` crosses the package boundary as an OPAQUE TOKEN, which is the case the rule is
 	// wrong about rather than a missing reader.** `internal/server/delivery.go:1215,1736,2060`
 	// derive one from an invitation and hand it straight to `VerifyAgainst`. Named search for a

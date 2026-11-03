@@ -60,6 +60,9 @@ type MapText struct {
 	// right-to-left OCR word as Nib stamps one (ADR-097). Text and Chars are then in READING order and Cuts run
 	// from the right: Cuts[i]..Cuts[i+1] is still Chars[i], with Cuts[i] the greater.
 	Reversed bool `json:"reversed,omitempty"`
+	// Bold and Italic are the run's font style (fontstyle.go; PLAN-import-export D18). The detection readers ignore them.
+	Bold   bool `json:"bold,omitempty"`
+	Italic bool `json:"italic,omitempty"`
 }
 
 // MapShape is a ruled line or a box.
@@ -233,7 +236,8 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 	if !rect.onPage() {
 		return MapText{}, false
 	}
-	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3, Reversed: r.reversed}
+	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3, Reversed: r.reversed,
+		Bold: r.bold || r.state.tr == 2, Italic: r.italic}
 	if r.reversed {
 		// Handed over in reading order, rune by rune — and glyph by glyph below, where the boundaries are known.
 		rs := []rune(r.text)

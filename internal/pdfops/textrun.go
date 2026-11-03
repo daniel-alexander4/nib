@@ -53,6 +53,8 @@ type textRun struct {
 	// font is the resource name the run was selected by (`F1`), and baseFont the font's /BaseFont.
 	font     string
 	baseFont string
+	// bold and italic are the font's style (fontstyle.go): the descriptor, else the base-font name.
+	bold, italic bool
 	// size is the effective size in user space: the `Tf` size scaled by the text and current
 	// transformation matrices, so a 10pt font under a 2× `cm` is 20.
 	size float64
@@ -373,7 +375,9 @@ func newRunGState() runGState {
 // runFont is what the walk needs from a font dictionary.
 type runFont struct {
 	baseFont string
-	twoByte  bool // Identity-H or Identity-V: codes are two bytes and CID == code
+	// bold and italic are read once per font object (fontstyle.go, PLAN-import-export D18).
+	bold, italic bool
+	twoByte      bool // Identity-H or Identity-V: codes are two bytes and CID == code
 	// vertical is Identity-V: glyphs advance DOWN the page, and a reader measuring them along the baseline is wrong.
 	vertical bool
 	// splittable is false for a Type0 font under a CMap this reader does not parse: its code lengths
@@ -452,6 +456,7 @@ func loadRunFont(xt *model.XRefTable, obj types.Object, shared ...*formWalkBudge
 	if bf := d.NameEntry("BaseFont"); bf != nil {
 		f.baseFont = *bf
 	}
+	f.bold, f.italic = fontStyle(xt, d)
 	if st := d.NameEntry("Subtype"); st != nil && *st == "Type0" {
 		if enc := d.NameEntry("Encoding"); enc != nil && (*enc == "Identity-H" || *enc == "Identity-V") {
 			f.twoByte = true
@@ -1389,6 +1394,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 		replaced: w.inReplacement(), propsWithoutMCID: w.inPropsWithoutMCID(), reversed: w.inReversedChars()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
+		run.bold, run.italic = gs.font.bold, gs.font.italic
 		run.vertical = gs.font.vertical
 	}
 	run.x, run.y = start.apply(0, gs.ts)
