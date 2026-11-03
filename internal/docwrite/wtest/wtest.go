@@ -97,11 +97,11 @@ func Open(t testing.TB, data []byte) Package {
 	return p
 }
 
-// WellFormed parses every .xml, .rels member to its end, strictly: a writer that emits a bare `&` or an unclosed tag fails here.
+// WellFormed parses every .xml, .rels, .xhtml, .opf member to its end, strictly: a writer that emits a bare `&` or an unclosed tag fails here.
 func (p Package) WellFormed(t testing.TB) {
 	t.Helper()
 	for _, n := range p.Order {
-		if !strings.HasSuffix(n, ".xml") && !strings.HasSuffix(n, ".rels") {
+		if !strings.HasSuffix(n, ".xml") && !strings.HasSuffix(n, ".rels") && !strings.HasSuffix(n, ".xhtml") && !strings.HasSuffix(n, ".opf") {
 			continue
 		}
 		d := xml.NewDecoder(bytes.NewReader(p.Files[n]))

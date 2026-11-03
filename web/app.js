@@ -10596,6 +10596,7 @@ const EXPORT_KEEPS = {
   html: 'Headings, lists, tables, bold, italic, web links and pictures are kept, in one file.',
   txt: 'Plain words in reading order, one table row to a line. No styles, links or pictures.',
   docx: 'Editable in Word. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
+  epub: 'For e-readers and reading apps. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
   odt: 'Editable in LibreOffice and other OpenDocument programs. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
 };
 
@@ -10665,6 +10666,7 @@ els.exportDocBtn.onclick = async () => {
     one('txt', 'Plain text (.txt)', '.txt'), // ADR-194 writes
     one('docx', 'Word (.docx)', '.docx'), // ADR-194 writes
     one('odt', 'OpenDocument text (.odt)', '.odt'), // ADR-194 writes
+    one('epub', 'E-book (.epub)', '.epub'), // ADR-194 writes
   ]);
 };
 

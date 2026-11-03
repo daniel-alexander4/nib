@@ -2,11 +2,14 @@ package html
 
 import (
 	"bytes"
+	"encoding/xml"
+	"io"
 	"strings"
 	"testing"
 
 	"golang.org/x/net/html"
 
+	"nib/internal/docmodel"
 	"nib/internal/docwrite/wtest"
 )
 
@@ -79,5 +82,84 @@ func TestHTMLReadsBackAsTheModelAndHoldsNoScript(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing %s", want)
 		}
+	}
+}
+
+func TestXHTMLIsWellFormedAndTheSameBodyAsTheWebPage(t *testing.T) {
+	d := wtest.Hostile()
+	body, pics, heads := XHTML(d)
+	dec := xml.NewDecoder(strings.NewReader("<r>" + body + "</r>"))
+	for {
+		if _, err := dec.Token(); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatalf("the XHTML body is not well-formed: %v\n%s", err, body)
+		}
+	}
+	if len(heads) != 1 || heads[0].ID != "h-1" || heads[0].Level != 1 || !strings.Contains(body, `<h1 id="h-1">`) {
+		t.Errorf("headings = %+v", heads)
+	}
+	if len(pics) != 1 || pics[0].Name != "images/img-1.png" || pics[0].MIME != "image/png" || !strings.Contains(body, `src="images/img-1.png"/>`) || strings.Contains(body, "data:") {
+		t.Errorf("pictures = %+v", pics)
+	}
+	if strings.Contains(body, "<br>") || strings.Contains(body, "<img alt=\"a dot\" src=\"images/img-1.png\">") {
+		t.Error("a void element is not self-closed")
+	}
+	// The web page is unchanged by the option: no ids, no files, `data:` pictures.
+	page := string(Write(d))
+	if strings.Contains(page, ` id="h-`) || !strings.Contains(page, "data:image/png;base64,") {
+		t.Error("the web page took the XHTML mode")
+	}
+}
+
+func TestNestedListsSitInsideTheirParentItem(t *testing.T) {
+	li := func(level int, text string) docmodel.Block {
+		return docmodel.Block{Kind: docmodel.ListItem, Level: level, List: 1, Marker: "•", Page: 1, Spans: []docmodel.Span{{Text: text}}}
+	}
+	for name, blocks := range map[string][]docmodel.Block{
+		"1-2-1":         {li(1, "a"), li(2, "b"), li(1, "c")},
+		"1-2-3-1":       {li(1, "a"), li(2, "b"), li(3, "c"), li(1, "d")},
+		"skips a level": {li(2, "x"), li(1, "y")},
+		"opens at 3":    {li(3, "x")},
+	} {
+		body, _, _ := XHTML(docmodel.Document{Blocks: blocks})
+		dec := xml.NewDecoder(strings.NewReader("<r>" + body + "</r>"))
+		var stack []string
+		items := 0
+		for {
+			tok, err := dec.Token()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", name, err, body)
+			}
+			switch e := tok.(type) {
+			case xml.StartElement:
+				if (e.Name.Local == "ul" || e.Name.Local == "ol") && len(stack) > 0 && stack[len(stack)-1] != "li" && stack[len(stack)-1] != "r" {
+					t.Errorf("%s: a <%s> is a child of <%s>, not of an <li>:\n%s", name, e.Name.Local, stack[len(stack)-1], body)
+				}
+				if e.Name.Local == "li" {
+					items++
+					if len(stack) == 0 || (stack[len(stack)-1] != "ul" && stack[len(stack)-1] != "ol") {
+						t.Errorf("%s: an <li> outside a list:\n%s", name, body)
+					}
+				}
+				stack = append(stack, e.Name.Local)
+			case xml.EndElement:
+				stack = stack[:len(stack)-1]
+			}
+		}
+		if items < len(blocks) {
+			t.Errorf("%s: %d <li> for at least %d items", name, items, len(blocks))
+		}
+	}
+	// Every item's text survives, in order.
+	body, _, _ := XHTML(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b"), li(1, "c")}})
+	if ia, ib, ic := strings.Index(body, ">a<"), strings.Index(body, "b</li>"), strings.Index(body, "c</li>"); !(ia >= 0 && ia < ib && ib < ic) {
+		t.Errorf("items out of order or missing:\n%s", body)
+	}
+	if page := string(Write(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b")}})); strings.Contains(page, "</ul>\n</ul>") || !strings.Contains(page, "<li>a<ul>") {
+		t.Errorf("the web page nests its lists wrongly:\n%s", page)
 	}
 }

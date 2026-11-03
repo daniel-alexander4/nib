@@ -10,6 +10,7 @@ import (
 	"nib/internal/docmodel"
 	"nib/internal/docmodel/read"
 	"nib/internal/docwrite/docx"
+	"nib/internal/docwrite/epub"
 	"nib/internal/docwrite/html"
 	"nib/internal/docwrite/markdown"
 	"nib/internal/docwrite/odt"
@@ -32,6 +33,7 @@ var exportFormats = map[string]struct {
 	"txt":  {"text/plain; charset=utf-8", plain(text.Write)},                                        // ADR-194 writes
 	"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.Write}, // ADR-194 writes
 	"odt":  {"application/vnd.oasis.opendocument.text", odt.Write},                                  // ADR-194 writes
+	"epub": {"application/epub+zip", epub.Write},                                                    // ADR-194 writes
 }
 
 // plain lifts a writer that cannot fail into the route's shape.
@@ -106,8 +108,8 @@ func exportTitle(s string) string {
 	return t
 }
 
-// handleExportDocument answers POST /api/export/document?format=md|html|txt|docx|odt&title=&redactionsPending=: the open
-// document as a Markdown, HTML, text, Word or OpenDocument file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
+// handleExportDocument answers POST /api/export/document?format=md|html|txt|docx|odt|epub&title=&redactionsPending=: the open
+// document as a Markdown, HTML, text, Word, OpenDocument or EPUB file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
 // what it did not carry in X-Nib-Export (D23). It reads the server's copy: overlay marks and typed field values the
 // window has not baked are not in it (W8), and the window says so on the Format line. 422 names a refusal about the
 // document; 409 is ADR-004's "not that document" and also the document having changed while it was read.
@@ -118,7 +120,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	format, known := exportFormats[r.URL.Query().Get("format")]
 	if !known {
-		httpError(w, http.StatusBadRequest, "format must be md, html, txt, docx or odt")
+		httpError(w, http.StatusBadRequest, "format must be md, html, txt, docx, odt or epub")
 		return
 	}
 	unapplied, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("redactionsPending")))

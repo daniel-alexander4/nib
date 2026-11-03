@@ -50,6 +50,44 @@ func dirAttr(d string) string {
 	return ""
 }
 
+// Picture is a picture the XHTML body names by file, so a package can carry it as a member instead of a `data:` URL.
+type Picture struct {
+	Name string // "images/img-N.ext", fixed and never derived from the PDF (Y9)
+	MIME string
+	Data []byte
+}
+
+// Heading is one heading of the XHTML body: its id in the body, its level and its text as one line.
+type Heading struct {
+	ID    string
+	Level int
+	Text  string
+}
+
+// XHTML is the model's body as well-formed XML — the same blocks, escapes and link allowlist as Write, through the same
+// code — for a package that wraps it (EPUB, P03.S03): void elements self-close, each heading carries an id (`h-N`) for a
+// table of contents, and a picture is a separate member (`images/img-N.ext`) the body refers to.
+func XHTML(doc docmodel.Document) (body string, pics []Picture, heads []Heading) {
+	r := &render{xhtml: true}
+	r.blocks(doc.Blocks)
+	return r.b.String(), r.pics, r.heads
+}
+
+// render holds one pass: the output, and in XHTML mode the pictures and headings it met.
+type render struct {
+	b     strings.Builder
+	xhtml bool
+	pics  []Picture
+	heads []Heading
+}
+
+func (r *render) void(tag string) string {
+	if r.xhtml {
+		return "<" + tag + "/>"
+	}
+	return "<" + tag + ">"
+}
+
 // Write is the document as HTML5.
 func Write(doc docmodel.Document) []byte {
 	title := docmodel.OneLine(doc.Meta.Title)
@@ -62,7 +100,9 @@ func Write(doc docmodel.Document) []byte {
 	b.WriteString("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\">\n")
 	b.WriteString("<meta name=\"generator\" content=\"Nib\">\n")
 	b.WriteString("<title>" + esc(title) + "</title>\n<style>" + style + "</style>\n</head>\n<body>\n")
-	blocks(&b, doc.Blocks)
+	r := &render{}
+	r.blocks(doc.Blocks)
+	b.WriteString(r.b.String())
 	b.WriteString("</body>\n</html>\n")
 	return []byte(b.String())
 }
@@ -88,11 +128,22 @@ func spans(sp []docmodel.Span) string {
 	return b.String()
 }
 
-func blocks(b *strings.Builder, bs []docmodel.Block) {
-	var open []string // closing tags of the lists open, innermost last
+func (r *render) blocks(bs []docmodel.Block) {
+	b := &r.b
+	// A list nested in a list sits INSIDE the parent's open <li> (a <ul> holds only <li>), so an item's <li> is left open
+	// until the next item at its depth or a shallower one closes it.
+	type level struct {
+		tag    string
+		liOpen bool
+	}
+	var open []level
 	closeTo := func(n int) {
 		for len(open) > n {
-			b.WriteString(open[len(open)-1])
+			l := open[len(open)-1]
+			if l.liOpen {
+				b.WriteString("</li>\n")
+			}
+			b.WriteString("</" + l.tag + ">\n")
 			open = open[:len(open)-1]
 		}
 	}
@@ -103,23 +154,37 @@ func blocks(b *strings.Builder, bs []docmodel.Block) {
 		switch blk.Kind {
 		case docmodel.Heading:
 			l := strconv.Itoa(min(max(blk.Level, 1), 6))
-			b.WriteString("<h" + l + dirAttr(blk.Dir) + ">" + spans(blk.Spans) + "</h" + l + ">\n")
+			id := ""
+			if r.xhtml {
+				id = " id=\"h-" + strconv.Itoa(len(r.heads)+1) + "\""
+				r.heads = append(r.heads, Heading{ID: "h-" + strconv.Itoa(len(r.heads)+1), Level: min(max(blk.Level, 1), 6), Text: plainLine(blk.Spans)})
+			}
+			b.WriteString("<h" + l + id + dirAttr(blk.Dir) + ">" + spans(blk.Spans) + "</h" + l + ">\n")
 		case docmodel.ListItem:
 			depth := max(blk.Level, 1)
 			closeTo(depth)
+			if depth == len(open) && open[depth-1].liOpen {
+				b.WriteString("</li>\n")
+				open[depth-1].liOpen = false
+			}
 			for len(open) < depth {
+				if len(open) > 0 && !open[len(open)-1].liOpen {
+					b.WriteString("<li>") // a level was skipped: the parent item is empty
+					open[len(open)-1].liOpen = true
+				}
 				tag := "ul"
 				if len(open) == depth-1 && numbered(blk.Marker) {
 					tag = "ol"
 				}
 				b.WriteString("<" + tag + dirAttr(blk.Dir) + ">\n")
-				open = append(open, "</"+tag+">\n")
+				open = append(open, level{tag: tag})
 			}
-			b.WriteString("<li>" + spans(blk.Spans) + "</li>\n")
+			b.WriteString("<li>" + spans(blk.Spans))
+			open[depth-1].liOpen = true
 		case docmodel.Table:
-			table(b, blk)
+			r.table(blk)
 		case docmodel.Figure:
-			figure(b, blk)
+			r.figure(blk)
 		default:
 			if s := spans(blk.Spans); s != "" {
 				b.WriteString("<p" + dirAttr(blk.Dir) + ">" + s + "</p>\n")
@@ -134,7 +199,17 @@ func numbered(m string) bool {
 	return len(m) > 1 && (m[len(m)-1] == '.' || m[len(m)-1] == ')') && m[0] >= '0' && m[0] <= '9'
 }
 
-func figure(b *strings.Builder, blk docmodel.Block) {
+// plainLine is a heading's spans as one line of text.
+func plainLine(sp []docmodel.Span) string {
+	var t strings.Builder
+	for _, s := range sp {
+		t.WriteString(s.Text)
+	}
+	return docmodel.OneLine(t.String())
+}
+
+func (r *render) figure(blk docmodel.Block) {
+	b := &r.b
 	im := blk.Image
 	if im == nil {
 		return
@@ -148,17 +223,24 @@ func figure(b *strings.Builder, blk docmodel.Block) {
 		b.WriteString("<p><em>[Picture: " + esc(alt) + "]</em></p>\n")
 		return
 	}
+	if r.xhtml {
+		name := "images/img-" + strconv.Itoa(len(r.pics)+1) + "." + im.Ext
+		r.pics = append(r.pics, Picture{Name: name, MIME: mime, Data: im.Data})
+		b.WriteString("<figure><img alt=\"" + esc(alt) + "\" src=\"" + name + "\"/></figure>\n")
+		return
+	}
 	b.WriteString("<figure><img alt=\"" + esc(alt) + "\" src=\"data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(im.Data) + "\"></figure>\n")
 }
 
-func table(b *strings.Builder, blk docmodel.Block) {
+func (r *render) table(blk docmodel.Block) {
+	b := &r.b
 	if len(blk.Rows) == 0 {
 		return
 	}
 	b.WriteString("<table" + dirAttr(blk.Dir) + ">\n")
-	for i, r := range blk.Rows {
+	for i, row := range blk.Rows {
 		b.WriteString("<tr>")
-		for _, c := range r {
+		for _, c := range row {
 			tag := "td"
 			if c.Header || i < blk.HeaderRows {
 				tag = "th"
@@ -176,7 +258,7 @@ func table(b *strings.Builder, blk docmodel.Block) {
 					ps = append(ps, s)
 				}
 			}
-			b.WriteString("<" + tag + attrs + ">" + strings.Join(ps, "<br>") + "</" + tag + ">")
+			b.WriteString("<" + tag + attrs + ">" + strings.Join(ps, r.void("br")) + "</" + tag + ">")
 		}
 		b.WriteString("</tr>\n")
 	}

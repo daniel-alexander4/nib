@@ -137,6 +137,7 @@ func TestTheExportRouteWritesWordAndOpenDocumentPackages(t *testing.T) {
 	for format, want := range map[string]struct{ mime, member string }{
 		"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word/document.xml"},
 		"odt":  {"application/vnd.oasis.opendocument.text", "content.xml"},
+		"epub": {"application/epub+zip", "OEBPS/content.xhtml"},
 	} {
 		code, body, h := exportDocument(t, ts.URL, c, csrf, dr.ID, "format="+format+"&title=Quarterly")
 		if code != 200 || h.Get("Content-Type") != want.mime {

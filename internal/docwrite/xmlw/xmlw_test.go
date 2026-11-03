@@ -50,3 +50,12 @@ func TestGridHoldsARowSpanThroughAShortRowAndCapsSpans(t *testing.T) {
 		t.Errorf("spans not capped: %+v", h[0][0])
 	}
 }
+
+func TestLangTagKeepsOnlyBCP47Shapes(t *testing.T) {
+	for in, want := range map[string]string{"en": "en", "en-US": "en-US", "zh-Hant-TW": "zh-Hant-TW", "x-private": "x-private",
+		"": "und", "-": "und", "a--b": "und", "en-": "und", "-en": "und", "123456789012": "und", "en-123456789": "und", "1a": "und", "a": "und", `en"><script>`: "und"} {
+		if got := LangTag(in); got != want {
+			t.Errorf("LangTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

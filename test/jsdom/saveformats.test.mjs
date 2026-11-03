@@ -691,7 +691,7 @@ test('Document as… offers Markdown, a web page, plain text, Word and OpenDocum
   $('exportDocBtn').click();
   await settle();
   assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
-  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)', 'Word (.docx)', 'OpenDocument text (.odt)']);
+  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)', 'Word (.docx)', 'OpenDocument text (.odt)', 'E-book (.epub)']);
   assert.equal($('saveAsName').value, 'stranger.md');
   const note = $('saveAsNote').textContent;
   assert.match(note, /3 links to other pages or places became plain text/);
@@ -729,6 +729,16 @@ test('Document as… asks for Word and OpenDocument by their own word and keeps 
   assert.equal($('saveAsName').value, 'stranger.odt');
   await save();
   assert.equal(written[0].bytes, 'DOC-AS-odt');
+  written.length = 0;
+  $('exportDocBtn').click();
+  await settle();
+  $('saveAsFormat').selectedIndex = 5;
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  assert.equal($('saveAsName').value, 'stranger.epub');
+  assert.match($('saveAsNote').textContent, /e-readers/);
+  assert.match($('saveAsNote').textContent, /page layout is not/);
+  await save();
+  assert.equal(written[0].bytes, 'DOC-AS-epub');
 });
 
 test('Document as… says in the server\'s words why there is nothing to export, and opens no dialog', async () => {

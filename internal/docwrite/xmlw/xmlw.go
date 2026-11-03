@@ -49,13 +49,23 @@ func SafeLink(u string) bool {
 	return false
 }
 
-// LangTag is a catalog /Lang kept only when it is a plain BCP 47 shape; anything else is "und".
+// LangTag is a catalog /Lang kept only when it is a BCP 47 shape — subtags of one to eight letters or digits joined by
+// single hyphens, the first of them two to eight letters (or the single letter i or x) — anything else is "und".
 func LangTag(l string) string {
-	if l == "" || len(l) > 35 {
+	if len(l) > 35 {
 		return "und"
 	}
-	for _, c := range l {
-		if !(c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+	for i, part := range strings.Split(l, "-") {
+		if part == "" || len(part) > 8 {
+			return "und"
+		}
+		for _, c := range part {
+			letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+			if !letter && !(c >= '0' && c <= '9') || i == 0 && !letter {
+				return "und"
+			}
+		}
+		if i == 0 && len(part) == 1 && part != "i" && part != "x" && part != "I" && part != "X" {
 			return "und"
 		}
 	}

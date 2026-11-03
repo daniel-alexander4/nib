@@ -1013,3 +1013,5 @@ home today.
   — PLAN-import-export P02.S04: `/api/export/document`, `ExportFacts`, the three writers behind `docmodel.Clean` and one escape door each.
 - [ADR-194](194-word-and-opendocument-text-are-written-as-flowing-packages-through-the-zip-door-and-one-xml-escape-door.md) — **Word and OpenDocument text are written as flowing packages through the zip door and one XML escape door**
   — PLAN-import-export P03.S01: `docwrite/docx` and `docwrite/odt` over `ziputil.Write` and `xmlw.Esc`; spans laid on a grid once; judged by parsing the XML and, where present, a LibreOffice read-back.
+- [ADR-195](195-an-epub-is-the-web-pages-body-as-xhtml-in-a-package-and-its-identity-is-the-contents.md) — **An EPUB is the web page's body as XHTML in a package, and its identity is the content's**
+  — PLAN-import-export P03.S03: `html.XHTML` and `docwrite/epub` over `ziputil.Write`; a content-hash `urn:uuid` and a constant `dcterms:modified`; `epubcheck` not run.
