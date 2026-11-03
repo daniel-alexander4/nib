@@ -187,6 +187,17 @@ test('the file lifecycle lives in File mode, not in the fixed bar', () => {
     `these controls are neither in the fixed bar nor in File mode: ${missing.join(', ')} — moved out of the bar and not rehomed, which is worse than leaving them there`);
 });
 
+// ── ADR-189 (D26): the two splits write many PDFs; they are Page Functions, with their ids unchanged ──
+test('Split by bookmarks and Split by page range live in Page Functions → Split Pages', () => {
+  const group = [...doc.querySelectorAll('.tbtab[data-tab="edit"] .tbgroup')].find((g) => g.dataset.label === 'Split Pages');
+  assert.ok(group, 'there is no Split Pages group in Page Functions');
+  for (const id of ['exportBookmarkSplitBtn', 'exportPageSplitBtn']) {
+    assert.ok(group.contains(doc.getElementById(id)), `${id} is not in Split Pages`);
+  }
+  const card = [...doc.querySelectorAll('.tbtab[data-tab="file"] .tbgroup')].find((g) => g.dataset.label === 'Export & Print');
+  assert.equal(card.querySelector('#exportBookmarkSplitBtn, #exportPageSplitBtn'), null, 'a split is back in Export & Print');
+});
+
 // ── ADR-103: closing is the strip's, and an export with several formats is one button ────
 test('Close all sits beside the tab strip, and the strip holds nothing but tabs', () => {
   const strip = doc.getElementById('tabstrip');
@@ -212,8 +223,8 @@ test('the Export & Print card is one button per thing exported', () => {
   const ids = [...card.querySelectorAll('button')].map((b) => b.id);
   assert.deepEqual(ids, [
     'printBtn', 'exportPagesBtn', 'exportImagesBtn', 'exportTextBtn',
-    'exportTableBtn', 'exportFormBtn', 'exportBookmarkSplitBtn', 'exportPageSplitBtn',
-  ], 'the Export & Print card is not the eight buttons ADR-103 names, in its order. An export with more than one format is ONE button and the Save dialog\'s Format line chooses — a per-format button is the fifteen-button card coming back');
+    'exportTableBtn', 'exportFormBtn',
+  ], 'the Export & Print card is not the six buttons ADR-189 names, in its order. An export with more than one format is ONE button and the Save dialog\'s Format line chooses — a per-format button is the fifteen-button card coming back');
   // The certificate is a real button in Secure, not a forwarding twin of one in File.
   const cert = doc.getElementById('exportCertBtn');
   assert.equal(cert?.closest('.tbtab')?.dataset.tab, 'secure', 'Signing certificate is not in the Secure pane');

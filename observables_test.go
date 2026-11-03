@@ -414,7 +414,9 @@ var published = map[string][]string{
 
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
 // unread observable gets parked and forgotten, which is the failure this file exists for.
-var excluded = map[string]string{}
+var excluded = map[string]string{
+	"pdfops.PageImageResult": "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
+}
 
 // internalShapes names each shape whose declared readers are ALL inside its own declaring
 // package, with the reason that is the honest answer for it (/pending 558).

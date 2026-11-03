@@ -244,7 +244,7 @@ const els = {
   profileOfferModal: $('profileOfferModal'), profileOfferList: $('profileOfferList'),
   profileOfferCancel: $('profileOfferCancel'), profileOfferYes: $('profileOfferYes'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
-  saveAsFormatRow: $('saveAsFormatRow'), saveAsFormat: $('saveAsFormat'), saveAsStatus: $('saveAsStatus'),
+  saveAsFormatRow: $('saveAsFormatRow'), saveAsNote: $('saveAsNote'), saveAsFormat: $('saveAsFormat'), saveAsStatus: $('saveAsStatus'),
   saveAsDir: $('saveAsDir'), saveAsHere: $('saveAsHere'), saveAsUp: $('saveAsUp'),
   saveAsList: $('saveAsList'), saveAsCancel: $('saveAsCancel'), saveAsGo: $('saveAsGo'),
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
@@ -9306,6 +9306,7 @@ function openSaveAs(blob, defaultName, title, formats) {
   els.saveAsFormat.disabled = false;
   els.saveAsGo.disabled = false;
   els.saveAsStatus.textContent = '';
+  showFormatNote(); // after the resets above: an unavailable first entry must leave Save off with its reason
   saveAsPutName = defaultName;
   els.saveAsTitle.textContent = title || 'Save';
   els.saveAsName.value = defaultName;
@@ -9322,6 +9323,24 @@ function saveAsSelected() {
   return saveAsFormats ? saveAsFormats[els.saveAsFormat.selectedIndex] || null : null;
 }
 
+// showFormatNote writes what the selected format keeps (D28) under the Format line, and — for a format this
+// machine cannot write (D27, X10) — says so in the dialog's status line and turns Save off. The entry stays
+// selectable and focusable (a disabled <option> is skipped by assistive technology); `#saveAsStatus` carries the
+// reason and the select is described by the static note.
+function showFormatNote() {
+  const f = saveAsSelected();
+  els.saveAsNote.textContent = (f && f.note) || '';
+  els.saveAsNote.hidden = !(f && f.note);
+  if (f && f.note) els.saveAsFormat.setAttribute('aria-describedby', 'saveAsNote');
+  else els.saveAsFormat.removeAttribute('aria-describedby');
+  if (f && f.unavailable) {
+    els.saveAsStatus.textContent = f.unavailable;
+    els.saveAsGo.disabled = true;
+  } else if (!saveAsBusy) {
+    els.saveAsGo.disabled = false;
+  }
+}
+
 // The name follows the format, but only as far as the name is still the dialog's own. A name the
 // dialog put there is replaced whole (the two picture formats differ by more than an extension:
 // "-page3.png" and "-pages.zip"); a name the user typed keeps every character except a
@@ -9331,6 +9350,7 @@ els.saveAsFormat.onchange = () => {
   const f = saveAsSelected();
   if (!f) return;
   els.saveAsStatus.textContent = '';
+  showFormatNote();
   const cur = els.saveAsName.value;
   if (cur === saveAsPutName) {
     els.saveAsName.value = saveAsPutName = f.name;
@@ -9405,6 +9425,9 @@ function closeSaveAs() {
   saveAsBlob = null;
   saveAsFormats = null;
   els.saveAsStatus.textContent = '';
+  els.saveAsNote.textContent = '';
+  els.saveAsNote.hidden = true;
+  els.saveAsFormat.removeAttribute('aria-describedby');
 }
 
 // b64ToBlob decodes a base64 string (e.g. an upgraded .ots from the server) into
@@ -9422,6 +9445,7 @@ els.saveAsDir.onchange = () => browseDir(els.saveAsDir.value.trim());
 els.saveAsGo.onclick = async () => {
   if (saveAsBusy) return;
   if (!saveAsBlob && !saveAsFormats) return;
+  if (saveAsSelected()?.unavailable) return; // the button is off for it; the handler holds without the attribute
   const name = els.saveAsName.value.trim();
   const dir = els.saveAsDir.value.trim();
   if (!name) return toast('Enter a file name');
@@ -10101,9 +10125,9 @@ async function flattenRefusal(res, fallback) {
 // half-threaded shape — the request named A and carried B's pages.
 // `press` is the Save dialog's (see renderFilledPages): a cancelled one gets no upload either — the
 // last page can finish after the Cancel, and the pictures of a 200-page document are ~143 MB.
-async function assembleBlob(format, owner = view, press = null) {
+async function assembleBlob(format, owner = view, press = null, onlyPage = undefined) {
   const docId = owner.docMeta && owner.docMeta.id;
-  const pages = await renderFilledPages(2, undefined, undefined, undefined, owner, press);
+  const pages = await renderFilledPages(2, onlyPage, undefined, undefined, owner, press);
   if (!pages || (press && !press.still())) return null;
   const form = new FormData();
   pages.forEach((p, i) => {
@@ -10113,7 +10137,7 @@ async function assembleBlob(format, owner = view, press = null) {
   });
   form.append('format', format);
   const res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId });
-  if (!res.ok) { toast('export failed'); return null; }
+  if (!res.ok) { toast(await errText(res, 'export failed')); return null; }
   return res.blob();
 }
 
@@ -10504,22 +10528,63 @@ els.exportPagesBtn.onclick = () => {
       throw new Error('That document is no longer open');
     }
   };
+  // ADR-189. PNG, JPEG and WebP are the browser's own encoders; GIF, BMP, TIFF, CBZ and ZIP are packaged by
+  // the server from the rendered pages (`/api/assemble`), so there is one encoder for each and none here.
+  const onePage = async (press, mime, quality) => {
+    stillOpen();
+    const pages = await renderFilledPages(2, pageNum, mime, quality, owner, press);
+    if (!pages || (press && !press.still())) return null;
+    return pages[0].blob;
+  };
+  const viaServer = async (press, format, only) => {
+    stillOpen();
+    const blob = await assembleBlob(format, owner, press, only);
+    if (!blob) throw new Error('Could not make the pictures');
+    return blob;
+  };
+  const webp = canWriteWebP();
   openSaveAs(null, '', 'Export pages as images', [
-    { label: 'This page (PNG)', name: exportName + '-page' + pageNum + '.png', ext: '.png',
-      make: async () => {
-        stillOpen();
-        const [{ blob }] = await renderFilledPages(2, pageNum, undefined, undefined, owner);
-        return blob;
-      } },
-    { label: 'Every page (ZIP)', name: exportName + '-pages.zip', ext: '.zip',
+    { label: 'This page (PNG, .png)', name: exportName + '-page' + pageNum + '.png', ext: '.png', // ADR-189 writes
+      note: 'One picture of this page, with the words and drawing as the window shows them.',
+      make: async (press) => { stillOpen(); const [{ blob }] = await renderFilledPages(2, pageNum, undefined, undefined, owner, press); return blob; } },
+    { label: 'This page (JPEG, .jpg)', name: exportName + '-page' + pageNum + '.jpg', ext: '.jpg', // ADR-189 writes
+      note: 'A smaller picture of this page; JPEG blurs fine text slightly.',
+      make: (press) => onePage(press, 'image/jpeg', 0.92) }, // ADR-189 writes
+    { label: 'This page (WebP, .webp)' + (webp ? '' : ' — this browser cannot write WebP'), name: exportName + '-page' + pageNum + '.webp', ext: '.webp', // ADR-189 writes
+      unavailable: webp ? '' : 'This browser cannot write WebP. Choose another format.',
+      note: 'A small picture of this page that most current programs open.',
       make: async (press) => {
-        stillOpen();
-        const blob = await assembleBlob('zip', owner, press);
-        if (!blob) throw new Error('Could not make the pictures');
+        const blob = await onePage(press, 'image/webp', 0.92); // ADR-189 writes
+        if (blob && blob.type !== 'image/webp') throw new Error('This browser cannot write WebP'); // ADR-189 writes
         return blob;
       } },
+    { label: 'This page (GIF, .gif)', name: exportName + '-page' + pageNum + '.gif', ext: '.gif', // ADR-189 writes
+      note: 'A picture of this page in 256 colours; photographs and shading lose detail.',
+      make: (press) => viaServer(press, 'gif', pageNum) },
+    { label: 'This page (BMP, .bmp)', name: exportName + '-page' + pageNum + '.bmp', ext: '.bmp', // ADR-189 writes
+      note: 'An uncompressed picture of this page; the file is large.',
+      make: (press) => viaServer(press, 'bmp', pageNum) },
+    { label: 'Every page (ZIP of PNGs, .zip)', name: exportName + '-pages.zip', ext: '.zip', // ADR-189 writes
+      note: 'One PNG picture per page, in a ZIP, named page-001.png and on.',
+      make: (press) => viaServer(press, 'zip') },
+    { label: 'Every page (TIFF, .tiff)', name: exportName + '-pages.tiff', ext: '.tiff', // ADR-189 writes
+      note: 'All pages in one TIFF file, one picture per page.',
+      make: (press) => viaServer(press, 'tiff') },
+    { label: 'Every page (comic book, .cbz)', name: exportName + '-pages.cbz', ext: '.cbz', // ADR-189 writes
+      note: 'All pages as pictures for a comic-book reader.',
+      make: (press) => viaServer(press, 'cbz') },
   ]);
 };
+
+// canWriteWebP asks the browser's own canvas: Go has no WebP encoder, and a browser that cannot write one
+// answers a PNG data URL. Asked when the dialog opens, so it describes this browser and not a guess.
+function canWriteWebP() {
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    return String(c.toDataURL('image/webp')).startsWith('data:image/webp');
+  } catch (e) { return false; }
+}
 
 els.exportTextBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).

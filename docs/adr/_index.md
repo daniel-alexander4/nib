@@ -1001,3 +1001,5 @@ home today.
   — PLAN-import-export P01.S03a: `internal/ziputil` reads under limits before decompressing and writes stored-first members; a census fails a file that opens `archive/zip` itself; GIF, BMP, multi-page TIFF and CBZ become pages through one budget, and every cap refuses by name.
 - [ADR-188](188-text-and-csv-are-laid-out-by-nibs-own-renderer-and-the-caps-are-measured.md) — **plain text and CSV are laid out by Nib's own renderer, and the caps are measured**
   — PLAN-import-export P01.S03b: no LibreOffice for `.txt`/`.csv`; literal cells (mdpdf now resolves backslash escapes); 40,000 lines / 10,000 rows measured.
+- [ADR-189](189-pages-as-images-has-one-encoder-for-each-format-and-the-splits-leave-export.md) — **pages as images has one encoder for each format, and the splits leave Export**
+  — PLAN-import-export P02.S01: GIF, BMP, multi-page TIFF, CBZ and ZIP through `pdfops.EncodePageImages`; WebP only where the canvas writes it, else listed with its reason; a per-format note; Split by bookmarks / page range move to Split Pages.

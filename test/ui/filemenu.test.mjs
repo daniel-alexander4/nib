@@ -77,7 +77,7 @@ test('File has no Close control, and the Export card is eight buttons', async ()
     .filter((b) => b.getBoundingClientRect().height > 0).map((b) => b.textContent.trim()));
   assert.deepEqual(shown, [
     'Print…', 'Pages as images…', 'Pictures in the document (ZIP)', 'Document text (.txt)',
-    'This page\'s table…', 'Form data…', 'Split by bookmarks…', 'Split by page range…',
+    'This page\'s table…', 'Form data…',
   ]);
 });
 
@@ -86,7 +86,7 @@ test('pages as images writes a PNG of this page by default, and a ZIP of every p
   assert.equal(png.name, 'menu-a-page1.png');
   assert.equal(png.bytes.subarray(0, 8).toString('latin1'), '\x89PNG\r\n\x1a\n', 'the default format did not write a PNG');
 
-  const zip = await exportAs('#exportPagesBtn', 'Every page (ZIP)');
+  const zip = await exportAs('#exportPagesBtn', 'Every page (ZIP of PNGs, .zip)');
   assert.equal(zip.name, 'menu-a-pages.zip', 'choosing the ZIP did not rename the file for it');
   assert.equal(zip.bytes.subarray(0, 2).toString('latin1'), 'PK', 'the file named .zip is not a ZIP — one format\'s bytes went out under the other\'s name');
   // Three pages in the fixture: three entries, each named in the archive's directory.

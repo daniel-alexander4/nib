@@ -353,13 +353,11 @@
            more than one format the choice is the Save dialog's Format line. Fifteen buttons stood
            here until then, seven of them the same three exports under different extensions. -->
       <button id="printBtn" title="Print (opens your browser's print dialog)" disabled>Print…</button>
-      <button id="exportPagesBtn" title="Save this page as a PNG picture, or every page as pictures in a ZIP">Pages as images…</button>
+      <button id="exportPagesBtn" title="Save this page, or every page, as pictures — PNG, JPEG, WebP, GIF, BMP, TIFF or a comic book">Pages as images…</button>
       <button id="exportImagesBtn" title="Save the pictures placed in this document, as they were put in, in a ZIP">Pictures in the document (ZIP)</button>
       <button id="exportTextBtn">Document text (.txt)</button>
       <button id="exportTableBtn" title="Extract this page's table to a spreadsheet — XLSX, CSV or ODS (best-effort on grid tables — review the result)">This page's table…</button>
       <button id="exportFormBtn" title="Export this form's data as CSV, JSON or XFDF — XFDF is the interchange format Acrobat and Foxit read">Form data…</button>
-      <button id="exportBookmarkSplitBtn">Split by bookmarks…</button>
-      <button id="exportPageSplitBtn">Split by page range…</button>
             </div>
     </div><div class="tbtab" data-tab="markup">
 <div class="tbgroup" data-label="Recognize Text (OCR)" data-fold="1">
@@ -464,6 +462,8 @@
       
       
       <div class="tbgroup" data-label="Split Pages" data-fold="2">
+<button id="exportBookmarkSplitBtn" title="Save each bookmarked section as its own PDF">Split by bookmarks…</button>
+      <button id="exportPageSplitBtn" title="Save each range of pages as its own PDF">Split by page range…</button>
 <button id="splitBtn" title="Split an imposed page (2-up, 4-up…) into separate pages">Split page…</button>
       <button id="splitBoxBtn" title="Draw regions to split this page into (the page is replaced by the pieces you draw)">Split by box</button>
       <button id="applyBoxSplitBtn" title="Replace this page with the regions you drew, each as its own page">Apply box split</button>
@@ -2077,6 +2077,8 @@
       <!-- Shown only for an export that comes in more than one format (ADR-103); every other save
            leaves it hidden and the dialog is what it always was. -->
       <label id="saveAsFormatRow" hidden>Format <select id="saveAsFormat"></select></label>
+      <!-- What the selected format keeps, in one sentence (D28); static text per format, written by showFormatNote. -->
+      <p id="saveAsNote" hidden></p>
       <label>Folder <input id="saveAsDir" type="text" /></label>
       <div class="dirbrowse">
         <button id="saveAsUp" type="button" title="Parent folder">⬆ Up</button>

@@ -2528,3 +2528,4 @@ body.presenting .presentbar { display: flex; }
 }
 /* The Compare legend's "added" is a key to .diffadd, so with its colour gone it takes the wash. */
 :root[data-appearance="light"] .inkgreen { background: color-mix(in srgb, var(--green) 16%, transparent); }
+#saveAsNote { margin: 4px 0 8px; font-size: 12px; }

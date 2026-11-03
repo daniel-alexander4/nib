@@ -21,7 +21,6 @@ import (
 // entry whose file no longer calls the archive is itself a failure.
 var exempt = map[string]string{
 	"internal/server/form.go":        "writes a bundle of filled forms as a plain deflate zip; no stored-first member, no reader",
-	"internal/server/export.go":      "writes the export bundle (one page per file) as a plain deflate zip",
 	"internal/pdfops/pdfops.go":      "writes the extracted-attachments / page-images bundle as a plain deflate zip",
 	"internal/pdfops/spreadsheet.go": "GridToXLSX: an OOXML package with no stored member; migrates with P03's DOCX writer",
 	"internal/testpdf/hostile.go":    "test-fixture generator for hostile archives; it must be able to write what the door refuses",

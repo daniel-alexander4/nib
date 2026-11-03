@@ -1309,11 +1309,11 @@ off — a draft watermark, a markup layer, an alternate language — reordering,
 extracting or redacting pages leaves them switched off. (**Strip active content** still
 reveals them, on purpose: that's what it's for.)
 
-**Split by bookmarks** (File → Export & Print) turns one bookmarked PDF into a folder of
+**Split by bookmarks** (Page Functions → Split Pages) turns one bookmarked PDF into a folder of
 separate files — one per top-level bookmark, named from the bookmark with an
 optional prefix. Point it at a scored orchestration and get one PDF per
 instrument/part in seconds; pick the destination folder, and the open document is
-left untouched. No bookmarks? **Split by page range** (File → Export & Print)
+left untouched. No bookmarks? **Split by page range** (Page Functions → Split Pages)
 divides the page sequence instead — **every N pages**, or **custom ranges** like
 `1-3, 4-8, 9-10` where each range becomes its own file — into a folder, the open
 document untouched.
@@ -1354,6 +1354,12 @@ the pictures inside the PDF into a zip — JPEGs come out as-is, other images ar
 re-encoded as PNG/TIFF. Text extraction reads the text layer; scanned
 (image-only) pages are read (OCR) first, which adds a text layer to them, and
 complex multi-column layouts may not preserve reading order.
+
+**Pages as images…** (File → Export & Print) saves a page, or every page, as pictures, and the
+Save dialog's **Format** line chooses the kind: *this page* as PNG, JPEG, WebP (where your browser
+can write it — otherwise it is listed with the reason), GIF or BMP; *every page* as a ZIP of PNGs,
+one multi-page TIFF, or a comic-book CBZ. A sentence under the line says what each keeps (GIF is
+256 colours; JPEG blurs fine text).
 
 **This page's table → spreadsheet** (File → Export & Print → *This page's table…*)
 clusters the current page's text into rows and columns and saves it as an Excel

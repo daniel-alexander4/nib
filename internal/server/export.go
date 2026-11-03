@@ -1,11 +1,8 @@
 package server
 
 import (
-	"archive/zip"
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"nib/internal/atomicfile"
@@ -281,24 +278,26 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 		images = append(images, b)
 	}
 
-	if r.FormValue("format") == "zip" {
-		var buf bytes.Buffer
-		zw := zip.NewWriter(&buf)
-		for i, img := range images {
-			fw, err := zw.Create(fmt.Sprintf("page-%02d.png", i+1))
-			if err == nil {
-				_, err = fw.Write(img)
-			}
-			if err != nil {
-				httpError(w, http.StatusInternalServerError, "could not build zip")
-				return
-			}
+	// Packaging pages as pictures is pdfops.EncodePageImages' alone (ADR-189): the archive formats, the TIFF
+	// and the two single-picture formats. The browser rendered the PNGs; a format it can write itself (PNG,
+	// JPEG, WebP) never comes here.
+	if f, ok := pdfops.ParsePageImageFormat(r.FormValue("format")); ok {
+		var widths []float64
+		for _, v := range r.MultipartForm.Value["pageW"] {
+			w, _ := strconv.ParseFloat(v, 64)
+			widths = append(widths, w)
 		}
-		if err := zw.Close(); err != nil {
-			httpError(w, http.StatusInternalServerError, "could not build zip")
-			return
+		res, err := pdfops.EncodePageImages(f, images, widths)
+		switch {
+		case errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrTooManyPages):
+			httpError(w, http.StatusRequestEntityTooLarge, err.Error())
+		case errors.Is(err, pdfops.ErrOnePageFormat), errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrPageImageUnreadable):
+			httpError(w, http.StatusBadRequest, err.Error())
+		case err != nil:
+			httpError(w, http.StatusInternalServerError, "could not make the pictures")
+		default:
+			sendDownload(w, res.Name, res.Mime, res.Data)
 		}
-		sendDownload(w, "pages.zip", "application/zip", buf.Bytes())
 		return
 	}
 

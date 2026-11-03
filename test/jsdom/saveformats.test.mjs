@@ -90,6 +90,8 @@ async function open(name, opts = {}) {
   $('openGo').click();
   await settle();
 }
+// The Format line of Pages as images (ADR-189): the ZIP of every page is the sixth entry.
+const EVERY_PAGE_ZIP = 5;
 async function choose(i) {
   const sel = $('saveAsFormat');
   sel.selectedIndex = i;
@@ -334,21 +336,46 @@ test('pages as images offers this page or every page, named for each', async () 
   const from = calls.length;
   $('exportPagesBtn').click();
   await settle();
-  assert.deepEqual(optionLabels(), ['This page (PNG)', 'Every page (ZIP)']);
+  assert.deepEqual(optionLabels(), [
+    'This page (PNG, .png)', 'This page (JPEG, .jpg)', 'This page (WebP, .webp) — this browser cannot write WebP',
+    'This page (GIF, .gif)', 'This page (BMP, .bmp)', 'Every page (ZIP of PNGs, .zip)', 'Every page (TIFF, .tiff)',
+    'Every page (comic book, .cbz)',
+  ]);
   assert.equal($('saveAsTitle').textContent, 'Export pages as images');
   assert.equal($('saveAsName').value, 'ledger-page1.png');
-  await choose(1);
+  await choose(EVERY_PAGE_ZIP);
   assert.equal($('saveAsName').value, 'ledger-pages.zip', 'the name did not become the every-page name');
   await choose(0);
   assert.equal($('saveAsName').value, 'ledger-page1.png');
   assert.equal(requests('/api/assemble', from).length, 0, 'the every-page render ran before Save was pressed');
 });
 
+test('a format this browser cannot write stays on the line with its reason, and Save is off until another is chosen (ADR-189)', async () => {
+  $('exportPagesBtn').click();
+  await settle();
+  // The first entry says what it keeps, and the select is described by that note.
+  assert.match($('saveAsNote').textContent, /picture of this page/i, 'the first format has no note');
+  assert.equal($('saveAsNote').hidden, false);
+  assert.equal($('saveAsFormat').getAttribute('aria-describedby'), 'saveAsNote');
+  // jsdom has no canvas, so WebP is the unavailable entry: selectable (not a disabled option), reason in the status.
+  const webp = [...$('saveAsFormat').options].findIndex((o) => /WebP/.test(o.textContent));
+  assert.ok(webp > 0, 'stimulus: there is no WebP entry on the line');
+  assert.equal($('saveAsFormat').options[webp].disabled, false, 'the unavailable format is a disabled option, which assistive technology skips');
+  await choose(webp);
+  assert.match($('saveAsStatus').textContent, /cannot write WebP/);
+  assert.equal($('saveAsGo').disabled, true, 'Save is on for a format that cannot be written');
+  await choose(0);
+  assert.equal($('saveAsGo').disabled, false, 'choosing a writable format did not turn Save back on');
+  assert.equal($('saveAsStatus').textContent, '', 'the reason outlived the choice');
+  await cancel();
+  assert.equal($('saveAsNote').hidden, true, 'the note outlived the dialog');
+});
+
 test('a render in progress says Preparing once, holds Save and the format, and a second press starts nothing', async () => {
   written.length = 0;
   $('exportPagesBtn').click();
   await settle();
-  await choose(1);
+  await choose(EVERY_PAGE_ZIP);
   const gate = renderGate();
   setDataGate(gate);
   await save();
@@ -439,7 +466,7 @@ async function everyPageOf(name, numPages) {
   await open(name, { numPages, renders: true });
   $('exportPagesBtn').click();
   await settle();
-  await choose(1);
+  await choose(EVERY_PAGE_ZIP);
 }
 async function closeActive() {
   await cancel();
@@ -492,7 +519,7 @@ test('cancelling an every-page render stops it at the next page and uploads noth
     // Cancel during the LAST page: the loop has no next page to stop at, so the upload must ask too.
     $('exportPagesBtn').click();
     await settle();
-    await choose(1);
+    await choose(EVERY_PAGE_ZIP);
     await save();
     for (let i = 0; i < 4; i++) await gate.next();
     assert.equal($('saveAsStatus').textContent, 'Preparing… page 5 of 5', 'stimulus: the render is not on its last page');
@@ -506,7 +533,7 @@ test('cancelling an every-page render stops it at the next page and uploads noth
     written.length = 0;
     $('exportPagesBtn').click();
     await settle();
-    await choose(1);
+    await choose(EVERY_PAGE_ZIP);
     await save();
     for (let i = 0; i < 5; i++) await gate.next();
     await settle(30);
