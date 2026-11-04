@@ -697,7 +697,7 @@ test('Document as… offers Markdown, a web page, plain text, Word and OpenDocum
   $('exportDocBtn').click();
   await settle();
   assert.equal($('saveAsModal').hidden, false, 'stimulus: the document export opened no save dialog');
-  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)', 'Word (.docx)', 'OpenDocument text (.odt)', 'E-book (.epub)']);
+  assert.deepEqual([...$('saveAsFormat').options].map((o) => o.textContent), ['Markdown (.md)', 'Web page (.html)', 'Plain text (.txt)', 'Word (.docx)', 'OpenDocument text (.odt)', 'E-book (.epub)', 'PowerPoint (.pptx)']);
   assert.equal($('saveAsName').value, 'stranger.md');
   const note = $('saveAsNote').textContent;
   assert.match(note, /3 links to other pages or places became plain text/);
@@ -746,6 +746,15 @@ test('Document as… asks for Word and OpenDocument by their own word and keeps 
   assert.match($('saveAsNote').textContent, /page layout is not/);
   await save();
   assert.equal(written[0].bytes, 'DOC-AS-epub');
+  written.length = 0;
+  $('exportDocBtn').click();
+  await settle();
+  $('saveAsFormat').selectedIndex = 6;
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  assert.equal($('saveAsName').value, 'stranger.pptx');
+  assert.match($('saveAsNote').textContent, /One slide per page/);
+  await save();
+  assert.equal(written[0].bytes, 'DOC-AS-pptx');
 });
 
 test('Document as… asks for the format at Save by naming the revision the first read was made at (ADR-146, /pending 941 #5)', async () => {

@@ -10637,6 +10637,7 @@ const EXPORT_KEEPS = {
   docx: 'Editable in Word. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
   epub: 'For e-readers and reading apps. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
   odt: 'Editable in LibreOffice and other OpenDocument programs. Headings, lists, tables, bold, italic, web links and pictures are kept as text that reflows; the page layout is not.',
+  pptx: 'Editable in PowerPoint and LibreOffice Impress. One slide per page, with each paragraph in a text box where the page sets it and the pictures placed; fonts become the program\'s own and links are not kept.',
 };
 
 // exportReport is what the export did not carry, in words (D28): one function over `X-Nib-Export`'s counts. Every key
@@ -10715,6 +10716,7 @@ els.exportDocBtn.onclick = async () => {
     one('docx', 'Word (.docx)', '.docx'), // ADR-194 writes
     one('odt', 'OpenDocument text (.odt)', '.odt'), // ADR-194 writes
     one('epub', 'E-book (.epub)', '.epub'), // ADR-194 writes
+    one('pptx', 'PowerPoint (.pptx)', '.pptx'), // ADR-194 writes
   ]);
 };
 

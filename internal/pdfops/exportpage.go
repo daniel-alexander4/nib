@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -36,6 +37,10 @@ type ExportSpan struct {
 // ExportParagraph is one paragraph in reading order.
 type ExportParagraph struct {
 	Spans []ExportSpan
+	// Rect is the box its lines occupy, in the page map's fractions of the displayed page (ADR-088), and Size the
+	// largest size of its lines in points: where a positioned writer (PPTX, ADR-206) sets it.
+	Rect MapRect
+	Size float64
 	// Running says it is a running header or footer.
 	Running bool
 }
@@ -125,6 +130,8 @@ type ExportPage struct {
 	Blocks []ExportBlock
 	// NoText says the page draws no glyph.
 	NoText bool
+	// Width and Height are the displayed page in points (`displaySpace`): what a positioned writer scales Rect by.
+	Width, Height float64
 	// Unsupported is the layout limits the grouping reported (D19), never a refusal.
 	Unsupported string
 	// UnstyledLines counts lines that fell back to one plain span; DroppedLinks the links not carried, by cause.
@@ -264,6 +271,7 @@ func exportPageIn(ctx *model.Context, pg pdfread.Page, page int, budget *formWal
 	links := pageLinksIn(ctx, pg)
 	ep.DroppedLinks = links.Dropped
 	sp := newDisplaySpace(pg)
+	ep.Width, ep.Height = sp.w, sp.h
 	ep.NoText, ep.Unsupported, ep.Visibility = l.noText, l.unsupported, vis
 	for _, p := range l.paragraphs {
 		ep.Paragraphs = append(ep.Paragraphs, exportParagraph(sp, links, p.lines, p.running, &ep.UnstyledLines))
@@ -342,7 +350,23 @@ func exportParagraph(sp displaySpace, links PageLinkSet, lines []textLine, runni
 			add(s)
 		}
 	}
-	return ExportParagraph{Spans: spans, Running: running}
+	p := ExportParagraph{Spans: spans, Running: running}
+	var box [4]float64
+	for _, ln := range lines {
+		p.Size = math.Max(p.Size, ln.size)
+		for _, r := range ln.runs {
+			b := runBox(r)
+			if box == ([4]float64{}) {
+				box = b
+				continue
+			}
+			box = [4]float64{math.Min(box[0], b[0]), math.Min(box[1], b[1]), math.Max(box[2], b[2]), math.Max(box[3], b[3])}
+		}
+	}
+	if box != ([4]float64{}) {
+		p.Rect = sp.rect(box)
+	}
+	return p
 }
 
 // lineSpans cuts ln at its runs' recorded starts, or nil when they do not reproduce its text.
