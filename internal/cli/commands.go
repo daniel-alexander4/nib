@@ -431,6 +431,24 @@ func sanitize(pdf []byte) ([]byte, error) {
 	return pdfops.StripMetadata(out)
 }
 
+// mergeInput is what `nib merge` appends for one input: a PDF as it came, anything else as the page or pages the opener
+// would make of it (ADR-185). A PDF never goes through Import, which holds a conversion to MaxImportBytes — the command
+// has always merged a PDF of any size — and a file Nib does not recognise is left as it came for Combine to name.
+func mergeInput(ctx context.Context, b []byte, name string) ([]byte, error) {
+	if pdfops.LooksLikePDF(b[:min(len(b), 1024)]) {
+		return b, nil
+	}
+	src, size := pdfops.BytesSource(b)
+	res, err := pdfops.Import(ctx, src, size, name, pdfops.ImportOptions{Door: "cli"})
+	switch {
+	case err == nil:
+		return res.PDF, nil
+	case errors.Is(err, pdfops.ErrNotADocument):
+		return b, nil
+	}
+	return nil, err
+}
+
 func cmdMerge(args []string) int {
 	fs := flag.NewFlagSet("nib merge", flag.ContinueOnError)
 	var out string
@@ -466,12 +484,8 @@ func cmdMerge(args []string) int {
 		// The opener's function (ADR-185), so a picture, a Markdown file or a Word document is the page the opener
 		// would make of it, and the refusal is its sentence. A file Nib does not recognise is left as it came and
 		// Combine names it, as the window's Combine does.
-		src, size := pdfops.BytesSource(b)
-		switch res, ierr := pdfops.Import(ctx, src, size, filepath.Base(p), pdfops.ImportOptions{Door: "cli"}); {
-		case ierr == nil:
-			b = res.PDF
-		case errors.Is(ierr, pdfops.ErrNotADocument):
-		default:
+		conv, ierr := mergeInput(ctx, b, filepath.Base(p))
+		if ierr != nil {
 			if tool, ok := pdfops.MissingToolFor(ierr); ok {
 				errf("%s: %s — install it from %s to convert office documents", p, tool.NotFound(), tool.Vendor())
 			} else {
@@ -479,6 +493,7 @@ func cmdMerge(args []string) int {
 			}
 			return 1
 		}
+		b = conv
 		pdfs = append(pdfs, b)
 		title := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
 		if p == "-" {

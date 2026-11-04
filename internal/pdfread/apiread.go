@@ -198,7 +198,7 @@ func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, dige
 				continue
 			}
 			w, h := imageSide(ctx.XRefTable, obj.ImageDict.Dict["Width"]), imageSide(ctx.XRefTable, obj.ImageDict.Dict["Height"])
-			if w <= 0 || h <= 0 || w*h > maxPixels {
+			if pixelsOver(w, h, maxPixels) {
 				skipped++
 				continue
 			}
@@ -214,6 +214,12 @@ func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, dige
 		}
 	}
 	return skipped, nil
+}
+
+// pixelsOver says w×h is not a positive area within max. It divides instead of multiplying: /Width and /Height come
+// from the file as 64-bit integers, and a product of two of them wraps negative and would pass the cap it exists to hold.
+func pixelsOver(w, h, max int64) bool {
+	return w <= 0 || h <= 0 || w > max || h > max/w
 }
 
 // imageSide is an image's /Width or /Height, or 0 when it is not a number.

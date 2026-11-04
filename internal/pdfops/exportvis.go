@@ -56,7 +56,7 @@ var coverBudget = 200_000_000
 // can only fail to be held by a covering mark, never be held by one it is not under (/pending 941 #7).
 func inkBox(r textRun) [4]float64 {
 	if r.rotated || r.vertical {
-		reach := r.width
+		reach := math.Abs(r.width) // a mirrored run advances backwards; a negative reach would invert the box and hold everything near it
 		if r.vertical {
 			reach = math.Max(reach, float64(r.codes)*r.size)
 		}
@@ -184,13 +184,14 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 		}
 	}
 	testHidden := hidden*len(visible) <= coverBudget
+	spent := 0 // the union's own cost, in squares of the pieces it works over (see unionBudget)
 	for _, r := range kept {
 		if r.state.tr == 3 && len(visible) > 0 {
-			if !testHidden {
+			if !testHidden || spent > unionBudget {
 				v.CoverUntested++
-			} else if covered, tested := mostlyCovered(runBox(r), visible); !tested {
+			} else if covered, tested, work := mostlyCovered(runBox(r), visible); !tested {
 				v.CoverUntested++
-			} else if covered {
+			} else if spent += work; covered {
 				v.HiddenText++
 				continue
 			}
@@ -210,6 +211,12 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 	return v
 }
 
+// unionBudget bounds what all of a page's unions cost together, in squares of the pieces each works over: one union is
+// about k² steps, so 256 pieces on each of many hidden words is a cost the pair budget above never sees (measured: 0.12 ms
+// a union at 256 pieces, so 20,000 words 2.5 s and the pair budget's own ceiling of 781,000 words minutes). A variable so a
+// test can lower it. Past it the remaining hidden text is kept and counted untested — the direction that cannot lose a word.
+var unionBudget = 500_000_000
+
 // maxCoverPieces bounds how many visible boxes one hidden run is compared with by union; past it the run is kept and
 // counted untested.
 const maxCoverPieces = 256
@@ -218,21 +225,21 @@ const maxCoverPieces = 256
 // overlap each other are one cover, not two (summing their overlaps with b counted the shared part twice and dropped
 // hidden text that visible text did not cover — /pending 941 #2). tested is false when more than maxCoverPieces boxes
 // meet b.
-func mostlyCovered(b [4]float64, over [][4]float64) (covered, tested bool) {
+func mostlyCovered(b [4]float64, over [][4]float64) (covered, tested bool, work int) {
 	area := boxArea(b)
 	if area <= 0 {
-		return false, true
+		return false, true, 0
 	}
 	var clipped [][4]float64
 	for _, o := range over {
 		c := [4]float64{math.Max(b[0], o[0]), math.Max(b[1], o[1]), math.Min(b[2], o[2]), math.Min(b[3], o[3])}
 		if boxArea(c) > 0 {
 			if clipped = append(clipped, c); len(clipped) > maxCoverPieces {
-				return false, false
+				return false, false, 0
 			}
 		}
 	}
-	return unionArea(clipped)/area > 0.5, true
+	return unionArea(clipped)/area > 0.5, true, len(clipped) * len(clipped)
 }
 
 // unionArea is the area of the union of boxes: the x coordinates cut the plane into strips, and in each the y

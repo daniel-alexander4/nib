@@ -95,6 +95,48 @@ func TestACoverBesideATurnedOrVerticalRunDoesNotDropIt(t *testing.T) {
 	}
 }
 
+// The unions of a page share one budget: past it the remaining hidden text is kept and counted untested, so a page of
+// thousands of hidden words over hundreds of overlapping boxes cannot cost minutes (/pending 941 #2, the review).
+func TestTheUnionsOfAPageShareABudget(t *testing.T) {
+	defer func(old int) { unionBudget = old }(unionBudget)
+	big := [4]float64{0, 0, 1000, 1000}
+	build := func() pageRuns {
+		runs := []textRun{visRun(1, 0, 0, 100, 10, 0), visRun(2, 0, 0, 100, 10, 0)}
+		for i := 0; i < 4; i++ {
+			runs = append(runs, visRun(3+i, 0, 0, 100, 10, 3))
+		}
+		return pageRuns{runs: runs}
+	}
+	unionBudget = 500_000_000
+	pr := build()
+	if v := visibleRuns(&pr, big); v.HiddenText != 4 || v.CoverUntested != 0 {
+		t.Fatalf("within the budget: HiddenText=%d CoverUntested=%d, want 4 and 0", v.HiddenText, v.CoverUntested)
+	}
+	unionBudget = 0
+	pr = build()
+	v := visibleRuns(&pr, big)
+	if v.HiddenText != 1 || v.CoverUntested != 3 || len(pr.runs) != 5 {
+		t.Errorf("past the budget: HiddenText=%d CoverUntested=%d runs=%d, want 1, 3 and 5 (two visible, three kept)", v.HiddenText, v.CoverUntested, len(pr.runs))
+	}
+}
+
+// A mirrored run advances backwards: its width is negative, and a reach taken from it must not turn the box inside out,
+// or every box near the run would "hold" it and drop visible text.
+func TestACoverNearAMirroredTurnedRunDoesNotDropIt(t *testing.T) {
+	big := [4]float64{-1000, -1000, 1000, 1000}
+	r := visRun(1, 100, 100, 10, 10, 0)
+	r.rotated = true
+	r.width = -500
+	cover := pageShape{rect: true, filled: true, seq: 2, box: [4]float64{20, 20, 30, 30}}
+	pr := pageRuns{runs: []textRun{r}, shapes: []pageShape{cover}}
+	if v := visibleRuns(&pr, big); v.Covered != 0 || len(pr.runs) != 1 {
+		t.Errorf("a small box far from the run dropped it: Covered=%d runs=%d", v.Covered, len(pr.runs))
+	}
+	if b := inkBox(r); b[0] > b[2] || b[1] > b[3] {
+		t.Errorf("the box is inside out: %v", b)
+	}
+}
+
 // A hidden run that more than maxCoverPieces visible boxes meet is kept and counted untested: the union is not worked out
 // over an unbounded number of pieces.
 func TestHiddenTextOverTooManyPiecesIsKeptAndCounted(t *testing.T) {

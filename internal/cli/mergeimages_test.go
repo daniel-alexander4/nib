@@ -89,3 +89,30 @@ func runsText(p pdfops.PageText) string {
 	}
 	return b.String()
 }
+
+// A PDF is merged as it came and never offered to Import, whose size cap is for conversions: a PDF over MaxImportBytes
+// merged before ADR-185 and must still (the review of /pending 940).
+func TestMergeInputPassesAPDFOfAnySizeUntouched(t *testing.T) {
+	b := make([]byte, pdfops.MaxImportBytes+1)
+	copy(b, "%PDF-1.7\n")
+	got, err := mergeInput(context.Background(), b, "big.pdf")
+	if err != nil {
+		t.Fatalf("a large PDF was refused: %v", err)
+	}
+	if len(got) != len(b) || &got[0] != &b[0] {
+		t.Error("a PDF was not handed on as it came")
+	}
+}
+
+// Anything else is the opener's page, and a file Nib does not recognise is left for Combine to name.
+func TestMergeInputConvertsWhatIsNotAPDFAndLeavesWhatIsNotADocument(t *testing.T) {
+	got, err := mergeInput(context.Background(), []byte("# Title\n\nbody\n"), "note.md")
+	if err != nil || !pdfops.LooksLikePDF(got) {
+		t.Fatalf("Markdown was not converted: %v", err)
+	}
+	junk := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05}
+	got, err = mergeInput(context.Background(), junk, "blob.bin")
+	if err != nil || string(got) != string(junk) {
+		t.Errorf("an unrecognised file was not left as it came: %v", err)
+	}
+}

@@ -150,9 +150,9 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// doc.data is replaced wholesale and never mutated in place (document.install), so the slice is safe to read
-	// outside the lock; `rev` says whether it was replaced while we read.
+	// outside the lock; `rev` is the count the read was made at, and the answer carries it (X-Nib-Doc-Rev) for a later request to name.
 	model, err := read.Read(r.Context(), data, read.Options{Title: exportTitle(r.URL.Query().Get("title"))})
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil {
 		return // the caller went away; nothing is listening for an answer
 	}
 	if err != nil {
@@ -160,7 +160,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := format.write(r.Context(), model)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil {
 		return
 	}
 	if err != nil {
