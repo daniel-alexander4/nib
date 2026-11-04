@@ -28,7 +28,7 @@ func TestConvertPDFAGhostscript(t *testing.T) {
 		t.Fatal("expected pure-Go PreparePDFA to refuse a non-embedded-font doc")
 	}
 
-	out, err := ConvertPDFAGhostscript(src)
+	out, err := ConvertPDFAGhostscript(context.Background(), src)
 	if err != nil {
 		t.Fatalf("ConvertPDFAGhostscript: %v", err)
 	}

@@ -312,3 +312,72 @@ func TestChildEnvRestoresTheTempVariableClaimRedirected(t *testing.T) {
 		t.Fatalf("a detached child would start with %v, want exactly TMPDIR=%s", got, orig)
 	}
 }
+
+// A teardown that arrives while an import still holds its directory removes it, and the owner's own Close
+// afterwards is a no-op that returns the same answer — the registry is what Server.Shutdown reaches.
+func TestCloseAllEndsEveryLiveDirectoryAndTheOwnersCloseStaysSafe(t *testing.T) {
+	isolate(t)
+	CloseAll() // other tests in this package leave directories open (a held-by-hand lock, a sweep fixture)
+	a, err := New("import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := New("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Close(); err != nil { // already closed by its owner: not counted, not touched
+		t.Fatal(err)
+	}
+	c, err := New("gs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteFile("in.pdf", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	// The owner closes at the same moment the teardown does.
+	done := make(chan error, 1)
+	go func() { done <- a.Close() }()
+	n := CloseAll()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 || n > 2 {
+		t.Fatalf("CloseAll closed %d directories, want 1 or 2 (c, and a unless its owner won)", n)
+	}
+	for _, d := range []*Dir{a, b, c} {
+		if _, err := os.Stat(d.Path()); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s survived the teardown: %v", d.Path(), err)
+		}
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("the owner's Close after CloseAll: %v", err)
+	}
+	if n := CloseAll(); n != 0 {
+		t.Fatalf("a second CloseAll closed %d directories, want 0", n)
+	}
+}
+
+// The claimed spill directory is Release's, and the process is still taking multipart overflow into it
+// while Shutdown runs.
+func TestCloseAllLeavesTheClaimedSpillDirectory(t *testing.T) {
+	isolate(t)
+	d, err := New("spill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimMu.Lock()
+	claimed = d
+	claimMu.Unlock()
+	t.Cleanup(func() {
+		claimMu.Lock()
+		claimed = nil
+		claimMu.Unlock()
+		_ = d.Close()
+	})
+	CloseAll()
+	if _, err := os.Stat(d.Path()); err != nil {
+		t.Fatalf("CloseAll removed the claimed spill directory: %v", err)
+	}
+}

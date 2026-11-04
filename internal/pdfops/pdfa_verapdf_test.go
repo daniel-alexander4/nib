@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,14 +89,14 @@ func TestPDFAConformanceVeraPDF(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gsOut, err := ConvertPDFAGhostscript(src)
+		gsOut, err := ConvertPDFAGhostscript(context.Background(), src)
 		if err != nil {
 			t.Fatalf("ConvertPDFAGhostscript: %v", err)
 		}
 		requireVeraPDFCompliant(t, gsOut, "2b")
 
 		// A DeviceCMYK doc pure-Go refuses → gs converts (colour) → conformant.
-		cmykOut, err := ConvertPDFAGhostscript(gsToCMYK(t, img))
+		cmykOut, err := ConvertPDFAGhostscript(context.Background(), gsToCMYK(t, img))
 		if err != nil {
 			t.Fatalf("ConvertPDFAGhostscript (CMYK): %v", err)
 		}

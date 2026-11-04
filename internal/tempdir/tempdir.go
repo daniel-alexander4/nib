@@ -162,6 +162,38 @@ func Release() {
 	}
 }
 
+// liveDirs is every Dir this process has made and not yet closed, so the one teardown can end what a
+// goroutine mid-import still holds (CloseAll). It is guarded by liveMu, which is never held across a
+// removal: a slow RemoveAll must not stall Shutdown or a New on another goroutine.
+var (
+	liveMu   sync.Mutex
+	liveDirs = map[*Dir]struct{}{}
+)
+
+// CloseAll closes every live directory except the claimed spill directory (Release's, called last on
+// the way out of `run()`), and returns how many it closed. It is the directory half of Server.Shutdown
+// (ADR-185): Quit, the idle exit and SIGTERM end a conversion by killing its group, and the directory
+// that held the user's source must go with it rather than wait for the next start's sweep. Safe against
+// the owner's own Close — Close is once-guarded, so whichever arrives second waits for the first and
+// removes nothing twice. A directory made after CloseAll is not refused; the process is leaving.
+func CloseAll() int {
+	claimMu.Lock()
+	keep := claimed
+	claimMu.Unlock()
+	liveMu.Lock()
+	var dirs []*Dir
+	for d := range liveDirs {
+		if d != keep {
+			dirs = append(dirs, d)
+		}
+	}
+	liveMu.Unlock()
+	for _, d := range dirs {
+		_ = d.Close()
+	}
+	return len(dirs)
+}
+
 // Dir is one live temporary directory. Close removes it and drops its lock; both are idempotent.
 type Dir struct {
 	path string
@@ -202,7 +234,11 @@ func New(kind string) (*Dir, error) {
 		}
 		return nil, err
 	}
-	return &Dir{path: p, live: f}, nil
+	d := &Dir{path: p, live: f}
+	liveMu.Lock()
+	liveDirs[d] = struct{}{}
+	liveMu.Unlock()
+	return d, nil
 }
 
 // Path is the directory.
@@ -225,6 +261,9 @@ func (d *Dir) RecordGroup(pgid int) error {
 // Close removes the directory and releases its lock.
 func (d *Dir) Close() error {
 	d.once.Do(func() {
+		liveMu.Lock()
+		delete(liveDirs, d)
+		liveMu.Unlock()
 		// The handle closes FIRST: Windows cannot delete a directory holding a file this process has open. A sweep
 		// that takes the released lock in the gap removes the same directory, and removal is idempotent.
 		filelock.Unlock(d.live)

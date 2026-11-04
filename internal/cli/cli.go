@@ -19,6 +19,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,8 +29,10 @@ import (
 	"net/url"
 	"nib/internal/addrscope"
 	"nib/internal/atomicfile"
+	"nib/internal/safe"
 	"nib/internal/tempdir"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
@@ -554,4 +557,18 @@ func requireHTTPScheme(u *url.URL) error {
 // predicate is how one of them gets fixed.
 func blockPrivateIP(_, address string, _ syscall.RawConn) error {
 	return addrscope.RefuseNonPublicDialAddress(address)
+}
+
+// interruptContext is the context a command that may run an outside converter (LibreOffice, Ghostscript, a
+// HEIF decoder, a browser) hands to pdfops. Ctrl-C or SIGTERM cancels it, which kills the converter's whole
+// process group and lets the conversion's deferred directory removal run (ADR-185); without it the default
+// action ended this process and left both for the next start's sweep. stop gives a SECOND signal back its
+// default action, so a conversion that will not end can still be interrupted.
+func interruptContext() (ctx context.Context, stop func()) {
+	ctx, stopNotify := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, func() {
+		defer safe.Recover("restore signal default")
+		stopNotify()
+	})
+	return ctx, stopNotify
 }

@@ -193,7 +193,9 @@ func cmdPDFA(args []string) int {
 		return 1
 	}
 	if useGS {
-		result, err := pdfops.ConvertPDFAGhostscript(pdf)
+		ctx, stop := interruptContext()
+		defer stop()
+		result, err := pdfops.ConvertPDFAGhostscript(ctx, pdf)
 		if err != nil {
 			// The one door classifies; the sentence is the CLI's own, because only the CLI
 			// knows there is a `--gs` flag to omit (ADR-009 unifies the check, not the text).
@@ -384,7 +386,9 @@ func cmdOffice(args []string) int {
 	// (`/pending 471`), so it is CHOSEN: it replaces the converter's /Lang, and a Markdown conversion earns
 	// the PDF/UA identification (`/pending 486`, ADR-033).
 	src, size := pdfops.BytesSource(data)
-	res, err := pdfops.Import(context.Background(), src, size, in, pdfops.ImportOptions{
+	ctx, stop := interruptContext()
+	defer stop()
+	res, err := pdfops.Import(ctx, src, size, in, pdfops.ImportOptions{
 		Door: "cli", Lang: lang, LangChosen: lang != "", Markdown: opts, TypeExt: typeExt,
 	})
 	if err != nil {
@@ -442,6 +446,8 @@ func cmdMerge(args []string) int {
 		errf("merge needs at least two inputs (PDFs or images)")
 		return 1
 	}
+	ctx, stop := interruptContext()
+	defer stop()
 	pdfs := make([][]byte, 0, fs.NArg())
 	files := make([]pdfops.MergedFile, 0, fs.NArg())
 	for _, p := range fs.Args() {
@@ -458,7 +464,7 @@ func cmdMerge(args []string) int {
 		// would make of it, and the refusal is its sentence. A file Nib does not recognise is left as it came and
 		// Combine names it, as the window's Combine does.
 		src, size := pdfops.BytesSource(b)
-		switch res, ierr := pdfops.Import(context.Background(), src, size, filepath.Base(p), pdfops.ImportOptions{Door: "cli"}); {
+		switch res, ierr := pdfops.Import(ctx, src, size, filepath.Base(p), pdfops.ImportOptions{Door: "cli"}); {
 		case ierr == nil:
 			b = res.PDF
 		case errors.Is(ierr, pdfops.ErrNotADocument):

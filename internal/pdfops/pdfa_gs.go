@@ -63,7 +63,12 @@ func GhostscriptAvailable() bool { return ghostscriptPath() != "" }
 // definition (which attaches the sRGB OutputIntent — bare -dPDFA=2 omits it) into
 // a temp dir, then runs gs under SAFER. Returns ErrGhostscriptMissing when gs is
 // absent.
-func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
+//
+// **It runs an outside tool, so it takes a slot at ImportGate** (ADR-185, ADR-009): two conversions at a
+// time whichever door asked, the import path's or this one. It waits however long the queue is — a person
+// pressed the button and nothing here is a hand-off backlog — and the two-minute budget starts once the slot
+// is held. ctx is the caller's: a closed request or a Ctrl-C ends the wait and kills the group.
+func ConvertPDFAGhostscript(ctx context.Context, pdf []byte) (out []byte, err error) {
 	gs := ghostscriptPath()
 	if gs == "" {
 		return nil, ErrGhostscriptMissing
@@ -74,6 +79,17 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 	if xfa, err := pdfread.ReadXFA(pdf); err == nil && xfa == pdfread.XFADynamic {
 		return nil, pdfread.ErrDynamicXFA
 	}
+	err = ImportGate.RunWait(ctx, gsConvertTimeout, nil, func(ctx context.Context) error {
+		out, err = convertPDFAGhostscript(ctx, gs, pdf)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func convertPDFAGhostscript(ctx context.Context, gs string, pdf []byte) ([]byte, error) {
 	dir, err := tempdir.New("pdfa")
 	if err != nil {
 		return nil, err
@@ -93,8 +109,6 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), gsConvertTimeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, gs,
 		"-dSAFER", // the ≥9.50 default, but explicit so an older gs is sandboxed too
 		"-dPDFA=2", "-dPDFACompatibilityPolicy=1",

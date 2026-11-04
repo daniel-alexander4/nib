@@ -28,7 +28,7 @@ func (s *Server) handlePDFA(w http.ResponseWriter, r *http.Request) {
 	// engine=gs → the general Ghostscript converter (re-embeds fonts, converts
 	// colour); default → the pure-Go normalizer (fast, but refuses hard cases).
 	if r.URL.Query().Get("engine") == "gs" {
-		result, err := pdfops.ConvertPDFAGhostscript(pdfBytes)
+		result, err := pdfops.ConvertPDFAGhostscript(r.Context(), pdfBytes)
 		if err != nil {
 			// Through the one door (ADR-009); the wording is this surface's. Note this branch
 			// was unreachable from the GUI until now: `#pdfaGsGo` is revealed only when gs is

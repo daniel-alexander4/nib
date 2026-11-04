@@ -82,6 +82,10 @@ func run() int {
 	replace := flag.Bool("replace", false, "accepted and ignored; superseded by hand-off (P07)")
 	flag.Parse()
 	log.Printf("Nib %s", version)
+	// The platform gaps ADR-185 declares are said where the person running Nib can read them.
+	for _, line := range pdfops.DeclaredLimits() {
+		log.Print(line)
+	}
 	if *replace {
 		log.Printf("--replace is ignored: a second launch now hands off to the running instance")
 	}

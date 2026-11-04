@@ -423,7 +423,7 @@ var tagFates = map[string]tagFate{
 		return StampTextLayer(b, []Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice"}}, "eng")
 	}},
 	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines",
-		uaDrive: ConvertPDFAGhostscript},
+		uaDrive: func(b []byte) ([]byte, error) { return ConvertPDFAGhostscript(context.Background(), b) }},
 	"PreparePDFA": {verdict: "carried", why: "its output is unreadable to the oracle on the minimal fixture; measured `carried` on the LibreOffice document (D9)",
 		uaDrive: func(b []byte) ([]byte, error) {
 			out, blockers, err := PreparePDFA(b)
@@ -662,6 +662,16 @@ func firstParamIsPDF(fn *ast.FuncDecl) bool {
 		return false
 	}
 	p := fn.Type.Params.List[0]
+	// A leading context.Context is the caller's cancel and says nothing about what the function takes: the
+	// PDF/A Ghostscript route gained one (ADR-202) and fell out of this census, which is the shape the paragraph
+	// above names as the census failing. Only a document NAMED `pdf` after it counts — the converters that make a
+	// PDF from another format (ConvertDocToPDF and its kin) take their source as `data` and are not operations on
+	// a PDF.
+	if sel, ok := p.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "Context" && len(fn.Type.Params.List) > 1 {
+		if next := fn.Type.Params.List[1]; len(next.Names) == 1 && next.Names[0].Name == "pdf" {
+			p = next
+		}
+	}
 	if len(p.Names) == 0 {
 		return false
 	}

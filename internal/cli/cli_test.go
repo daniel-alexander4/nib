@@ -2004,3 +2004,19 @@ func TestFillAndFieldsSayWhichFieldsCannotBeFilled(t *testing.T) {
 		t.Errorf("a CSV merge naming no orphan said %q", got)
 	}
 }
+
+// Every command door that reaches an outside converter hands it the interruptible context. A bare
+// context.Background() there is the defect this replaced: Ctrl-C ended the process and left the converter and its
+// directory for the next start's sweep.
+func TestNoCommandHandsAConverterABareBackgroundContext(t *testing.T) {
+	b, err := os.ReadFile("commands.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(b), "\n") {
+		if (strings.Contains(line, "pdfops.Import(") || strings.Contains(line, "pdfops.ConvertPDFAGhostscript(")) &&
+			strings.Contains(line, "context.Background()") {
+			t.Errorf("commands.go:%d passes context.Background() to a converter door: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}
