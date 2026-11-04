@@ -70,7 +70,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
-  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'),
+  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -400,6 +400,7 @@ async function repointKey() {
     els.repointGo.disabled = false;
   }
 }
+let heifAvailable = false; // a HEIF decoder found (from /api/status) → HEIC pictures open (ADR-199)
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
 
@@ -591,6 +592,7 @@ let lockedPanelInFlight = false;
 function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
+  heifAvailable = !!st.heif;
   loAvailable = !!st.libreoffice;
   // Both pickers' `accept` are built from the server's format table (pdfops.Formats) — no list of
   // extensions lives in the page. The import picker drops a format whose tool this machine lacks.
@@ -606,6 +608,9 @@ function applyStatus(st) {
   // Ghostscript's notice (ADR-198): the same shape, for the PostScript rows of the format table.
   if (els.psMissing) els.psMissing.hidden = gsAvailable;
   if (els.psRecheck) els.psRecheck.hidden = gsAvailable;
+  // The HEIF decoder's notice (ADR-199): the same shape again.
+  if (els.heifMissing) els.heifMissing.hidden = heifAvailable;
+  if (els.heifRecheck) els.heifRecheck.hidden = heifAvailable;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     els.authOverlay.hidden = true;
@@ -4613,6 +4618,7 @@ els.officeOpenBtn.onclick = () => els.officeInput.click();
 // and "restart Nib" is not simple, since a relaunch hands off to the running instance.
 if (els.officeRecheck) els.officeRecheck.onclick = () => refreshStatus();
 if (els.psRecheck) els.psRecheck.onclick = () => refreshStatus();
+if (els.heifRecheck) els.heifRecheck.onclick = () => refreshStatus();
 els.officeInput.onchange = async () => {
   const file = els.officeInput.files[0];
   els.officeInput.value = '';

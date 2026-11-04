@@ -112,6 +112,13 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 // was told to produce — the run/timeout/stderr-tail plumbing Ghostscript and
 // LibreOffice share, kept in one place so fixes land in both.
 func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *tempdir.Dir) ([]byte, error) {
+	return runConvertPick(ctx, cmd, func() string { return outPath }, tool, dir)
+}
+
+// runConvertPick is runConvert for a tool that names its own output: pick is asked AFTER the process has
+// ended, so a decoder that writes `out-1.png` where it was asked for `out.png` (libheif does, for a file
+// with several pictures) is read from where it wrote.
+func runConvertPick(ctx context.Context, cmd *exec.Cmd, pick func() string, tool string, dir *tempdir.Dir) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	// **The timeout has to end the conversion, not only the process nib started** (`/pending 503`).
@@ -160,6 +167,7 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *t
 	}
 	// **Sized by `stat` before it is read** (D31(3)): a converter's output is its own, and reading a
 	// file of whatever size it chose into memory is how a 5 GiB result becomes a 5 GiB heap.
+	outPath := pick()
 	fi, serr := os.Stat(outPath)
 	if serr == nil && fi.Size() > maxConvertedBytes {
 		return nil, ErrConvertedTooLarge

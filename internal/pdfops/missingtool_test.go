@@ -21,6 +21,7 @@ func TestMissingToolForClassifiesBothSentinelsAndNothingElse(t *testing.T) {
 	}{
 		{"libreoffice", ErrLibreOfficeMissing, ToolLibreOffice, true},
 		{"ghostscript", ErrGhostscriptMissing, ToolGhostscript, true},
+		{"heif", ErrHEIFMissing, ToolHEIF, true},
 		{"wrapped", fmt.Errorf("converting: %w", ErrLibreOfficeMissing), ToolLibreOffice, true},
 		{"unsupported type", ErrUnsupportedOffice, ToolNone, false},
 		{"some other error", errors.New("disk full"), ToolNone, false},
@@ -52,7 +53,7 @@ func TestMissingToolForUsesErrorsIsRatherThanEquality(t *testing.T) {
 
 // Every surface builds its sentence from these, so an empty one ships an empty sentence.
 func TestEveryToolNamesItselfAndItsVendor(t *testing.T) {
-	for _, tool := range []MissingTool{ToolLibreOffice, ToolGhostscript} {
+	for _, tool := range []MissingTool{ToolLibreOffice, ToolGhostscript, ToolHEIF} {
 		if tool.Name() == "" {
 			t.Errorf("tool %d has no Name(); every surface interpolates it", tool)
 		}

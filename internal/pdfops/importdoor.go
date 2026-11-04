@@ -266,6 +266,8 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = ImageToDocumentCtx(ctx, data, name)
 	case f.Family == FamilyPostScript:
 		pdf, err = ConvertPostScriptToPDF(ctx, data, f.Key == "eps")
+	case f.Family == FamilyHEIF:
+		pdf, err = heicToDocument(ctx, data, name)
 	case f.Key == "txt" || f.Key == "csv":
 		pdf, res.Unprintable, err = textImport(data, f, o)
 	default:
@@ -282,7 +284,7 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		if _, tool := MissingToolFor(err); tool || errors.Is(err, ErrShuttingDown) || ctx.Err() != nil || isNativeRefusal(err) {
 			return nil, err
 		}
-		return nil, &ConversionError{Format: f.Key, Image: f.Image, Err: err}
+		return nil, &ConversionError{Format: f.Key, Image: f.Image || f.Family == FamilyHEIF, Err: err}
 	}
 	// The converted document's title is the source's name — best-effort, and the door guarantees it: a failed
 	// metadata write must not turn a conversion that succeeded into a refusal.
@@ -320,6 +322,8 @@ func missingToolFor(f Format) error {
 		return ErrLibreOfficeMissing
 	case ToolGhostscript:
 		return ErrGhostscriptMissing
+	case ToolHEIF:
+		return ErrHEIFMissing
 	}
 	return ErrNotADocument
 }
@@ -349,8 +353,10 @@ func refusalCause(err error) string {
 		return "no-pages"
 	case errors.Is(err, ErrGhostscriptTooOld), errors.Is(err, ErrGhostscriptNotConfined):
 		return "tool-unsafe"
-	case errors.Is(err, ErrPostScriptUnreadable):
+	case errors.Is(err, ErrPostScriptUnreadable), errors.Is(err, ErrHEIFUnreadable):
 		return "unreadable"
+	case errors.Is(err, ErrHEIFCannotRead):
+		return "tool-cannot-read"
 	case errors.Is(err, ErrTIFFCompression):
 		return "tiff-compression"
 	case errors.Is(err, ErrExtensionDisagrees):
@@ -425,7 +431,7 @@ func ImportCountKeys() []string {
 // isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
 // maps itself, as opposed to a conversion that failed (ConversionError).
 func isNativeRefusal(err error) bool {
-	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable} {
+	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable, ErrHEIFCannotRead, ErrHEIFUnreadable} {
 		if errors.Is(err, t) {
 			return true
 		}

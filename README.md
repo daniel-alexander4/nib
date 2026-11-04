@@ -399,6 +399,16 @@ the test program does read a file and start a command with the sandbox switched 
 neither with it on (Ghostscript 10.02.1). A file stops at 1,000 pages, at two minutes and at the
 same memory ceiling as Office files. An EPS page is its bounding box.
 
+**HEIC and HEIF pictures** (`.heic`, `.heif`, the format phones save) open the same way, through a
+decoder Nib finds on this computer and never bundles: libheif's `heif-dec` or `heif-convert`, or
+ImageMagick's `magick`, tried in that order. The picture is turned into a PNG and then opens like any other
+picture, under the same 200-megapixel limit. Many ImageMagick builds cannot read HEIC, so before the first
+use Nib has each tool convert a small HEIC picture it carries and skips one that cannot; if none can, it says
+so instead of failing on your file. The size the file declares is read first, and a picture over the limit is
+turned away before any tool starts. ImageMagick is run with a policy file of Nib's own that allows only the
+HEIC and PNG formats and no external programs or `@file` paths. I tested this with libheif 1.17 and libde265
+1.0.15; I did not run it against ImageMagick itself. A file holding several pictures opens at the first one.
+
 The source file is never written: the conversion works on a copy in the temporary
 directory, and the result opens as a new document with no file behind it, so *Save*
 asks for a name. The copy is removed when the conversion ends. If Nib is killed

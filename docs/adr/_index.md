@@ -1021,3 +1021,5 @@ home today.
   — PLAN-import-export P04.S01: `scanPackageReferences` in the one LibreOffice door; local references refused, web and mail links allowed; the plan's six leak controls did not reproduce.
 - [ADR-198](198-postscript-is-run-only-by-a-ghostscript-that-has-been-asked-to-keep-it-in.md) — **PostScript is run only by a Ghostscript that has been asked to keep it in, and the answer is not its version number**
   — PLAN-import-export P04.S02a: `ps` / `eps` rows through `ConvertPostScriptToPDF`; one `psArgs`, a cached behavioural confinement probe, a 9.50 floor; HEIC is S02b.
+- [ADR-199](199-a-heic-picture-is-decoded-only-by-a-tool-that-has-been-shown-to-read-one.md) — **A HEIC picture is decoded only by a tool that has been shown to read one, and its own declared size is read before any decoder runs**
+  — PLAN-import-export P04.S02b: `heic` row through `heif-dec` / `heif-convert` / `magick`; a cached capability probe, `ispe` sizes charged against the pixel cap first, ImageMagick by prefix under Nib's own policy.xml.

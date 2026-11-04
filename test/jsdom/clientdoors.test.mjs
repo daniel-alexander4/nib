@@ -264,6 +264,19 @@ test('with no Ghostscript, the File card says PostScript cannot be converted and
   }
 });
 
+test('with no HEIF decoder, the File card says HEIC cannot be opened and offers a way back (ADR-199)', () => {
+  const shown = (sel) => { const el = doc.querySelector(sel); return !!el && !el.hidden; };
+  assert.ok(shown('#heifMissing'), 'nothing tells the user why their .heic picture cannot be opened');
+  assert.ok(shown('#heifRecheck'), 'there is no way to re-ask after installing a decoder');
+  const link = doc.querySelector('#heifMissing a');
+  assert.ok(link && /^https:\/\//.test(link.getAttribute('href') || ''), 'the notice carries no https link');
+  assert.equal(link.getAttribute('rel'), 'noopener');
+  const apply = bodyOf('function applyStatus(st) {');
+  for (const re of [/els\.heifMissing\.hidden = heifAvailable/, /els\.heifRecheck\.hidden = heifAvailable/]) {
+    assert.match(apply, re, 'the HEIF notice is not tied to heifAvailable in applyStatus');
+  }
+});
+
 test('with no Ghostscript, a refused PDF/A says a tool would have converted it', () => {
   // Census rather than a driven click, and deliberately: reaching the real branch needs an open
   // document and the modal, and this file's document state belongs to the tab-closing test above.

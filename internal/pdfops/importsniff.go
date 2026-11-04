@@ -48,6 +48,8 @@ func sniffFamily(head []byte) Family {
 		return FamilyRTF
 	case bytes.HasPrefix(head, []byte("%!")), bytes.HasPrefix(head, dosEPSMagic):
 		return FamilyPostScript
+	case isHEIF(head):
+		return FamilyHEIF
 	}
 	return FamilyNone
 }
@@ -106,6 +108,13 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are PostScript", ErrExtensionDisagrees, named.Label)
 		}
 		return named, nil
+	case FamilyHEIF:
+		// A picture, so (as for any image) it is a picture whatever it is called: phones and mail clients rename
+		// them. A name that is a different KIND of document is the contradiction.
+		if hasRow && named.Family != FamilyHEIF && named.Family != FamilyImage {
+			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a HEIC picture", ErrExtensionDisagrees, named.Label)
+		}
+		return heifRow(), nil
 	case FamilyZip, FamilyOLE, FamilyRTF:
 		if !hasRow {
 			return Format{}, fmt.Errorf("%w: it is a packaged document but its name does not say which kind", ErrExtensionDisagrees)

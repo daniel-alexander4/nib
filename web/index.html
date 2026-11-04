@@ -276,7 +276,7 @@
       <div class="tbgroup" data-label="Open &amp; Import" data-fold="1">
       <button id="openMenuItem">Open…</button>
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
-      <button id="officeOpenBtn" title="Import a Markdown, Word, Excel, PowerPoint, OpenDocument or PostScript file as a PDF, choosing its language (Word, Excel and the like need LibreOffice; PostScript needs Ghostscript)">Import…</button>
+      <button id="officeOpenBtn" title="Import a Markdown, Word, Excel, PowerPoint, OpenDocument, PostScript or HEIC file as a PDF, choosing its language (Word, Excel and the like need LibreOffice; PostScript needs Ghostscript; HEIC needs a HEIF decoder)">Import…</button>
       <input id="officeInput" type="file" hidden />
       <!-- Shown only when the server could not find LibreOffice (`applyStatus`). Until now the
            absence was communicated by the file picker quietly narrowing to Markdown, so a user
@@ -300,6 +300,12 @@
         <a href="https://www.ghostscript.com/" target="_blank" rel="noopener">ghostscript.com</a>,
         then check again.</p>
       <button id="psRecheck" type="button" hidden>Check again for Ghostscript</button>
+      <!-- The same notice for HEIC pictures (ADR-199): a static link, hidden while a HEIF decoder is found. -->
+      <p id="heifMissing" class="libhint" role="status" aria-live="polite" hidden>Nib couldn't find a
+        <strong>HEIF decoder</strong>, so HEIC pictures from a phone can't be opened. Install
+        <a href="https://github.com/strukturag/libheif" target="_blank" rel="noopener">libheif</a>'s
+        <code>heif-dec</code> (or ImageMagick built with HEIC support), then check again.</p>
+      <button id="heifRecheck" type="button" hidden>Check again for a HEIF decoder</button>
       <!-- /pending 471: the language a converted document is declared in, for screen readers.
            Pre-filled from this computer's language; "Not specified" declares nothing new. -->
       <select id="docLang" aria-label="Document language" title="The language the document is written in — declared for screen readers when it is converted">

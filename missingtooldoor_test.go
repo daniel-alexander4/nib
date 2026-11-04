@@ -36,6 +36,7 @@ func TestEveryMissingToolRefusalGoesThroughOneDoor(t *testing.T) {
 	sentinels := map[string]bool{
 		"ErrLibreOfficeMissing": true,
 		"ErrGhostscriptMissing": true,
+		"ErrHEIFMissing":        true,
 	}
 
 	repo, err := filepath.Abs(".")

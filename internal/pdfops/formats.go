@@ -42,6 +42,7 @@ const (
 	FamilyOLE                      // a legacy Office compound file
 	FamilyRTF                      // Rich Text
 	FamilyPostScript               // a PostScript program or EPS file: `%!` or a DOS EPS header
+	FamilyHEIF                     // a HEIC / HEIF picture: an ISO base media `ftyp` box naming a HEIF brand
 )
 
 const (
@@ -74,6 +75,7 @@ var formats = []Format{
 	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 	{Key: "ps", Label: "PostScript", Exts: []string{"ps"}, MIME: []string{"application/postscript"}, Tool: ToolGhostscript, Family: FamilyPostScript},
 	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript},
+	{Key: "heic", Label: "HEIC / HEIF image", Exts: []string{"heic", "heif"}, MIME: []string{"image/heic", "image/heif"}, Tool: ToolHEIF, Family: FamilyHEIF},
 	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 }
 
@@ -112,6 +114,8 @@ func FormatAvailable(f Format) bool {
 		return LibreOfficeAvailable()
 	case ToolGhostscript:
 		return GhostscriptAvailable()
+	case ToolHEIF:
+		return HEIFAvailable()
 	}
 	return false
 }

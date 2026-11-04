@@ -38,6 +38,7 @@ const (
 	ToolNone MissingTool = iota
 	ToolLibreOffice
 	ToolGhostscript
+	ToolHEIF
 )
 
 // MissingToolFor classifies err. The bool is false for every other error, so a caller reads
@@ -53,6 +54,8 @@ func MissingToolFor(err error) (MissingTool, bool) {
 		return ToolLibreOffice, true
 	case errors.Is(err, ErrGhostscriptMissing):
 		return ToolGhostscript, true
+	case errors.Is(err, ErrHEIFMissing):
+		return ToolHEIF, true
 	}
 	return ToolNone, false
 }
@@ -64,6 +67,8 @@ func (t MissingTool) Name() string {
 		return "LibreOffice"
 	case ToolGhostscript:
 		return "Ghostscript"
+	case ToolHEIF:
+		return "a HEIF decoder (libheif's heif-dec, or ImageMagick)"
 	}
 	return ""
 }
@@ -77,6 +82,8 @@ func (t MissingTool) Vendor() string {
 		return "https://www.libreoffice.org/"
 	case ToolGhostscript:
 		return "https://www.ghostscript.com/"
+	case ToolHEIF:
+		return "https://github.com/strukturag/libheif"
 	}
 	return ""
 }
