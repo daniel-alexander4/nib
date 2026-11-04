@@ -162,18 +162,34 @@ func LibreOfficeText(t *testing.T, name string, data []byte) string {
 	return string(b)
 }
 
-// ReadBack checks that LibreOffice's text holds every word of the model in order, and reports how many words it holds
-// beyond them: the rendered list labels and the placeholder line a picture-less figure becomes. The count is the caller's
-// to pin, so a dropped or reordered word and an invented one both fail.
-func ReadBack(got string, want []string) (extra int, ok bool) {
+// ReadBack checks that LibreOffice's text holds every word of the model in order, and returns the words it holds beyond
+// them: the rendered list labels and the placeholder line a picture-less figure becomes. The caller pins that list, word
+// for word and in order (SameWords), so a dropped word, a reordered one and an invented one each fail — a count would let
+// an invented word stand in for a dropped one (/pending 941 #21).
+func ReadBack(got string, want []string) (extra []string, ok bool) {
 	fields := strings.Fields(strings.TrimPrefix(got, "\ufeff"))
 	i := 0
 	for _, g := range fields {
 		if i < len(want) && g == want[i] {
 			i++
+			continue
+		}
+		extra = append(extra, g)
+	}
+	return extra, i == len(want)
+}
+
+// SameWords is whether two word lists are the same list.
+func SameWords(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-	return len(fields) - len(want), i == len(want)
+	return true
 }
 
 // EpubCheck runs the W3C validator over a written package and fails on any error it reports. It skips, saying so by

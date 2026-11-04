@@ -231,8 +231,8 @@ func TestDocxOpensInLibreOffice(t *testing.T) {
 	got := wtest.LibreOfficeText(t, "hostile.docx", out)
 	extra, ok := wtest.ReadBack(got, wtest.Words(d))
 	// Extra: three rendered list labels and the six words of the placeholder line "[Picture: Scanned page 3 "quoted" <b>]".
-	if !ok || extra != 9 {
-		t.Errorf("LibreOffice does not read the model's words in order (ok=%v, %d extra, want 9):\n%s", ok, extra, got)
+	if !ok || !wtest.SameWords(extra, hostileExtras) {
+		t.Errorf("LibreOffice does not read the model's words in order (ok=%v, extra %q, want %q):\n%s", ok, extra, hostileExtras, got)
 	}
 }
 

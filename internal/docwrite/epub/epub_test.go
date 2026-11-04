@@ -112,8 +112,8 @@ func TestEPUBReadsBackAsTheModel(t *testing.T) {
 	r := parse(t, pkg.Files["OEBPS/content.xhtml"])
 	// Extra: the six words of the placeholder line "[Picture: Scanned page 3 "quoted" <b>]".
 	extra, ok := wtest.ReadBack(r.text, wtest.Words(d))
-	if !ok || extra != 6 {
-		t.Errorf("the XHTML does not hold the model's words in order (ok=%v, %d extra, want 6):\n%s", ok, extra, r.text)
+	if !ok || !wtest.SameWords(extra, hostileExtras) {
+		t.Errorf("the XHTML does not hold the model's words in order (ok=%v, extra %q, want %q):\n%s", ok, extra, hostileExtras, r.text)
 	}
 	if r.headings != 1 || r.lists != 2 || r.items != 3 || r.tables != 1 {
 		t.Errorf("structure: %d headings, %d lists, %d items, %d tables; want 1, 2, 3, 1", r.headings, r.lists, r.items, r.tables)
@@ -351,7 +351,7 @@ func TestEPUBContentOpensInLibreOffice(t *testing.T) {
 	d := wtest.Hostile()
 	pkg := write(t, d)
 	got := wtest.LibreOfficeText(t, "content.xhtml", pkg.Files["OEBPS/content.xhtml"])
-	if _, ok := wtest.ReadBack(got, wtest.Words(d)); !ok {
+	if _, ok := wtest.ReadBack(got, wtest.Words(d)); !ok { // the extras differ with the engine; the words and their order are what is judged here
 		t.Errorf("LibreOffice does not read the model's words in order:\n%s", got)
 	}
 }

@@ -173,3 +173,59 @@ func TestHTMLWithNothingToWriteIsNilAndTakesTheSharedLanguageRule(t *testing.T) 
 		t.Errorf("a malformed language reached the page:\n%s", page)
 	}
 }
+
+// The page's policy is exactly the one the ADR names, once, in the head, before anything that could load (/pending 941
+// #21): a substring match passed a policy with `script-src *` appended, a second weaker policy, and a meta in the body
+// (where a browser ignores it).
+func TestTheContentSecurityPolicyIsExactlyTheOneWeMean(t *testing.T) {
+	const want = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+	root, err := html.Parse(bytes.NewReader(Write(wtest.Hostile())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policies []string
+	var walk func(x *html.Node)
+	walk = func(x *html.Node) {
+		if x.Type == html.ElementNode {
+			if x.Data == "meta" {
+				for _, a := range x.Attr {
+					if strings.EqualFold(a.Key, "http-equiv") {
+						for _, c := range x.Attr {
+							if c.Key == "content" {
+								policies = append(policies, c.Val)
+							}
+						}
+					}
+				}
+			}
+		}
+		for c := x.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+	if len(policies) != 1 || policies[0] != want {
+		t.Fatalf("policies = %q, want exactly one: %q", policies, want)
+	}
+	// Nothing that can fetch (style, link, img, script, base, a second meta) comes before it.
+	seen := false
+	var order func(x *html.Node)
+	order = func(x *html.Node) {
+		if x.Type == html.ElementNode && !seen {
+			switch x.Data {
+			case "style", "link", "img", "script", "base", "title":
+				t.Errorf("<%s> comes before the policy", x.Data)
+			case "meta":
+				for _, a := range x.Attr {
+					if strings.EqualFold(a.Key, "http-equiv") {
+						seen = true
+					}
+				}
+			}
+		}
+		for c := x.FirstChild; c != nil; c = c.NextSibling {
+			order(c)
+		}
+	}
+	order(root)
+}
