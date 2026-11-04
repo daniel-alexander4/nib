@@ -63,6 +63,7 @@ func TestEveryProcessNibStartsIsDeclared(t *testing.T) {
 		"internal/pdfops/office.go":              {"LibreOffice converts an Office document", true},
 		"internal/pdfops/pdfa_gs.go":             {"Ghostscript converts to PDF/A", true},
 		"internal/pdfops/heifimport.go":          {"a HEIF decoder (heif-dec, heif-convert or magick) turns a HEIC picture into a PNG, and the probe that asks whether it can read one (ADR-199)", true},
+		"internal/pdfops/svgexport.go":           {"poppler's pdftocairo draws one page of a stranger's PDF as an SVG file (ADR-205)", true},
 		"internal/pdfops/psimport.go":            {"Ghostscript interprets a PostScript program, and the probe that asks whether it is confined (ADR-198)", true},
 		"internal/pdfops/htmlimport.go":          {"the browser prints a stranger's web page to a PDF (headless, through browserrender's flags and one-request origin)", true},
 		"internal/browser/browser.go":            {"launches the user's own browser window and its handoff", false},

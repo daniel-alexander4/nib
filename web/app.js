@@ -401,6 +401,7 @@ async function repointKey() {
   }
 }
 let browserAvailable = false; // a Chromium-family browser that prints a test page (from /api/status) → saved web pages open (ADR-200)
+let svgExportAvailable = false; // pdftocairo found (from /api/status) → a page can be saved as an SVG (ADR-205)
 let heifAvailable = false; // a HEIF decoder found (from /api/status) → HEIC pictures open (ADR-199)
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
@@ -594,6 +595,7 @@ function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
   heifAvailable = !!st.heif;
+  svgExportAvailable = !!st.svgExport;
   browserAvailable = !!st.browser;
   loAvailable = !!st.libreoffice;
   // Both pickers' `accept` are built from the server's format table (pdfops.Formats) — no list of
@@ -10579,6 +10581,16 @@ els.exportPagesBtn.onclick = () => {
     { label: 'This page (BMP, .bmp)', name: exportName + '-page' + pageNum + '.bmp', ext: '.bmp', // ADR-189 writes
       note: 'An uncompressed picture of this page; the file is large.',
       make: (press) => viaServer(press, 'bmp', pageNum) },
+    { label: 'This page (SVG, .svg)' + (svgExportAvailable ? '' : ' — needs pdftocairo (poppler)'), name: exportName + '-page' + pageNum + '.svg', ext: '.svg', // ADR-205 writes
+      unavailable: svgExportAvailable ? '' : 'Saving a page as SVG needs poppler\'s pdftocairo, which Nib could not find (poppler.freedesktop.org). Choose another format.',
+      note: 'A drawing of this page that scales without blurring. It is drawn from the document as Nib holds it, so anything you have placed, typed or drawn and not saved is not in it.',
+      make: async () => {
+        stillOpen();
+        const r = await apiFetch('/api/export/svg?page=' + pageNum, { method: 'POST', docId });
+        if (!r.ok) throw new Error(await errText(r, 'Could not draw the page as an SVG'));
+        stillOpen();
+        return r.blob();
+      } },
     { label: 'Every page (ZIP of PNGs, .zip)', name: exportName + '-pages.zip', ext: '.zip', // ADR-189 writes
       note: 'One PNG picture per page, in a ZIP, named page-001.png and on.',
       make: (press) => viaServer(press, 'zip') },

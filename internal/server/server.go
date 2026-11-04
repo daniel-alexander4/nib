@@ -558,6 +558,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/document/revision", s.requireUnlocked(s.handleDocumentRevision))
 	// The open document as Markdown, HTML or text, read through the one document model (PLAN-import-export P02.S04, ADR-193).
 	mux.HandleFunc("POST /api/export/document", s.requireUnlocked(s.handleExportDocument))
+	// One page of the open document as an SVG file, drawn by poppler's pdftocairo (PLAN-import-export P05.S01b, ADR-205).
+	mux.HandleFunc("POST /api/export/svg", s.requireUnlocked(s.handleExportSVG))
 	// This machine's stored copy of the ceremony the document belongs to — the dispute surface's second link (P03.S03).
 	mux.HandleFunc("GET /api/document/ceremony-copy", s.requireUnlocked(s.handleDocumentCeremonyCopy))
 	// A copy kept when you signed (P04.S02, ADR-073): the open document's, the list, and the one route that removes one.

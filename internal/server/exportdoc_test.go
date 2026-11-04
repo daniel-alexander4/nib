@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"nib/internal/docwrite/wtest"
+	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
 
@@ -159,5 +160,56 @@ func TestTheExportRouteWritesWordAndOpenDocumentPackages(t *testing.T) {
 func TestTheExportFactsCarryTheTablesWrittenAsText(t *testing.T) {
 	if f := factsOf(docmodel.Report{TablesAsText: 2}, false, 0); f.TablesAsText != 2 {
 		t.Errorf("TablesAsText = %d, want 2", f.TablesAsText)
+	}
+}
+
+func exportSVG(t *testing.T, base string, c *http.Client, csrf, id, query string) (int, []byte, http.Header) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, base+"/api/export/svg?"+query, nil)
+	req.Header.Set("X-Nib-Doc", id)
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, resp.Header
+}
+
+// The SVG route (ADR-205): one page drawn by pdftocairo, refusals by cause, pinned to the document (ADR-004).
+func TestTheSVGRouteDrawsOnePageAndRefusesByCause(t *testing.T) {
+	if !pdfops.PdftocairoAvailable() {
+		t.Skip("pdftocairo (poppler) not installed")
+	}
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", exportFixture(t, "covered"))
+	code, body, h := exportSVG(t, ts.URL, c, csrf, dr.ID, "page=1")
+	if code != 200 || h.Get("Content-Type") != "image/svg+xml" || !strings.Contains(string(body[:200]), "<svg") {
+		t.Fatalf("page 1 = %d %q %.120s", code, h.Get("Content-Type"), body)
+	}
+	if code, _, _ := exportSVG(t, ts.URL, c, csrf, dr.ID, "page=0"); code != 400 {
+		t.Errorf("page 0 = %d, want 400", code)
+	}
+	if code, _, _ := exportSVG(t, ts.URL, c, csrf, dr.ID, "page=x"); code != 400 {
+		t.Errorf("page x = %d, want 400", code)
+	}
+	code, body, _ = exportSVG(t, ts.URL, c, csrf, dr.ID, "page=99")
+	var e map[string]string
+	_ = json.Unmarshal(body, &e)
+	if code != 422 || e["cause"] != "page" {
+		t.Errorf("page 99 = %d %s, want 422 cause page", code, body)
+	}
+	if code, _, _ := exportSVG(t, ts.URL, c, csrf, "e1-9999", "page=1"); code != 409 {
+		t.Errorf("a document the server does not hold = %d, want 409 (ADR-004)", code)
+	}
+	// No session: the route is behind requireSession like the rest.
+	resp, err := http.Post(ts.URL+"/api/export/svg?page=1", "", nil)
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			t.Error("answered without a session")
+		}
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"nib/internal/docwrite/markdown"
 	"nib/internal/docwrite/odt"
 	"nib/internal/docwrite/text"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -164,6 +166,55 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Nib-Export", string(hdr))
 	w.Header().Set("Content-Type", format.mime)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write(body)
+}
+
+// handleExportSVG answers POST /api/export/svg?page=N: one page of the open document drawn as an SVG file by poppler's
+// pdftocairo (PLAN-import-export P05.S01b, ADR-205). It draws the server's copy, so a mark the window has not baked is
+// not in it — the Format line says so, as it does for Document as… (W8). 503 is a missing tool, 422 a refusal about the
+// page, 409 ADR-004's "not that document" and also the document having changed while it was drawn.
+func (s *Server) handleExportSVG(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	page, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("page")))
+	if err != nil || page < 1 {
+		httpError(w, http.StatusBadRequest, "page must be a page number, 1 or more")
+		return
+	}
+	var data []byte
+	var rev uint64
+	if !s.snapshotRegistered(w, doc, func() { data, rev = doc.data, doc.rev }) {
+		return
+	}
+	body, err := pdfops.ExportPageSVG(r.Context(), data, page)
+	switch {
+	case err == nil:
+	case errors.Is(err, pdfops.ErrPdftocairoMissing):
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "Nib " + pdfops.ToolPdftocairo.NotFound() + ", so it cannot write an SVG", "cause": "missing-tool"})
+		return
+	case errors.Is(err, pdfops.ErrSVGPage):
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error(), "cause": "page"})
+		return
+	case errors.Is(err, pdfops.ErrSVGUnreadable), errors.Is(err, pdfops.ErrConvertedTooLarge):
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "pdftocairo could not draw that page as an SVG", "cause": "unreadable"})
+		return
+	default:
+		httpError(w, http.StatusInternalServerError, "could not write the SVG")
+		return
+	}
+	moved := false
+	if !s.snapshotRegistered(w, doc, func() { moved = doc.rev != rev }) {
+		return
+	}
+	if moved {
+		httpError(w, http.StatusConflict, "the document changed while it was being drawn; export again")
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	_, _ = w.Write(body)

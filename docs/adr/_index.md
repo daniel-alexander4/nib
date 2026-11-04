@@ -1033,3 +1033,5 @@ home today.
   — PLAN-import-export P04 phase close: unfinished probes are never cached, the origin refuses a gone socket, an EPUB is read once per chapter and bounded in total, stderr is a tail, `.eml` drops the message's style sheets; the CVE-2024-29510 probe gap is declared (/pending 943).
 - [ADR-204](204-an-svg-is-rebuilt-from-an-allowlist-and-shown-only-as-a-picture-at-its-declared-size.md) — **An SVG is rebuilt from an allowlist and shown only as a picture, at its declared size**
   — PLAN-import-export P05.S01a: `svg` row; strict parse, allowlisted elements and attributes, embedded only as a `data:` image in Nib's own wrapper page through the browser door; page size from the declared width/height, capped; nine vectors each with a firing control.
+- [ADR-205](205-a-page-is-drawn-as-an-svg-by-pdftocairo-from-the-servers-copy-and-the-tool-is-asked-once-for-one-page.md) — **A page is drawn as an SVG by pdftocairo, from the server's copy, one page to a call**
+  — PLAN-import-export P05.S01b: `ToolPdftocairo`, `POST /api/export/svg`, Format-line entry that stays with its reason when the tool is absent; unapplied overlay marks are not in it.
