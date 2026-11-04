@@ -6,6 +6,7 @@
 package docx
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -53,12 +54,14 @@ type writer struct {
 }
 
 // Write is the document as a .docx package, or nil when the model holds nothing to write.
-func Write(doc docmodel.Document) ([]byte, error) {
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
 	if len(doc.Blocks) == 0 {
 		return nil, nil
 	}
 	w := &writer{nums: map[int]int{}, linkIDs: map[string]string{}}
-	w.blocks(doc)
+	if err := w.blocks(ctx, doc); err != nil {
+		return nil, err
+	}
 	if w.body.Len() == 0 {
 		return nil, nil
 	}
@@ -113,6 +116,9 @@ func Write(doc docmodel.Document) ([]byte, error) {
 		{Name: "word/_rels/document.xml.rels", Data: []byte(docRels)},
 	}
 	entries = append(entries, w.media...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return ziputil.Write(entries)
 }
 
@@ -194,8 +200,11 @@ func (w *writer) para(ppr, runs string) string {
 	return `<w:p>` + ppr + runs + `</w:p>`
 }
 
-func (w *writer) blocks(doc docmodel.Document) {
+func (w *writer) blocks(ctx context.Context, doc docmodel.Document) error {
 	for _, blk := range doc.Blocks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		rtl := dirOf(blk.Dir)
 		bidi := ""
 		if rtl {
@@ -222,6 +231,7 @@ func (w *writer) blocks(doc docmodel.Document) {
 			}
 		}
 	}
+	return nil
 }
 
 // decimal is the numId of the decimal list a model list is, drawn from 2 up so each list restarts at 1.

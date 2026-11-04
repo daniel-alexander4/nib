@@ -19,7 +19,7 @@ import (
 // element a word could have conjured.
 func TestMarkdownReadsBackAsTheModel(t *testing.T) {
 	d := wtest.Hostile()
-	out := Write(d)
+	out := writeOK(d)
 	var buf bytes.Buffer
 	if err := goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithRendererOptions(html.WithUnsafe())).Convert(out, &buf); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestListItemsHeadingsAndSpansKeepWhatThePageSaid(t *testing.T) {
 			{cell("d", 1), cell("e", 1)},
 		}},
 	}}
-	out := string(Write(d))
+	out := string(writeOK(d))
 	h := render(t, []byte(out))
 	for _, want := range []string{"<h2>Appendix #</h2>", "<li>- foo</li>", "<li># bar</li>", "<li>1. baz</li>"} {
 		if !strings.Contains(h, want) {
@@ -176,7 +176,7 @@ func TestEmphasisIsWrittenOnlyWhereMarkdownReadsIt(t *testing.T) {
 		{"one style split after punctuation", []docmodel.Span{b("a."), b("b"), p(" c")}, 1, 0},
 		{"italic in a word", []docmodel.Span{p("un"), i("believ"), p("able")}, 0, 1},
 	} {
-		out := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: c.sp}}})
+		out := writeOK(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: c.sp}}})
 		text, tags, _ := readHTML(t, render(t, out))
 		if strings.Contains(text, "*") {
 			t.Errorf("%s: a literal asterisk reached the reader's text: %q\nfrom %q", c.name, text, out)
@@ -202,7 +202,7 @@ func TestANestedItemIsIndentedByItsParentsMarker(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{
 		item(1, "100.", "outer"), item(2, "-", "inner"), item(3, "1.", "deep"), item(1, "101.", "next"),
 	}}
-	out := Write(d)
+	out := writeOK(d)
 	h := render(t, out)
 	_, tags, _ := readHTML(t, h)
 	if tags["ol"] != 2 || tags["ul"] != 1 || strings.Count(h, "<li>") != 4 {
@@ -229,18 +229,18 @@ func TestAdjacentListsStayApart(t *testing.T) {
 		"ordered": {docmodel.Document{Blocks: []docmodel.Block{item(1, "1.", "a"), item(1, "2.", "b"), item(2, "1.", "c"), item(2, "2.", "d")}}, 2},
 		"three":   {docmodel.Document{Blocks: []docmodel.Block{item(1, "-", "a"), item(2, "-", "b"), item(3, "-", "c")}}, 3},
 	} {
-		out := Write(c.d)
+		out := writeOK(c.d)
 		h := render(t, out)
 		_, tags, _ := readHTML(t, h)
 		if tags["ul"]+tags["ol"] != c.want {
 			t.Errorf("%s: %d lists, want %d:\n%s\nfrom\n%s", name, tags["ul"]+tags["ol"], c.want, h, out)
 		}
 	}
-	two := string(Write(docmodel.Document{Blocks: []docmodel.Block{item(1, "-", "a"), item(2, "-", "b")}}))
+	two := string(writeOK(docmodel.Document{Blocks: []docmodel.Block{item(1, "-", "a"), item(2, "-", "b")}}))
 	if two != "- a\n\n* b\n" {
 		t.Errorf("two lists are parted by a blank line and a second marker: %q", two)
 	}
-	out := Write(docmodel.Document{Blocks: []docmodel.Block{item(1, "-", "a"), item(1, "-", "b")}})
+	out := writeOK(docmodel.Document{Blocks: []docmodel.Block{item(1, "-", "a"), item(1, "-", "b")}})
 	if _, tags, _ := readHTML(t, render(t, out)); tags["ul"] != 1 {
 		t.Errorf("one list became %d", tags["ul"])
 	}
@@ -255,7 +255,7 @@ func TestALinkDestinationKeepsTheAddressItWasGiven(t *testing.T) {
 		"https://example.com/a?x=1&y=2",
 		"https://example.com/&notanentity",
 	} {
-		out := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "go", Link: u}}}}})
+		out := writeOK(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "go", Link: u}}}}})
 		_, _, hrefs := readHTML(t, render(t, out))
 		if len(hrefs) != 1 || hrefs[0] != u {
 			t.Errorf("link %q came back as %v\nfrom %q", u, hrefs, out)
@@ -266,7 +266,7 @@ func TestALinkDestinationKeepsTheAddressItWasGiven(t *testing.T) {
 // A marker CommonMark would not read as a number is not written as one: ten digits are a paragraph, not a list.
 func TestAMarkerThatIsNotANumberIsABullet(t *testing.T) {
 	for _, m := range []string{"1234567890.", "1a."} {
-		out := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.ListItem, List: 1, Level: 1, Marker: m, Page: 1, Spans: []docmodel.Span{{Text: "x"}}}}})
+		out := writeOK(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.ListItem, List: 1, Level: 1, Marker: m, Page: 1, Spans: []docmodel.Span{{Text: "x"}}}}})
 		if string(out) != "- x\n" {
 			t.Errorf("marker %q written as %q", m, out)
 		}

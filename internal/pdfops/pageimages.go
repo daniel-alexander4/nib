@@ -62,8 +62,10 @@ func ParsePageImageFormat(s string) (PageImageFormat, bool) {
 
 // EncodePageImages packages pngs (one per page, in order) as format. widthsPt, when it has one entry per page,
 // sets a TIFF's resolution from the page's width in points; otherwise 144 dpi, the window's render scale.
-// A page past the pixel caps is refused (ErrImagePixels), never shrunk, and so is a page count past importPages.
-func EncodePageImages(format PageImageFormat, pngs [][]byte, widthsPt []float64) (PageImageResult, error) {
+// A page past the pixel caps is refused (ErrImagePixels), never shrunk, and so is a page count past importPages and
+// an output past maxConvertedBytes (the TIFF, GIF and BMP writers alike; the archives hold the pages as they came).
+// ctx is the caller's: a cancelled request stops the decode, the flatten and the write (/pending 941 #6).
+func EncodePageImages(ctx context.Context, format PageImageFormat, pngs [][]byte, widthsPt []float64) (PageImageResult, error) {
 	if len(pngs) == 0 {
 		return PageImageResult{}, ErrNoPages
 	}
@@ -72,14 +74,14 @@ func EncodePageImages(format PageImageFormat, pngs [][]byte, widthsPt []float64)
 	}
 	switch format {
 	case PageImagesZIP, PageImagesCBZ:
-		return packPageArchive(format, pngs)
+		return packPageArchive(ctx, format, pngs)
 	case PageImagesTIFF:
-		return packPageTIFF(pngs, widthsPt)
+		return packPageTIFF(ctx, pngs, widthsPt)
 	case PageImagesGIF, PageImagesBMP:
 		if len(pngs) != 1 {
 			return PageImageResult{}, ErrOnePageFormat
 		}
-		return packOnePage(format, pngs[0])
+		return packOnePage(ctx, format, pngs[0])
 	}
 	return PageImageResult{}, fmt.Errorf("%w: %q", ErrPageImageFormat, string(format))
 }
@@ -110,9 +112,12 @@ func decodePage(j *rasterJob, data []byte) (image.Image, error) {
 	return img, nil
 }
 
-func packPageArchive(format PageImageFormat, pngs [][]byte) (PageImageResult, error) {
+func packPageArchive(ctx context.Context, format PageImageFormat, pngs [][]byte) (PageImageResult, error) {
 	entries := make([]ziputil.Entry, len(pngs))
 	for i, p := range pngs {
+		if err := ctx.Err(); err != nil {
+			return PageImageResult{}, err
+		}
 		// A picture that is not a PNG is not a page of this export: the names promise PNG.
 		if _, err := png.DecodeConfig(bytes.NewReader(p)); err != nil {
 			return PageImageResult{}, fmt.Errorf("pdfops: %w: %v", ErrPageImageUnreadable, err)
@@ -129,12 +134,22 @@ func packPageArchive(format PageImageFormat, pngs [][]byte) (PageImageResult, er
 	return PageImageResult{Data: data, Name: "pages.zip", Mime: "application/zip"}, nil
 }
 
-func packOnePage(format PageImageFormat, data []byte) (PageImageResult, error) {
-	j, cancel := newRasterJob(context.Background())
+func packOnePage(ctx context.Context, format PageImageFormat, data []byte) (PageImageResult, error) {
+	j, cancel := newRasterJob(ctx)
 	defer cancel()
+	// A BMP of an opaque page is 24 bits a pixel with each row padded to four bytes: its size is known from the PNG's header,
+	// before the page is decoded or a byte is written, so a page whose file would pass the cap is refused there.
+	if format == PageImagesBMP {
+		if cfg, err := png.DecodeConfig(bytes.NewReader(data)); err == nil && bmpSize(cfg.Width, cfg.Height) > onePageLimit {
+			return PageImageResult{}, fmt.Errorf("%w: the BMP would pass %d MiB", ErrImagePixels, maxConvertedBytes>>20)
+		}
+	}
 	img, err := decodePage(j, data)
 	if err != nil {
 		return PageImageResult{}, err
+	}
+	if err := j.ctx.Err(); err != nil {
+		return PageImageResult{}, fmt.Errorf("pdfops: writing the picture took too long: %w", err)
 	}
 	// A page is opaque: a transparent pixel must land on white, not on the nearest palette entry (black), as the
 	// TIFF writer already does.
@@ -142,22 +157,56 @@ func packOnePage(format PageImageFormat, data []byte) (PageImageResult, error) {
 	draw.Draw(flat, flat.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 	draw.Draw(flat, flat.Bounds(), img, img.Bounds().Min, draw.Over)
 	img = flat
-	var buf bytes.Buffer
+	if err := j.ctx.Err(); err != nil {
+		return PageImageResult{}, fmt.Errorf("pdfops: writing the picture took too long: %w", err)
+	}
+	buf := &boundedWriter{ctx: j.ctx, limit: onePageLimit}
 	switch format {
 	case PageImagesBMP:
-		err = bmp.Encode(&buf, img)
+		err = bmp.Encode(buf, img)
 		return finishOne(buf, err, "page.bmp", "image/bmp")
 	default:
-		err = gif.Encode(&buf, img, &gif.Options{NumColors: 256, Quantizer: documentQuantizer{}, Drawer: draw.FloydSteinberg})
+		err = gif.Encode(buf, img, &gif.Options{NumColors: 256, Quantizer: documentQuantizer{}, Drawer: draw.FloydSteinberg})
 		return finishOne(buf, err, "page.gif", "image/gif")
 	}
 }
 
-func finishOne(buf bytes.Buffer, err error, name, mime string) (PageImageResult, error) {
-	if err != nil {
+// bmpSize is the file size of a w×h opaque page as `bmp.Encode` writes it: 24 bits a pixel, rows padded to four bytes.
+func bmpSize(w, h int) int64 { return 54 + (int64(w)*3+3)&^3*int64(h) }
+
+// onePageLimit is the single-picture output cap; a variable only so a test can lower it.
+var onePageLimit = int64(maxConvertedBytes)
+
+// boundedWriter is the single-picture writers' sink: every write observes the context and the output cap, so an
+// encoder that writes as it goes stops on a cancelled request and on a file past maxConvertedBytes instead of filling
+// memory. The refusal is the TIFF writer's (ErrImagePixels); a cancel is the context's own error.
+type boundedWriter struct {
+	ctx   context.Context
+	limit int64
+	buf   bytes.Buffer
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if int64(w.buf.Len())+int64(len(p)) > w.limit {
+		return 0, fmt.Errorf("%w: the picture passed %d MiB", ErrImagePixels, maxConvertedBytes>>20)
+	}
+	return w.buf.Write(p)
+}
+
+func finishOne(buf *boundedWriter, err error, name, mime string) (PageImageResult, error) {
+	switch {
+	case errors.Is(err, ErrImagePixels), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return PageImageResult{}, err // the cap's own sentence, and the context's error as it is
+	case err != nil:
 		return PageImageResult{}, fmt.Errorf("pdfops: could not write the picture: %w", err)
 	}
-	return PageImageResult{Data: buf.Bytes(), Name: name, Mime: mime}, nil
+	if err := buf.ctx.Err(); err != nil {
+		return PageImageResult{}, err
+	}
+	return PageImageResult{Data: buf.buf.Bytes(), Name: name, Mime: mime}, nil
 }
 
 // documentPalette is 40 greys then a 6×6×6 colour cube: a page is mostly white, black and the greys between
@@ -188,8 +237,8 @@ func (documentQuantizer) Quantize(p color.Palette, _ image.Image) color.Palette 
 
 const tiffStripTarget = 256 << 10
 
-func packPageTIFF(pngs [][]byte, widthsPt []float64) (PageImageResult, error) {
-	j, cancel := newRasterJob(context.Background())
+func packPageTIFF(ctx context.Context, pngs [][]byte, widthsPt []float64) (PageImageResult, error) {
+	j, cancel := newRasterJob(ctx)
 	defer cancel()
 	le := binary.LittleEndian
 	var out bytes.Buffer

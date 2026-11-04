@@ -15,7 +15,7 @@ import (
 
 func TestHTMLReadsBackAsTheModelAndHoldsNoScript(t *testing.T) {
 	d := wtest.Hostile()
-	out := Write(d)
+	out := writeOK(d)
 	root, err := html.Parse(bytes.NewReader(out))
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestHTMLReadsBackAsTheModelAndHoldsNoScript(t *testing.T) {
 
 func TestXHTMLIsWellFormedAndTheSameBodyAsTheWebPage(t *testing.T) {
 	d := wtest.Hostile()
-	body, pics, heads := XHTML(d)
+	body, pics, heads := xhtmlOK(d)
 	dec := xml.NewDecoder(strings.NewReader("<r>" + body + "</r>"))
 	for {
 		if _, err := dec.Token(); err == io.EOF {
@@ -106,7 +106,7 @@ func TestXHTMLIsWellFormedAndTheSameBodyAsTheWebPage(t *testing.T) {
 		t.Error("a void element is not self-closed")
 	}
 	// The web page is unchanged by the option: no ids, no files, `data:` pictures.
-	page := string(Write(d))
+	page := string(writeOK(d))
 	if strings.Contains(page, ` id="h-`) || !strings.Contains(page, "data:image/png;base64,") {
 		t.Error("the web page took the XHTML mode")
 	}
@@ -122,7 +122,7 @@ func TestNestedListsSitInsideTheirParentItem(t *testing.T) {
 		"skips a level": {li(2, "x"), li(1, "y")},
 		"opens at 3":    {li(3, "x")},
 	} {
-		body, _, _ := XHTML(docmodel.Document{Blocks: blocks})
+		body, _, _ := xhtmlOK(docmodel.Document{Blocks: blocks})
 		dec := xml.NewDecoder(strings.NewReader("<r>" + body + "</r>"))
 		var stack []string
 		items := 0
@@ -155,20 +155,20 @@ func TestNestedListsSitInsideTheirParentItem(t *testing.T) {
 		}
 	}
 	// Every item's text survives, in order.
-	body, _, _ := XHTML(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b"), li(1, "c")}})
+	body, _, _ := xhtmlOK(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b"), li(1, "c")}})
 	if ia, ib, ic := strings.Index(body, ">a<"), strings.Index(body, "b</li>"), strings.Index(body, "c</li>"); !(ia >= 0 && ia < ib && ib < ic) {
 		t.Errorf("items out of order or missing:\n%s", body)
 	}
-	if page := string(Write(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b")}})); strings.Contains(page, "</ul>\n</ul>") || !strings.Contains(page, "<li>a<ul>") {
+	if page := string(writeOK(docmodel.Document{Blocks: []docmodel.Block{li(1, "a"), li(2, "b")}})); strings.Contains(page, "</ul>\n</ul>") || !strings.Contains(page, "<li>a<ul>") {
 		t.Errorf("the web page nests its lists wrongly:\n%s", page)
 	}
 }
 
 func TestHTMLWithNothingToWriteIsNilAndTakesTheSharedLanguageRule(t *testing.T) {
-	if out := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1}}}); out != nil {
+	if out := writeOK(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1}}}); out != nil {
 		t.Errorf("a model of one blank paragraph wrote %d bytes, want nil", len(out))
 	}
-	page := string(Write(docmodel.Document{Meta: docmodel.Meta{Lang: "a--b"}, Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "x"}}}}}))
+	page := string(writeOK(docmodel.Document{Meta: docmodel.Meta{Lang: "a--b"}, Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "x"}}}}}))
 	if !strings.Contains(page, `<html lang="und"`) {
 		t.Errorf("a malformed language reached the page:\n%s", page)
 	}
@@ -179,7 +179,7 @@ func TestHTMLWithNothingToWriteIsNilAndTakesTheSharedLanguageRule(t *testing.T) 
 // (where a browser ignores it).
 func TestTheContentSecurityPolicyIsExactlyTheOneWeMean(t *testing.T) {
 	const want = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
-	root, err := html.Parse(bytes.NewReader(Write(wtest.Hostile())))
+	root, err := html.Parse(bytes.NewReader(writeOK(wtest.Hostile())))
 	if err != nil {
 		t.Fatal(err)
 	}

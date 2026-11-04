@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -26,19 +28,14 @@ const maxExportFactList = maxRevisionFactList
 // writer. The window's Format line is the same three, from the format table's `exports` rows (W10).
 var exportFormats = map[string]struct {
 	mime  string
-	write func(docmodel.Document) ([]byte, error)
+	write func(context.Context, docmodel.Document) ([]byte, error)
 }{
-	"md":   {"text/markdown; charset=utf-8", plain(markdown.Write)}, // ADR-194 writes
-	"html": {"text/html; charset=utf-8", plain(html.Write)},
-	"txt":  {"text/plain; charset=utf-8", plain(text.Write)},                                        // ADR-194 writes
+	"md":   {"text/markdown; charset=utf-8", markdown.Write}, // ADR-194 writes
+	"html": {"text/html; charset=utf-8", html.Write},
+	"txt":  {"text/plain; charset=utf-8", text.Write},                                               // ADR-194 writes
 	"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.Write}, // ADR-194 writes
 	"odt":  {"application/vnd.oasis.opendocument.text", odt.Write},                                  // ADR-194 writes
 	"epub": {"application/epub+zip", epub.Write},                                                    // ADR-194 writes
-}
-
-// plain lifts a writer that cannot fail into the route's shape.
-func plain(f func(docmodel.Document) []byte) func(docmodel.Document) ([]byte, error) {
-	return func(d docmodel.Document) ([]byte, error) { return f(d), nil }
 }
 
 // exportPage is one flagged page in the header.
@@ -128,19 +125,43 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	if err != nil || unapplied < 0 {
 		unapplied = 0
 	}
+	// A second request for the same read (the Save dialog asks again for the format it was told to write) names the
+	// revision the first answered with; a document that has moved since is refused as ADR-146 refuses a posted operation
+	// (/pending 941 #5). None named is last-writer-wins, as for the CLI and a Go test. This is a read, not a commit, so it
+	// does not build an `echoedBase` (that is the two posted-bytes routes' alone).
+	var want uint64
+	named := false
+	if v := r.URL.Query().Get("baseRev"); v != "" {
+		n, perr := strconv.ParseUint(v, 10, 64)
+		if perr != nil {
+			httpError(w, http.StatusBadRequest, errBaseRev.Error())
+			return
+		}
+		want, named = n, true
+	}
 	var data []byte
 	var rev uint64
 	if !s.snapshotRegistered(w, doc, func() { data, rev = doc.data, doc.rev }) {
 		return
 	}
+	if named && rev != want {
+		httpError(w, http.StatusConflict, errDocChanged.Error())
+		return
+	}
 	// doc.data is replaced wholesale and never mutated in place (document.install), so the slice is safe to read
 	// outside the lock; `rev` says whether it was replaced while we read.
-	model, err := read.Read(data, read.Options{Title: exportTitle(r.URL.Query().Get("title"))})
+	model, err := read.Read(r.Context(), data, read.Options{Title: exportTitle(r.URL.Query().Get("title"))})
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return // the caller went away; nothing is listening for an answer
+	}
 	if err != nil {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
 		return
 	}
-	body, err := format.write(model)
+	body, err := format.write(r.Context(), model)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write the document")
 		return
@@ -163,6 +184,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("X-Nib-Export", string(hdr))
+	w.Header().Set("X-Nib-Doc-Rev", strconv.FormatUint(rev, 10)) // the count this read was made on (ADR-146)
 	w.Header().Set("Content-Type", format.mime)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))

@@ -35,6 +35,7 @@ let tableAnswer = null;    // likewise for /api/table
 let calls = [];
 let docAnswer = null;      // a Response the document export gives instead of the format's bytes
 let docFacts = '{"source":"proposal"}';
+let docRev = null;         // the revision the document export says it read at (X-Nib-Doc-Rev, ADR-146)
 let docGate = null;        // a promise the document export waits on before it answers (a view switch lands meanwhile)
 const formatOf = () => new URL('http://x' + calls.at(-1).url.replace(/^https?:\/\/[^/]+/, '')).searchParams.get('format');
 
@@ -51,7 +52,7 @@ const h = await boot({
     '/api/form-data': () => formAnswer || new Response('FORM-AS-' + formatOf(), { status: 200 }),
     '/api/assemble': () => new Response('PICTURES', { status: 200 }),
     '/api/extract-images': () => new Response('ZIPPED', { status: 200, headers: { 'X-Image-Count': '2' } }),
-    '/api/export/document': async () => { if (docGate) await docGate; return docAnswer || new Response('DOC-AS-' + formatOf(), { status: 200, headers: { 'X-Nib-Export': docFacts } }); },
+    '/api/export/document': async () => { if (docGate) await docGate; return docAnswer || new Response('DOC-AS-' + formatOf(), { status: 200, headers: { 'X-Nib-Export': docFacts, ...(docRev == null ? {} : { 'X-Nib-Doc-Rev': docRev }) } }); },
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/write': async (opts) => {
       const f = opts.body;
@@ -741,6 +742,25 @@ test('Document as… asks for Word and OpenDocument by their own word and keeps 
   assert.match($('saveAsNote').textContent, /page layout is not/);
   await save();
   assert.equal(written[0].bytes, 'DOC-AS-epub');
+});
+
+test('Document as… asks for the format at Save by naming the revision the first read was made at (ADR-146, /pending 941 #5)', async () => {
+  await open('revision.pdf');
+  docRev = '7';
+  const from = calls.length;
+  $('exportDocBtn').click();
+  await settle();
+  $('saveAsFormat').selectedIndex = 3; // Word: not the Markdown the press already read
+  $('saveAsFormat').dispatchEvent(new h.window.Event('change'));
+  await save();
+  docRev = null;
+  const reqs = requests('/api/export/document', from).map((c) => new URL('http://x' + c.url.replace(/^https?:\/\/[^/]+/, '')).searchParams);
+  assert.equal(reqs.length, 2, 'the press reads once and Save asks once more');
+  assert.equal(reqs[0].get('format'), 'md');
+  assert.equal(reqs[0].has('baseRev'), false, 'the first read has nothing to name');
+  assert.equal(reqs[1].get('format'), 'docx');
+  assert.equal(reqs[1].get('baseRev'), '7', 'the Save request must name the revision the first answer reported');
+  await cancel();
 });
 
 test('Document as… says in the server\'s words why there is nothing to export, and opens no dialog', async () => {

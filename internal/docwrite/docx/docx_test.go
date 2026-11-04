@@ -2,6 +2,7 @@ package docx
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -116,7 +117,7 @@ func parse(t *testing.T, data []byte) read {
 
 func TestDocxReadsBackAsTheModel(t *testing.T) {
 	d := wtest.Hostile()
-	out, err := Write(d)
+	out, err := Write(context.Background(), d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestDocxReadsBackAsTheModel(t *testing.T) {
 
 func TestDocxHoldsOnlyItsNamedPartsAndNoClaims(t *testing.T) {
 	d := wtest.Hostile()
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	pkg := wtest.Open(t, out)
 	allowed := map[string]bool{"word/media/img-1.png": true}
 	for _, p := range Parts {
@@ -197,7 +198,7 @@ func TestDocxTableSpansAreRealMerges(t *testing.T) {
 		{cell("a", 2, 1), cell("b", 1, 2)},
 		{cell("c", 1, 1), cell("d", 1, 1)},
 	}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	pkg := wtest.Open(t, out)
 	doc := string(pkg.Files["word/document.xml"])
 	// Row 2 holds c, d and a covered position under b: three cells, one vMerge continue and one restart in all.
@@ -210,14 +211,14 @@ func TestDocxTableSpansAreRealMerges(t *testing.T) {
 }
 
 func TestDocxOfNothingIsNil(t *testing.T) {
-	if out, err := Write(docmodel.Document{}); out != nil || err != nil {
+	if out, err := Write(context.Background(), docmodel.Document{}); out != nil || err != nil {
 		t.Errorf("got %d bytes, %v", len(out), err)
 	}
 }
 
 func TestDocxWhitespaceIsKept(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Spans: []docmodel.Span{{Text: " lead "}, {Text: "bold", Bold: true}, {Text: "a\tb\nc  d"}}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	r := parse(t, wtest.Open(t, out).Files["word/document.xml"])
 	if want := []string{"lead", "bolda", "b", "c", "d"}; !slices.Equal(r.words, want) {
 		t.Errorf("words = %q, want %q (bold and plain adjoin with no separator, as Word joins them)", r.words, want)
@@ -227,7 +228,7 @@ func TestDocxWhitespaceIsKept(t *testing.T) {
 // The confirmatory run (D22): LibreOffice opens the package and reads the model's words back in order.
 func TestDocxOpensInLibreOffice(t *testing.T) {
 	d := wtest.Hostile()
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	got := wtest.LibreOfficeText(t, "hostile.docx", out)
 	extra, ok := wtest.ReadBack(got, wtest.Words(d))
 	// Extra: three rendered list labels and the six words of the placeholder line "[Picture: Scanned page 3 "quoted" <b>]".
@@ -243,7 +244,7 @@ func TestDocxMarksHeaderRowsAndPadsShortRows(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Table, Page: 1, HeaderRows: 1, Rows: [][]docmodel.Cell{
 		{cell("h1"), cell("h2"), cell("h3")}, {cell("a")}, {cell("b"), cell("c")},
 	}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	doc := string(wtest.Open(t, out).Files["word/document.xml"])
 	if strings.Count(doc, "<w:tblHeader/>") != 1 {
 		t.Errorf("header rows marked %d times, want once:\n%s", strings.Count(doc, "<w:tblHeader/>"), doc)
@@ -252,7 +253,7 @@ func TestDocxMarksHeaderRowsAndPadsShortRows(t *testing.T) {
 		t.Errorf("a short row is not padded to the grid: %d cells, %d columns", strings.Count(doc, "<w:tc>"), strings.Count(doc, "<w:gridCol "))
 	}
 	d.Blocks[0].HeaderRows = 0
-	out, _ = Write(d)
+	out, _ = Write(context.Background(), d)
 	if strings.Contains(string(wtest.Open(t, out).Files["word/document.xml"]), "tblHeader") {
 		t.Error("a table with no header rows marks one")
 	}
@@ -260,29 +261,29 @@ func TestDocxMarksHeaderRowsAndPadsShortRows(t *testing.T) {
 
 func TestDocxTablePropertiesAreInSchemaOrderAndNothingWrittenIsNil(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Table, Dir: "rtl", Rows: [][]docmodel.Cell{{{Paragraphs: [][]docmodel.Span{{{Text: "x"}}}, ColSpan: 1, RowSpan: 1}}}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	doc := string(wtest.Open(t, out).Files["word/document.xml"])
 	if strings.Index(doc, "<w:bidiVisual/>") < 0 || strings.Index(doc, "<w:bidiVisual/>") > strings.Index(doc, "<w:tblW ") {
 		t.Errorf("bidiVisual must precede tblW in tblPr:\n%s", doc)
 	}
-	if out, _ := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure}, {Kind: docmodel.Paragraph}}}); out != nil {
+	if out, _ := Write(context.Background(), docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure}, {Kind: docmodel.Paragraph}}}); out != nil {
 		t.Error("blocks that render nothing must not become a blank 200")
 	}
 	big := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 1000, Height: 300000000}}}}
-	out, _ = Write(big)
+	out, _ = Write(context.Background(), big)
 	if strings.Contains(string(wtest.Open(t, out).Files["word/document.xml"]), `cy="-`) {
 		t.Error("extent overflowed")
 	}
 }
 
 func TestDocxCarriesAPictureAReaderCanDecode(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	wtest.Open(t, out).DecodesAsPNG(t, "word/media/img-1.png")
 }
 
 func TestDocxPictureExtentStaysInsideWordsTwentyTwoInches(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 100, Height: 20000}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	doc := string(wtest.Open(t, out).Files["word/document.xml"])
 	i := strings.Index(doc, `<wp:extent cx="`)
 	if i < 0 {

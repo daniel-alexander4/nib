@@ -10,7 +10,7 @@ import (
 
 func TestTextCarriesEveryWordInOrder(t *testing.T) {
 	d := wtest.Hostile()
-	out := string(Write(d))
+	out := string(writeOK(d))
 	got := strings.Fields(out)
 	var i int
 	for _, w := range wtest.Words(d) {
@@ -33,7 +33,7 @@ func TestTextCarriesEveryWordInOrder(t *testing.T) {
 }
 
 func TestTextOfNothingIsNil(t *testing.T) {
-	if Write(docmodel.Document{}) != nil {
+	if writeOK(docmodel.Document{}) != nil {
 		t.Error("an empty document wrote bytes")
 	}
 }

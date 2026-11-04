@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -287,8 +288,10 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 			w, _ := strconv.ParseFloat(v, 64)
 			widths = append(widths, w)
 		}
-		res, err := pdfops.EncodePageImages(f, images, widths)
+		res, err := pdfops.EncodePageImages(r.Context(), f, images, widths)
 		switch {
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil:
+			return // the caller went away
 		case errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrTooManyPages):
 			httpError(w, http.StatusRequestEntityTooLarge, err.Error())
 		case errors.Is(err, pdfops.ErrOnePageFormat), errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrPageImageUnreadable):

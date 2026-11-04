@@ -3,6 +3,7 @@ package pdfops
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"image"
 	"image/color"
@@ -36,7 +37,7 @@ func pagePNG(t *testing.T, n, w, h int) []byte {
 
 func TestTheTIFFWritesEveryPageAndNibsOwnReaderWalksIt(t *testing.T) {
 	pages := [][]byte{pagePNG(t, 1, 50, 40), pagePNG(t, 2, 33, 70), pagePNG(t, 3, 600, 500)}
-	res, err := EncodePageImages(PageImagesTIFF, pages, nil)
+	res, err := EncodePageImages(context.Background(), PageImagesTIFF, pages, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestAnotherLibraryReadsTheTIFFPageForPage(t *testing.T) {
 		t.Skip("Pillow absent")
 	}
 	pages := [][]byte{pagePNG(t, 1, 50, 40), pagePNG(t, 2, 33, 70), pagePNG(t, 3, 700, 900)}
-	res, err := EncodePageImages(PageImagesTIFF, pages, []float64{100, 66, 700})
+	res, err := EncodePageImages(context.Background(), PageImagesTIFF, pages, []float64{100, 66, 700})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestAPageWithTransparencyIsFlattenedOverWhiteInTheTIFF(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 4)) // fully transparent
 	var b bytes.Buffer
 	png.Encode(&b, img)
-	res, err := EncodePageImages(PageImagesTIFF, [][]byte{b.Bytes()}, nil)
+	res, err := EncodePageImages(context.Background(), PageImagesTIFF, [][]byte{b.Bytes()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestAPageWithTransparencyIsFlattenedOverWhiteInTheTIFF(t *testing.T) {
 
 func TestGIFAndBMPHoldTheOnePage(t *testing.T) {
 	p := pagePNG(t, 2, 64, 48)
-	g, err := EncodePageImages(PageImagesGIF, [][]byte{p}, nil)
+	g, err := EncodePageImages(context.Background(), PageImagesGIF, [][]byte{p}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestGIFAndBMPHoldTheOnePage(t *testing.T) {
 	if err != nil || gi.Bounds().Dx() != 64 || gi.Bounds().Dy() != 48 {
 		t.Fatalf("gif: %v %v", err, gi)
 	}
-	bm, err := EncodePageImages(PageImagesBMP, [][]byte{p}, nil)
+	bm, err := EncodePageImages(context.Background(), PageImagesBMP, [][]byte{p}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestGIFAndBMPHoldTheOnePage(t *testing.T) {
 	if err != nil || bi.Bounds().Dx() != 64 {
 		t.Fatalf("bmp: %v", err)
 	}
-	if _, err := EncodePageImages(PageImagesGIF, [][]byte{p, p}, nil); !errors.Is(err, ErrOnePageFormat) {
+	if _, err := EncodePageImages(context.Background(), PageImagesGIF, [][]byte{p, p}, nil); !errors.Is(err, ErrOnePageFormat) {
 		t.Errorf("two pages as a GIF: %v", err)
 	}
 }
@@ -146,7 +147,7 @@ func TestGIFAndBMPHoldTheOnePage(t *testing.T) {
 func TestTheArchivesNamePagesInOrderAndRefuseNonPictures(t *testing.T) {
 	pages := [][]byte{pagePNG(t, 1, 8, 8), pagePNG(t, 2, 8, 8)}
 	for _, f := range []PageImageFormat{PageImagesZIP, PageImagesCBZ} {
-		res, err := EncodePageImages(f, pages, nil)
+		res, err := EncodePageImages(context.Background(), f, pages, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,11 +159,11 @@ func TestTheArchivesNamePagesInOrderAndRefuseNonPictures(t *testing.T) {
 			t.Errorf("%s names: %v", f, zr.File)
 		}
 	}
-	if _, err := EncodePageImages(PageImagesZIP, [][]byte{[]byte("not a picture")}, nil); err == nil {
+	if _, err := EncodePageImages(context.Background(), PageImagesZIP, [][]byte{[]byte("not a picture")}, nil); err == nil {
 		t.Error("a non-PNG went into the archive")
 	}
 	// A CBZ written here is one the import door reads back as the same number of pages.
-	cbz, _ := EncodePageImages(PageImagesCBZ, pages, nil)
+	cbz, _ := EncodePageImages(context.Background(), PageImagesCBZ, pages, nil)
 	doc, err := CBZToDocument(t.Context(), cbz.Data, "pages.cbz")
 	if err != nil {
 		t.Fatal(err)
@@ -173,17 +174,17 @@ func TestTheArchivesNamePagesInOrderAndRefuseNonPictures(t *testing.T) {
 }
 
 func TestPageImagesRefuseWhatTheyCannotWrite(t *testing.T) {
-	if _, err := EncodePageImages("svg", [][]byte{pagePNG(t, 1, 4, 4)}, nil); !errors.Is(err, ErrPageImageFormat) {
+	if _, err := EncodePageImages(context.Background(), "svg", [][]byte{pagePNG(t, 1, 4, 4)}, nil); !errors.Is(err, ErrPageImageFormat) {
 		t.Errorf("an unknown format: %v", err)
 	}
-	if _, err := EncodePageImages(PageImagesTIFF, nil, nil); !errors.Is(err, ErrNoPages) {
+	if _, err := EncodePageImages(context.Background(), PageImagesTIFF, nil, nil); !errors.Is(err, ErrNoPages) {
 		t.Errorf("no pages: %v", err)
 	}
 	if _, ok := ParsePageImageFormat(""); ok {
 		t.Error("the empty string parsed as a format")
 	}
 	many := make([][]byte, importPages+1)
-	if _, err := EncodePageImages(PageImagesZIP, many, nil); !errors.Is(err, ErrTooManyPages) {
+	if _, err := EncodePageImages(context.Background(), PageImagesZIP, many, nil); !errors.Is(err, ErrTooManyPages) {
 		t.Errorf("past the page cap: %v", err)
 	}
 }
@@ -219,10 +220,10 @@ func TestTheRowFastPathsAgreeWithTheGenericReader(t *testing.T) {
 }
 
 func TestAnUndecodablePagePictureIsNamedAndAResolutionNeverBecomesGarbage(t *testing.T) {
-	if _, err := EncodePageImages(PageImagesTIFF, [][]byte{[]byte("nope")}, nil); !errors.Is(err, ErrPageImageUnreadable) {
+	if _, err := EncodePageImages(context.Background(), PageImagesTIFF, [][]byte{[]byte("nope")}, nil); !errors.Is(err, ErrPageImageUnreadable) {
 		t.Errorf("a non-PNG page: %v", err)
 	}
-	res, err := EncodePageImages(PageImagesTIFF, [][]byte{pagePNG(t, 1, 10, 10)}, []float64{1e-300})
+	res, err := EncodePageImages(context.Background(), PageImagesTIFF, [][]byte{pagePNG(t, 1, 10, 10)}, []float64{1e-300})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func TestAPageWithTransparencyIsWhiteInTheGIFAndTheBMPToo(t *testing.T) {
 	var b bytes.Buffer
 	png.Encode(&b, img)
 	for _, f := range []PageImageFormat{PageImagesGIF, PageImagesBMP} {
-		res, err := EncodePageImages(f, [][]byte{b.Bytes()}, nil)
+		res, err := EncodePageImages(context.Background(), f, [][]byte{b.Bytes()}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

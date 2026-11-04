@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -146,25 +147,29 @@ type ExportDoc struct {
 // ExportPages reads pages of pdf (nil or empty: every page) for the document model. Pictures are extracted in one pass
 // over the pages that draw any, each object once however often it is drawn.
 func ExportPages(pdf []byte, pages []int) ([]ExportPage, error) {
-	d, err := ExportRead(pdf, pages)
+	d, err := ExportRead(context.Background(), pdf, pages)
 	return d.Pages, err
 }
 
-// ExportRead is ExportPages with the catalog's language: the document is validated once.
-func ExportRead(pdf []byte, pages []int) (ExportDoc, error) {
-	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+// ExportRead is ExportPages with the catalog's language: the document is validated once. ctx is observed between pages and
+// after each picture is decoded (/pending 941 #1), and its error is returned as it is.
+func ExportRead(ctx context.Context, pdf []byte, pages []int) (ExportDoc, error) {
+	if err := ctx.Err(); err != nil {
+		return ExportDoc{}, err
+	}
+	pc, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return ExportDoc{}, err
 	}
 	lang := ""
-	if cat, cerr := ctx.Catalog(); cerr == nil && cat != nil {
-		lang = readLang(ctx.XRefTable, cat["Lang"])
+	if cat, cerr := pc.Catalog(); cerr == nil && cat != nil {
+		lang = readLang(pc.XRefTable, cat["Lang"])
 	}
-	out, err := exportPagesIn(ctx, pdf, pages)
+	out, err := exportPagesIn(ctx, pc, pdf, pages)
 	return ExportDoc{Lang: lang, Pages: out}, err
 }
 
-func exportPagesIn(ctx *model.Context, pdf []byte, pages []int) ([]ExportPage, error) {
+func exportPagesIn(cctx context.Context, ctx *model.Context, pdf []byte, pages []int) ([]ExportPage, error) {
 	if len(pages) == 0 {
 		for p := 1; p <= ctx.PageCount; p++ {
 			pages = append(pages, p)
@@ -175,6 +180,9 @@ func exportPagesIn(ctx *model.Context, pdf []byte, pages []int) ([]ExportPage, e
 	var reads []pageRead
 	var withPictures []int
 	for _, p := range pages {
+		if err := cctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := pageInDocument(p, ctx.PageCount); err != nil {
 			return nil, err
 		}
@@ -206,7 +214,7 @@ func exportPagesIn(ctx *model.Context, pdf []byte, pages []int) ([]ExportPage, e
 		reads[el.page-1].block(&out[el.page-1], el)
 	}
 	if len(withPictures) > 0 {
-		if err := joinPictures(pdf, withPictures, out); err != nil {
+		if err := joinPictures(cctx, pdf, withPictures, out); err != nil {
 			return nil, err
 		}
 	}
@@ -379,7 +387,7 @@ func validCut(s string, from, to int) bool {
 }
 
 // joinPictures extracts the pictures of pages once and gives each figure its bytes, or the cause it has none.
-func joinPictures(pdf []byte, pages []int, out []ExportPage) error {
+func joinPictures(ctx context.Context, pdf []byte, pages []int, out []ExportPage) error {
 	type carried struct {
 		img  model.Image
 		data []byte
@@ -392,6 +400,9 @@ func joinPictures(pdf []byte, pages []int, out []ExportPage) error {
 		sel[i] = fmt.Sprint(p)
 	}
 	digest := func(img model.Image) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if byObj[img.ObjNr] != nil {
 			return nil
 		}
@@ -434,6 +445,9 @@ func joinPictures(pdf []byte, pages []int, out []ExportPage) error {
 	// optimizing the whole file again for each (/pending 941 #3). A pass that cannot start (a budget refusal) fails every
 	// figure the same way.
 	_, _ = pdfread.ExtractImagesEach(pdf, sel, int64(exportImagePixels), digest)
+	if err := ctx.Err(); err != nil {
+		return err // a cancelled pass is not a picture that could not be read
+	}
 	for pi := range out {
 		for fi := range out[pi].Figures {
 			f := &out[pi].Figures[fi]

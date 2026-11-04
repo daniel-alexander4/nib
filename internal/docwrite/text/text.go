@@ -4,6 +4,7 @@
 package text
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -11,9 +12,12 @@ import (
 )
 
 // Write is the document as UTF-8 text with a final newline, or nil for a document with no block.
-func Write(doc docmodel.Document) []byte {
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
 	var out []string
 	for i, b := range doc.Blocks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		s := block(b)
 		if s == "" {
 			continue
@@ -25,9 +29,9 @@ func Write(doc docmodel.Document) []byte {
 		out = append(out, s)
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return []byte(strings.Join(out, "\n") + "\n")
+	return []byte(strings.Join(out, "\n") + "\n"), nil
 }
 
 func plain(sp []docmodel.Span) string {

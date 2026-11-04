@@ -2,6 +2,7 @@ package epub
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"io"
 	"strings"
@@ -98,7 +99,7 @@ func parse(t *testing.T, data []byte) read {
 
 func write(t *testing.T, d docmodel.Document) wtest.Package {
 	t.Helper()
-	out, err := Write(d)
+	out, err := Write(context.Background(), d)
 	if err != nil || out == nil {
 		t.Fatalf("Write: %v, %d bytes", err, len(out))
 	}
@@ -135,7 +136,7 @@ func TestEPUBReadsBackAsTheModel(t *testing.T) {
 }
 
 func TestEPUBMimetypeIsFirstStoredAndAtByte38(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	if string(out[:2]) != "PK" || out[8] != 0 || out[9] != 0 {
 		t.Errorf("first member is not stored: % x", out[:10])
 	}
@@ -273,7 +274,7 @@ func TestEPUBIsAWellFormedPublication(t *testing.T) {
 }
 
 func TestEPUBHoldsOnlyItsNamedPartsAndNoClaims(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	pkg := wtest.Open(t, out)
 	allowed := map[string]bool{"OEBPS/images/img-1.png": true}
 	for _, p := range Parts {
@@ -295,14 +296,14 @@ func TestEPUBHoldsOnlyItsNamedPartsAndNoClaims(t *testing.T) {
 }
 
 func TestEPUBIsTheSameBytesTwiceAndNamesNothingOfTheMachine(t *testing.T) {
-	a, _ := Write(wtest.Hostile())
-	b, _ := Write(wtest.Hostile())
+	a, _ := Write(context.Background(), wtest.Hostile())
+	b, _ := Write(context.Background(), wtest.Hostile())
 	if !bytes.Equal(a, b) {
 		t.Error("the same model wrote two different packages")
 	}
 	d := wtest.Hostile()
 	d.Blocks[0].Spans[0].Text = "Another document"
-	c, _ := Write(d)
+	c, _ := Write(context.Background(), d)
 	if oa, oc := readOPF(t, wtest.Open(t, a)).id, readOPF(t, wtest.Open(t, c)).id; oa == oc {
 		t.Errorf("two different documents share the identifier %s", oa)
 	}
@@ -339,7 +340,7 @@ func TestEPUBNothingWrittenIsNil(t *testing.T) {
 		"no blocks":         {},
 		"a blank paragraph": {Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: " "}}}}},
 	} {
-		if out, err := Write(d); err != nil || out != nil {
+		if out, err := Write(context.Background(), d); err != nil || out != nil {
 			t.Errorf("%s: %d bytes, %v; want nil", name, len(out), err)
 		}
 	}
@@ -377,7 +378,7 @@ func TestEPUBNavigationNamesEachHeadingByItsOwnTarget(t *testing.T) {
 }
 
 func TestEPUBPassesEpubcheck(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	wtest.EpubCheck(t, out)
 }
 

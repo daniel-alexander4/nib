@@ -7,6 +7,7 @@
 package epub
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -41,8 +42,11 @@ func identifier(title, body string) string {
 }
 
 // Write is the document as an .epub package, or nil when the model holds nothing to write.
-func Write(doc docmodel.Document) ([]byte, error) {
-	body, pics, heads := html.XHTML(doc)
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
+	body, pics, heads, err := html.XHTML(ctx, doc)
+	if err != nil {
+		return nil, err
+	}
 	if len(doc.Blocks) == 0 || !hasContent(body, len(pics)) {
 		return nil, nil
 	}
@@ -96,6 +100,9 @@ func Write(doc docmodel.Document) ([]byte, error) {
 		{Name: "OEBPS/content.opf", Data: []byte(opf)},
 		{Name: "OEBPS/nav.xhtml", Data: []byte(nav.String())},
 		{Name: "OEBPS/content.xhtml", Data: []byte(content)},
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return ziputil.Write(append(all, entries...))
 }

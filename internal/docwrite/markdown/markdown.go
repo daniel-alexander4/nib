@@ -4,6 +4,7 @@
 package markdown
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"unicode"
@@ -15,10 +16,13 @@ import (
 
 // Write is the document as Markdown, or nil for a document with no block. A picture is a bracketed line naming it: a
 // single .md file carries no bytes, and writing a file beside it under a name the PDF chose is exactly what Y9 forbids.
-func Write(doc docmodel.Document) []byte {
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
 	var out []string
 	var ls listState
 	for i, b := range doc.Blocks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var s string
 		if b.Kind == docmodel.ListItem {
 			s = ls.item(b)
@@ -38,9 +42,9 @@ func Write(doc docmodel.Document) []byte {
 		out = append(out, s)
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return []byte(strings.Join(out, "\n") + "\n")
+	return []byte(strings.Join(out, "\n") + "\n"), nil
 }
 
 // listState remembers what a run of list items needs from the item before it: where an item's content begins at each

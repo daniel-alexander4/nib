@@ -4,6 +4,7 @@
 package html
 
 import (
+	"context"
 	"encoding/base64"
 	stdhtml "html"
 	"strconv"
@@ -42,10 +43,12 @@ type Heading struct {
 // XHTML is the model's body as well-formed XML — the same blocks, escapes and link allowlist as Write, through the same
 // code — for a package that wraps it (EPUB, P03.S03): void elements self-close, each heading carries an id (`h-N`) for a
 // table of contents, and a picture is a separate member (`images/img-N.ext`) the body refers to.
-func XHTML(doc docmodel.Document) (body string, pics []Picture, heads []Heading) {
+func XHTML(ctx context.Context, doc docmodel.Document) (body string, pics []Picture, heads []Heading, err error) {
 	r := &render{xhtml: true}
-	r.blocks(doc.Blocks)
-	return r.b.String(), r.pics, r.heads
+	if err := r.blocks(ctx, doc.Blocks); err != nil {
+		return "", nil, nil, err
+	}
+	return r.b.String(), r.pics, r.heads, nil
 }
 
 // render holds one pass: the output, and in XHTML mode the pictures and headings it met.
@@ -64,7 +67,7 @@ func (r *render) void(tag string) string {
 }
 
 // Write is the document as HTML5.
-func Write(doc docmodel.Document) []byte {
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
 	title := xmlw.Title(doc.Meta)
 	var b strings.Builder
 	b.WriteString("<!DOCTYPE html>\n<html lang=\"" + esc(xmlw.LangTag(doc.Meta.Lang)) + "\"" + dirAttr(doc.Meta.Dir) + ">\n<head>\n")
@@ -73,13 +76,15 @@ func Write(doc docmodel.Document) []byte {
 	b.WriteString("<meta name=\"generator\" content=\"Nib\">\n")
 	b.WriteString("<title>" + esc(title) + "</title>\n<style>" + style + "</style>\n</head>\n<body>\n")
 	r := &render{}
-	r.blocks(doc.Blocks)
+	if err := r.blocks(ctx, doc.Blocks); err != nil {
+		return nil, err
+	}
 	if r.b.Len() == 0 {
-		return nil // nothing to write: the route answers "empty" for every format alike
+		return nil, nil // nothing to write: the route answers "empty" for every format alike
 	}
 	b.WriteString(r.b.String())
 	b.WriteString("</body>\n</html>\n")
-	return []byte(b.String())
+	return []byte(b.String()), nil
 }
 
 func spans(sp []docmodel.Span) string {
@@ -103,7 +108,7 @@ func spans(sp []docmodel.Span) string {
 	return b.String()
 }
 
-func (r *render) blocks(bs []docmodel.Block) {
+func (r *render) blocks(ctx context.Context, bs []docmodel.Block) error {
 	b := &r.b
 	// A list nested in a list sits INSIDE the parent's open <li> (a <ul> holds only <li>), so an item's <li> is left open
 	// until the next item at its depth or a shallower one closes it.
@@ -123,6 +128,9 @@ func (r *render) blocks(bs []docmodel.Block) {
 		}
 	}
 	for _, blk := range bs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if blk.Kind != docmodel.ListItem {
 			closeTo(0)
 		}
@@ -167,6 +175,7 @@ func (r *render) blocks(bs []docmodel.Block) {
 		}
 	}
 	closeTo(0)
+	return nil
 }
 
 // plainLine is a heading's spans as one line of text.

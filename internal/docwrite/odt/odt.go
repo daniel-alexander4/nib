@@ -6,6 +6,7 @@
 package odt
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -44,12 +45,14 @@ type writer struct {
 }
 
 // Write is the document as an .odt package, or nil when the model holds nothing to write.
-func Write(doc docmodel.Document) ([]byte, error) {
+func Write(ctx context.Context, doc docmodel.Document) ([]byte, error) {
 	if len(doc.Blocks) == 0 {
 		return nil, nil
 	}
 	w := &writer{}
-	w.blocks(doc)
+	if err := w.blocks(ctx, doc); err != nil {
+		return nil, err
+	}
 	if w.body.Len() == 0 {
 		return nil, nil
 	}
@@ -71,6 +74,9 @@ func Write(doc docmodel.Document) ([]byte, error) {
 		{Name: "content.xml", Data: []byte(content)},
 		{Name: "styles.xml", Data: []byte(styles)},
 		{Name: "meta.xml", Data: []byte(meta)},
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return ziputil.Write(append(entries, w.media...))
 }
@@ -201,8 +207,11 @@ func (w *writer) listItem(blk docmodel.Block) {
 	w.stack[len(w.stack)-1].itemOpen = true
 }
 
-func (w *writer) blocks(doc docmodel.Document) {
+func (w *writer) blocks(ctx context.Context, doc docmodel.Document) error {
 	for _, blk := range doc.Blocks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if blk.Kind != docmodel.ListItem {
 			w.closeTo(0)
 		}
@@ -223,6 +232,7 @@ func (w *writer) blocks(doc docmodel.Document) {
 		}
 	}
 	w.closeTo(0)
+	return nil
 }
 
 func (w *writer) table(blk docmodel.Block) {

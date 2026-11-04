@@ -1,8 +1,10 @@
 package read
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nib/internal/docmodel"
@@ -13,7 +15,7 @@ func fixture(t *testing.T, name string) docmodel.Document {
 	t.Helper()
 	for _, f := range testpdf.ExportModelSet() {
 		if f.Name == name {
-			d, err := Read(f.PDF, Options{Title: "t"})
+			d, err := Read(context.Background(), f.PDF, Options{Title: "t"})
 			if err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
@@ -105,7 +107,7 @@ func TestScannedPageIsItsOwnPicture(t *testing.T) {
 		if f.Name != "scanned" {
 			continue
 		}
-		d, err := Read(f.PDF, Options{})
+		d, err := Read(context.Background(), f.PDF, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +124,7 @@ func TestUntaggedUsesProposalAndRTL(t *testing.T) {
 		if f.Name != "right-to-left" {
 			continue
 		}
-		d, err := Read(f.PDF, Options{})
+		d, err := Read(context.Background(), f.PDF, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,11 +187,49 @@ func TestATaggedDocumentWithAnUntaggedPageIsMixed(t *testing.T) {
 		9:  "<< /Nums [0 [10 0 R]] >>",
 		10: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K 0 >>",
 	})
-	d, err := Read(pdf, Options{})
+	d, err := Read(context.Background(), pdf, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d.Report.Source != docmodel.SourceMixed || !flagged(d, 2, docmodel.FlagTreeIncomplete) {
 		t.Fatalf("report %+v", d.Report)
+	}
+}
+
+// ctxTrip is a context whose Err() says Canceled from its nth call on, and counts the calls.
+type ctxTrip struct {
+	context.Context
+	n     int64
+	calls atomic.Int64
+}
+
+func (c *ctxTrip) Err() error {
+	if c.calls.Add(1) >= c.n && c.n > 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestACancelledReadStopsAtEveryPlaceItLooks — /pending 941 #1. Read observes the context at the start, between pages of
+// the page read, after each picture is decoded and between pages of the model; a cancel at ANY of them is the
+// context's error and no document, and a reader that looks once at entry has too few places to look.
+func TestACancelledReadStopsAtEveryPlaceItLooks(t *testing.T) {
+	pdf := testpdf.ExportPictureTwoPages()
+	probe := &ctxTrip{Context: context.Background()}
+	if _, err := Read(probe, pdf, Options{}); err != nil {
+		t.Fatalf("a read with a live context: %v", err)
+	}
+	total := probe.calls.Load()
+	const pages, pictures = 2, 2 // ExportPictureTwoPages draws one picture on each page
+	// The places, counted: ExportRead's entry (1), its page loop (2), each picture decoded (2), the pass's end (1),
+	// Read's entry after it (1) and its page loop (2). A place removed is a place a cancel is not seen at.
+	if want := int64(1 + pages + pictures + 1 + 1 + pages); total != want {
+		t.Fatalf("Read looked at the context %d times for a %d-page document with %d pictures, want %d", total, pages, pictures, want)
+	}
+	for n := int64(1); n <= total; n++ {
+		d, err := Read(&ctxTrip{Context: context.Background(), n: n}, pdf, Options{})
+		if err != context.Canceled || len(d.Blocks) != 0 {
+			t.Fatalf("a cancel at observation %d of %d: %d blocks, err %v — want context.Canceled and no document", n, total, len(d.Blocks), err)
+		}
 	}
 }

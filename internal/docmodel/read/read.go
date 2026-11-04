@@ -9,6 +9,7 @@
 package read
 
 import (
+	"context"
 	"strings"
 	"unicode"
 
@@ -21,10 +22,14 @@ type Options struct {
 	Title string
 }
 
-// Read reads pdf into the model.
-func Read(pdf []byte, opts Options) (docmodel.Document, error) {
-	ed, err := pdfops.ExportRead(pdf, nil)
+// Read reads pdf into the model. ctx is observed between pages here and inside `pdfops.ExportRead`; a cancelled read
+// returns the context's error (/pending 941 #1).
+func Read(ctx context.Context, pdf []byte, opts Options) (docmodel.Document, error) {
+	ed, err := pdfops.ExportRead(ctx, pdf, nil)
 	if err != nil {
+		return docmodel.Document{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return docmodel.Document{}, err
 	}
 	tree, terr := pdfops.ReadStructure(pdf)
@@ -44,6 +49,9 @@ func Read(pdf []byte, opts Options) (docmodel.Document, error) {
 	}
 	usedTree, usedProposal := false, false
 	for _, ep := range ed.Pages {
+		if err := ctx.Err(); err != nil {
+			return docmodel.Document{}, err
+		}
 		prop := proposalBlocks(ep)
 		blocks := prop
 		flag := func(cause string) {

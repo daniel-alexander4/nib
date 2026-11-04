@@ -2,6 +2,7 @@ package odt
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -128,7 +129,7 @@ func parse(t *testing.T, data []byte) read {
 
 func TestODTReadsBackAsTheModel(t *testing.T) {
 	d := wtest.Hostile()
-	out, err := Write(d)
+	out, err := Write(context.Background(), d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestODTReadsBackAsTheModel(t *testing.T) {
 }
 
 func TestODTMimetypeIsFirstStoredAndAtByte38(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	if string(out[:2]) != "PK" || out[8] != 0 || out[9] != 0 {
 		t.Errorf("first member is not stored: % x", out[:10])
 	}
@@ -178,7 +179,7 @@ func TestODTMimetypeIsFirstStoredAndAtByte38(t *testing.T) {
 }
 
 func TestODTHoldsOnlyItsNamedPartsAndNoClaims(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	pkg := wtest.Open(t, out)
 	allowed := map[string]bool{"Pictures/img-1.png": true}
 	for _, p := range Parts {
@@ -208,7 +209,7 @@ func TestODTTableSpansAreRealCovers(t *testing.T) {
 		{cell("a", 2, 1), cell("b", 1, 2)},
 		{cell("c", 1, 1), cell("d", 1, 1)},
 	}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	r := parse(t, wtest.Open(t, out).Files["content.xml"])
 	// a covers one position to its right; row 2 holds c, d and the position b covers.
 	if r.cells != 4 || r.covered != 2 || !slices.Equal(r.words, []string{"a", "b", "c", "d"}) {
@@ -217,11 +218,11 @@ func TestODTTableSpansAreRealCovers(t *testing.T) {
 }
 
 func TestODTSpacesAndOfNothing(t *testing.T) {
-	if out, err := Write(docmodel.Document{}); out != nil || err != nil {
+	if out, err := Write(context.Background(), docmodel.Document{}); out != nil || err != nil {
 		t.Errorf("got %d bytes, %v", len(out), err)
 	}
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Spans: []docmodel.Span{{Text: "  a   b "}, {Text: "c"}}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	content := string(wtest.Open(t, out).Files["content.xml"])
 	if !strings.Contains(content, `<text:s text:c="2"/>a <text:s text:c="2"/>b `) {
 		t.Errorf("collapsing spaces are not counted:\n%s", content)
@@ -231,7 +232,7 @@ func TestODTSpacesAndOfNothing(t *testing.T) {
 // The confirmatory run (D22): LibreOffice opens the package and reads the model's words back in order.
 func TestODTOpensInLibreOffice(t *testing.T) {
 	d := wtest.Hostile()
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	got := wtest.LibreOfficeText(t, "hostile.odt", out)
 	extra, ok := wtest.ReadBack(got, wtest.Words(d))
 	// Extra: three rendered list labels and the six words of the placeholder line "[Picture: Scanned page 3 "quoted" <b>]".
@@ -248,7 +249,7 @@ func TestODTTwoListsAtOneDepthRestartAndNestingStaysInsideItsItem(t *testing.T) 
 		item(1, 1, "1.", "a"), item(1, 2, "-", "a1"), item(1, 1, "2.", "b"),
 		item(2, 1, "1.", "c"),
 	}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	content := string(wtest.Open(t, out).Files["content.xml"])
 	if strings.Count(content, `<text:list text:style-name="L2">`) != 2 {
 		t.Errorf("two model lists must be two ODF lists so numbering restarts:\n%s", content)
@@ -259,24 +260,24 @@ func TestODTTwoListsAtOneDepthRestartAndNestingStaysInsideItsItem(t *testing.T) 
 }
 
 func TestODTNothingWrittenIsNilAndAFlatPictureKeepsAHeight(t *testing.T) {
-	if out, _ := Write(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure}}}); out != nil {
+	if out, _ := Write(context.Background(), docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure}}}); out != nil {
 		t.Error("blocks that render nothing must not become a blank 200")
 	}
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 100000, Height: 1}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	if strings.Contains(string(wtest.Open(t, out).Files["content.xml"]), `svg:height="0.000in"`) {
 		t.Error("a zero-height frame")
 	}
 }
 
 func TestODTCarriesAPictureAReaderCanDecode(t *testing.T) {
-	out, _ := Write(wtest.Hostile())
+	out, _ := Write(context.Background(), wtest.Hostile())
 	wtest.Open(t, out).DecodesAsPNG(t, "Pictures/img-1.png")
 }
 
 func TestODTPictureHeightStaysInsideTwentyTwoInches(t *testing.T) {
 	d := docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Figure, Image: &docmodel.Image{Ext: "png", Data: []byte{1}, Width: 100, Height: 20000}}}}
-	out, _ := Write(d)
+	out, _ := Write(context.Background(), d)
 	doc := string(wtest.Open(t, out).Files["content.xml"])
 	i := strings.Index(doc, `svg:height="`)
 	if i < 0 {

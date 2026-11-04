@@ -10672,11 +10672,15 @@ els.exportDocBtn.onclick = async () => {
   // Still the document the press named, and still in front (ADR-001): checked after every await, and quiet.
   const stillHere = () => owner === view && (owner.docMeta && owner.docMeta.id) === (opDoc && opDoc.id);
   if (!stillHere()) return;
-  const fetchAs = (format) => apiFetch('/api/export/document?' + ['format=' + format, 'title=' + encodeURIComponent(exportName),
-    'redactionsPending=' + marks].join('&'), { method: 'POST', docId: opDoc && opDoc.id });
+  // The first read names no revision and answers with the one it was made on; the Save request for another format
+  // names that one back (`baseRev`, ADR-146), so a document that moved between the press and Save is refused, not
+  // exported as a different document from the facts the dialog shows (/pending 941 #5).
+  const fetchAs = (format, baseRev) => apiFetch('/api/export/document?' + ['format=' + format, 'title=' + encodeURIComponent(exportName),
+    'redactionsPending=' + marks].concat(baseRev == null ? [] : ['baseRev=' + baseRev]).join('&'), { method: 'POST', docId: opDoc && opDoc.id });
   const first = await fetchAs('md');
   if (!stillHere()) return;
   if (!first.ok) { toast(await errText(first, 'Could not export the document')); return; }
+  const readAt = first.headers.get('X-Nib-Doc-Rev');
   let facts = {};
   try { facts = JSON.parse(first.headers.get('X-Nib-Export') || '{}'); } catch { facts = {}; }
   const report = exportReport(facts);
@@ -10687,7 +10691,7 @@ els.exportDocBtn.onclick = async () => {
     note: EXPORT_KEEPS[format] + ' Anything you have placed, typed or drawn and not saved is not in it.' + (report ? ' ' + report : ''),
     make: async () => {
       if (format === 'md') return firstBlob;
-      const r = await fetchAs(format);
+      const r = await fetchAs(format, readAt);
       if (!r.ok) throw new Error(await errText(r, 'Could not export the document'));
       return r.blob();
     },
