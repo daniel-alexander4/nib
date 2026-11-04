@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,12 +101,16 @@ func TestAWrongHostPathMethodOrUserIsA404ThatDoesNotSpendTheUse(t *testing.T) {
 	if res, body := get(t, o, "GET", host, tokenPath(o)); res.StatusCode != 200 || body == "" {
 		t.Errorf("the real request after six refusals = %d", res.StatusCode)
 	}
-	// Root's and an unknown owner's connections are served (ADR-157's rule); a gone socket too.
-	for _, st := range []peercred.State{peercred.Unknown, peercred.Gone} {
-		o2 := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) { return 99999, st })
-		if res, _ := get(t, o2, "GET", Host+":"+fmtInt(o2.Port()), tokenPath(o2)); res.StatusCode != 200 {
-			t.Errorf("state %v answered %d, want 200", st, res.StatusCode)
-		}
+	// Root's and an unknown owner's connections are served (ADR-157's rule). A gone socket is NOT: this server
+	// has just accepted the connection, so "no such socket" is a far end that closed before the lookup, and
+	// that is how another user would spend the one use (P04 review).
+	o2 := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) { return 99999, peercred.Unknown })
+	if res, _ := get(t, o2, "GET", Host+":"+fmtInt(o2.Port()), tokenPath(o2)); res.StatusCode != 200 {
+		t.Errorf("unknown owner answered %d, want 200", res.StatusCode)
+	}
+	og := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) { return 0, peercred.Gone })
+	if res, _ := get(t, og, "GET", Host+":"+fmtInt(og.Port()), tokenPath(og)); res.StatusCode != 404 || og.Served() {
+		t.Errorf("a gone socket answered %d (served %v), want 404 unspent", res.StatusCode, og.Served())
 	}
 	o3 := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) { return 0, peercred.Found })
 	if res, _ := get(t, o3, "GET", Host+":"+fmtInt(o3.Port()), tokenPath(o3)); res.StatusCode != 200 {
@@ -147,5 +152,17 @@ func TestTheBrowserIsLaunchedWithTheDoorsFlags(t *testing.T) {
 		if strings.Contains(args, never) {
 			t.Errorf("Args contains %q", never)
 		}
+	}
+}
+
+func TestCloseFromTwoPlacesAtOnceDoesNotPanic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		o := newOrigin(t, nil)
+		var wg sync.WaitGroup
+		for j := 0; j < 4; j++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); o.Close() }()
+		}
+		wg.Wait()
 	}
 }

@@ -290,3 +290,16 @@ func TestALargeMessageWithShortLfHeadersIsRead(t *testing.T) {
 		}
 	}
 }
+
+func TestAMessagesStyleSheetCannotReachNibsHeaderTable(t *testing.T) {
+	page, _, _, err := emlToHTML(eml(emlHead+"Content-Type: text/html", "<style>table{display:none} th{content:'x'}</style><p>hello body</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(page), "display:none") || strings.Contains(string(page), "<style") {
+		t.Errorf("the message's style sheet reached the page: %s", page)
+	}
+	if !strings.Contains(string(page), "hello body") {
+		t.Error("the body is gone")
+	}
+}

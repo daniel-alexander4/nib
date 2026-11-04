@@ -204,7 +204,13 @@ func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePar
 
 // mhtmlToHTML turns an MHTML message into one HTML document (sanitised later) and its picture resolver.
 func mhtmlToHTML(data []byte) ([]byte, func(string) (string, bool), error) {
-	if i := bytes.Index(data, []byte("\r\n\r\n")); (i < 0 && len(data) > mimeHeaderBytes) || i > mimeHeaderBytes {
+	end := len(data)
+	for _, sep := range []string{"\r\n\r\n", "\n\n"} {
+		if i := bytes.Index(data, []byte(sep)); i >= 0 && i < end {
+			end = i
+		}
+	}
+	if end > mimeHeaderBytes {
 		return nil, nil, ErrPackageTooBig
 	}
 	msg, err := mail.ReadMessage(bytes.NewReader(data))
@@ -321,14 +327,16 @@ func epubToHTML(data []byte) ([]byte, error) {
 	}
 	var heads, bodies bytes.Buffer
 	n := 0
+	seen := map[string]bool{}
 	for _, ref := range opf.Spine {
-		if n >= epubChapters {
+		if n >= epubChapters || heads.Len()+bodies.Len() > epubOutputBytes {
 			return nil, ErrPackageTooBig
 		}
 		name, ok := byID[ref.IDRef]
-		if !ok {
-			continue
+		if !ok || seen[name] {
+			continue // a spine that names one chapter again is read once: each read charges its pictures again
 		}
+		seen[name] = true
 		b, ok := read(name, packagePartBytes)
 		if !ok {
 			continue
@@ -371,3 +379,7 @@ func splitOwnDocument(doc []byte) (head, body []byte) {
 	h = strings.Replace(h, `<meta charset="utf-8">`, "", 1)
 	return []byte(h), []byte(s[bs+len("<body>") : be])
 }
+
+// epubOutputBytes bounds the chapters' sanitised output together. Each chapter's picture budget is its own,
+// so without this one 300-chapter book could write 300 budgets (a variable so a test can lower it).
+var epubOutputBytes = packageAllBytes

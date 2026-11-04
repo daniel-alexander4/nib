@@ -84,10 +84,10 @@ func renderProbe(ctx context.Context, chromium string) error {
 			err = fmt.Errorf("%w: it wrote %d pages", ErrBrowserCannotRender, n)
 		}
 	} else if !errors.Is(err, ErrBrowserCannotRender) && ctx.Err() == nil {
-		err = fmt.Errorf("%w: %v", ErrBrowserCannotRender, err)
+		err = fmt.Errorf("%w: %w", ErrBrowserCannotRender, err)
 	}
-	if ctx.Err() != nil {
-		return err // a cancelled probe says nothing about the browser
+	if ctx.Err() != nil || (err != nil && (probeUnfinished(err) || errors.Is(err, browserrender.ErrNotServed))) {
+		return err // not a verdict: cancelled, timed out, or the browser never asked for the page
 	}
 	if serr == nil {
 		renderCache.st = renderState{path: chromium, size: fi.Size(), mod: fi.ModTime(), err: err}

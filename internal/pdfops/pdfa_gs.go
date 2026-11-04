@@ -1,7 +1,6 @@
 package pdfops
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -119,8 +118,8 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *t
 // ended, so a decoder that writes `out-1.png` where it was asked for `out.png` (libheif does, for a file
 // with several pictures) is read from where it wrote.
 func runConvertPick(ctx context.Context, cmd *exec.Cmd, pick func() string, tool string, dir *tempdir.Dir) ([]byte, error) {
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := &tailBuffer{max: 16 << 10}
+	cmd.Stderr = stderr
 	// **The timeout has to end the conversion, not only the process nib started** (`/pending 503`).
 	// `soffice` is a launcher: it starts `soffice.bin`, and `CommandContext` kills only the launcher. A hung
 	// `soffice.bin` kept converting past the timeout, and because it inherited the stderr pipe, `Run` waited
@@ -234,4 +233,32 @@ func execErrTail(stderr string, err error) string {
 		lines = lines[len(lines)-3:]
 	}
 	return strings.Join(lines, "; ")
+}
+
+// tailBuffer keeps the last max bytes written to it. A converter's stderr is only ever read for its last
+// lines (execErrTail), and a hostile program can write to it for as long as the timeout lets it, so the
+// buffer in Nib's own process must not grow with what the program writes.
+type tailBuffer struct {
+	max int
+	b   []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= t.max {
+		t.b = append(t.b[:0], p[len(p)-t.max:]...)
+		return n, nil
+	}
+	t.b = append(t.b, p...)
+	if len(t.b) > 2*t.max {
+		t.b = append(t.b[:0], t.b[len(t.b)-t.max:]...)
+	}
+	return n, nil
+}
+
+func (t *tailBuffer) String() string {
+	if len(t.b) > t.max {
+		return string(t.b[len(t.b)-t.max:])
+	}
+	return string(t.b)
 }

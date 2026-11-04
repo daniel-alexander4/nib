@@ -58,12 +58,13 @@ type Origin struct {
 	// ownerOf answers "who owns the far end of this connection"; a test replaces it.
 	ownerOf func(local, peer netip.AddrPort) (uint32, peercred.State)
 
-	consumed atomic.Bool   // the token path has been asked for once
-	served   atomic.Bool   // the whole document was written to that one request
-	refused  atomic.Int64  // requests answered 404 (a wrong host, a wrong user, a wrong path, a second ask)
-	done     chan struct{} // closed when the document has been handled
-	once     sync.Once
-	closed   chan struct{}
+	consumed  atomic.Bool   // the token path has been asked for once
+	served    atomic.Bool   // the whole document was written to that one request
+	refused   atomic.Int64  // requests answered 404 (a wrong host, a wrong user, a wrong path, a second ask)
+	done      chan struct{} // closed when the document has been handled
+	once      sync.Once
+	closeOnce sync.Once // Close is reached from the lifetime timer and from the render's defer
+	closed    chan struct{}
 }
 
 // Listen starts the origin for doc. The caller must Close it on every path.
@@ -188,8 +189,12 @@ func (o *Origin) peerIsMe(r *http.Request) bool {
 	switch st {
 	case peercred.Found:
 		return uid == uint32(os.Geteuid()) || uid == 0
-	case peercred.Gone, peercred.Unknown:
-		return true
+	case peercred.Unknown:
+		return true // off Linux the kernel cannot say (the declared gap)
+	case peercred.Gone:
+		// This server has just accepted the connection, so its own end exists: "no such socket" means the
+		// far end closed before the lookup, which is how another user's request would try to spend the use.
+		return false
 	}
 	return false
 }
@@ -199,11 +204,10 @@ func (o *Origin) Done() <-chan struct{} { return o.done }
 
 // Close ends the origin: Shutdown bounded at one second, then Close. Safe to call more than once.
 func (o *Origin) Close() {
-	select {
-	case <-o.closed:
-		return
-	default:
-	}
+	o.closeOnce.Do(o.closeNow)
+}
+
+func (o *Origin) closeNow() {
 	close(o.closed)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

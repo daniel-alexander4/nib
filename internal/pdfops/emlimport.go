@@ -209,7 +209,9 @@ func emlToHTML(data []byte) (page []byte, resolve func(string) (string, bool), d
 		if serr != nil {
 			return nil, nil, 0, fmt.Errorf("%w: %v", ErrHTMLUnreadable, serr)
 		}
-		styles, body = splitOwnDocument(out)
+		// The message's own style sheets are dropped: they share the page with Nib's header table, and a
+		// rule such as `table{display:none}` would hide it or put a forged one in its place (P04 review).
+		_, body = splitOwnDocument(out)
 	case haveText:
 		body = []byte(`<pre style="white-space:pre-wrap;font-family:monospace">` + html.EscapeString(mailText2(textBody)) + `</pre>`)
 	default:

@@ -1029,3 +1029,5 @@ home today.
   — PLAN-import-export P04.S04b: `mhtml` and `epub` rows; pictures only from the package's own parts by its own names, typed by their bytes; caps with hostile fixtures; chapters joined from Nib's own sanitised output.
 - [ADR-202](202-an-email-prints-five-named-headers-and-counts-its-attachments-and-msg-is-refused-by-name.md) — **An email prints five named headers and counts its attachments; `.msg` is refused by name**
   — PLAN-import-export P04.S05: `eml` row; From/To/Cc/Date/Subject as escaped text and no other header; attachments counted and never decoded (`decodeIf`), `cid:` pictures only from the message; body through ADR-200's path; Outlook `.msg` refused by name.
+- [ADR-203](203-the-phase-close-bounds-what-the-browser-door-reads-and-what-a-probe-is-allowed-to-remember.md) — **The P04 close: a probe remembers only a verdict, and a book is bounded in total**
+  — PLAN-import-export P04 phase close: unfinished probes are never cached, the origin refuses a gone socket, an EPUB is read once per chapter and bounded in total, stderr is a tail, `.eml` drops the message's style sheets; the CVE-2024-29510 probe gap is declared (/pending 943).
