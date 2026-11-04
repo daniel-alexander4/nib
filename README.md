@@ -422,6 +422,13 @@ takes their pictures only from inside the file, and prints the result as one doc
 chapters. Nothing is written under a name the file chose, and an EPUB prints without its own style sheets.
 Links in the page stay links. I tested Chrome 157 and Chromium 156 on Linux; Windows and macOS are not run.
 
+An SVG picture (`.svg`) opens through the same browser, as one page of the size the file declares (a file that declares none, or
+one past 200 inches a side, is refused). Nib parses it strictly and rebuilds it from a list of drawing elements, which drops scripts,
+`foreignObject`, links, animation and anything that points at another file or address, then hands it to the browser only as a picture
+inside a page of Nib's own, where a browser runs no script and fetches nothing. In my tests nine tricks (a script, an `onload`, an
+`<image>`, a style sheet import, a `foreignObject` frame and others) each did their harm when the protection was removed and none
+did through Nib. Text stays text and words in it can be selected. Fonts the file names are not loaded; the browser's own are used.
+
 An email saved as `.eml` opens the same way. The PDF shows who it was from, who it went to, the date and the subject, then
 the message. No other header is shown, so a sending address, a server name or a tracking id in the headers does not reach the
 page. Attachments are not opened or saved; the PDF says how many there were. A picture the message carries inside itself

@@ -271,6 +271,8 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = ConvertPostScriptToPDF(ctx, data, f.Key == "eps")
 	case f.Family == FamilyHTML:
 		pdf, err = ConvertHTMLToPDF(ctx, data)
+	case f.Family == FamilySVG:
+		pdf, err = ConvertSVGToPDF(ctx, data)
 	case f.Family == FamilyMHTML:
 		pdf, err = ConvertMHTMLToPDF(ctx, data)
 	case f.Family == FamilyEmail:
@@ -295,7 +297,7 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		if _, tool := MissingToolFor(err); tool || errors.Is(err, ErrShuttingDown) || ctx.Err() != nil || isNativeRefusal(err) {
 			return nil, err
 		}
-		return nil, &ConversionError{Format: f.Key, Image: f.Image || f.Family == FamilyHEIF, Err: err}
+		return nil, &ConversionError{Format: f.Key, Image: f.Image || f.Family == FamilyHEIF || f.Family == FamilySVG, Err: err}
 	}
 	// The converted document's title is the source's name — best-effort, and the door guarantees it: a failed
 	// metadata write must not turn a conversion that succeeded into a refusal.

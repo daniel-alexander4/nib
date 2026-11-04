@@ -54,6 +54,8 @@ func sniffFamily(head []byte) Family {
 		return FamilyMHTML
 	case isEmail(head):
 		return FamilyEmail
+	case isSVG(head):
+		return FamilySVG
 	case isHTML(head):
 		return FamilyHTML
 	}
@@ -150,6 +152,19 @@ func classify(head []byte, name string) (Format, error) {
 		}
 		if named.Family != fam {
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a web page", ErrExtensionDisagrees, named.Label)
+		}
+		return named, nil
+	case FamilySVG:
+		// A picture drawn by a browser, so only a name that says SVG sends it there; a text file that happens to
+		// open with the tag stays text, and a name that says nothing is not guessed.
+		if hasRow && named.Family == FamilyText {
+			return named, nil
+		}
+		if !hasRow {
+			return Format{}, fmt.Errorf("%w: it is an SVG picture but its name does not say so", ErrExtensionDisagrees)
+		}
+		if named.Family != fam {
+			return Format{}, fmt.Errorf("%w: the name says %s, the contents are an SVG picture", ErrExtensionDisagrees, named.Label)
 		}
 		return named, nil
 	case FamilyZip, FamilyOLE, FamilyRTF:
