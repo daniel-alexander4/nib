@@ -17,6 +17,7 @@ import (
 	"nib/internal/docwrite/odt"
 	"nib/internal/docwrite/text"
 	"nib/internal/pdfops"
+	"nib/internal/pptxexport"
 	"nib/internal/sign"
 )
 
@@ -29,13 +30,17 @@ const maxExportFactList = maxRevisionFactList
 var exportFormats = map[string]struct {
 	mime  string
 	write func(docmodel.Document) ([]byte, error)
+	// slides marks the one positioned format: it is written from the page reader and not from the flowing model
+	// (D21, ADR-206), and `write` is nil.
+	slides bool
 }{
-	"md":   {"text/markdown; charset=utf-8", plain(markdown.Write)}, // ADR-194 writes
-	"html": {"text/html; charset=utf-8", plain(html.Write)},
-	"txt":  {"text/plain; charset=utf-8", plain(text.Write)},                                        // ADR-194 writes
-	"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.Write}, // ADR-194 writes
-	"odt":  {"application/vnd.oasis.opendocument.text", odt.Write},                                  // ADR-194 writes
-	"epub": {"application/epub+zip", epub.Write},                                                    // ADR-194 writes
+	"md":   {"text/markdown; charset=utf-8", plain(markdown.Write), false}, // ADR-194 writes
+	"html": {"text/html; charset=utf-8", plain(html.Write), false},
+	"txt":  {"text/plain; charset=utf-8", plain(text.Write), false},                                        // ADR-194 writes
+	"docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.Write, false}, // ADR-194 writes
+	"odt":  {"application/vnd.oasis.opendocument.text", odt.Write, false},                                  // ADR-194 writes
+	"epub": {"application/epub+zip", epub.Write, false},                                                    // ADR-194 writes
+	"pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", nil, true},       // ADR-194 writes
 }
 
 // plain lifts a writer that cannot fail into the route's shape.
@@ -111,7 +116,7 @@ func exportTitle(s string) string {
 	return t
 }
 
-// handleExportDocument answers POST /api/export/document?format=md|html|txt|docx|odt|epub&title=&redactionsPending=: the open
+// handleExportDocument answers POST /api/export/document?format=md|html|txt|docx|odt|epub|pptx&title=&redactionsPending=: the open
 // document as a Markdown, HTML, text, Word, OpenDocument or EPUB file, read through the ONE reader (`docmodel/read.Read`, D16) in one pass, with
 // what it did not carry in X-Nib-Export (D23). It reads the server's copy: overlay marks and typed field values the
 // window has not baked are not in it (W8), and the window says so on the Format line. 422 names a refusal about the
@@ -123,7 +128,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	format, known := exportFormats[r.URL.Query().Get("format")]
 	if !known {
-		httpError(w, http.StatusBadRequest, "format must be md, html, txt, docx, odt or epub")
+		httpError(w, http.StatusBadRequest, "format must be md, html, txt, docx, odt, epub or pptx")
 		return
 	}
 	unapplied, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("redactionsPending")))
@@ -137,15 +142,37 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// doc.data is replaced wholesale and never mutated in place (document.install), so the slice is safe to read
 	// outside the lock; `rev` says whether it was replaced while we read.
-	model, err := read.Read(data, read.Options{Title: exportTitle(r.URL.Query().Get("title"))})
-	if err != nil {
-		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
-		return
-	}
-	body, err := format.write(model)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not write the document")
-		return
+	title := exportTitle(r.URL.Query().Get("title"))
+	var body []byte
+	var report docmodel.Report
+	if format.slides {
+		var empty bool
+		body, report, empty, err = slidesOf(data, title)
+		switch {
+		case errors.Is(err, pptxexport.ErrTooManySlides):
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has more pages than a presentation Nib writes", "cause": "too-many-pages"})
+			return
+		case err != nil && !errors.Is(err, errSlidesUnwritten):
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
+			return
+		case err != nil:
+			httpError(w, http.StatusInternalServerError, "could not write the document")
+			return
+		case empty:
+			body = nil
+		}
+	} else {
+		model, err := read.Read(data, read.Options{Title: title})
+		if err != nil {
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
+			return
+		}
+		report = model.Report
+		body, err = format.write(model)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "could not write the document")
+			return
+		}
 	}
 	if len(body) == 0 {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has no text or pictures to export", "cause": "empty"})
@@ -159,7 +186,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "the document changed while it was being read; export again")
 		return
 	}
-	hdr, err := json.Marshal(factsOf(model.Report, sign.HasSignatureBlob(data), unapplied))
+	hdr, err := json.Marshal(factsOf(report, sign.HasSignatureBlob(data), unapplied))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not describe the export")
 		return
@@ -218,4 +245,64 @@ func (s *Server) handleExportSVG(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	_, _ = w.Write(body)
+}
+
+// errSlidesUnwritten marks a failure of the package writer itself, as opposed to a refusal about the document.
+var errSlidesUnwritten = errors.New("the presentation was not written")
+
+// slidesOf reads the document once through the export reader (which applies the visibility rule before it groups) and
+// writes a slide per page. The report is built from the same counters the flowing export fills, so the header says the
+// same things (Y3); empty says the pages held neither text nor a picture.
+func slidesOf(data []byte, title string) (body []byte, rep docmodel.Report, empty bool, err error) {
+	ed, err := pdfops.ExportRead(data, nil)
+	if err != nil {
+		return nil, rep, false, err
+	}
+	if len(ed.Pages) > pptxexport.MaxSlides {
+		return nil, rep, false, pptxexport.ErrTooManySlides
+	}
+	rep.Source = docmodel.SourceProposal
+	rep.Placeholders, rep.DroppedLinks = map[string]int{}, map[string]int{}
+	any := false
+	for _, ep := range ed.Pages {
+		v := ep.Visibility
+		rep.CoveredText += v.Covered
+		rep.MaybeCovered += v.MaybeCovered
+		rep.HiddenText += v.HiddenText
+		rep.HiddenLayer += v.HiddenLayer
+		rep.OffPage += v.OffPage
+		rep.CoverUntested += v.CoverUntested
+		rep.UnreadGlyphs += v.UnreadGlyphs
+		if v.UnreadGlyphs > 0 {
+			rep.FlaggedPages = append(rep.FlaggedPages, docmodel.FlaggedPage{Page: ep.Page, Cause: docmodel.FlagUnread})
+		}
+		if ep.NoText {
+			rep.NoTextPages++
+		}
+		carried := false
+		for _, f := range ep.Figures {
+			if f.Placeholder != "" {
+				rep.Placeholders[f.Placeholder]++
+				continue
+			}
+			carried = true
+		}
+		if ep.NoText && carried {
+			rep.ScannedPages = append(rep.ScannedPages, ep.Page)
+		}
+		if len(ep.Paragraphs) > 0 || len(ep.Tables) > 0 || len(ep.Figures) > 0 {
+			any = true
+		}
+	}
+	body, counts, err := pptxexport.Write(ed, title)
+	if err != nil {
+		if errors.Is(err, pptxexport.ErrTooManySlides) {
+			return nil, rep, false, err
+		}
+		return nil, rep, false, errSlidesUnwritten
+	}
+	if counts.DroppedLinks > 0 {
+		rep.DroppedLinks["not-carried"] = counts.DroppedLinks
+	}
+	return body, rep, !any, nil
 }

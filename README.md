@@ -1404,7 +1404,7 @@ points at Compress. On the command line, `nib shrink IN -o OUT [--level N | --ta
 
 **Pull the contents out** (File → Export & Print): **Document as…** saves the document's words as
 Markdown, a web page (one HTML file, pictures inside it), plain text, a Word document (.docx), an
-OpenDocument text (.odt) or an e-book (.epub), in reading order, with headings, lists, tables, bold, italic and web links kept
+OpenDocument text (.odt), an e-book (.epub) or a PowerPoint file (.pptx, one slide per page with each paragraph in a text box where the page sets it), in reading order, with headings, lists, tables, bold, italic and web links kept
 where the document has them (Word, OpenDocument and the e-book also keep the pictures; the page layout is not kept, the
 text reflows); **Pictures in the document
 (ZIP)** bundles the pictures inside the PDF into a zip — JPEGs come out as-is, other images are

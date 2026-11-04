@@ -213,3 +213,40 @@ func TestTheSVGRouteDrawsOnePageAndRefusesByCause(t *testing.T) {
 		}
 	}
 }
+
+// The PowerPoint route (ADR-206): positioned, from the page reader, and the visibility rule still holds (D30).
+func TestTheExportRouteWritesPowerPointAndHoldsTheCoveredTextRule(t *testing.T) {
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", exportFixture(t, "covered"))
+	code, body, h := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=pptx&title=Quarterly&redactionsPending=1")
+	if code != 200 || h.Get("Content-Type") != "application/vnd.openxmlformats-officedocument.presentationml.presentation" {
+		t.Fatalf("pptx: %d %q", code, h.Get("Content-Type"))
+	}
+	pkg := wtest.Open(t, body)
+	pkg.WellFormed(t)
+	slide := string(pkg.Files["ppt/slides/slide1.xml"])
+	if !strings.Contains(slide, "visible heading") || strings.Contains(slide, "secret under the box") {
+		t.Errorf("the covered text rule does not hold on the slide:\n%s", slide)
+	}
+	var f ExportFacts
+	if err := json.Unmarshal([]byte(h.Get("X-Nib-Export")), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Source != "proposal" || f.CoveredText == 0 || f.UnappliedRedactions != 1 {
+		t.Errorf("facts = %+v", f)
+	}
+}
+
+func TestThePowerPointRouteRefusesADocumentWithNothingToPlace(t *testing.T) {
+	ts, _ := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", mustBlankPDF(t))
+	code, body, _ := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=pptx")
+	if code != 422 || !strings.Contains(string(body), `"empty"`) {
+		t.Errorf("blank page = %d %s, want 422 empty", code, body)
+	}
+	if code, _, _ := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=ppt"); code != 400 {
+		t.Errorf("unknown format = %d", code)
+	}
+}
