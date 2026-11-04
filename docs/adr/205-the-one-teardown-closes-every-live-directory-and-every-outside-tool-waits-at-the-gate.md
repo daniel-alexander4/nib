@@ -1,4 +1,4 @@
-# ADR-202 — The one teardown closes every live directory, and every outside tool waits at the gate
+# ADR-205 — The one teardown closes every live directory, and every outside tool waits at the gate
 
 Status: accepted, 2026-11-04 (/pending 940, review residue of v2.33.0). Extends ADR-185, ADR-009.
 
