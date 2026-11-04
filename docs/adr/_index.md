@@ -1035,5 +1035,5 @@ home today.
   — PLAN-import-export P05.S01a: `svg` row; strict parse, allowlisted elements and attributes, embedded only as a `data:` image in Nib's own wrapper page through the browser door; page size from the declared width/height, capped; nine vectors each with a firing control.
 - [ADR-205](205-a-page-is-drawn-as-an-svg-by-pdftocairo-from-the-servers-copy-and-the-tool-is-asked-once-for-one-page.md) — **A page is drawn as an SVG by pdftocairo, from the server's copy, one page to a call**
   — PLAN-import-export P05.S01b: `ToolPdftocairo`, `POST /api/export/svg`, Format-line entry that stays with its reason when the tool is absent; unapplied overlay marks are not in it.
-- [ADR-206](206-the-one-teardown-closes-every-live-directory-and-every-outside-tool-waits-at-the-gate.md) — **The one teardown closes every live directory, and every outside tool waits at the gate**
+- [ADR-207](207-the-one-teardown-closes-every-live-directory-and-every-outside-tool-waits-at-the-gate.md) — **The one teardown closes every live directory, and every outside tool waits at the gate**
   — /pending 940: `tempdir.CloseAll` from `Server.Shutdown`; the PDF/A Ghostscript route takes ctx and an `ImportGate` slot; the CLI import is signal-cancelled; the off-Linux gaps are logged at start.
