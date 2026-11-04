@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -249,5 +251,55 @@ func TestAQueuedDocumentDoesNotOutliveItsSession(t *testing.T) {
 	s.mu.Unlock()
 	if !slices.Equal(queued, []string{b}) {
 		t.Errorf("queued for the unlock = %v, want only %s — the closed session's document opens beside it", queued, b)
+	}
+}
+
+// writeImportable puts a PNG on disk: a file Nib converts rather than opens.
+func writeImportable(t *testing.T, name string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, testPNG(t, 8, 8), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestAConversionHandedOffBeforeAnyWindowConnectsIsToldToTheFirstWindowOnce (/pending 940 #1): a
+// document's own answer carries `importedFrom` only on the route that imported it, so a window that
+// connects afterwards and restores the list would never learn the file was converted.
+func TestAConversionHandedOffBeforeAnyWindowConnectsIsToldToTheFirstWindowOnce(t *testing.T) {
+	ts, s := startServerWith(t)
+	s.SetHandoffSecret("secret")
+	c, _ := authedClient(t, ts)
+	if _, out := handoffTo(t, ts, c, "secret", writeImportable(t, "scan.png")); out.Result != "opened" || out.Surfaced {
+		t.Fatalf("setup: the launch = %q surfaced=%v, want opened/false (no window yet)", out.Result, out.Surfaced)
+	}
+	first := listenAsAWindow(t, ts)
+	waitForWindows(t, s, 1)
+	ev, ok := nextHandoff(t, first, streamWait(t))
+	if !ok || ev.Result != "opened" || ev.ImportedFrom != "scan.png" || ev.Seq == 0 {
+		t.Fatalf("the first window heard %+v (arrived %v), want the conversion with its sequence", ev, ok)
+	}
+	second := listenAsAWindow(t, ts)
+	waitForWindows(t, s, 2)
+	if ev, ok := nextHandoff(t, second, 300*time.Millisecond); ok {
+		t.Errorf("a second window was told of the same conversion: %+v", ev)
+	}
+}
+
+// TestAConversionQueuedWhileLockedIsToldToTheWindowAtUnlock (/pending 940 #2): the drain opens the file
+// after the unlock and goes through the same door a live hand-off does.
+func TestAConversionQueuedWhileLockedIsToldToTheWindowAtUnlock(t *testing.T) {
+	ts, s := startServerWith(t)
+	lines := listenAsAWindow(t, ts)
+	waitForWindows(t, s, 1)
+	if !s.queuePendingOpen(writeImportable(t, "queued.png")) {
+		t.Fatal("setup: a locked instance refused to queue")
+	}
+	_, v := unlockedServer(t)
+	s.adoptVault(v)
+	ev, ok := nextHandoff(t, lines, streamWait(t))
+	if !ok || ev.Result != "opened" || ev.ImportedFrom != "queued.png" {
+		t.Fatalf("the window heard %+v (arrived %v), want the queued file's conversion", ev, ok)
 	}
 }

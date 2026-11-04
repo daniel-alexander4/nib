@@ -6,6 +6,6 @@
  		// emit-on-difference rule above would swallow the second of two identical outcomes.
 -		for _, ev := range s.push.since(lastHandoff) {
 +		for _, ev := range s.push.since(lastHandoff)[:0] {
- 			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom})
+ 			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom, Seq: ev.seq})
  			if hoErr != nil {
  				return

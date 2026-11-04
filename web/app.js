@@ -4494,7 +4494,7 @@ function applyHandoffEvent(ev) {
   // contents, a cap. Without a reason it is the old generic sentence.
   if (ev.result === 'refused' && ev.reason) toast(ev.reason, 9000);
   else if (ev.result === 'refused' || ev.result === 'queued') toast(HANDOFF_NOTICES['handoff-' + ev.result]);
-  if (ev.result === 'opened' && ev.importedFrom) noteImported(ev.importedFrom, '', true);
+  if (ev.result === 'opened' && ev.importedFrom) noteImported(ev.importedFrom, '', true, ev.seq);
   if (ev.result === 'opened' || ev.result === 'focused') adoptHandedOff(ev.result === 'focused');
   if (!document.hasFocus()) {
     document.title = '● ' + baseTitle;
@@ -5524,7 +5524,7 @@ async function save() {
     // It went to the browser's downloads as "document.pdf" until v2.2.0, whatever the file was
     // called; it is Save As now, under the file's own name and in a folder the user chooses.
     if (!doc.canSave) {
-      openSaveAs(new Blob([bytes], { type: 'application/pdf' }), ownFileName(owner), 'Save As');
+      openSaveAs(new Blob([bytes], { type: 'application/pdf' }), ownFileName(owner), 'Save As', null, () => { owner.importedFrom = ''; });
       return;
     }
     let res = await apiFetch('/api/save', {
@@ -9228,6 +9228,7 @@ function baseNameOf(v) {
   return b || 'document';
 }
 
+let saveAsOnSaved = null; // what a write of the document's own PDF does once it lands (openSaveAs)
 let saveAsBlob = null; // the bytes the dialog will write on confirm
 // An export that comes in more than one format (ADR-103) hands the dialog a LIST instead of a
 // blob: `{ label, name, ext, blob | make }` each. `name` is the whole default file name for that
@@ -9295,7 +9296,11 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   if (!t.list.children.length) row('no sub-folders', 'blank', null);
 }
 
-function openSaveAs(blob, defaultName, title, formats) {
+//
+// `onSaved` is what a write of THIS document's own PDF does once it lands (/pending 940): Save As on a view
+// whose file was converted clears its "converted, PDF not saved" mark. Nothing else passes one — an export to
+// another format, or a copy of some other file, does not save the PDF.
+function openSaveAs(blob, defaultName, title, formats, onSaved) {
   // One dialog, one set of bytes. `saveAsBlob` is a single module global, so a second
   // export finishing while this dialog is open used to replace both the bytes and the
   // name field under the user — including a name they had already typed. Refusing is
@@ -9310,6 +9315,7 @@ function openSaveAs(blob, defaultName, title, formats) {
   saveAsBusy = false;
   saveAsBlob = several ? null : blob;
   saveAsFormats = several ? formats : null;
+  saveAsOnSaved = onSaved || null;
   els.saveAsFormat.textContent = '';
   if (several) {
     for (const f of formats) {
@@ -9442,6 +9448,7 @@ function closeSaveAs() {
   els.saveAsModal.hidden = true;
   saveAsBlob = null;
   saveAsFormats = null;
+  saveAsOnSaved = null;
   els.saveAsStatus.textContent = '';
   els.saveAsNote.textContent = '';
   els.saveAsNote.hidden = true;
@@ -9471,6 +9478,7 @@ els.saveAsGo.onclick = async () => {
   // Name first, bytes second, and nothing between them that can change the format: the Format
   // line is disabled for as long as a maker runs.
   const filledOwner = view;
+  const onSaved = saveAsOnSaved; // the press's, before closeSaveAs clears it
   const filled = await collectFilledValues(filledOwner); // before anything can reload the view (/pending 917)
   const bytes = await saveAsBytes();
   if (!bytes) return;
@@ -9498,6 +9506,7 @@ els.saveAsGo.onclick = async () => {
   if (!res.ok) { toast(await errText(res, 'could not save')); return; }
   const meta = await res.json();
   closeSaveAs();
+  if (onSaved) onSaved();
   toast('Saved to ' + meta.path);
   offerToKeepFilled(filled);
 };
@@ -10345,7 +10354,7 @@ async function saveAs(owner) {
   if (!owner.pdfDocument || !owner.docMeta) return;
   const name = ownFileName(owner);
   const bytes = await bakedBytes(owner.docMeta.id, owner, null, true);
-  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), name, 'Save As');
+  openSaveAs(new Blob([bytes], { type: 'application/pdf' }), name, 'Save As', null, () => { owner.importedFrom = ''; });
 }
 
 // ownFileName is the name Save As offers: the document's own file name as it was opened, kept as
@@ -10660,15 +10669,19 @@ els.exportDocBtn.onclick = async () => {
     + ' not been applied.\n\nChoose Cancel, apply the redactions, then export. Export anyway?')) return;
   const need = await ensureText(owner);
   if (need.outcome === 'cancelled' || need.outcome === 'gone') return;
-  if (owner !== view) return;
+  // Still the document the press named, and still in front (ADR-001): checked after every await, and quiet.
+  const stillHere = () => owner === view && (owner.docMeta && owner.docMeta.id) === (opDoc && opDoc.id);
+  if (!stillHere()) return;
   const fetchAs = (format) => apiFetch('/api/export/document?' + ['format=' + format, 'title=' + encodeURIComponent(exportName),
     'redactionsPending=' + marks].join('&'), { method: 'POST', docId: opDoc && opDoc.id });
   const first = await fetchAs('md');
+  if (!stillHere()) return;
   if (!first.ok) { toast(await errText(first, 'Could not export the document')); return; }
   let facts = {};
   try { facts = JSON.parse(first.headers.get('X-Nib-Export') || '{}'); } catch { facts = {}; }
   const report = exportReport(facts);
   const firstBlob = await first.blob();
+  if (!stillHere()) return;
   const one = (format, label, ext) => ({
     label, name: exportName + ext, ext,
     note: EXPORT_KEEPS[format] + ' Anything you have placed, typed or drawn and not saved is not in it.' + (report ? ' ' + report : ''),
@@ -14869,10 +14882,11 @@ function importNoticeWords(names, untagged) {
   return `Imported ${names.length} files as PDFs. Save writes a PDF; use Export for other formats.`;
 }
 // importKey is how a document is remembered as announced. A hand-off event carries no id, so it is keyed by
-// the name and the moment — it is delivered to a window once, and this only absorbs a stream replay.
-function importKey(name, id) { return id || `ev:${name}`; }
-function noteImported(name, id, tagged) {
-  const key = importKey(name, id);
+// the server's sequence for it (and the name, which a restarted server's counter could repeat): the same event
+// delivered twice is one notice, and the same file handed off again later is another (/pending 940).
+function importKey(name, id, seq) { return id || (seq ? `ev:${seq}:${name}` : `ev:${name}`); }
+function noteImported(name, id, tagged, seq) {
+  const key = importKey(name, id, seq);
   if (importedSeen.has(key)) return;
   importedSeen.add(key);
   try {

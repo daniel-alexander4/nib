@@ -365,7 +365,7 @@ func (s *Server) windowArrived() (n int64, heardFrom uint64) {
 	if s.idle.arrivedHook != nil {
 		s.idle.arrivedHook()
 	}
-	heardFrom = s.push.current()
+	heardFrom = s.push.claim()
 	n = s.windows.n.Add(1)
 	counted := s.idle.countedHook
 	s.idle.mu.Unlock()
@@ -622,7 +622,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// A launch handed this instance a document (ADR-086). Every one is sent, by sequence: the
 		// emit-on-difference rule above would swallow the second of two identical outcomes.
 		for _, ev := range s.push.since(lastHandoff) {
-			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom})
+			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom, Seq: ev.seq})
 			if hoErr != nil {
 				return
 			}

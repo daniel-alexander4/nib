@@ -35,6 +35,7 @@ let tableAnswer = null;    // likewise for /api/table
 let calls = [];
 let docAnswer = null;      // a Response the document export gives instead of the format's bytes
 let docFacts = '{"source":"proposal"}';
+let docGate = null;        // a promise the document export waits on before it answers (a view switch lands meanwhile)
 const formatOf = () => new URL('http://x' + calls.at(-1).url.replace(/^https?:\/\/[^/]+/, '')).searchParams.get('format');
 
 const h = await boot({
@@ -50,7 +51,7 @@ const h = await boot({
     '/api/form-data': () => formAnswer || new Response('FORM-AS-' + formatOf(), { status: 200 }),
     '/api/assemble': () => new Response('PICTURES', { status: 200 }),
     '/api/extract-images': () => new Response('ZIPPED', { status: 200, headers: { 'X-Image-Count': '2' } }),
-    '/api/export/document': () => docAnswer || new Response('DOC-AS-' + formatOf(), { status: 200, headers: { 'X-Nib-Export': docFacts } }),
+    '/api/export/document': async () => { if (docGate) await docGate; return docAnswer || new Response('DOC-AS-' + formatOf(), { status: 200, headers: { 'X-Nib-Export': docFacts } }); },
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/write': async (opts) => {
       const f = opts.body;
@@ -749,4 +750,73 @@ test('Document as… says in the server\'s words why there is nothing to export,
   docAnswer = null;
   assert.equal($('saveAsModal').hidden, true);
   assert.equal(toastText(), 'This document has no text or pictures to export');
+});
+
+// ── Document as… acts on the document it captured (ADR-001, /pending 941) ───────────────────────
+// Each await after the press is a place the user can look at another tab: the dialog then belongs to a document
+// that is no longer in front, and says nothing — the press was for that one, and a dialog for it now is a surprise.
+async function exportThenSwitchWhile(arrange) {
+  await open('alpha.pdf');
+  await open('beta.pdf');
+  const [ledger, other] = ['alpha.pdf', 'beta.pdf'].map((n) => tabs().find((t) => t.textContent.includes(n)));
+  ledger.click();
+  await settle();
+  let release; docGate = new Promise((r) => { release = r; });
+  arrange(); // sets docAnswer for the case under test
+  $('exportDocBtn').click();
+  await settle();
+  other.click();
+  await settle();
+  assert.equal(doc.querySelector('#tabstrip .tab.active').textContent.includes('beta.pdf'), true, 'setup: the switch did not happen');
+  release();
+  await settle(); await settle();
+  const opened = !$('saveAsModal').hidden;
+  docGate = null; docAnswer = null;
+  await cancel();
+  other.querySelector('.tabclose').click();
+  await settle();
+  ledger.querySelector('.tabclose').click();
+  await settle();
+  return opened;
+}
+
+test('Document as… says nothing when the view changed while the export was answering', async () => {
+  const before = toastText();
+  const opened = await exportThenSwitchWhile(() => {
+    docAnswer = new Response('{"error":"The export of the document pressed on was refused","cause":"empty"}', { status: 422 });
+  });
+  assert.equal(opened, false, 'a dialog opened over a refused export');
+  assert.equal(toastText(), before, 'a refusal for the document pressed on was spoken over another');
+});
+
+test('Document as… opens no dialog when the view changed while the export was answering', async () => {
+  assert.equal(await exportThenSwitchWhile(() => {}), false, 'a dialog for the document pressed on opened over another');
+});
+
+test('Document as… opens no dialog when the view changed while the body was read', async () => {
+  await open('alpha.pdf');
+  await open('beta.pdf');
+  const [ledger, other] = ['alpha.pdf', 'beta.pdf'].map((n) => tabs().find((t) => t.textContent.includes(n)));
+  ledger.click();
+  await settle();
+  // The headers come at once and the body waits: the fetch resolves, the switch lands, then the blob does.
+  let release; const bodyGate = new Promise((r) => { release = r; });
+  const slow = new Response('MD', { status: 200, headers: { 'X-Nib-Export': '{"source":"tree"}' } });
+  slow.blob = async () => { await bodyGate; return new Blob(['MD']); };
+  docAnswer = slow;
+  $('exportDocBtn').click();
+  await settle();
+  other.click();
+  await settle();
+  assert.equal(doc.querySelector('#tabstrip .tab.active').textContent.includes('beta.pdf'), true, 'setup: the switch did not happen');
+  release();
+  await settle(); await settle();
+  const opened = !$('saveAsModal').hidden;
+  docAnswer = null;
+  await cancel();
+  other.querySelector('.tabclose').click();
+  await settle();
+  ledger.querySelector('.tabclose').click();
+  await settle();
+  assert.equal(opened, false, 'a dialog for the document pressed on opened after the body was read over another');
 });

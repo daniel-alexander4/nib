@@ -41,13 +41,22 @@ test('Import… carries its new label and the group is Open & Import', () => {
 });
 
 test('a hand-off that converted names the file once, however many times the stream replays it', async () => {
-  h.pushWindowEvent('handoff', JSON.stringify({ result: 'opened', importedFrom: 'letter.docx' }));
-  h.pushWindowEvent('handoff', JSON.stringify({ result: 'opened', importedFrom: 'letter.docx' }));
+  h.pushWindowEvent('handoff', JSON.stringify({ result: 'opened', importedFrom: 'letter.docx', seq: 1 }));
+  h.pushWindowEvent('handoff', JSON.stringify({ result: 'opened', importedFrom: 'letter.docx', seq: 1 }));
   await settle(); await wait(500); await settle();
   assert.equal(box().hidden, false, 'a converted hand-off said nothing');
   assert.equal(text(), 'Imported letter.docx as a PDF. Save writes a PDF; use Export for other formats.');
   doc.getElementById('importNoticeDismiss').onclick();
   assert.equal(box().hidden, true, 'Dismiss left the notice up');
+});
+
+test('the same file handed off again later is announced again - it is another event', async () => {
+  h.pushWindowEvent('handoff', JSON.stringify({ result: 'opened', importedFrom: 'letter.docx', seq: 2 }));
+  await settle(); await wait(500); await settle();
+  assert.equal(box().hidden, false, 'a second hand-off of the same file name was swallowed as a replay (/pending 940)');
+  assert.match(text(), /Imported letter\.docx as a PDF/);
+  doc.getElementById('importNoticeDismiss').onclick();
+  assert.equal(box().hidden, true);
 });
 
 test('several imports landing together are one sentence', async () => {

@@ -302,7 +302,13 @@ func (s *Server) drainPendingOpens() {
 		if s.docForPath(path) != nil {
 			continue
 		}
-		if _, _, err := s.openHandedOff(context.Background(), path); err != nil {
+		if _, imported, err := s.openHandedOff(context.Background(), path); err == nil {
+			// A conversion is told the way a live hand-off's is (/pending 940): the window is at the unlock
+			// screen and learns what its queued file became.
+			if imported != "" {
+				s.tellWindows("opened", "", imported)
+			}
+		} else {
 			// Logged rather than surfaced: the user is at the unlock screen and has no
 			// place to receive it yet. The document simply does not appear, which is
 			// the same outcome as the refusal they would have seen while unlocked.

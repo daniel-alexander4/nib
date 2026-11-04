@@ -22,12 +22,18 @@ type handoffEvent struct {
 	Reason string `json:"reason,omitempty"`
 	// ImportedFrom is the source's file name when an "opened" hand-off was a conversion; the window says so once.
 	ImportedFrom string `json:"importedFrom,omitempty"`
+	// Seq is the server's own sequence for the event: two identical outcomes are two events, and the same
+	// event delivered twice is one. The page keys an import notice on it (/pending 940).
+	Seq uint64 `json:"seq,omitempty"`
 }
 
 // handoffNote is one hand-off as the server keeps it. The sequence is the server's own, so two
-// identical outcomes are two events; the page has no use for it and it never reaches the wire.
+// identical outcomes are two events.
 type handoffNote struct {
-	seq          uint64
+	seq uint64
+	// held marks a conversion announced while no window was open: the first window to connect is owed it
+	// (`claim`), because a document's own answer carries `importedFrom` only on the route that imported it.
+	held         bool
 	result       string
 	reason       string
 	importedFrom string
@@ -59,9 +65,51 @@ type handoffPush struct {
 
 // announce records one hand-off and wakes every window's stream.
 func (p *handoffPush) announce(result, reason, importedFrom string) {
+	p.announceNote(result, reason, importedFrom, false)
+}
+
+// hold records a conversion for a window that has not connected yet and returns its sequence.
+func (p *handoffPush) hold(importedFrom string) uint64 {
+	return p.announceNote("opened", "", importedFrom, true)
+}
+
+// release withdraws a hold: a window connected between the count being read and the note being kept, and
+// its stream will deliver the note by sequence.
+func (p *handoffPush) release(seq uint64) {
+	p.mu.Lock()
+	for i := range p.recent {
+		if p.recent[i].seq == seq {
+			p.recent[i].held = false
+		}
+	}
+	p.mu.Unlock()
+}
+
+// claim is the sequence a connecting window's stream starts from. A window hears the hand-offs that arrive while
+// it is open and never the ones before it connected: its boot restore already shows those documents, and
+// replaying a refusal to a window opened an hour later would be a notice about nothing. The one exception is a
+// held conversion — the restore shows the document, not that it was converted — which the first window is owed
+// once, so the start moves back to just before the oldest.
+func (p *handoffPush) claim() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	from := p.seq
+	for i := range p.recent {
+		if p.recent[i].held {
+			if p.recent[i].seq-1 < from {
+				from = p.recent[i].seq - 1
+			}
+			p.recent[i].held = false
+		}
+	}
+	return from
+}
+
+func (p *handoffPush) announceNote(result, reason, importedFrom string, held bool) uint64 {
 	p.mu.Lock()
 	p.seq++
-	p.recent = append(p.recent, handoffNote{seq: p.seq, result: result, reason: reason, importedFrom: importedFrom})
+	seq := p.seq
+	p.recent = append(p.recent, handoffNote{seq: seq, result: result, reason: reason, importedFrom: importedFrom, held: held})
 	if len(p.recent) > handoffKept {
 		p.recent = p.recent[len(p.recent)-handoffKept:]
 	}
@@ -70,6 +118,7 @@ func (p *handoffPush) announce(result, reason, importedFrom string) {
 		p.watch = nil
 	}
 	p.mu.Unlock()
+	return seq
 }
 
 // changes returns a channel closed on the next hand-off. Same contract as armedChanges: take it
@@ -81,15 +130,6 @@ func (p *handoffPush) changes() <-chan struct{} {
 		p.watch = make(chan struct{})
 	}
 	return p.watch
-}
-
-// current is the sequence a stream starts from. A window hears the hand-offs that arrive while it
-// is open and never the ones before it connected: its boot restore already shows those documents,
-// and replaying a refusal to a window opened an hour later would be a notice about nothing.
-func (p *handoffPush) current() uint64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.seq
 }
 
 // since returns the hand-offs after seq, oldest first.
@@ -143,6 +183,22 @@ func (s *Server) ExpectWindow() { s.push.expect() }
 // ExpectNoWindow withdraws it: nothing could be launched.
 func (s *Server) ExpectNoWindow() { s.push.arrived() }
 
+// tellWindows is the ONE door an outcome reaches the windows through (ADR-009): the open windows hear it by
+// sequence, and a conversion with no window open is held for the first that connects. Returns the windows open.
+func (s *Server) tellWindows(result, reason, importedFrom string) int64 {
+	if n := s.windows.n.Load(); n > 0 {
+		s.push.announce(result, reason, importedFrom)
+		return n
+	}
+	if result == "opened" && importedFrom != "" {
+		seq := s.push.hold(importedFrom)
+		if s.windows.n.Load() > 0 {
+			s.push.release(seq)
+		}
+	}
+	return 0
+}
+
 // windowHas decides whether the launch behind a hand-off should open a window, announces the
 // hand-off to the windows that are open, and reports the answer as the route's `surfaced`.
 //
@@ -155,10 +211,9 @@ func (s *Server) windowHas(result, reason, importedFrom string) (surfaced bool) 
 		s.push.expect()
 		return false
 	}
-	n := s.windows.n.Load()
+	n := s.tellWindows(result, reason, importedFrom)
 	switch {
 	case n > 0:
-		s.push.announce(result, reason, importedFrom)
 		log.Printf("%s %s (%d open)", handoffTakenMsg, result, n)
 		return true
 	case result != "refused" && s.push.expected():
