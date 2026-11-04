@@ -62,6 +62,7 @@ func TestEveryProcessNibStartsIsDeclared(t *testing.T) {
 	}{
 		"internal/pdfops/office.go":              {"LibreOffice converts an Office document", true},
 		"internal/pdfops/pdfa_gs.go":             {"Ghostscript converts to PDF/A", true},
+		"internal/pdfops/psimport.go":            {"Ghostscript interprets a PostScript program, and the probe that asks whether it is confined (ADR-198)", true},
 		"internal/browser/browser.go":            {"launches the user's own browser window and its handoff", false},
 		"internal/browser/openfolder.go":         {"asks the desktop to open a folder (xdg-open / open / explorer)", false},
 		"internal/pdfops/convertproc_windows.go": {"`taskkill` ends a converter's process tree on Windows (compiled and argv-tested only)", false},

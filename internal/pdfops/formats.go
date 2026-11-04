@@ -35,12 +35,13 @@ type Format struct {
 type Family int
 
 const (
-	FamilyNone  Family = iota // not classified by bytes
-	FamilyImage               // a raster image, decided by sniffImage
-	FamilyText                // text: bytes cannot name the format, the extension does
-	FamilyZip                 // an OOXML or OpenDocument package
-	FamilyOLE                 // a legacy Office compound file
-	FamilyRTF                 // Rich Text
+	FamilyNone       Family = iota // not classified by bytes
+	FamilyImage                    // a raster image, decided by sniffImage
+	FamilyText                     // text: bytes cannot name the format, the extension does
+	FamilyZip                      // an OOXML or OpenDocument package
+	FamilyOLE                      // a legacy Office compound file
+	FamilyRTF                      // Rich Text
+	FamilyPostScript               // a PostScript program or EPS file: `%!` or a DOS EPS header
 )
 
 const (
@@ -71,6 +72,8 @@ var formats = []Format{
 	{Key: "csv", Label: "CSV", Exts: []string{"csv"}, MIME: []string{"text/csv"}, Family: FamilyText},
 	{Key: "ppt", Label: "PowerPoint (.ppt)", Exts: []string{"ppt"}, MIME: []string{"application/vnd.ms-powerpoint"}, Tool: ToolLibreOffice, Family: FamilyOLE},
 	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "ps", Label: "PostScript", Exts: []string{"ps"}, MIME: []string{"application/postscript"}, Tool: ToolGhostscript, Family: FamilyPostScript},
+	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript},
 	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 }
 

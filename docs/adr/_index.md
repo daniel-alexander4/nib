@@ -1019,3 +1019,5 @@ home today.
   — PLAN-import-export P03 phase close: `docmodel.BoundTable`, spans clamped before they are summed, a wide or huge table written as lines of text and reported; shared writer rules moved to `xmlw`.
 - [ADR-197](197-a-package-that-names-a-location-outside-itself-is-refused-before-the-converter-sees-it.md) — **A package that names a location outside itself is refused before the converter sees it**
   — PLAN-import-export P04.S01: `scanPackageReferences` in the one LibreOffice door; local references refused, web and mail links allowed; the plan's six leak controls did not reproduce.
+- [ADR-198](198-postscript-is-run-only-by-a-ghostscript-that-has-been-asked-to-keep-it-in.md) — **PostScript is run only by a Ghostscript that has been asked to keep it in, and the answer is not its version number**
+  — PLAN-import-export P04.S02a: `ps` / `eps` rows through `ConvertPostScriptToPDF`; one `psArgs`, a cached behavioural confinement probe, a 9.50 floor; HEIC is S02b.

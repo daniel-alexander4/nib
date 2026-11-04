@@ -70,7 +70,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
-  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'),
+  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -603,6 +603,9 @@ function applyStatus(st) {
   // them even for the moment before /api/status answers.
   if (els.officeMissing) els.officeMissing.hidden = loAvailable;
   if (els.officeRecheck) els.officeRecheck.hidden = loAvailable;
+  // Ghostscript's notice (ADR-198): the same shape, for the PostScript rows of the format table.
+  if (els.psMissing) els.psMissing.hidden = gsAvailable;
+  if (els.psRecheck) els.psRecheck.hidden = gsAvailable;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     els.authOverlay.hidden = true;
@@ -4609,6 +4612,7 @@ els.officeOpenBtn.onclick = () => els.officeInput.click();
 // before that, installing LibreOffice while Nib ran changed nothing until the process ended —
 // and "restart Nib" is not simple, since a relaunch hands off to the running instance.
 if (els.officeRecheck) els.officeRecheck.onclick = () => refreshStatus();
+if (els.psRecheck) els.psRecheck.onclick = () => refreshStatus();
 els.officeInput.onchange = async () => {
   const file = els.officeInput.files[0];
   els.officeInput.value = '';

@@ -562,3 +562,15 @@ func TestAHandoffEventCarriesWhatWasImportedOrWhyItWasRefused(t *testing.T) {
 		t.Errorf("second event %+v, want a refusal that says why", evs[1])
 	}
 }
+
+func TestThePostScriptRefusalsAreAnsweredAsRefusals(t *testing.T) {
+	for _, err := range []error{pdfops.ErrGhostscriptTooOld, pdfops.ErrGhostscriptNotConfined, pdfops.ErrPostScriptUnreadable} {
+		status, msg := importRefusal(fmt.Errorf("wrapped: %w", err))
+		if status != http.StatusUnprocessableEntity || msg == "" {
+			t.Errorf("%v: answered %d %q", err, status, msg)
+		}
+		if !isImportRefusal(err) {
+			t.Errorf("%v is not an import refusal, so a path open would report it as a disk error", err)
+		}
+	}
+}

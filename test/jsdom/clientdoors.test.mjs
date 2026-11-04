@@ -250,6 +250,20 @@ test('with no LibreOffice, the File card says so and offers a way back', async (
     + 'feature that works in order to report one that does not');
 });
 
+test('with no Ghostscript, the File card says PostScript cannot be converted and offers a way back (ADR-198)', () => {
+  // boot.mjs answers /api/status with ghostscript: false, so this file boots into the absent state.
+  const shown = (sel) => { const el = doc.querySelector(sel); return !!el && !el.hidden; };
+  assert.ok(shown('#psMissing'), 'nothing tells the user why their .ps file cannot be converted');
+  assert.ok(shown('#psRecheck'), 'there is no way to re-ask after installing Ghostscript');
+  const link = doc.querySelector('#psMissing a');
+  assert.ok(link && /^https:\/\//.test(link.getAttribute('href') || ''), 'the notice carries no https link');
+  assert.equal(link.getAttribute('rel'), 'noopener');
+  const apply = bodyOf('function applyStatus(st) {');
+  for (const re of [/els\.psMissing\.hidden = gsAvailable/, /els\.psRecheck\.hidden = gsAvailable/]) {
+    assert.match(apply, re, 'the Ghostscript notice is not tied to gsAvailable in applyStatus');
+  }
+});
+
 test('with no Ghostscript, a refused PDF/A says a tool would have converted it', () => {
   // Census rather than a driven click, and deliberately: reaching the real branch needs an open
   // document and the modal, and this file's document state belongs to the tab-closing test above.

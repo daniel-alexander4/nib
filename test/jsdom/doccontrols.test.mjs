@@ -85,7 +85,7 @@ const EXEMPT = new Set([
   // MACHINE ("can you find LibreOffice yet?"), asked after the user has installed it, and it is
   // only visible while the answer is no. Requiring a document would mean the one control that
   // repairs "I can't open my .docx" is disabled exactly when nothing can be opened.
-  'officeRecheck',
+  'officeRecheck', 'psRecheck', // psRecheck asks the same of Ghostscript (ADR-198)
   // Lists the copies kept when you signed (P04.S02, ADR-073) — files on this machine, not the open document; requiring
   // one would mean removing your kept PII waits on opening something unrelated.
   'keptBtn',

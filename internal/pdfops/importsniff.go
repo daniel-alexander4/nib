@@ -46,9 +46,14 @@ func sniffFamily(head []byte) Family {
 		return FamilyOLE
 	case bytes.HasPrefix(head, []byte(`{\rtf`)):
 		return FamilyRTF
+	case bytes.HasPrefix(head, []byte("%!")), bytes.HasPrefix(head, dosEPSMagic):
+		return FamilyPostScript
 	}
 	return FamilyNone
 }
+
+// dosEPSMagic opens an EPS file with a binary preview header (Adobe's TIFF/WMF-preview wrapper).
+var dosEPSMagic = []byte{0xC5, 0xD0, 0xD3, 0xC6}
 
 // looksLikeText: no NUL in the head. Markdown, plain text and CSV have no signature, so "is text" is the
 // only thing the bytes can be held to.
@@ -85,6 +90,22 @@ func classify(head []byte, name string) (Format, error) {
 			}
 		}
 		return Format{}, ErrNotADocument
+	case FamilyPostScript:
+		// A text file that happens to begin `%!` is text, and is not run: only a name that says PostScript
+		// sends it to the interpreter. A `.ps` whose name is missing is not guessed (a URL's path may end in anything).
+		if hasRow && named.Family == FamilyText {
+			if !looksLikeText(head) {
+				return Format{}, ErrNotText
+			}
+			return named, nil
+		}
+		if !hasRow {
+			return Format{}, fmt.Errorf("%w: it is a PostScript program but its name does not say so", ErrExtensionDisagrees)
+		}
+		if named.Family != fam {
+			return Format{}, fmt.Errorf("%w: the name says %s, the contents are PostScript", ErrExtensionDisagrees, named.Label)
+		}
+		return named, nil
 	case FamilyZip, FamilyOLE, FamilyRTF:
 		if !hasRow {
 			return Format{}, fmt.Errorf("%w: it is a packaged document but its name does not say which kind", ErrExtensionDisagrees)

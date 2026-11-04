@@ -386,6 +386,19 @@ of link in other formats (a spreadsheet's web functions, OLE links) were not
 tested. **A Word, Excel, PowerPoint or OpenDocument file that names a file on this computer, a network share or a path outside itself is refused before LibreOffice sees it**: Nib reads the package's link lists in memory and turns it away, naming the first such link (web links and mail links are fine, and so is anything the file carries itself; a link inside a field code or a formula is not read). I tried five such links in LibreOffice 24.2 (a section source, a table source, a linked sub-document, an include field, a spreadsheet web function) and none of them printed the local file's text, so this is a precaution and not a fix for a leak I found. The older binary formats (.doc, .xls, .ppt) and RTF are not packages and are not checked. Fidelity is LibreOffice's: complex documents may not convert
 pixel-perfectly.
 
+**PostScript and EPS** (`.ps`, `.eps`) open the same way, through an installed
+**Ghostscript** (found on PATH or in its stock install folder, never bundled). A PostScript
+file is a program, so it is run with Ghostscript's sandbox on (`-dSAFER`, no file permissions
+granted), the one output device `pdfwrite`, its standard input empty, a stripped-down
+environment, and the file alone in a folder Nib made. Before the first one is opened, Nib runs
+a small PostScript program on that Ghostscript that tries to read a file and to start a
+command; if either works, Nib refuses to run PostScript on that computer and says why. It
+also refuses a Ghostscript older than 9.50. Nib cannot tell from the version number whether a
+distribution has patched a known bug, which is why it asks the program instead; I checked that
+the test program does read a file and start a command with the sandbox switched off, and does
+neither with it on (Ghostscript 10.02.1). A file stops at 1,000 pages, at two minutes and at the
+same memory ceiling as Office files. An EPS page is its bounding box.
+
 The source file is never written: the conversion works on a copy in the temporary
 directory, and the result opens as a new document with no file behind it, so *Save*
 asks for a name. The copy is removed when the conversion ends. If Nib is killed
