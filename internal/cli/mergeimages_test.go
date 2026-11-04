@@ -8,7 +8,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"nib/internal/pdfops"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -46,11 +49,43 @@ func TestMergeTakesAnImageAsThePageTheOpenerMakesOfIt(t *testing.T) {
 		t.Fatalf("pages = %+v, want the picture first at 144×72 then the PDF's page", dims)
 	}
 
-	junk := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(junk, []byte("plain text"), 0o644); err != nil {
+	// ADR-185: merge decides through pdfops.Import as the window's Combine does, so a text or Markdown file is
+	// converted to the page the opener would make of it (it used to be refused here while Combine took it) ...
+	for _, name := range []string{"notes.txt", "readme.md"} {
+		src := filepath.Join(dir, name)
+		if err := os.WriteFile(src, []byte("plain words on a page"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		merged := filepath.Join(dir, "with-"+name+".pdf")
+		if code := cmdMerge([]string{doc, src, "-o", merged}); code != 0 {
+			t.Fatalf("merge of a PDF and %s exit = %d, want 0", name, code)
+		}
+		mb, err := os.ReadFile(merged)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n, err := pdfops.PageCount(mb); err != nil || n != 2 {
+			t.Errorf("%s merged into %d pages (%v), want 2: the PDF's and the converted file's", name, n, err)
+		}
+		pages, err := pdfops.DocumentText(mb)
+		if err != nil || len(pages) != 2 || !strings.Contains(strings.Join(strings.Fields(runsText(pages[1])), ""), "plainwordsonapage") {
+			t.Errorf("%s was merged but its words are not on page 2 (%v)", name, err)
+		}
+	}
+	// ... and a file Nib has no route for is still refused, by Combine, as in the window.
+	junk := filepath.Join(dir, "mystery.xyz")
+	if err := os.WriteFile(junk, []byte("not a document"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if code := cmdMerge([]string{pic, junk, "-o", filepath.Join(dir, "no.pdf")}); code == 0 {
-		t.Error("a text file was merged; only PDFs and images are inputs")
+		t.Error("a file Nib has no route for was merged; the opener refuses it and merge must too")
 	}
+}
+
+func runsText(p pdfops.PageText) string {
+	var b strings.Builder
+	for _, r := range p.Runs {
+		b.WriteString(r.Text + " ")
+	}
+	return b.String()
 }

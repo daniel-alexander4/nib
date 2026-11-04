@@ -8,10 +8,12 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf16"
 
+	"nib/internal/gate"
 	"nib/mdpdf"
 )
 
@@ -329,5 +331,53 @@ func TestASourceSmallerThanItsDeclaredSizeIsNamedNotPadded(t *testing.T) {
 	}
 	if _, err := Import(context.Background(), r, -1, "x.csv", ImportOptions{}); !errors.Is(err, ErrSourceChanged) {
 		t.Fatalf("a negative size: %v", err)
+	}
+}
+
+// errAfter is a context that reports itself cancelled after n questions and counts every one asked.
+type errAfter struct {
+	context.Context
+	n     int64
+	asked atomic.Int64
+}
+
+func (c *errAfter) Err() error {
+	if c.asked.Add(1) > c.n {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestTextImportEndsWithItsContextInsideTheLayout — /pending 940 finding 9. textImport used context.Background(), so a
+// cancelled request laid out the whole document anyway. The context here turns cancelled after 1,000 questions, deep
+// inside a 30,000-line code block; the layout must stop asking within a few more, which it cannot do if the loop
+// that lays out the lines never asks.
+func TestTextImportEndsWithItsContextInsideTheLayout(t *testing.T) {
+	data := []byte(strings.Repeat("The quick brown fox jumps over the lazy dog.\n", 30000))
+	ctx := &errAfter{Context: context.Background(), n: 1000}
+	r, n := BytesSource(data)
+	_, err := Import(ctx, r, n, "big.txt", ImportOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a text import whose context ended mid-layout = %v, want context.Canceled", err)
+	}
+	if got := ctx.asked.Load(); got > 1000+10 {
+		t.Errorf("the layout asked its context %d times: it kept going for %d lines after the context ended", got, got-1000)
+	}
+}
+
+// TestTextImportTakesNoGateSlot — /pending 940 finding 9, ADR-185. The gate bounds outside tools; text and CSV are laid
+// out in-process and must not wait behind a full gate nor count towards its queue.
+func TestTextImportTakesNoGateSlot(t *testing.T) {
+	g := gate.New(1, 0)
+	release, err := g.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	for _, name := range []string{"a.txt", "a.csv"} {
+		res, err := importText(t, name, []byte("a,b\n1,2\n"), ImportOptions{Gate: g})
+		if err != nil || res == nil || len(res.PDF) == 0 {
+			t.Fatalf("%s through a full gate = %v, want a PDF", name, err)
+		}
 	}
 }

@@ -229,7 +229,12 @@ func csvToMarkdown(text string) (string, error) {
 // textImport is the plain-text and CSV producer: decode, write the Markdown that says it, lay it out with Nib's
 // renderer, and hold the result to the page cap. The Markdown options that name a PAGE (size, margin) apply;
 // placeholders and an image directory do not — a file's own `{{x}}` is its text, not a template's.
-func textImport(data []byte, f Format, o ImportOptions) (pdf []byte, unprintable []rune, err error) {
+func textImport(ctx context.Context, data []byte, f Format, o ImportOptions) (pdf []byte, unprintable []rune, err error) {
+	// In-process, so it takes no ImportGate slot (the gate bounds outside tools, ADR-185) — but it is CPU and memory
+	// bound for seconds, so it ends with the caller's context: here, between the stages, and inside the layout.
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	text := decodeText(data)
 	var md string
 	if f.Key == "csv" {
@@ -240,16 +245,19 @@ func textImport(data []byte, f Format, o ImportOptions) (pdf []byte, unprintable
 	if err != nil {
 		return nil, nil, err
 	}
+	// What cannot be printed is read off the decoded text before the layout, so the text is not held through it.
+	unprintable = unprintableText(text)
+	text = ""
 	opts := o.Markdown
 	opts.Vars, opts.ImageDir = nil, ""
-	pdf, err = ConvertDocToPDFWith(context.Background(), []byte(md), ".md", opts)
+	pdf, err = ConvertDocToPDFWith(ctx, []byte(md), ".md", opts)
 	if err != nil {
 		return nil, nil, textLayoutRefusal(err)
 	}
 	if n, perr := PageCount(pdf); perr == nil && n > importPages {
 		return nil, nil, fmt.Errorf("%w: Nib opens up to %d", ErrTooManyPages, importPages)
 	}
-	return pdf, UnprintableMarkdown([]byte(text)), nil
+	return pdf, unprintable, nil
 }
 
 // textLayoutRefusal names the layout's own refusals in the import door's words.

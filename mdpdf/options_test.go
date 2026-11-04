@@ -164,3 +164,61 @@ func TestABackslashEscapeIsThePunctuationAndACodeSpanKeepsItsBackslash(t *testin
 		t.Errorf("a table cell printed a backslash: %q, %v", cell, err)
 	}
 }
+
+// TestAConvertedDocumentEndsWithItsContext — /pending 940 finding 9. Options.Context ends the conversion with an
+// error and no document: already done at the start, and done while the layout is inside a long code block or table.
+func TestAConvertedDocumentEndsWithItsContext(t *testing.T) {
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ConvertWithFacesAndOptions([]byte("# hi\n"), nil, nil, Options{Context: done}); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled context = %v, want context.Canceled", err)
+	}
+	live, stop := context.WithCancel(context.Background())
+	defer stop()
+	pdf, err := ConvertWithFacesAndOptions([]byte("# hi\n"), nil, nil, Options{Context: live})
+	if err != nil || len(pdf) == 0 {
+		t.Fatalf("a live context = %v, want a document", err)
+	}
+	// Mid-layout: the context turns done after the layout has begun; the loop that lays out lines must notice.
+	mid := &flipAfter{Context: context.Background(), n: 1000}
+	code := "```\n" + strings.Repeat("a line of code\n", 4000) + "```\n"
+	// The error is the context's own and unwrapped: the PDF writer wraps its ("render pdf: ..."), so a wrapped one
+	// means the layout ran to the end and only the writer noticed.
+	if _, err := ConvertWithFacesAndOptions([]byte(code), nil, nil, Options{Context: mid}); err != context.Canceled {
+		t.Errorf("a context that ends inside a code block = %v, want context.Canceled", err)
+	}
+	if got := mid.asked; got > 1000+10 {
+		t.Errorf("the code block asked its context %d times: it kept laying out lines after the context ended", got)
+	}
+	mid = &flipAfter{Context: context.Background(), n: 1000}
+	table := "| a | b |\n| - | - |\n" + strings.Repeat("| x | y |\n", 3000)
+	if _, err := ConvertWithFacesAndOptions([]byte(table), nil, nil, Options{Context: mid}); err != context.Canceled {
+		t.Errorf("a context that ends inside a table = %v, want context.Canceled", err)
+	}
+	if got := mid.asked; got > 1000+10 {
+		t.Errorf("the table asked its context %d times: it kept reading rows after the context ended", got)
+	}
+	mid = &flipAfter{Context: context.Background(), n: 1000}
+	paras := strings.Repeat("A paragraph of words.\n\n", 3000)
+	if _, err := ConvertWithFacesAndOptions([]byte(paras), nil, nil, Options{Context: mid}); err != context.Canceled {
+		t.Errorf("a context that ends between paragraphs = %v, want context.Canceled", err)
+	}
+	if got := mid.asked; got > 1000+10 {
+		t.Errorf("the walk asked its context %d times: it kept laying out blocks after the context ended", got)
+	}
+}
+
+// flipAfter is a context that reports itself done after n questions and counts them.
+type flipAfter struct {
+	context.Context
+	n     int
+	asked int
+}
+
+func (c *flipAfter) Err() error {
+	c.asked++
+	if c.asked > c.n {
+		return context.Canceled
+	}
+	return nil
+}

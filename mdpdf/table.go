@@ -37,7 +37,7 @@ func (r *renderer) table(t *east.Table, indent float64) {
 	}
 	var rows [][]*tableCell
 	var heads []bool
-	for row := t.FirstChild(); row != nil; row = row.NextSibling() {
+	for row := t.FirstChild(); row != nil && !r.l.stopped(); row = row.NextSibling() {
 		_, isHead := row.(*east.TableHeader)
 		if len(rows) >= maxTableRows {
 			r.err = ErrTableTooLong

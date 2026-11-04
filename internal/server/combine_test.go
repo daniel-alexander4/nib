@@ -134,3 +134,49 @@ func TestCombineTakesImagesThroughTheOpenersDoor(t *testing.T) {
 		t.Errorf("a corrupt office file = %d %q, want 415 (the opener's own status) naming it and its refusal", resp.StatusCode, refusal.Error)
 	}
 }
+
+// TestCombineAsksTheByteCapAsEachDocumentIsMade — /pending 940 finding 11, ADR-008. Every conversion is held until
+// Combine runs, so the byte cap must refuse as the running sum crosses it and not once at the install. The third
+// file is one the opener refuses: if the cap were asked only at the end, the answer would be that file's refusal.
+func TestCombineAsksTheByteCapAsEachDocumentIsMade(t *testing.T) {
+	ts, srv := startServerOverSameHome(t, t.TempDir())
+	c, csrf := authedClient(t, ts)
+
+	doc, err := pdfops.ImagesToPDF([]pdfops.RasterPage{{Image: pageImage(t, 160, 220), W: 80, H: 110}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	srv.maxDocBytes = len(doc) + len(doc)/2 // one fits, two do not
+	srv.mu.Unlock()
+
+	post := func(files ...[2]any) (int, string) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		for _, f := range files {
+			w, _ := mw.CreateFormFile("file", f[0].(string))
+			w.Write(f[1].([]byte))
+		}
+		mw.Close()
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/combine", mw.FormDataContentType(), &buf)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(body)
+	}
+	before := len(srv.docs)
+
+	code, body := post([2]any{"a.pdf", doc}, [2]any{"b.pdf", doc}, [2]any{"mystery.xyz", []byte("not a document")})
+	if code != http.StatusConflict || !strings.Contains(body, ErrTooManyBytes.Error()) {
+		t.Fatalf("two documents past the byte cap, then a refused file = %d %q, want 409 with the cap's sentence before the third is read", code, body)
+	}
+	if len(srv.docs) != before {
+		t.Errorf("a refused combine left %d documents open, want %d", len(srv.docs), before)
+	}
+	// STIMULUS: the same two documents fit under a roomier budget, so the 409 above was the sum and not the count.
+	srv.mu.Lock()
+	srv.maxDocBytes = 8 * len(doc)
+	srv.mu.Unlock()
+	if code, body := post([2]any{"a.pdf", doc}, [2]any{"b.pdf", doc}); code != http.StatusOK {
+		t.Fatalf("two documents under the cap = %d %q, want 200", code, body)
+	}
+}

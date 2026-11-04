@@ -30,6 +30,7 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pdfs := make([][]byte, 0, len(headers))
+	held := 0
 	for _, fh := range headers {
 		f, err := fh.Open()
 		if err != nil {
@@ -53,6 +54,14 @@ func (s *Server) handleCombine(w http.ResponseWriter, r *http.Request) {
 		default:
 			status, msg := importRefusal(err)
 			httpError(w, status, fh.Filename+": "+msg)
+			return
+		}
+		// The byte cap is asked as each document is made, not once at the install: every conversion is held until
+		// Combine runs, so N large ones would all be in memory before the ceiling could refuse the first
+		// (ADR-008). The combined document is about their sum.
+		held += len(doc)
+		if err := s.roomToHold(held); err != nil {
+			httpError(w, http.StatusConflict, err.Error())
 			return
 		}
 		pdfs = append(pdfs, doc)

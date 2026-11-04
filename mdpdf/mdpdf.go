@@ -20,7 +20,6 @@ package mdpdf
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,8 +242,13 @@ func convert(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, *l
 		return nil, nil, err
 	}
 	doc := goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(md))
+	ctx := opts.ctx()
 	r := &renderer{src: md, l: newLayout(faces, g), fonts: fallbacks, f: faces, sub: &substituter{vars: opts.Vars}, imageDir: opts.ImageDir}
+	r.l.ctx = ctx
 	r.blocks(doc, 0, nil)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	if r.sub.err != nil {
 		return nil, nil, r.sub.err
 	}
@@ -256,7 +260,7 @@ func convert(md []byte, base *Faces, fallbacks []Font, opts Options) ([]byte, *l
 		return nil, nil, err
 	}
 	var out bytes.Buffer
-	if err := api.Create(context.Background(), nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
+	if err := api.Create(ctx, nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, nil, fmt.Errorf("render pdf: %w", err)
 	}
 	return out.Bytes(), r.l, nil
@@ -339,7 +343,7 @@ func refuseAbsurdNesting(md []byte) error {
 // blocks lays out the children of n. A non-nil marker (list bullet/number)
 // attaches to the first child only.
 func (r *renderer) blocks(n ast.Node, indent float64, marker *word) {
-	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+	for c := n.FirstChild(); c != nil && !r.l.stopped(); c = c.NextSibling() {
 		r.block(c, indent, marker)
 		marker = nil
 	}

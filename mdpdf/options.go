@@ -1,6 +1,7 @@
 package mdpdf
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -26,6 +27,17 @@ type Options struct {
 	// data: or file: reference, an absolute path, `..`, a link out, another format, or a file over the caps. Unset, images
 	// are skipped, as they always were, so a document with web badges converts as before.
 	ImageDir string
+	// Context ends the conversion early when it is done: it is asked between blocks, between the lines of a code
+	// block and the rows of a table, and passed to the PDF writer, and the conversion returns its error. Nil is
+	// context.Background(): a conversion nothing can end.
+	Context context.Context
+}
+
+func (o Options) ctx() context.Context {
+	if o.Context == nil {
+		return context.Background()
+	}
+	return o.Context
 }
 
 // MissingPlaceholderError is a template that names a key no value was given for. It carries the key and never a value.

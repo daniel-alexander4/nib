@@ -227,7 +227,8 @@ type box struct {
 
 // layout accumulates positioned runs page by page as the cursor descends.
 type layout struct {
-	runs  [][]run // one slice per page
+	ctx   context.Context // Options.Context; nil until convert sets it
+	runs  [][]run         // one slice per page
 	boxes [][]box
 	figs  [][]figure // pictures per page, in the order they are drawn (Options.ImageDir)
 	y     float64    // current baseline cursor on the last page
@@ -261,6 +262,10 @@ func newLayout(f faceSet, g geom) *layout {
 	l.newPage()
 	return l
 }
+
+// stopped is whether the conversion's context is done (Options.Context): the walk then stops laying out and
+// convert returns the context's error, so what was laid out so far is never used.
+func (l *layout) stopped() bool { return l.ctx != nil && l.ctx.Err() != nil }
 
 func (l *layout) newPage() {
 	l.runs = append(l.runs, nil)
@@ -355,6 +360,9 @@ func (l *layout) code(lines []string, indent float64) {
 	}
 	lead := sty.leading()
 	for _, ln := range lines {
+		if l.stopped() {
+			return
+		}
 		ln = strings.ReplaceAll(ln, "\t", "    ")
 		for _, chunk := range chunks(ln, maxChars) {
 			l.need(lead)

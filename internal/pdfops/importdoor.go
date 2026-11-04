@@ -285,7 +285,7 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 	case f.Family == FamilyHEIF:
 		pdf, err = heicToDocument(ctx, data, name)
 	case f.Key == "txt" || f.Key == "csv":
-		pdf, res.Unprintable, err = textImport(data, f, o)
+		pdf, res.Unprintable, err = textImport(ctx, data, f, o)
 	default:
 		ext := "." + f.Exts[0]
 		if o.TypeExt != "" {

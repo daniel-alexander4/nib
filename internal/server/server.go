@@ -1690,10 +1690,14 @@ func (s *Server) roomForLocked(incoming int) error {
 //
 // **Advisory.** A document can be opened while the work runs, so addDocCapped's test under its
 // own hold stays the one that decides; this only spares work that was never going to land.
-func (s *Server) roomToOpen() error {
+func (s *Server) roomToOpen() error { return s.roomToHold(0) }
+
+// roomToHold is roomToOpen for a route that already holds `incoming` bytes it will install — the same cap,
+// asked with the size (ADR-008). Advisory for the same reason.
+func (s *Server) roomToHold(incoming int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.roomForLocked(0)
+	return s.roomForLocked(incoming)
 }
 
 // addDoc opens doc ALONGSIDE whatever is already open and makes it active,

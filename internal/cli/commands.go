@@ -430,7 +430,7 @@ func cmdMerge(args []string) int {
 	var perFile bool
 	outFlag(fs, &out)
 	fs.BoolVar(&perFile, "bookmark-per-file", false, "give the result one top-level bookmark per input, titled from its file name and pointing at its first page; an input's own outline is nested beneath it (replaces the result's outline)")
-	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT [--bookmark-per-file]", "Concatenate two or more PDFs or images (PNG, JPEG, TIFF, WebP), in the order given, into one.")
+	fs.Usage = usageFunc(fs, "nib merge IN... -o OUT [--bookmark-per-file]", "Concatenate two or more PDFs, images, or other documents Nib opens (Markdown, text, CSV, Word...), in the order given, into one.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -454,12 +454,21 @@ func cmdMerge(args []string) int {
 			errf("%s: %s", p, refuseSignedInPlace)
 			return 1
 		}
-		if !pdfops.LooksLikePDF(b) && pdfops.LooksLikeImage(b) {
-			// The opener's door, so a picture is the page the opener would make of it.
-			if b, err = pdfops.ImageToDocument(b, filepath.Base(p)); err != nil {
-				errf("%s: %v", p, err)
-				return 1
+		// The opener's function (ADR-185), so a picture, a Markdown file or a Word document is the page the opener
+		// would make of it, and the refusal is its sentence. A file Nib does not recognise is left as it came and
+		// Combine names it, as the window's Combine does.
+		src, size := pdfops.BytesSource(b)
+		switch res, ierr := pdfops.Import(context.Background(), src, size, filepath.Base(p), pdfops.ImportOptions{Door: "cli"}); {
+		case ierr == nil:
+			b = res.PDF
+		case errors.Is(ierr, pdfops.ErrNotADocument):
+		default:
+			if tool, ok := pdfops.MissingToolFor(ierr); ok {
+				errf("%s: %s — install it from %s to convert office documents", p, tool.NotFound(), tool.Vendor())
+			} else {
+				errf("%s: %v", p, ierr)
 			}
+			return 1
 		}
 		pdfs = append(pdfs, b)
 		title := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))

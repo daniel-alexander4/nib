@@ -78,9 +78,10 @@ func SupportedMarkdownExt(ext string) bool {
 // print in Nib?") rather than the narrower one mdpdf.Unsupported answers on its own
 // ("would this print with no fonts supplied?"). Since v1.109.0 those differ for most of the
 // world's scripts.
-func UnprintableMarkdown(data []byte) []rune {
-	return mdpdf.UnsupportedWith(string(data), markdownFallbackFonts())
-}
+func UnprintableMarkdown(data []byte) []rune { return unprintableText(string(data)) }
+
+// unprintableText is UnprintableMarkdown for text already held as a string, so a 20 MiB source is not copied again.
+func unprintableText(s string) []rune { return mdpdf.UnsupportedWith(s, markdownFallbackFonts()) }
 
 // SupportedDocExt reports whether ext converts to PDF via ConvertDocToPDF,
 // natively (Markdown) or through LibreOffice (office formats).
@@ -111,13 +112,15 @@ func ConvertDocToPDFWith(ctx context.Context, data []byte, ext string, opts mdpd
 	if f, ok := FormatForExt(ext); ok && (f.Key == "txt" || f.Key == "csv") {
 		// Native (D10, ADR-188): one producer whichever door asks, so a fixture or a caller converting a .csv
 		// directly gets what Import gives.
-		pdf, _, err := textImport(data, f, ImportOptions{Markdown: opts})
+		pdf, _, err := textImport(ctx, data, f, ImportOptions{Markdown: opts})
 		return pdf, err
 	}
 	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil || opts.ImageDir != "") {
 		return nil, ErrOptionsNeedMarkdown
 	}
 	if SupportedMarkdownExt(ext) {
+		// The conversion ends with the caller's context, mid-layout and not only before it (mdpdf.Options.Context).
+		opts.Context = ctx
 		if err := opts.Validate(); err != nil {
 			return nil, err
 		}

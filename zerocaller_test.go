@@ -154,6 +154,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(*Gate).Queued":      "test-only — queue depth, read by the gate and server tests.",
 		"ConvertDocToPDF":     "test-support — the option-less forward to ConvertDocToPDFWith; ~40 tests in four packages build a converted fixture with it.",
 		"SupportedDocExt":     "test-only — every open route decides through pdfops.Import now (ADR-185); the predicate survives for the format table's own tests.",
+		"ImageToDocument":     "test-only — the context-free form; every route reaches the converter through pdfops.Import (ADR-185, /pending 940), and the image fixtures call this one.",
 		"ImportCountKeys":     "test-only — the sorted counter keys, read by the per-door census.",
 		"LiveConverters":      "test-only — registered converter groups, read by the shutdown and gate tests.",
 		"MinimalDocx":         "test-support — the smallest Word package LibreOffice converts, for tests that need a real conversion.",
