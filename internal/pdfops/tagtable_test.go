@@ -370,6 +370,7 @@ var tagFates = map[string]tagFate{
 	"FlagsJSON":         {verdict: "untouched", why: "returns a report, not a document"},
 	"FlagsAndXFA":       {verdict: "untouched", why: "FlagsJSON with one more fact from the same read; returns a report, not a document"},
 	"ExtractImagesZip":  {verdict: "untouched", why: "returns a ZIP of images, not a document"},
+	"ExportPageSVG":     {verdict: "untouched", why: "returns one page drawn as an SVG by pdftocairo, not a PDF (ADR-205); the structure tree is not read"},
 	"CreateFromJSON":    {verdict: "untouched", why: "authors a document from a JSON spec; there is no input tagging to lose"},
 	"ImageToDocument":   {verdict: "untouched", why: "its input is a PNG or JPEG, not a PDF — it produces a one-page document from an image, and an image carries no structure tree to keep or lose"},
 	// The autotagger's commit (P08.S06b). Not driven: the census fixture is TAGGED, and a tagged input is
