@@ -268,6 +268,10 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = ConvertPostScriptToPDF(ctx, data, f.Key == "eps")
 	case f.Family == FamilyHTML:
 		pdf, err = ConvertHTMLToPDF(ctx, data)
+	case f.Family == FamilyMHTML:
+		pdf, err = ConvertMHTMLToPDF(ctx, data)
+	case f.Key == "epub":
+		pdf, err = ConvertEPUBToPDF(ctx, data)
 	case f.Family == FamilyHEIF:
 		pdf, err = heicToDocument(ctx, data, name)
 	case f.Key == "txt" || f.Key == "csv":
@@ -357,7 +361,9 @@ func refusalCause(err error) string {
 		return "no-pages"
 	case errors.Is(err, ErrGhostscriptTooOld), errors.Is(err, ErrGhostscriptNotConfined):
 		return "tool-unsafe"
-	case errors.Is(err, ErrPostScriptUnreadable), errors.Is(err, ErrHEIFUnreadable), errors.Is(err, ErrHTMLUnreadable):
+	case errors.Is(err, ErrPackageTooBig):
+		return "cap:archive"
+	case errors.Is(err, ErrPostScriptUnreadable), errors.Is(err, ErrHEIFUnreadable), errors.Is(err, ErrHTMLUnreadable), errors.Is(err, ErrPackageUnreadable):
 		return "unreadable"
 	case errors.Is(err, ErrHEIFCannotRead), errors.Is(err, ErrBrowserCannotRender):
 		return "tool-cannot-read"
@@ -435,7 +441,7 @@ func ImportCountKeys() []string {
 // isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
 // maps itself, as opposed to a conversion that failed (ConversionError).
 func isNativeRefusal(err error) bool {
-	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable, ErrHEIFCannotRead, ErrHEIFUnreadable, ErrBrowserCannotRender, ErrHTMLUnreadable} {
+	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable, ErrHEIFCannotRead, ErrHEIFUnreadable, ErrBrowserCannotRender, ErrHTMLUnreadable, ErrPackageTooBig, ErrPackageUnreadable} {
 		if errors.Is(err, t) {
 			return true
 		}

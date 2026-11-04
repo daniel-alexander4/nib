@@ -50,6 +50,8 @@ func sniffFamily(head []byte) Family {
 		return FamilyPostScript
 	case isHEIF(head):
 		return FamilyHEIF
+	case isMHTML(head):
+		return FamilyMHTML
 	case isHTML(head):
 		return FamilyHTML
 	}
@@ -117,6 +119,14 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a HEIC picture", ErrExtensionDisagrees, named.Label)
 		}
 		return heifRow(), nil
+	case FamilyMHTML:
+		if hasRow && named.Family == FamilyText {
+			return named, nil
+		}
+		if !hasRow || named.Family != fam {
+			return Format{}, fmt.Errorf("%w: it is a saved web page (MHTML) but its name does not say so", ErrExtensionDisagrees)
+		}
+		return named, nil
 	case FamilyHTML:
 		// Markup is read by a browser, so a name that says text keeps it text (a Markdown file may open with a
 		// tag) and a name that says nothing is not guessed (a URL's path may end in anything).
@@ -177,6 +187,8 @@ func inspectPackage(r io.ReaderAt, size int64, f Format) error {
 		return wantPart(seen, f, "xl/")
 	case "pptx":
 		return wantPart(seen, f, "ppt/")
+	case "epub":
+		return wantMimetype(a, f)
 	case "odt", "ods", "odp":
 		return wantMimetype(a, f)
 	}

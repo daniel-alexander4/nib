@@ -98,6 +98,28 @@ func renderProbe(ctx context.Context, chromium string) error {
 // ConvertHTMLToPDF turns a web page into a PDF through an installed browser. The caller holds the gate
 // (Import does) and its context ends the render, killing the process tree.
 func ConvertHTMLToPDF(ctx context.Context, data []byte) ([]byte, error) {
+	return convertPageToPDF(ctx, data, nil)
+}
+
+// ConvertMHTMLToPDF unpacks a saved MIME message in memory and prints its page, its pictures inline.
+func ConvertMHTMLToPDF(ctx context.Context, data []byte) ([]byte, error) {
+	page, resolve, err := mhtmlToHTML(data)
+	if err != nil {
+		return nil, err
+	}
+	return convertPageToPDF(ctx, page, resolve)
+}
+
+// ConvertEPUBToPDF joins an e-book's chapters, in spine order, into one page and prints it.
+func ConvertEPUBToPDF(ctx context.Context, data []byte) ([]byte, error) {
+	page, err := epubToHTML(data)
+	if err != nil {
+		return nil, err
+	}
+	return convertPageToPDF(ctx, page, nil)
+}
+
+func convertPageToPDF(ctx context.Context, data []byte, resolve func(string) (string, bool)) ([]byte, error) {
 	chromium := browserPath()
 	if chromium == "" {
 		return nil, ErrBrowserMissing
@@ -105,7 +127,7 @@ func ConvertHTMLToPDF(ctx context.Context, data []byte) ([]byte, error) {
 	if err := renderProbe(ctx, chromium); err != nil {
 		return nil, err
 	}
-	doc, _, err := sanitizeHTML(data)
+	doc, _, err := sanitizeHTMLWith(data, resolve)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrHTMLUnreadable, err)
 	}
@@ -158,6 +180,17 @@ func renderDocument(ctx context.Context, chromium string, doc []byte) ([]byte, e
 		return nil, ErrHTMLUnreadable
 	}
 	return pdf, nil
+}
+
+// isMHTML: a MIME message that holds a saved page — `MIME-Version` in the first 2 KB and `multipart/related`
+// in the head. A mail message (`.eml`, S05) is multipart/mixed or alternative and is not claimed here.
+func isMHTML(head []byte) bool {
+	if bytes.IndexByte(head, 0) >= 0 {
+		return false
+	}
+	l := bytes.ToLower(head)
+	i := bytes.Index(l, []byte("mime-version:"))
+	return i >= 0 && i < 2048 && bytes.Contains(l, []byte("multipart/related"))
 }
 
 // isHTML reports whether the head of a file is a web page: after a byte-order mark and white space it

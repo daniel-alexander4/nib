@@ -417,6 +417,9 @@ computer can reach, and starts the browser with every other web address switched
 read a file on your disk or to contact a server printed nothing of either in my tests (eleven tricks, each
 shown to work when the protection is removed), and opening a page fetches nothing. Before first use Nib has
 the browser print a test page and skips one that cannot, which is what happens with a snap-packaged Chromium.
+A saved page in one file (`.mhtml`, `.mht`) and an e-book (`.epub`) open the same way: Nib unpacks them in memory,
+takes their pictures only from inside the file, and prints the result as one document, a page break between
+chapters. Nothing is written under a name the file chose, and an EPUB prints without its own style sheets.
 Links in the page stay links. I tested Chrome 157 and Chromium 156 on Linux; Windows and macOS are not run.
 
 The source file is never written: the conversion works on a copy in the temporary

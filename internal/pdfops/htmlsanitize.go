@@ -76,7 +76,7 @@ func dataImageTypeOK(typ string) bool {
 // The CSP header already stops all of it; refusing the text is the rule the header backs up.
 func cssIsInert(css string) bool {
 	l := strings.ToLower(css)
-	for _, bad := range []string{"@import", "url(", "image-set(", "image(", "src:", "expression", "behavior", "-moz-binding", "\\", "@font-face", "javascript:"} {
+	for _, bad := range []string{"@import", "url(", "image-set(", "image(", "src:", "expression", "behavior", "-moz-binding", "\\", "@font-face", "javascript:", "<"} {
 		if strings.Contains(l, bad) {
 			return false
 		}
@@ -142,6 +142,13 @@ type htmlStats struct {
 
 // sanitizeHTML returns a new document built from the allowlist.
 func sanitizeHTML(data []byte) ([]byte, htmlStats, error) {
+	return sanitizeHTMLWith(data, nil)
+}
+
+// sanitizeHTMLWith is sanitizeHTML for a page whose pictures live in the same package (an MHTML message, an
+// EPUB): resolve maps a picture's `src` to a `data:` URL built from a member of that package, or says it
+// cannot. It is the ONLY way a picture that is not already a data URL survives, and it never touches a path.
+func sanitizeHTMLWith(data []byte, resolve func(src string) (string, bool)) ([]byte, htmlStats, error) {
 	var st htmlStats
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
@@ -229,6 +236,11 @@ func sanitizeHTML(data []byte) ([]byte, htmlStats, error) {
 							el.Attr = append(el.Attr, html.Attribute{Key: "alt", Val: a.Val})
 						case "src":
 							v := a.Val
+							if resolve != nil {
+								if r, ok := resolve(strings.TrimSpace(v)); ok {
+									v = r
+								}
+							}
 							if dataImage(&v, &total) {
 								haveSrc = true
 								el.Attr = append(el.Attr, html.Attribute{Key: "src", Val: v})

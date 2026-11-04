@@ -577,7 +577,7 @@ func TestThePostScriptRefusalsAreAnsweredAsRefusals(t *testing.T) {
 }
 
 func TestTheBrowserRefusalsAreAnsweredAsRefusals(t *testing.T) {
-	for _, err := range []error{pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed} {
+	for _, err := range []error{pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed, pdfops.ErrPackageTooBig, pdfops.ErrPackageUnreadable} {
 		status, msg := importRefusal(fmt.Errorf("wrapped: %w", err))
 		if status != http.StatusUnprocessableEntity || msg == "" {
 			t.Errorf("%v: answered %d %q", err, status, msg)

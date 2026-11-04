@@ -1025,3 +1025,5 @@ home today.
   — PLAN-import-export P04.S02b: `heic` row through `heif-dec` / `heif-convert` / `magick`; a cached capability probe, `ispe` sizes charged against the pixel cap first, ImageMagick by prefix under Nib's own policy.xml.
 - [ADR-200](200-a-web-page-is-printed-only-from-an-origin-that-serves-it-once-and-reaches-nothing-else.md) — **A web page is printed only from an origin that serves it once and reaches nothing else**
   — PLAN-import-export P04.S04a: `html` row; allowlist rebuild of the page, a one-request loopback origin (`internal/browserrender`, peer check in the new leaf `internal/peercred`), a browser told every other name does not exist, a render probe; new listener census.
+- [ADR-201](201-a-saved-page-package-is-unpacked-in-memory-and-becomes-one-page-before-the-door.md) — **A saved-page package is unpacked in memory and becomes one page before the door**
+  — PLAN-import-export P04.S04b: `mhtml` and `epub` rows; pictures only from the package's own parts by its own names, typed by their bytes; caps with hostile fixtures; chapters joined from Nib's own sanitised output.
