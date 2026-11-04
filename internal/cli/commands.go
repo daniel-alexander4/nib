@@ -408,6 +408,9 @@ func cmdOffice(args []string) int {
 	if res.LabelRefused != nil {
 		errf("note: not labelled PDF/UA: %v", res.LabelRefused)
 	}
+	if res.AttachmentsDropped > 0 {
+		errf("note: %d attachment(s) of that message were not imported", res.AttachmentsDropped)
+	}
 	return writeOut(out, res.PDF)
 }
 

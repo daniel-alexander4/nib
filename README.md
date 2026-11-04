@@ -422,6 +422,12 @@ takes their pictures only from inside the file, and prints the result as one doc
 chapters. Nothing is written under a name the file chose, and an EPUB prints without its own style sheets.
 Links in the page stay links. I tested Chrome 157 and Chromium 156 on Linux; Windows and macOS are not run.
 
+An email saved as `.eml` opens the same way. The PDF shows who it was from, who it went to, the date and the subject, then
+the message. No other header is shown, so a sending address, a server name or a tracking id in the headers does not reach the
+page. Attachments are not opened or saved; the PDF says how many there were. A picture the message carries inside itself
+shows, and one that would have to be fetched from the web does not. Outlook's `.msg` is refused with a note to save the
+message as `.eml`.
+
 The source file is never written: the conversion works on a copy in the temporary
 directory, and the result opens as a new document with no file behind it, so *Save*
 asks for a name. The copy is removed when the conversion ends. If Nib is killed

@@ -104,6 +104,7 @@ type mimePart struct {
 	typ      string
 	location string
 	cid      string
+	disp     string // the Content-Disposition media type, lower-cased ("attachment", "inline" or "")
 	body     []byte
 }
 
@@ -140,7 +141,10 @@ func (s *stripSpace) Read(p []byte) (int, error) {
 }
 
 // walkMIME reads parts to the caps. depth counts nested multipart.
-func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePart, total *int) error {
+//
+// decodeIf, when not nil, is asked before a leaf part is decoded: a part it refuses is recorded with no body
+// (mail attachments are counted and never read — Y8).
+func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePart, total *int, decodeIf func(typ, disp string) bool) error {
 	typ, params, err := mime.ParseMediaType(h("Content-Type"))
 	if err != nil {
 		typ = "text/plain"
@@ -161,10 +165,16 @@ func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePar
 			if len(*parts) >= packageParts {
 				return ErrPackageTooBig
 			}
-			if err := walkMIME(func(k string) string { return p.Header.Get(k) }, p, depth+1, parts, total); err != nil {
+			if err := walkMIME(func(k string) string { return p.Header.Get(k) }, p, depth+1, parts, total, decodeIf); err != nil {
 				return err
 			}
 		}
+	}
+	disp, _, _ := mime.ParseMediaType(h("Content-Disposition"))
+	disp = strings.ToLower(disp)
+	if decodeIf != nil && !decodeIf(typ, disp) {
+		*parts = append(*parts, mimePart{typ: typ, disp: disp, cid: strings.Trim(strings.TrimSpace(h("Content-ID")), "<>")})
+		return nil
 	}
 	data, err := decodePart(body, h("Content-Transfer-Encoding"))
 	if err != nil {
@@ -173,7 +183,7 @@ func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePar
 	if *total += len(data); *total > packageAllBytes {
 		return ErrPackageTooBig
 	}
-	if typ == "text/html" {
+	if typ == "text/html" || typ == "text/plain" {
 		if cs := params["charset"]; cs != "" {
 			if r, cerr := charset.NewReaderLabel(cs, bytes.NewReader(data)); cerr == nil {
 				if conv, rerr := io.ReadAll(io.LimitReader(r, packagePartBytes*2)); rerr == nil {
@@ -186,6 +196,7 @@ func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePar
 		typ:      typ,
 		location: strings.TrimSpace(h("Content-Location")),
 		cid:      strings.Trim(strings.TrimSpace(h("Content-ID")), "<>"),
+		disp:     disp,
 		body:     data,
 	})
 	return nil
@@ -202,7 +213,7 @@ func mhtmlToHTML(data []byte) ([]byte, func(string) (string, bool), error) {
 	}
 	var parts []mimePart
 	total := 0
-	if err := walkMIME(func(k string) string { return msg.Header.Get(k) }, msg.Body, 0, &parts, &total); err != nil {
+	if err := walkMIME(func(k string) string { return msg.Header.Get(k) }, msg.Body, 0, &parts, &total, nil); err != nil {
 		return nil, nil, err
 	}
 	pics := &packagePictures{byName: map[string]string{}}

@@ -1027,3 +1027,5 @@ home today.
   — PLAN-import-export P04.S04a: `html` row; allowlist rebuild of the page, a one-request loopback origin (`internal/browserrender`, peer check in the new leaf `internal/peercred`), a browser told every other name does not exist, a render probe; new listener census.
 - [ADR-201](201-a-saved-page-package-is-unpacked-in-memory-and-becomes-one-page-before-the-door.md) — **A saved-page package is unpacked in memory and becomes one page before the door**
   — PLAN-import-export P04.S04b: `mhtml` and `epub` rows; pictures only from the package's own parts by its own names, typed by their bytes; caps with hostile fixtures; chapters joined from Nib's own sanitised output.
+- [ADR-202](202-an-email-prints-five-named-headers-and-counts-its-attachments-and-msg-is-refused-by-name.md) — **An email prints five named headers and counts its attachments; `.msg` is refused by name**
+  — PLAN-import-export P04.S05: `eml` row; From/To/Cc/Date/Subject as escaped text and no other header; attachments counted and never decoded (`decodeIf`), `cid:` pictures only from the message; body through ADR-200's path; Outlook `.msg` refused by name.

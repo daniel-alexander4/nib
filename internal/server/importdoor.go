@@ -64,7 +64,7 @@ func importRefusal(err error) (status int, msg string) {
 	case errors.Is(err, pdfops.ErrImportTooLarge), errors.Is(err, pdfops.ErrConvertedTooLarge), errors.Is(err, pdfops.ErrTooManyPages),
 		errors.Is(err, pdfops.ErrTextTooLong), errors.Is(err, pdfops.ErrCSVTooLong), errors.Is(err, pdfops.ErrCSVTooWide), errors.Is(err, pdfops.ErrCSVTooManyCells):
 		return http.StatusRequestEntityTooLarge, err.Error()
-	case errors.Is(err, pdfops.ErrConverterOverMemory), errors.Is(err, pdfops.ErrGhostscriptTooOld), errors.Is(err, pdfops.ErrGhostscriptNotConfined), errors.Is(err, pdfops.ErrPostScriptUnreadable), errors.Is(err, pdfops.ErrHEIFCannotRead), errors.Is(err, pdfops.ErrHEIFUnreadable), errors.Is(err, pdfops.ErrBrowserCannotRender), errors.Is(err, pdfops.ErrHTMLUnreadable), errors.Is(err, browserrender.ErrNotServed), errors.Is(err, pdfops.ErrPackageTooBig), errors.Is(err, pdfops.ErrPackageUnreadable):
+	case errors.Is(err, pdfops.ErrConverterOverMemory), errors.Is(err, pdfops.ErrGhostscriptTooOld), errors.Is(err, pdfops.ErrGhostscriptNotConfined), errors.Is(err, pdfops.ErrPostScriptUnreadable), errors.Is(err, pdfops.ErrHEIFCannotRead), errors.Is(err, pdfops.ErrHEIFUnreadable), errors.Is(err, pdfops.ErrBrowserCannotRender), errors.Is(err, pdfops.ErrHTMLUnreadable), errors.Is(err, browserrender.ErrNotServed), errors.Is(err, pdfops.ErrPackageTooBig), errors.Is(err, pdfops.ErrPackageUnreadable), errors.Is(err, pdfops.ErrMsgNotSupported):
 		return http.StatusUnprocessableEntity, err.Error()
 	case errors.Is(err, gate.ErrQueueFull), errors.Is(err, pdfops.ErrShuttingDown):
 		return http.StatusServiceUnavailable, err.Error()
@@ -120,7 +120,7 @@ func isImportRefusal(err error) bool {
 		pdfops.ErrImportTooLarge, pdfops.ErrConvertedTooLarge, pdfops.ErrConverterOverMemory, pdfops.ErrOptionsNeedMarkdown, gate.ErrQueueFull, pdfops.ErrShuttingDown, context.DeadlineExceeded, context.Canceled,
 		pdfops.ErrNotADocument, pdfops.ErrCorruptDocument, pdfops.ErrNotText, pdfops.ErrNotAPDF, pdfops.ErrExtensionDisagrees, pdfops.ErrArchiveRefused, pdfops.ErrPackageNamesOutside,
 		pdfops.ErrImagePixels, pdfops.ErrTooManyPages, pdfops.ErrNoPages, pdfops.ErrTIFFCompression,
-		pdfops.ErrGhostscriptTooOld, pdfops.ErrGhostscriptNotConfined, pdfops.ErrPostScriptUnreadable, pdfops.ErrHEIFCannotRead, pdfops.ErrHEIFUnreadable, pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed, pdfops.ErrPackageTooBig, pdfops.ErrPackageUnreadable,
+		pdfops.ErrGhostscriptTooOld, pdfops.ErrGhostscriptNotConfined, pdfops.ErrPostScriptUnreadable, pdfops.ErrHEIFCannotRead, pdfops.ErrHEIFUnreadable, pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed, pdfops.ErrPackageTooBig, pdfops.ErrPackageUnreadable, pdfops.ErrMsgNotSupported,
 	} {
 		if errors.Is(err, target) {
 			return true

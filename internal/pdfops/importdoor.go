@@ -85,6 +85,9 @@ type ImportResult struct {
 	// LabelRefused is why a Markdown conversion with a chosen language did not earn the PDF/UA label; nil
 	// when it did or was not asked for. A note, not a failure.
 	LabelRefused error
+	// AttachmentsDropped is how many attachments of a mail message were not imported (Y8): none is ever
+	// extracted, decoded or written. The PDF says the same in its own text.
+	AttachmentsDropped int
 }
 
 // ImportGate is the process's gate for outside-tool conversions: two at a time, sixteen waiting (D9, D31(4);
@@ -270,6 +273,8 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 		pdf, err = ConvertHTMLToPDF(ctx, data)
 	case f.Family == FamilyMHTML:
 		pdf, err = ConvertMHTMLToPDF(ctx, data)
+	case f.Family == FamilyEmail:
+		pdf, res.AttachmentsDropped, err = ConvertEMLToPDF(ctx, data)
 	case f.Key == "epub":
 		pdf, err = ConvertEPUBToPDF(ctx, data)
 	case f.Family == FamilyHEIF:
@@ -375,7 +380,7 @@ func refusalCause(err error) string {
 		return "not-text"
 	case errors.Is(err, ErrCorruptDocument):
 		return "unreadable"
-	case errors.Is(err, ErrNotADocument):
+	case errors.Is(err, ErrNotADocument), errors.Is(err, ErrMsgNotSupported):
 		return "unsupported"
 	case errors.Is(err, gate.ErrQueueFull):
 		return "queue-full"
@@ -441,7 +446,7 @@ func ImportCountKeys() []string {
 // isNativeRefusal reports whether err is a native producer REFUSING a file by a named cap or rule, which a caller
 // maps itself, as opposed to a conversion that failed (ConversionError).
 func isNativeRefusal(err error) bool {
-	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable, ErrHEIFCannotRead, ErrHEIFUnreadable, ErrBrowserCannotRender, ErrHTMLUnreadable, ErrPackageTooBig, ErrPackageUnreadable} {
+	for _, t := range []error{ErrTextTooLong, ErrCSVTooLong, ErrCSVTooWide, ErrCSVTooManyCells, ErrCSVUnreadable, ErrImagePixels, ErrTooManyPages, ErrNoPages, ErrTIFFCompression, ErrArchiveRefused, ErrPackageNamesOutside, ErrCorruptDocument, ErrConvertedTooLarge, ErrGhostscriptTooOld, ErrGhostscriptNotConfined, ErrPostScriptUnreadable, ErrHEIFCannotRead, ErrHEIFUnreadable, ErrBrowserCannotRender, ErrHTMLUnreadable, ErrPackageTooBig, ErrPackageUnreadable, ErrMsgNotSupported} {
 		if errors.Is(err, t) {
 			return true
 		}
