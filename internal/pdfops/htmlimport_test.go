@@ -356,3 +356,15 @@ func TestPicturesTogetherAreBoundedAsWellAsOneByOne(t *testing.T) {
 		t.Errorf("kept %d pictures, dropped %d; want 1 and 1", strings.Count(string(out), "base64"), st.DroppedImages)
 	}
 }
+
+// The sanitiser's walks recurse once per level. They are safe because the parser itself refuses an open-element
+// stack past 512 (measured at the P04 close: "html: open stack of elements exceeds 512 nodes"); this pins that
+// bound, so a parser that stopped refusing would turn red here and not as a fatal stack overflow in the field.
+func TestAPageNestedPastTheParsersBoundIsRefusedNotWalked(t *testing.T) {
+	if _, _, err := sanitizeHTML([]byte(strings.Repeat("<div>", 600) + "x")); err == nil {
+		t.Error("a page nested 600 deep was read")
+	}
+	if _, _, err := sanitizeHTML([]byte(strings.Repeat("<div>", 100) + "x")); err != nil {
+		t.Errorf("an ordinary depth: %v", err)
+	}
+}

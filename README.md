@@ -422,6 +422,24 @@ takes their pictures only from inside the file, and prints the result as one doc
 chapters. Nothing is written under a name the file chose, and an EPUB prints without its own style sheets.
 Links in the page stay links. I tested Chrome 157 and Chromium 156 on Linux; Windows and macOS are not run.
 
+An SVG picture (`.svg`) opens through the same browser, as one page of the size the file declares (a file that declares none, or
+one past 200 inches a side, is refused). Nib parses it strictly and rebuilds it from a list of drawing elements, which drops scripts,
+`foreignObject`, links, animation and anything that points at another file or address, then hands it to the browser only as a picture
+inside a page of Nib's own, where a browser runs no script and fetches nothing. In my tests nine tricks (a script, an `onload`, an
+`<image>`, a style sheet import, a `foreignObject` frame and others) each did their harm when the protection was removed and none
+did through Nib. Text stays text and words in it can be selected. Fonts the file names are not loaded; the browser's own are used.
+
+Pages as images can also save the page you are on as an SVG drawing. This one needs poppler's `pdftocairo` on the computer
+(`poppler-utils` on Debian and Ubuntu, `poppler` in Homebrew); without it the entry stays in the list and says so. Nib draws it from
+the document as Nib holds it, so anything you have placed or typed and not saved is not in the file. Only the page you are on, one
+file at a time. I tested poppler 24.02 on Linux; Windows and macOS are not run.
+
+An email saved as `.eml` opens the same way. The PDF shows who it was from, who it went to, the date and the subject, then
+the message. No other header is shown, so a sending address, a server name or a tracking id in the headers does not reach the
+page. Attachments are not opened or saved; the PDF says how many there were. A picture the message carries inside itself
+shows, and one that would have to be fetched from the web does not. Outlook's `.msg` is refused with a note to save the
+message as `.eml`.
+
 The source file is never written: the conversion works on a copy in the temporary
 directory, and the result opens as a new document with no file behind it, so *Save*
 asks for a name. The copy is removed when the conversion ends. If Nib is killed

@@ -31,11 +31,11 @@ const packagePartCap = 16 << 20
 // (`#…`), and a path inside the package. LibreOffice's network fetches are closed separately by the dead proxy of
 // officeprofile.go; this scan is the local-file half.
 func scanPackageReferences(data []byte) error {
-	if !bytes.HasPrefix(data, []byte("PK\x03\x04")) {
-		return nil
-	}
 	a, err := ziputil.Open(bytes.NewReader(data), int64(len(data)), packageLimits)
 	if err != nil {
+		if !bytes.Contains(data[:min(len(data), 4096)], []byte("PK\x03\x04")) {
+			return nil // not a zip at all (an OLE or flat-XML document): nothing to scan, the declared gap
+		}
 		return fmt.Errorf("%w: %v", ErrArchiveRefused, err)
 	}
 	names := a.Names()

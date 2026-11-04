@@ -249,3 +249,32 @@ func TestAnEPUBIsHeldToItsChapterCap(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestAnLFOnlyMHTMLMessageOverTheHeaderCapIsRead(t *testing.T) {
+	msg := "MIME-Version: 1.0\nContent-Type: text/html\n\n<p>" + strings.Repeat("word ", mimeHeaderBytes) + "</p>"
+	if _, _, err := mhtmlToHTML([]byte(msg)); err != nil {
+		t.Errorf("an LF-only message with a short header block: %v", err)
+	}
+}
+
+func TestAnEPUBSpineThatRepeatsAChapterReadsItOnce(t *testing.T) {
+	data := epubZip(t, func(f map[string]string, _ *[]string) {
+		f["OEBPS/content.opf"] = strings.Replace(f["OEBPS/content.opf"], `<itemref idref="c1"/>`, strings.Repeat(`<itemref idref="c1"/>`, 40), 1)
+	})
+	page, err := epubToHTML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(page), "Chapter One"); n != 1 {
+		t.Errorf("chapter one appears %d times, want 1", n)
+	}
+}
+
+func TestAnEPUBsChaptersTogetherAreBounded(t *testing.T) {
+	old := epubOutputBytes
+	epubOutputBytes = 10
+	defer func() { epubOutputBytes = old }()
+	if _, err := epubToHTML(epubZip(t, nil)); !errors.Is(err, ErrPackageTooBig) {
+		t.Errorf("err = %v", err)
+	}
+}

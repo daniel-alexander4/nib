@@ -52,6 +52,10 @@ func sniffFamily(head []byte) Family {
 		return FamilyHEIF
 	case isMHTML(head):
 		return FamilyMHTML
+	case isEmail(head):
+		return FamilyEmail
+	case isSVG(head):
+		return FamilySVG
 	case isHTML(head):
 		return FamilyHTML
 	}
@@ -127,6 +131,16 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: it is a saved web page (MHTML) but its name does not say so", ErrExtensionDisagrees)
 		}
 		return named, nil
+	case FamilyEmail:
+		// A message is read by Nib's own header and MIME reader, so only a name that says mail sends it there; a
+		// text file that happens to open with header-shaped lines stays text.
+		if hasRow && named.Family == FamilyText {
+			return named, nil
+		}
+		if !hasRow || named.Family != fam {
+			return Format{}, fmt.Errorf("%w: it is an email message but its name does not say so", ErrExtensionDisagrees)
+		}
+		return named, nil
 	case FamilyHTML:
 		// Markup is read by a browser, so a name that says text keeps it text (a Markdown file may open with a
 		// tag) and a name that says nothing is not guessed (a URL's path may end in anything).
@@ -140,7 +154,25 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a web page", ErrExtensionDisagrees, named.Label)
 		}
 		return named, nil
+	case FamilySVG:
+		// A picture drawn by a browser, so only a name that says SVG sends it there; a text file that happens to
+		// open with the tag stays text, and a name that says nothing is not guessed.
+		if hasRow && named.Family == FamilyText {
+			return named, nil
+		}
+		if !hasRow {
+			return Format{}, fmt.Errorf("%w: it is an SVG picture but its name does not say so", ErrExtensionDisagrees)
+		}
+		if named.Family != fam {
+			return Format{}, fmt.Errorf("%w: the name says %s, the contents are an SVG picture", ErrExtensionDisagrees, named.Label)
+		}
+		return named, nil
 	case FamilyZip, FamilyOLE, FamilyRTF:
+		if fam == FamilyOLE && normalExt(ext) == "msg" {
+			// Y8: Outlook's .msg is an OLE compound file and Nib has no reader built to the bar a stranger's
+			// message needs; refused BY NAME rather than handed to a converter that would try.
+			return Format{}, ErrMsgNotSupported
+		}
 		if !hasRow {
 			return Format{}, fmt.Errorf("%w: it is a packaged document but its name does not say which kind", ErrExtensionDisagrees)
 		}

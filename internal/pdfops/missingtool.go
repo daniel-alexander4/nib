@@ -40,6 +40,7 @@ const (
 	ToolGhostscript
 	ToolHEIF
 	ToolBrowser
+	ToolPdftocairo
 )
 
 // MissingToolFor classifies err. The bool is false for every other error, so a caller reads
@@ -59,6 +60,8 @@ func MissingToolFor(err error) (MissingTool, bool) {
 		return ToolHEIF, true
 	case errors.Is(err, ErrBrowserMissing):
 		return ToolBrowser, true
+	case errors.Is(err, ErrPdftocairoMissing):
+		return ToolPdftocairo, true
 	}
 	return ToolNone, false
 }
@@ -74,6 +77,8 @@ func (t MissingTool) Name() string {
 		return "a HEIF decoder (libheif's heif-dec, or ImageMagick)"
 	case ToolBrowser:
 		return "a Chromium-family browser (Chrome, Chromium, Edge or Brave)"
+	case ToolPdftocairo:
+		return "poppler's pdftocairo"
 	}
 	return ""
 }
@@ -91,6 +96,8 @@ func (t MissingTool) Vendor() string {
 		return "https://github.com/strukturag/libheif"
 	case ToolBrowser:
 		return "https://www.chromium.org/getting-involved/download-chromium/"
+	case ToolPdftocairo:
+		return "https://poppler.freedesktop.org/"
 	}
 	return ""
 }

@@ -40,7 +40,8 @@ import (
 // gsFloor is the oldest Ghostscript the door will run a program on. 9.50 is where SAFER became the default
 // and `--permit-file-read` / `--permit-file-write` took their present meaning. It is a FLOOR and not a
 // verdict: CVE-2024-29510 (a SAFER bypass through the `uniprint` device) is fixed upstream in 10.03.1 and a
-// version below that may still be patched by its distributor, so the probe, not the number, decides.
+// version below that may still be patched by its distributor, so the number cannot decide. The probe does NOT
+// exercise that bypass (ADR-203, /pending 943): it tries a file read and a pipe, which plain SAFER already refuses.
 var gsFloor = gsVersion{9, 50}
 
 // Refusals named by the PostScript door.
@@ -123,6 +124,9 @@ func confineProbe(ctx context.Context, gs string) error {
 	err := probeGhostscript(ctx, gs)
 	if ctx.Err() != nil {
 		return err // a cancelled probe says nothing about the binary
+	}
+	if err != nil && !errors.Is(err, ErrGhostscriptNotConfined) && !errors.Is(err, ErrGhostscriptTooOld) {
+		return err // a probe that did not finish (timeout, no scratch space) is not a verdict
 	}
 	if serr == nil {
 		confineCache.st = confineState{path: gs, size: fi.Size(), modTime: fi.ModTime(), err: err}
@@ -256,4 +260,11 @@ func convertPostScriptWith(ctx context.Context, gs string, data []byte, eps bool
 		return nil, fmt.Errorf("%w: Nib opens up to %d", ErrTooManyPages, importPages)
 	}
 	return pdf, nil
+}
+
+// probeUnfinished: the error says the probe did not complete, which is a fact about this moment and not
+// about the tool, so it is never cached as a verdict.
+func probeUnfinished(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, ErrConverterOverMemory) || errors.Is(err, ErrShuttingDown) || errors.Is(err, ErrConvertedTooLarge)
 }

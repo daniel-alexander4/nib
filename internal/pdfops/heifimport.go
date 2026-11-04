@@ -307,8 +307,8 @@ func heifProbe(ctx context.Context, t heifTool) error {
 		}
 	}
 	err := probeHEIF(ctx, t)
-	if ctx.Err() != nil {
-		return err
+	if ctx.Err() != nil || (err != nil && !errors.Is(err, ErrHEIFCannotRead)) {
+		return err // not a verdict: cancelled, timed out, out of memory or shutting down
 	}
 	if serr == nil {
 		if heifProbeCache.m == nil {
@@ -324,6 +324,9 @@ func probeHEIF(ctx context.Context, t heifTool) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if probeUnfinished(err) {
+			return err
 		}
 		return fmt.Errorf("%w (%s: %v)", ErrHEIFCannotRead, t.name, err)
 	}

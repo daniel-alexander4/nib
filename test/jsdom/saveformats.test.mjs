@@ -25,7 +25,7 @@
 // One boot per file — see boot.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import { boot, BOOT_ROUTES } from './boot.mjs';
 import { setNextDocument, setDataGate } from './stub-pdfjs.mjs';
 
 const written = [];        // every /api/write: { dir, name, bytes, overwrite }
@@ -39,8 +39,12 @@ let docRev = null;         // the revision the document export says it read at (
 let docGate = null;        // a promise the document export waits on before it answers (a view switch lands meanwhile)
 const formatOf = () => new URL('http://x' + calls.at(-1).url.replace(/^https?:\/\/[^/]+/, '')).searchParams.get('format');
 
+// Whether pdftocairo is found, as /api/status says (ADR-205); a test flips it and asks again through a recheck button.
+let svgTool = true;
 const h = await boot({
   routes: {
+    '/api/status': () => ({ ...BOOT_ROUTES['/api/status'], svgExport: svgTool }),
+    '/api/export/svg': () => new Response('<svg>DRAWN</svg>', { status: 200, headers: { 'Content-Type': 'image/svg+xml' } }),
     '/api/listdir': { path: '/home/someone/nib', parent: '/home/someone', dirs: [], files: [] },
     '/api/open': (opts) => {
       const { path: p } = JSON.parse(opts.body);
@@ -97,7 +101,7 @@ async function open(name, opts = {}) {
   await settle();
 }
 // The Format line of Pages as images (ADR-189): the ZIP of every page is the sixth entry.
-const EVERY_PAGE_ZIP = 5;
+const EVERY_PAGE_ZIP = 6;
 async function choose(i) {
   const sel = $('saveAsFormat');
   sel.selectedIndex = i;
@@ -344,7 +348,7 @@ test('pages as images offers this page or every page, named for each', async () 
   await settle();
   assert.deepEqual(optionLabels(), [
     'This page (PNG, .png)', 'This page (JPEG, .jpg)', 'This page (WebP, .webp) — this browser cannot write WebP',
-    'This page (GIF, .gif)', 'This page (BMP, .bmp)', 'Every page (ZIP of PNGs, .zip)', 'Every page (TIFF, .tiff)',
+    'This page (GIF, .gif)', 'This page (BMP, .bmp)', 'This page (SVG, .svg)', 'Every page (ZIP of PNGs, .zip)', 'Every page (TIFF, .tiff)',
     'Every page (comic book, .cbz)',
   ]);
   assert.equal($('saveAsTitle').textContent, 'Export pages as images');
@@ -839,4 +843,37 @@ test('Document as… opens no dialog when the view changed while the body was re
   ledger.querySelector('.tabclose').click();
   await settle();
   assert.equal(opened, false, 'a dialog for the document pressed on opened after the body was read over another');
+
+test('SVG writes the server\'s drawing of this page, and without pdftocairo it stays on the line with its reason (ADR-205)', async () => {
+  await open('svgdoc.pdf');
+  const from = calls.length;
+  $('exportPagesBtn').click();
+  await settle();
+  const svg = [...$('saveAsFormat').options].findIndex((o) => /SVG/.test(o.textContent));
+  assert.ok(svg > 0, 'stimulus: there is no SVG entry on the line');
+  await choose(svg);
+  assert.equal($('saveAsName').value, 'svgdoc-page1.svg');
+  assert.equal($('saveAsGo').disabled, false, 'Save is off although pdftocairo was found');
+  await save();
+  const asked = requests('/api/export/svg', from);
+  assert.equal(asked.length, 1, 'the SVG was not asked for exactly once');
+  assert.match(asked[0].url, /page=1\b/);
+  assert.equal(written.at(-1).name, 'svgdoc-page1.svg');
+  assert.equal(written.at(-1).bytes, '<svg>DRAWN</svg>', 'the bytes written are not the server\'s drawing');
+  assert.equal(requests('/api/assemble', from).length, 0, 'the SVG went through the picture encoder');
+  await cancel();
+  // pdftocairo gone: the entry stays, says why in its label and status, and Save is off.
+  svgTool = false;
+  $('heifRecheck').click();
+  await settle();
+  $('exportPagesBtn').click();
+  await settle();
+  const off = [...$('saveAsFormat').options].findIndex((o) => /SVG/.test(o.textContent));
+  assert.match($('saveAsFormat').options[off].textContent, /needs pdftocairo/);
+  assert.equal($('saveAsFormat').options[off].disabled, false);
+  await choose(off);
+  assert.match($('saveAsStatus').textContent, /pdftocairo/);
+  assert.equal($('saveAsGo').disabled, true, 'Save is on for a format that cannot be written');
+  await cancel();
+  svgTool = true;
 });

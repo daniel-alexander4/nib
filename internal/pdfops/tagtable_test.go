@@ -663,7 +663,7 @@ func firstParamIsPDF(fn *ast.FuncDecl) bool {
 	}
 	p := fn.Type.Params.List[0]
 	// A leading context.Context is the caller's cancel and says nothing about what the function takes: the
-	// PDF/A Ghostscript route gained one (ADR-205) and fell out of this census, which is the shape the paragraph
+	// PDF/A Ghostscript route gained one (ADR-206) and fell out of this census, which is the shape the paragraph
 	// above names as the census failing. Only a document NAMED `pdf` after it counts — the converters that make a
 	// PDF from another format (ConvertDocToPDF and its kin) take their source as `data` and are not operations on
 	// a PDF.

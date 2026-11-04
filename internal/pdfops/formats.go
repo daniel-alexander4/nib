@@ -44,7 +44,9 @@ const (
 	FamilyPostScript               // a PostScript program or EPS file: `%!` or a DOS EPS header
 	FamilyHEIF                     // a HEIC / HEIF picture: an ISO base media `ftyp` box naming a HEIF brand
 	FamilyMHTML                    // a saved page as one MIME message: `MIME-Version` and `multipart/related` near the top
+	FamilyEmail                    // a mail message: RFC 5322 header lines at the top (`From:`, `Received:`, `Message-ID:`…), not a saved page
 	FamilyHTML                     // a web page: markup that opens `<!doctype html` or `<html`, or carries an `<html`, `<head` or `<body` tag early
+	FamilySVG                      // an SVG picture: its first element is `<svg`
 )
 
 const (
@@ -79,7 +81,9 @@ var formats = []Format{
 	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript},
 	{Key: "heic", Label: "HEIC / HEIF image", Exts: []string{"heic", "heif"}, MIME: []string{"image/heic", "image/heif"}, Tool: ToolHEIF, Family: FamilyHEIF},
 	{Key: "html", Label: "Web page (HTML)", Exts: []string{"html", "htm", "xhtml"}, MIME: []string{"text/html", "application/xhtml+xml"}, Tool: ToolBrowser, Family: FamilyHTML},
-	{Key: "mhtml", Label: "Saved web page (MHTML)", Exts: []string{"mhtml", "mht"}, MIME: []string{"multipart/related", "message/rfc822"}, Tool: ToolBrowser, Family: FamilyMHTML},
+	{Key: "svg", Label: "SVG picture", Exts: []string{"svg"}, MIME: []string{"image/svg+xml"}, Tool: ToolBrowser, Family: FamilySVG},
+	{Key: "mhtml", Label: "Saved web page (MHTML)", Exts: []string{"mhtml", "mht"}, MIME: []string{"multipart/related"}, Tool: ToolBrowser, Family: FamilyMHTML},
+	{Key: "eml", Label: "Email (.eml)", Exts: []string{"eml"}, MIME: []string{"message/rfc822"}, Tool: ToolBrowser, Family: FamilyEmail},
 	{Key: "epub", Label: "E-book (EPUB)", Exts: []string{"epub"}, MIME: []string{"application/epub+zip"}, Tool: ToolBrowser, Family: FamilyZip},
 	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 }

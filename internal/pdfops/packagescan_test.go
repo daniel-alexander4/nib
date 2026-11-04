@@ -154,3 +154,19 @@ func TestADocumentWithAWebLinkStillConverts(t *testing.T) {
 		t.Errorf("not a PDF: %q", out[:min(len(out), 8)])
 	}
 }
+
+// A zip with bytes in front of it is still a zip to a reader that finds the central directory from the end;
+// the scan must not take the missing leading signature for "not a package" (P04 review).
+func TestAPackageWithBytesInFrontOfItIsStillScanned(t *testing.T) {
+	d := pkg(t, "[Content_Types].xml", "<Types/>", "word/document.xml", "<d/>", "word/_rels/document.xml.rels", rels("ext:file:///etc/passwd"))
+	prefixed := append([]byte("JUNKJUNKJUNK"), d...)
+	if err := scanPackageReferences(prefixed); err == nil {
+		t.Error("a prefixed package naming a local file was passed")
+	}
+	if err := scanPackageReferences(d[:len(d)-30]); !errors.Is(err, ErrArchiveRefused) {
+		t.Errorf("a package with its directory cut off: %v", err)
+	}
+	if err := scanPackageReferences([]byte("not a zip at all")); err != nil {
+		t.Errorf("a non-zip was refused: %v", err)
+	}
+}

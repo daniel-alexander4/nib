@@ -412,6 +412,9 @@ func cmdOffice(args []string) int {
 	if note := pdfops.LabelNote(res.LabelRefused); note != "" {
 		errf("note: %s", note)
 	}
+	if res.AttachmentsDropped > 0 {
+		errf("note: %d attachment(s) of that message were not imported", res.AttachmentsDropped)
+	}
 	return writeOut(out, res.PDF)
 }
 

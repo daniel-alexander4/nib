@@ -278,6 +278,7 @@ type statusResponse struct {
 	Version               string                       `json:"version"`                         // running build, shown in the About dialog
 	Browser               bool                         `json:"browser"`                         // a Chromium-family browser found that prints a test page → web pages can be opened
 	HEIF                  bool                         `json:"heif"`                            // a HEIF decoder found (heif-dec, heif-convert, magick) → HEIC pictures can be opened (ADR-199)
+	SVGExport             bool                         `json:"svgExport"`                       // pdftocairo found → a page can be exported as an SVG file (ADR-205)
 	Ghostscript           bool                         `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
 	LibreOffice           bool                         `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
 	// Formats is the format table (pdfops.Formats), the one list the pickers' `accept` is built from.
@@ -319,6 +320,7 @@ func (s *Server) currentStatus() statusResponse {
 	st.Version = s.version
 	st.Ghostscript = pdfops.GhostscriptAvailable()
 	st.HEIF = pdfops.HEIFAvailable()
+	st.SVGExport = pdfops.PdftocairoAvailable()
 	st.Browser = pdfops.BrowserAvailable()
 	st.LibreOffice = pdfops.LibreOfficeAvailable()
 	st.Formats = formatViews()
