@@ -87,6 +87,15 @@ type ImportResult struct {
 	LabelRefused error
 }
 
+// LabelNote is the sentence for LabelRefused — "" when the conversion earned the label or was not asked for it.
+// The CLI prints it as a note and the window shows it once (`docResponse.LabelNote`): one wording, one door.
+func (r *ImportResult) LabelNote() string {
+	if r == nil || r.LabelRefused == nil {
+		return ""
+	}
+	return "Not labelled PDF/UA: " + r.LabelRefused.Error()
+}
+
 // ImportGate is the process's gate for outside-tool conversions: two at a time, sixteen waiting (D9, D31(4);
 // the figures are assumptions, measured at the end of P01.S02a).
 var ImportGate = gate.New(2, 16)

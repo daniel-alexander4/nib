@@ -131,3 +131,49 @@ func TestTheDeclaredEntryCountIsRefusedBeforeTheDirectoryIsRead(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTooManyEntries from the declared count", err)
 	}
 }
+
+// forged returns an archive whose one member inflates to n bytes while BOTH its local and its central header
+// claim declared: the sizes Open sums and a lying producer controls.
+func forged(t *testing.T, n int, declared uint32) []byte {
+	t.Helper()
+	b := build(t, []string{"a"}, [][]byte{bytes.Repeat([]byte{0}, n)})
+	put := func(sig []byte, off int) {
+		i := bytes.Index(b, sig)
+		if i < 0 {
+			t.Fatalf("no %x record", sig)
+		}
+		b[i+off], b[i+off+1], b[i+off+2], b[i+off+3] = byte(declared), byte(declared>>8), byte(declared>>16), byte(declared>>24)
+	}
+	put([]byte{'P', 'K', 3, 4}, 22) // local header: uncompressed size
+	put([]byte{'P', 'K', 1, 2}, 24) // central directory: uncompressed size
+	return b
+}
+
+func TestReadHoldsItsCapAgainstAForgedHeader(t *testing.T) {
+	lim := testLim
+	lim.RatioMax = 1 << 30 // the ratio guard is not the one under test
+	a, err := open(t, forged(t, 5000, 10), lim)
+	if err != nil {
+		t.Fatalf("the forged archive must open — Open trusts the declared 10 bytes: %v", err)
+	}
+	if got := a.Files()[0].UncompressedSize64; got != 10 {
+		t.Fatalf("setup: header says %d, want the forged 10", got)
+	}
+	// archive/zip itself stops a stream at its header's size (ErrFormat), so the refusal here is ErrUnreadable;
+	// the LimitReader is the second wall. What must never happen is the bytes coming back.
+	b, err := a.Read(a.Files()[0], 100)
+	if err == nil || len(b) != 0 || !(errors.Is(err, ErrTooLarge) || errors.Is(err, ErrUnreadable)) {
+		t.Fatalf("a 10-byte member that inflates to 5000: len %d err %v, want a refusal and no bytes", len(b), err)
+	}
+	// And a header that agrees with the stream but not with the caller's cap is ErrTooLarge, from the stream.
+	h, err := open(t, forged(t, 5000, 5000), lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Read(h.Files()[0], 100); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("5000 real bytes against a cap of 100: %v", err)
+	}
+	if b, err := a.Peek(a.Files()[0], 5); err != nil || len(b) != 5 {
+		t.Fatalf("Peek reads a bounded prefix of the real stream: len %d err %v", len(b), err)
+	}
+}

@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/netip"
 	"nib/internal/atomicfile"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -768,6 +767,10 @@ type docResponse struct {
 	// ImportedFrom is the source file's name when THIS answer is the one that imported it (open, upload, URL,
 	// Import…). Set by those routes after docResponse, so `/api/docs`, a reload and every later answer omit it.
 	ImportedFrom string `json:"importedFrom,omitempty"`
+	// LabelNote is why a Markdown conversion with a language the person chose did not earn the PDF/UA label
+	// (`ImportResult.LabelNote`, the CLI's sentence); only /api/office sets it, on its own answer. A note, not a
+	// failure: the document opened.
+	LabelNote string `json:"labelNote,omitempty"`
 
 	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
 	// from "you have not edited this document" — states that canUndo:false reports
@@ -903,28 +906,25 @@ type pathRefusal struct {
 // "no LooksLikePDF (so any readable file becomes the open document with canSave true,
 // and Save clobbers it), no size cap".
 //
+// **The file is opened FIRST and everything is asked of the descriptor** (/pending 940): a path stat-ed and then
+// opened can be swapped for a FIFO in between, and the check would have judged another file than the one read.
+// `openRegular` is the one place that is done.
+//
 // **The size check reads the STAT, never the bytes.** A 4 GiB file must be refused
 // without being read into memory first, so the order here is load-bearing rather than
 // stylistic — reversing it turns the cap from a guard into an OOM.
 func readInstallablePDF(ctx context.Context, path string, o pdfops.ImportOptions) (res *pdfops.ImportResult, ref *pathRefusal) {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
+	f, info, ref := openRegular(path)
+	if ref != nil {
+		return nil, ref
 	}
-	// **Only a regular file is read** (/pending 691 R6-5). A FIFO, a socket or a device passes the
-	// stat with size 0, so it cleared the cap above it — and `os.ReadFile` on a FIFO with no
-	// writer never returns. This runs under `setupMu` from the hand-off drain, so one such path on
-	// a command line hung `/api/status` and every later launch with it. The stat follows links, so
-	// a link to a real file still opens.
-	if !info.Mode().IsRegular() {
-		return nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "not a file that can be opened"}
-	}
+	defer f.Close()
 	// A path-opened document reports canSave, so a non-PDF installed with its path would be
 	// overwritten with PDF bytes by the next Save — the one open surface where getting this wrong
 	// destroys the file. **Everything that is not a PDF is converted by `pdfops.Import` and comes back
 	// `Converted`, and the caller drops the path**: the bytes on disk are a PNG or a .docx and the
 	// document in memory is a PDF, so a Save that wrote back would destroy the original (L1).
-	res, err = openPath(ctx, path, info.Size(), filepath.Base(path), o)
+	res, err := importOpened(ctx, f, info, filepath.Base(path), o)
 	if err != nil {
 		status, msg := importRefusal(err)
 		switch {

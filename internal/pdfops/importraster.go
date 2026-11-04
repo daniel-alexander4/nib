@@ -46,6 +46,8 @@ const (
 	importTotalPixels = 1_000_000_000
 	// importCBZEntryBytes is the most one picture inside a CBZ may be.
 	importCBZEntryBytes = 64 << 20
+	// cbzSniffBytes is the prefix of a CBZ member that sniffImage needs (the longest signature test is a BMP's 26).
+	cbzSniffBytes = 64
 	// nativeImportTimeout is a native producer's wall-clock cap, checked between pages.
 	nativeImportTimeout = 2 * time.Minute
 )
@@ -62,13 +64,33 @@ var (
 	ErrTIFFCompression = errors.New("that TIFF is compressed in a way Nib cannot read")
 )
 
+// errTIFFLoop: a directory chain that returns to a directory it has read. Ending the walk there would open the
+// file with the pages after the loop missing and say nothing.
+var errTIFFLoop = errors.New("pdfops: this tiff could not be read: its page directories loop back on themselves")
+
+// The density a file may declare. A page is px/dpi*72 points: a file saying 1 dpi makes a 72-pt-per-pixel
+// page no viewer lays out, and one saying 100,000 a speck. A density outside the range is a guess a writer
+// made badly, not a size anyone meant, so it reads as "unknown" and the page takes defaultDPI — the same
+// answer a file with no density gets. (Clamping to the edge would invent a size just as wrong.)
+const (
+	minImportDPI = 10.0
+	maxImportDPI = 2400.0
+)
+
+// usableDPI is dpi when it is a density Nib will size a page by, else 0 (unknown).
+func usableDPI(dpi float64) float64 {
+	if dpi < minImportDPI || dpi > maxImportDPI || dpi != dpi {
+		return 0
+	}
+	return dpi
+}
+
 // rasterJob is one import in progress.
 type rasterJob struct {
 	ctx      context.Context
 	segs     [][]byte
 	out      int   // bytes of PDF so far, against maxConvertedBytes
-	pixels   int64 // decoded so far, against importTotalPixels
-	declared int64 // charged for animation frames and TIFF pages not yet decoded (same budget)
+	pixels   int64 // everything charged so far — decoded pages and a GIF's held frames alike — against importTotalPixels
 }
 
 func newRasterJob(ctx context.Context) (*rasterJob, context.CancelFunc) {
@@ -205,7 +227,7 @@ func (j *rasterJob) addPlain(data []byte, format imageFormat) error {
 	case formatJPEG:
 		dpi = jpegDPI(data)
 	}
-	if dpi <= 0 {
+	if dpi = usableDPI(dpi); dpi == 0 {
 		dpi = defaultDPI
 	}
 	rot := 0
@@ -219,7 +241,7 @@ func (j *rasterJob) addPlain(data []byte, format imageFormat) error {
 
 // emitImage encodes a decoded picture as a PNG and makes its page.
 func (j *rasterJob) emitImage(img image.Image, dpi float64) error {
-	if dpi <= 0 {
+	if dpi = usableDPI(dpi); dpi == 0 {
 		dpi = defaultDPI
 	}
 	var buf bytes.Buffer
@@ -352,8 +374,9 @@ func (j *rasterJob) addGIF(data []byte) error {
 		if int64(f[0])*int64(f[1]) > maxImagePixels {
 			return fmt.Errorf("%w: a frame is %d×%d", ErrImagePixels, f[0], f[1])
 		}
-		j.declared += int64(f[0]) * int64(f[1])
-		if j.declared > importTotalPixels {
+		// The frame's own pixels DecodeAll holds are charged to the same counter, so the one cap is the whole sum.
+		j.pixels += int64(f[0]) * int64(f[1])
+		if j.pixels > importTotalPixels {
 			return fmt.Errorf("%w: the frames together are past %d megapixels", ErrImagePixels, importTotalPixels/1_000_000)
 		}
 	}
@@ -405,7 +428,7 @@ type tiffPage struct {
 
 // walkTIFF reads the IFD chain itself: x/image/tiff decodes the first image directory only, so a multi-page TIFF
 // would open as its first page and say nothing. Offsets are bounds-checked, each visited at most once (a chain
-// that loops ends there), and the walk stops at importPages.
+// that loops is refused, never opened short), and the walk stops at importPages.
 func walkTIFF(data []byte) ([]tiffPage, error) {
 	bad := errors.New("pdfops: this tiff could not be read: its directory is damaged")
 	if len(data) < 8 {
@@ -423,10 +446,10 @@ func walkTIFF(data []byte) ([]tiffPage, error) {
 	var pages []tiffPage
 	visited := map[uint32]bool{}
 	for off := bo.Uint32(data[4:8]); off != 0; {
-		if visited[off] || off < 8 || uint64(off)+2 > uint64(len(data)) {
-			if visited[off] {
-				break
-			}
+		if visited[off] {
+			return pages, errTIFFLoop
+		}
+		if off < 8 || uint64(off)+2 > uint64(len(data)) {
 			return pages, bad
 		}
 		visited[off] = true
@@ -617,15 +640,24 @@ func CBZToDocument(ctx context.Context, data []byte, name string) ([]byte, error
 		if err := j.ctx.Err(); err != nil {
 			return nil, err
 		}
+		// A picture is known by its bytes, so the member's first bytes decide whether it is read at all: a text
+		// file or a big ComicInfo.xml over the picture cap is not a page and is not why the archive is refused.
+		head, err := a.Peek(files[i], cbzSniffBytes)
+		if err != nil {
+			if errors.Is(err, ziputil.ErrUnreadable) {
+				return nil, fmt.Errorf("%w: a member of the archive could not be read", ErrCorruptDocument)
+			}
+			return nil, fmt.Errorf("%w: %v", ErrArchiveRefused, err)
+		}
+		if !LooksLikeImage(head) {
+			continue
+		}
 		b, err := a.Read(files[i], importCBZEntryBytes)
 		if err != nil {
 			if errors.Is(err, ziputil.ErrUnreadable) {
 				return nil, fmt.Errorf("%w: a picture in the archive could not be read", ErrCorruptDocument)
 			}
 			return nil, fmt.Errorf("%w: %v", ErrArchiveRefused, err)
-		}
-		if !LooksLikeImage(b) {
-			continue
 		}
 		if err := j.addFile(b); err != nil {
 			return nil, err

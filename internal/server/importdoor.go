@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"nib/internal/browserrender"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"nib/internal/gate"
@@ -97,15 +99,39 @@ func (s *Server) importOrRefuse(w http.ResponseWriter, ctx context.Context, src 
 	return res, true
 }
 
-// openPath reads the regular file at path through Import. It is what `readInstallablePDF` calls, and
-// the file handle is held open for the import: a queued import holds a descriptor, not its bytes.
-func openPath(ctx context.Context, path string, size int64, name string, o pdfops.ImportOptions) (*pdfops.ImportResult, error) {
-	f, err := os.Open(path)
+// openRegular opens path and answers for the DESCRIPTOR: the file it returns is the one that was checked. A
+// stat followed by an open is two looks at a name, and a FIFO swapped in between would block the read under
+// `setupMu`; O_NONBLOCK makes the open itself unable to wait for a writer, and the descriptor's own Stat must
+// then say regular file. The caller closes f.
+//
+// A missing path, a directory and anything that is not a regular file are 404 as they always were; a path
+// Nib may not read is a 403 with its own sentence, which "could not read file" (500) said nothing true about.
+func openRegular(path string) (*os.File, os.FileInfo, *pathRefusal) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, nil, &pathRefusal{kind: refuseUnreadable, status: http.StatusForbidden, msg: "Nib is not allowed to read that file", err: err}
+		}
+		return nil, nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
 	}
-	defer f.Close()
-	return pdfops.Import(ctx, f, size, name, o)
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		f.Close()
+		return nil, nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
+	}
+	// **Only a regular file is read** (/pending 691 R6-5): a FIFO, a socket or a device stats with size 0, so it
+	// would clear the size cap, and a read of a FIFO with no writer never returns.
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "not a file that can be opened"}
+	}
+	return f, info, nil
+}
+
+// importOpened runs Import over a file openRegular returned: its handle is held for the import, so a queued import
+// holds a descriptor, not its bytes. The call to Import stays in this file (ADR-185's census).
+func importOpened(ctx context.Context, f *os.File, info os.FileInfo, name string, o pdfops.ImportOptions) (*pdfops.ImportResult, error) {
+	return pdfops.Import(ctx, f, info.Size(), name, o)
 }
 
 // isImportRefusal reports whether err is Import REFUSING or FAILING a conversion — a verdict about the file

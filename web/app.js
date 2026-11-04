@@ -4642,7 +4642,10 @@ els.officeInput.onchange = async () => {
   try {
     const res = await apiFetch('/api/office', { method: 'POST', body: form });
     if (!res.ok) return toast(await errText(res, 'could not convert file'));
-    await installOpened(await res.json());
+    const meta = await res.json();
+    // A language was chosen and the PDF/UA label was not earned: the document opened, and the person is told why
+    // once (the command line's note, /pending 940).
+    if (await installOpened(meta) && meta.labelNote) toast(meta.labelNote, 12000);
   } catch {
     toast('could not convert file');
   }

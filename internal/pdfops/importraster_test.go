@@ -176,13 +176,10 @@ func TestAMultiPageTIFFReadsBackEveryPage(t *testing.T) {
 	}
 }
 
-func TestATIFFDirectoryThatLoopsEndsAtTheLoop(t *testing.T) {
-	res, err := importBytes(t, tiffOf([]int{40, 80}, 0, false, true), "loop.tif", ImportOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n, _ := PageCount(res.PDF); n != 2 {
-		t.Fatalf("a looping chain gave %d pages, want 2", n)
+func TestATIFFDirectoryThatLoopsIsRefusedNotOpenedShort(t *testing.T) {
+	_, err := importBytes(t, tiffOf([]int{40, 80}, 0, false, true), "loop.tif", ImportOptions{})
+	if !errors.Is(err, errTIFFLoop) || !strings.Contains(err.Error(), "loop") {
+		t.Fatalf("a looping chain: %v, want errTIFFLoop (a file opened as 2 of its pages says nothing of the rest)", err)
 	}
 }
 
@@ -433,5 +430,84 @@ func TestATIFFWithAThumbnailFirstOpensThePageNotTheThumbnail(t *testing.T) {
 	}
 	if got := pageWidths(t, res.PDF); !eq(got, []int{30}) {
 		t.Fatalf("pages = %v, want the one 40 px page (30 pt), not the 8 px thumbnail (6 pt)", got)
+	}
+}
+
+// TestAGIFsFramesAndScreensAreOneBudget — the frames' own pixels and the screen-sized pages they become are
+// charged to the SAME counter, so importTotalPixels is the sum and not two caps of the same size.
+func TestAGIFsFramesAndScreensAreOneBudget(t *testing.T) {
+	g := gifOf(t, 4) // one 4x4 frame: 16 px of page, 16 px of frame
+	j, cancel := newRasterJob(t.Context())
+	defer cancel()
+	j.pixels = importTotalPixels - 20 // room for the page (16) but not the page and the frame (32)
+	if err := j.addGIF(g); !errors.Is(err, ErrImagePixels) {
+		t.Fatalf("page and frame together past the one cap: %v, want ErrImagePixels", err)
+	}
+	j2, cancel2 := newRasterJob(t.Context())
+	defer cancel2()
+	j2.pixels = importTotalPixels - 32
+	if err := j2.addGIF(g); err != nil {
+		t.Fatalf("exactly at the cap: %v", err)
+	}
+}
+
+// TestADensityNobodyMeantIsTheDefaultDensity — a declared density outside minImportDPI..maxImportDPI is read as
+// unknown, so a 96 px picture is 72 pt (the 96 dpi default) rather than a 7 km or a 0.07 pt page.
+func TestADensityNobodyMeantIsTheDefaultDensity(t *testing.T) {
+	withPPM := func(ppm uint32) []byte {
+		b := bmpOf(t, 96, 48)
+		binary.LittleEndian.PutUint32(b[38:42], ppm)
+		return b
+	}
+	for name, c := range map[string]struct {
+		ppm  uint32
+		want int
+	}{
+		"in range (192 dpi)":     {7559, 36},
+		"1 dpi":                  {39, 72},
+		"100000 dpi":             {3937008, 72},
+		"just under the minimum": {391, 72},
+		"just over the maximum":  {94495, 72},
+	} {
+		res, err := importBytes(t, withPPM(c.ppm), "d.bmp", ImportOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := pageWidths(t, res.PDF); !eq(got, []int{c.want}) {
+			t.Errorf("%s: width %v, want %d", name, got, c.want)
+		}
+	}
+}
+
+func TestACBZMemberThatIsNotAPictureNeverRefusesTheArchiveForItsSize(t *testing.T) {
+	// A stored text member one byte over the picture cap; the picture beside it is the only page.
+	big := bytes.Repeat([]byte("x"), importCBZEntryBytes+1)
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	w, _ := zw.CreateHeader(&zip.FileHeader{Name: "ComicInfo.xml", Method: zip.Store})
+	w.Write(big)
+	w, _ = zw.Create("p1.png")
+	w.Write(pngBytes(t, 8, 8))
+	zw.Close()
+	res, err := importBytes(t, b.Bytes(), "x.cbz", ImportOptions{})
+	if err != nil {
+		t.Fatalf("an over-cap non-picture refused the archive: %v", err)
+	}
+	if n, _ := PageCount(res.PDF); n != 1 {
+		t.Fatalf("%d pages, want 1", n)
+	}
+}
+
+func TestTheLabelNoteIsTheOneSentenceForARefusedLabel(t *testing.T) {
+	if got := (&ImportResult{}).LabelNote(); got != "" {
+		t.Fatalf("no refusal: %q", got)
+	}
+	var nilRes *ImportResult
+	if got := nilRes.LabelNote(); got != "" {
+		t.Fatalf("nil result: %q", got)
+	}
+	got := (&ImportResult{LabelRefused: ErrUAUntagged}).LabelNote()
+	if !strings.HasPrefix(got, "Not labelled PDF/UA: ") || !strings.Contains(got, ErrUAUntagged.Error()) {
+		t.Fatalf("refused: %q", got)
 	}
 }

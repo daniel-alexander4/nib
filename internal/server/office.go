@@ -54,5 +54,6 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.docResponse(installed)
 	resp.ImportedFrom = installed.imported
+	resp.LabelNote = res.LabelNote()
 	writeJSON(w, resp)
 }

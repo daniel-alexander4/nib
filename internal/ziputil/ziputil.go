@@ -156,6 +156,26 @@ func (a *Archive) Read(f *zip.File, max int64) ([]byte, error) {
 	return b, nil
 }
 
+// Peek returns up to n leading bytes of a member, for a caller deciding whether to Read it at all (a picture is
+// known by its bytes, and a member that is not one must not be inflated whole to find out). It reads through the
+// same limited stream as Read, and the bytes are not counted against Limits.DecodedBytes: they are a prefix of
+// what a later Read would count.
+func (a *Archive) Peek(f *zip.File, n int64) ([]byte, error) {
+	if n <= 0 {
+		return nil, errors.New("ziputil: Peek needs a positive n")
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(io.LimitReader(rc, n))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
+	}
+	return b, nil
+}
+
 // SafeName reports whether a member name is one a path could not misread: not empty, not absolute, no `..`
 // element, no backslash, no NUL or other control character, no drive letter.
 func SafeName(name string) bool {

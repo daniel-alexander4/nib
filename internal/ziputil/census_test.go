@@ -23,7 +23,7 @@ var exempt = map[string]string{
 	"internal/server/form.go":        "writes a bundle of filled forms as a plain deflate zip; no stored-first member, no reader",
 	"internal/pdfops/pdfops.go":      "writes the extracted-attachments / page-images bundle as a plain deflate zip",
 	"internal/pdfops/spreadsheet.go": "GridToXLSX: an OOXML package with no stored member; migrates with P03's DOCX writer",
-	"internal/testpdf/hostile.go":    "test-fixture generator for hostile archives; it must be able to write what the door refuses",
+	"internal/testpdf/hostile.go":    "test-fixture generator for large and many-image VALID Word packages (PackageOfSize, DocxWithImages); not a hostile-archive writer",
 	"internal/testpdf/docx.go":       "test-fixture generator for a minimal DOCX",
 }
 

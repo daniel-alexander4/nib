@@ -405,8 +405,8 @@ func cmdOffice(args []string) int {
 		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
 			len(res.Unprintable), mdpdf.FormatRunes(res.Unprintable))
 	}
-	if res.LabelRefused != nil {
-		errf("note: not labelled PDF/UA: %v", res.LabelRefused)
+	if note := res.LabelNote(); note != "" {
+		errf("note: %s", note)
 	}
 	return writeOut(out, res.PDF)
 }
