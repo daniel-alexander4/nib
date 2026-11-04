@@ -768,7 +768,7 @@ type docResponse struct {
 	// Import…). Set by those routes after docResponse, so `/api/docs`, a reload and every later answer omit it.
 	ImportedFrom string `json:"importedFrom,omitempty"`
 	// LabelNote is why a Markdown conversion with a language the person chose did not earn the PDF/UA label
-	// (`ImportResult.LabelNote`, the CLI's sentence); only /api/office sets it, on its own answer. A note, not a
+	// (`pdfops.LabelNote`, the CLI's sentence); only /api/office sets it, on its own answer. A note, not a
 	// failure: the document opened.
 	LabelNote string `json:"labelNote,omitempty"`
 

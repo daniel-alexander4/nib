@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -54,6 +55,6 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.docResponse(installed)
 	resp.ImportedFrom = installed.imported
-	resp.LabelNote = res.LabelNote()
+	resp.LabelNote = pdfops.LabelNote(res.LabelRefused)
 	writeJSON(w, resp)
 }

@@ -405,7 +405,7 @@ func cmdOffice(args []string) int {
 		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
 			len(res.Unprintable), mdpdf.FormatRunes(res.Unprintable))
 	}
-	if note := res.LabelNote(); note != "" {
+	if note := pdfops.LabelNote(res.LabelRefused); note != "" {
 		errf("note: %s", note)
 	}
 	return writeOut(out, res.PDF)

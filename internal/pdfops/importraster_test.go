@@ -499,14 +499,10 @@ func TestACBZMemberThatIsNotAPictureNeverRefusesTheArchiveForItsSize(t *testing.
 }
 
 func TestTheLabelNoteIsTheOneSentenceForARefusedLabel(t *testing.T) {
-	if got := (&ImportResult{}).LabelNote(); got != "" {
+	if got := LabelNote((&ImportResult{}).LabelRefused); got != "" {
 		t.Fatalf("no refusal: %q", got)
 	}
-	var nilRes *ImportResult
-	if got := nilRes.LabelNote(); got != "" {
-		t.Fatalf("nil result: %q", got)
-	}
-	got := (&ImportResult{LabelRefused: ErrUAUntagged}).LabelNote()
+	got := LabelNote((&ImportResult{LabelRefused: ErrUAUntagged}).LabelRefused)
 	if !strings.HasPrefix(got, "Not labelled PDF/UA: ") || !strings.Contains(got, ErrUAUntagged.Error()) {
 		t.Fatalf("refused: %q", got)
 	}

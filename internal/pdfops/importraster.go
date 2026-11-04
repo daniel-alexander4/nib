@@ -87,10 +87,10 @@ func usableDPI(dpi float64) float64 {
 
 // rasterJob is one import in progress.
 type rasterJob struct {
-	ctx      context.Context
-	segs     [][]byte
-	out      int   // bytes of PDF so far, against maxConvertedBytes
-	pixels   int64 // everything charged so far — decoded pages and a GIF's held frames alike — against importTotalPixels
+	ctx    context.Context
+	segs   [][]byte
+	out    int   // bytes of PDF so far, against maxConvertedBytes
+	pixels int64 // everything charged so far — decoded pages and a GIF's held frames alike — against importTotalPixels
 }
 
 func newRasterJob(ctx context.Context) (*rasterJob, context.CancelFunc) {
