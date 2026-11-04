@@ -1238,3 +1238,98 @@ func median(xs []float64) float64 {
 	}
 	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }
+
+// linkPieces cuts one run's span where a link begins or ends within it (/pending 941 #8: a sentence drawn as one run
+// with a link on its last words was linked whole or not at all). A glyph is in a link when the link holds its centre; a
+// WORD is linked when the link holds at least half its glyphs, whole — a link rectangle a point or two short of a word's
+// edge links the word, as the run's own centre did — and a space between two words of the same link is in it. nil — the
+// run is judged by its own centre — when the glyphs cannot be laid along the run: it is turned, vertical or reversed, or
+// its glyphs' text is not the span's text but for the spaces that joined it to the next run.
+func linkPieces(sp displaySpace, links PageLinkSet, r textRun, s ExportSpan) []ExportSpan {
+	if len(r.glyphs) == 0 || r.rotated || r.vertical || r.reversed {
+		return nil
+	}
+	var glyphText strings.Builder
+	for _, g := range r.glyphs {
+		glyphText.WriteString(g.text)
+	}
+	rest, ok := strings.CutPrefix(s.Text, glyphText.String())
+	if !ok || strings.TrimLeft(rest, " ") != "" {
+		return nil
+	}
+	uris := make([]string, len(r.glyphs))
+	x := r.x
+	for i, g := range r.glyphs {
+		x += g.kern
+		cut := r
+		cut.x, cut.width = x, g.advance
+		x += g.advance
+		b := sp.rect(runBox(cut))
+		if l, ok := links.At((b[0]+b[2])/2, (b[1]+b[3])/2); ok {
+			uris[i] = l.URI
+		}
+	}
+	space := func(i int) bool { return strings.TrimSpace(r.glyphs[i].text) == "" }
+	// Words: the majority URI of each, written over all its glyphs.
+	type word struct {
+		from, to int
+		uri      string
+	}
+	var words []word
+	for i := 0; i < len(uris); {
+		if space(i) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(uris) && !space(j) {
+			j++
+		}
+		count := map[string]int{}
+		for _, u := range uris[i:j] {
+			count[u]++
+		}
+		best, n := "", 0
+		for u, c := range count {
+			if u != "" && (c > n || c == n && u < best) {
+				best, n = u, c
+			}
+		}
+		if n*2 < j-i {
+			best = ""
+		}
+		words = append(words, word{i, j, best})
+		i = j
+	}
+	for i := range uris {
+		uris[i] = ""
+	}
+	for k, w := range words {
+		for i := w.from; i < w.to; i++ {
+			uris[i] = w.uri
+		}
+		if k+1 < len(words) && w.uri != "" && words[k+1].uri == w.uri {
+			for i := w.to; i < words[k+1].from; i++ {
+				uris[i] = w.uri
+			}
+		}
+	}
+	var out []ExportSpan
+	for i, g := range r.glyphs {
+		if g.text == "" {
+			continue
+		}
+		if n := len(out); n > 0 && out[n-1].Link == uris[i] {
+			out[n-1].Text += g.text
+			continue
+		}
+		piece := s
+		piece.Text, piece.Link = g.text, uris[i]
+		out = append(out, piece)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	out[len(out)-1].Text += rest
+	return out
+}

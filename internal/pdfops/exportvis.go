@@ -1,6 +1,9 @@
 package pdfops
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // What an export may read of a page (PLAN-import-export D30, R2, X6): only text a reader could see. A run is dropped,
 // and COUNTED by cause, when it is
@@ -47,7 +50,19 @@ func (v *ExportVisibility) Add(o ExportVisibility) {
 var coverBudget = 200_000_000
 
 // inkBox is the part of a run's box the cover test asks about: its baseline to 0.7 of its size.
+//
+// A turned or vertical run's width is not an extent along x (the walker keeps the baseline's length, not its direction,
+// and a vertical font advances down the page), so its box is the square that holds the run whichever way it points: it
+// can only fail to be held by a covering mark, never be held by one it is not under (/pending 941 #7).
 func inkBox(r textRun) [4]float64 {
+	if r.rotated || r.vertical {
+		reach := r.width
+		if r.vertical {
+			reach = math.Max(reach, float64(r.codes)*r.size)
+		}
+		reach += r.size
+		return [4]float64{r.x - reach, r.y - reach, r.x + reach, r.y + reach}
+	}
 	x0, x1 := r.x, r.x+r.width
 	if x1 < x0 {
 		x0, x1 = x1, x0
@@ -66,10 +81,6 @@ func boxesMeet(a, b [4]float64) bool {
 
 func boxArea(b [4]float64) float64 {
 	return math.Max(0, b[2]-b[0]) * math.Max(0, b[3]-b[1])
-}
-
-func overlapArea(a, b [4]float64) float64 {
-	return boxArea([4]float64{math.Max(a[0], b[0]), math.Max(a[1], b[1]), math.Min(a[2], b[2]), math.Min(a[3], b[3])})
 }
 
 // opaqueImage says an image hides what is below it where it is drawn.
@@ -166,13 +177,20 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 		}
 	}
 	out := kept[:0:0]
+	hidden := 0
+	for _, r := range kept {
+		if r.state.tr == 3 {
+			hidden++
+		}
+	}
+	testHidden := hidden*len(visible) <= coverBudget
 	for _, r := range kept {
 		if r.state.tr == 3 && len(visible) > 0 {
-			b, got := runBox(r), 0.0
-			for _, vb := range visible {
-				got += overlapArea(b, vb)
-			}
-			if a := boxArea(b); a > 0 && got/a > 0.5 {
+			if !testHidden {
+				v.CoverUntested++
+			} else if covered, tested := mostlyCovered(runBox(r), visible); !tested {
+				v.CoverUntested++
+			} else if covered {
 				v.HiddenText++
 				continue
 			}
@@ -190,4 +208,63 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 		}
 	}
 	return v
+}
+
+// maxCoverPieces bounds how many visible boxes one hidden run is compared with by union; past it the run is kept and
+// counted untested.
+const maxCoverPieces = 256
+
+// mostlyCovered says whether the boxes in over hold more than half of b, each point counted ONCE: two visible boxes that
+// overlap each other are one cover, not two (summing their overlaps with b counted the shared part twice and dropped
+// hidden text that visible text did not cover — /pending 941 #2). tested is false when more than maxCoverPieces boxes
+// meet b.
+func mostlyCovered(b [4]float64, over [][4]float64) (covered, tested bool) {
+	area := boxArea(b)
+	if area <= 0 {
+		return false, true
+	}
+	var clipped [][4]float64
+	for _, o := range over {
+		c := [4]float64{math.Max(b[0], o[0]), math.Max(b[1], o[1]), math.Min(b[2], o[2]), math.Min(b[3], o[3])}
+		if boxArea(c) > 0 {
+			if clipped = append(clipped, c); len(clipped) > maxCoverPieces {
+				return false, false
+			}
+		}
+	}
+	return unionArea(clipped)/area > 0.5, true
+}
+
+// unionArea is the area of the union of boxes: the x coordinates cut the plane into strips, and in each the y
+// intervals of the boxes spanning it are merged.
+func unionArea(boxes [][4]float64) float64 {
+	xs := make([]float64, 0, 2*len(boxes))
+	for _, b := range boxes {
+		xs = append(xs, b[0], b[2])
+	}
+	sort.Float64s(xs)
+	total := 0.0
+	for i := 0; i+1 < len(xs); i++ {
+		x0, x1 := xs[i], xs[i+1]
+		if x1 <= x0 {
+			continue
+		}
+		var spans [][2]float64
+		for _, b := range boxes {
+			if b[0] <= x0 && b[2] >= x1 {
+				spans = append(spans, [2]float64{b[1], b[3]})
+			}
+		}
+		sort.Slice(spans, func(a, c int) bool { return spans[a][0] < spans[c][0] })
+		covered, end := 0.0, math.Inf(-1)
+		for _, sp := range spans {
+			lo := math.Max(sp[0], end)
+			if sp[1] > lo {
+				covered += sp[1] - lo
+			}
+			end = math.Max(end, sp[1])
+		}
+		total += covered * (x1 - x0)
+	}
+	return total
 }

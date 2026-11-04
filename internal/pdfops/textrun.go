@@ -1664,3 +1664,8 @@ func splitCodes(f *runFont, b []byte) [][]byte {
 	}
 	return out
 }
+
+// drawsBold is whether the run is drawn bold: its font says so, or it is filled and stroked (`Tr 2`), how a producer
+// fakes weight. The ONE answer — the page map and the export both ask it (ADR-009; /pending 941 #10: the export read
+// the font alone and set a faked-bold word in plain).
+func (r textRun) drawsBold() bool { return r.bold || r.state.tr == 2 }

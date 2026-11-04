@@ -237,7 +237,7 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 		return MapText{}, false
 	}
 	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3, Reversed: r.reversed,
-		Bold: r.bold || r.state.tr == 2, Italic: r.italic}
+		Bold: r.drawsBold(), Italic: r.italic}
 	if r.reversed {
 		// Handed over in reading order, rune by rune — and glyph by glyph below, where the boundaries are known.
 		rs := []rune(r.text)

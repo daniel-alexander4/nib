@@ -172,8 +172,12 @@ func imageOf(f pdfops.ExportFigure) *docmodel.Image {
 }
 
 // scanned gives a page that draws no text and one picture over most of it that picture as its content (D20).
+//
+// **"Draws no text" is the page's own fact (`ExportPage.NoText`, no glyph in any stream), not "none survived the
+// visibility rules"**: a page whose text sits under a later opaque picture, or off the page, draws text, and calling it
+// a scan would name it "Scanned page N" and send it to the reader as a picture (/pending 941 #12).
 func scanned(blocks []docmodel.Block, ep pdfops.ExportPage, rep *docmodel.Report) []docmodel.Block {
-	if hasText(blocks) {
+	if hasText(blocks) || !ep.NoText {
 		return blocks
 	}
 	big := -1
@@ -333,7 +337,10 @@ func withStyles(tree, prop []docmodel.Block) []docmodel.Block {
 	return out
 }
 
-// withFigures joins the tree's pictures to the page's pictures by the largest overlap of their boxes.
+// withFigures joins the tree's pictures to the page's pictures by the largest overlap of their boxes (a tree picture
+// with no box takes the first page picture still unused), and then adds the page's own pictures the tree never named:
+// a tagged page that leaves an image out of its tree still draws it (/pending 941 #11). Each is placed after as many of
+// the blocks that are not pictures as the page drew before it.
 func withFigures(blocks []docmodel.Block, ep pdfops.ExportPage, boxes map[*docmodel.Image][4]float64) []docmodel.Block {
 	used := map[int]bool{}
 	for i := range blocks {
@@ -342,12 +349,21 @@ func withFigures(blocks []docmodel.Block, ep pdfops.ExportPage, boxes map[*docmo
 			continue
 		}
 		best, bi := 0.0, -1
+		box := boxes[b.Image]
 		for j, f := range ep.Figures {
 			if used[j] {
 				continue
 			}
-			if o := overlap(boxes[b.Image], [4]float64(f.Rect)); o > best {
+			if o := overlap(box, [4]float64(f.Rect)); o > best {
 				best, bi = o, j
+			}
+		}
+		if bi < 0 && (box[2] <= box[0] || box[3] <= box[1]) {
+			for j := range ep.Figures {
+				if !used[j] {
+					bi = j
+					break
+				}
 			}
 		}
 		alt := b.Image.Alt
@@ -358,6 +374,24 @@ func withFigures(blocks []docmodel.Block, ep pdfops.ExportPage, boxes map[*docmo
 			b.Image.Placeholder = pdfops.PlaceholderNotRead
 		}
 		b.Image.Alt = alt
+	}
+	for j, f := range ep.Figures {
+		if used[j] {
+			continue
+		}
+		at, seen := len(blocks), 0
+		for i, b := range blocks {
+			if seen >= f.Before {
+				at = i
+				break
+			}
+			if b.Kind != docmodel.Figure {
+				seen++
+			}
+		}
+		blocks = append(blocks, docmodel.Block{})
+		copy(blocks[at+1:], blocks[at:])
+		blocks[at] = docmodel.Block{Kind: docmodel.Figure, Image: imageOf(f)}
 	}
 	return blocks
 }
@@ -384,9 +418,8 @@ func maxf(a, b float64) float64 {
 	return b
 }
 
-// dirOf is "rtl" when right-to-left letters outnumber the rest in the block's text.
-func dirOf(b docmodel.Block) string {
-	rtl, ltr := 0, 0
+// letterCounts is how many right-to-left letters and how many other letters the block's text and cells hold.
+func letterCounts(b docmodel.Block) (rtl, ltr int) {
 	count := func(s string) {
 		for _, r := range s {
 			switch {
@@ -405,15 +438,28 @@ func dirOf(b docmodel.Block) string {
 			}
 		}
 	}
-	if rtl > ltr {
+	return rtl, ltr
+}
+
+// dirOf is "rtl" when right-to-left letters outnumber the rest in the block's text.
+func dirOf(b docmodel.Block) string {
+	if rtl, ltr := letterCounts(b); rtl > ltr {
 		return "rtl"
 	}
 	return "ltr"
 }
 
+func hasLetters(b docmodel.Block) bool {
+	rtl, ltr := letterCounts(b)
+	return rtl+ltr > 0
+}
+
 func majorityDir(blocks []docmodel.Block) string {
 	n := map[string]int{}
 	for _, b := range blocks {
+		if !hasLetters(b) {
+			continue // a picture, or digits alone, has no direction to vote with (/pending 941 #13)
+		}
 		n[b.Dir]++
 	}
 	if n["rtl"] > n["ltr"] {

@@ -176,48 +176,142 @@ type drawnImage struct {
 }
 
 // imageCause reads the allowlist (P02.S03b, D18) from an image dictionary, so a picture is named before any
-// extraction runs — pdfcpu's extraction refuses a page over one stencil it cannot render.
+// extraction runs — pdfcpu's extraction refuses a page over one stencil it cannot render, and decodes every pixel of the
+// ones it can, so a picture over the pixel cap is named here too, from /Width and /Height (/pending 941 #4).
+//
+// What the allowlist carries is a picture whose stored samples ARE what the page shows: a /Decode array that is not the
+// default maps them elsewhere (an inverted gray), a CMYK space — directly, as an ICCBased space of four components or as
+// an Indexed space's base — is not one a writer carries unchanged, and a /Filter held in an indirect object or an
+// indirect element is the same filter as a direct one (/pending 941 #9).
 func imageCause(xt *model.XRefTable, d types.Dict) string {
 	if b, ok := d["ImageMask"].(types.Boolean); ok && bool(b) {
-		return "stencil-mask"
+		return PlaceholderStencil
 	}
 	if d["Mask"] != nil {
-		return "masked"
+		return PlaceholderMasked
 	}
 	if d["SMask"] != nil {
-		return "soft-masked"
+		return PlaceholderSoftMask
 	}
 	filters := ""
-	switch f := d["Filter"].(type) {
-	case types.Name:
-		filters = f.Value()
-	case types.Array:
-		for _, e := range f {
-			if n, ok := e.(types.Name); ok {
+	add := func(o types.Object) {
+		if o, err := xt.Dereference(o); err == nil {
+			if n, ok := o.(types.Name); ok {
 				filters += " " + n.Value()
 			}
 		}
 	}
-	if strings.Contains(filters, "JPX") || strings.Contains(filters, "CCITT") || strings.Contains(filters, "JBIG2") {
-		return "filter"
+	switch f, _ := xt.Dereference(d["Filter"]); f := f.(type) {
+	case types.Name:
+		add(f)
+	case types.Array:
+		for _, e := range f {
+			add(e)
+		}
 	}
-	cs := d["ColorSpace"]
+	if strings.Contains(filters, "JPX") || strings.Contains(filters, "CCITT") || strings.Contains(filters, "JBIG2") {
+		return PlaceholderFilter
+	}
+	cs, indexed := colourSpaceOf(xt, d["ColorSpace"], 0)
+	if cs == "" {
+		return PlaceholderColour
+	}
+	top := 0.0 // an indexed image's default /Decode runs to its largest index
+	if indexed {
+		if bpc, ok := pdfNumber(xt, d["BitsPerComponent"]); ok && bpc >= 1 && bpc <= 16 {
+			top = math.Pow(2, bpc) - 1
+		}
+	}
+	if dec, _ := xt.Dereference(d["Decode"]); dec != nil && !defaultDecode(xt, dec, indexed, top) {
+		return PlaceholderColour
+	}
+	if w, ok := pdfNumber(xt, d["Width"]); ok {
+		if h, ok := pdfNumber(xt, d["Height"]); ok && w > 0 && h > 0 && w*h > float64(exportImagePixels) {
+			return PlaceholderTooBig
+		}
+	}
+	return ""
+}
+
+// colourSpaceOf names the space of an image when it is one the export carries: "gray" or "rgb" (a device, Cal or
+// ICCBased space of one or three components), or "indexed" over such a base. "" says it is not. indexed is whether the
+// samples are indices (whose default /Decode is [0 2^n-1], not [0 1]).
+func colourSpaceOf(xt *model.XRefTable, cs types.Object, depth int) (name string, indexed bool) {
+	if depth > 2 {
+		return "", false
+	}
 	if o, err := xt.Dereference(cs); err == nil && o != nil {
 		cs = o
 	}
 	switch c := cs.(type) {
 	case types.Name:
-		if c.Value() == "DeviceGray" || c.Value() == "DeviceRGB" || c.Value() == "CalGray" || c.Value() == "CalRGB" {
-			return ""
+		switch c.Value() {
+		case "DeviceGray", "CalGray":
+			return "gray", false
+		case "DeviceRGB", "CalRGB":
+			return "rgb", false
 		}
 	case types.Array:
-		if len(c) > 0 {
-			if n, ok := c[0].(types.Name); ok && (n.Value() == "ICCBased" || n.Value() == "Indexed" || n.Value() == "CalRGB" || n.Value() == "CalGray") {
-				return ""
+		if len(c) == 0 {
+			return "", false
+		}
+		n, ok := c[0].(types.Name)
+		if !ok {
+			return "", false
+		}
+		switch n.Value() {
+		case "CalGray":
+			return "gray", false
+		case "CalRGB":
+			return "rgb", false
+		case "ICCBased":
+			if len(c) < 2 {
+				return "", false
+			}
+			o, err := xt.Dereference(c[1])
+			sd, isStream := o.(types.StreamDict)
+			if err != nil || !isStream {
+				return "", false
+			}
+			switch n, _ := pdfNumber(xt, sd.Dict["N"]); n {
+			case 1:
+				return "gray", false
+			case 3:
+				return "rgb", false
+			}
+		case "Indexed", "I":
+			if len(c) < 2 {
+				return "", false
+			}
+			if base, _ := colourSpaceOf(xt, c[1], depth+1); base != "" {
+				return "indexed", true
 			}
 		}
 	}
-	return "colour-space"
+	return "", false
+}
+
+// defaultDecode says a /Decode array maps the samples to themselves: [0 1] per component, and for an indexed image
+// [0 top] with top the largest index its depth allows (0 when the depth is unknown: then nothing is the default).
+func defaultDecode(xt *model.XRefTable, dec types.Object, indexed bool, top float64) bool {
+	arr, ok := dec.(types.Array)
+	if !ok {
+		return false
+	}
+	for i, e := range arr {
+		v, ok := pdfNumber(xt, e)
+		switch {
+		case !ok:
+			return false
+		case i%2 == 0 && v != 0:
+			return false
+		case i%2 == 1 && !indexed && v != 1:
+			return false
+		case i%2 == 1 && indexed && (top == 0 || v != top):
+			return false
+		}
+	}
+	return len(arr) > 0 && len(arr)%2 == 0
 }
 
 // plainBox says whether m draws the unit square upright and unmirrored.

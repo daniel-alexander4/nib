@@ -158,6 +158,83 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 	return nil
 }
 
+// ExtractImagesEach reads the document ONCE and hands digest every image of the selected pages that is not refused, one
+// image at a time (/pending 941 #3, #4). It is `ExtractImages` with two differences the export needs:
+//
+//   - an image whose extraction fails — an error, or a panic in pdfcpu's renderer — is skipped and COUNTED, where
+//     `ExtractImages` aborts the page and the caller re-reads the whole file once per page to find which one it was;
+//   - an image whose /Width × /Height exceeds maxPixels is skipped before pdfcpu renders it (`ExtractPageImages` decodes
+//     every image of a page, so a cap applied to the result runs after the allocation it exists to prevent).
+//
+// The budget refusal of `ReadOptimizedOrRefuse` is still returned: a skipped optimize pass would report no images.
+// skipped counts both kinds of skip.
+func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, digest func(model.Image) error) (skipped int, err error) {
+	defer fault.Catch(&err)
+	ctx, err := ReadOptimizedOrRefuse(pdf, apiConf(nil, model.EXTRACTIMAGES))
+	if err != nil {
+		return 0, err
+	}
+	pages, err := api.PagesForPageSelection(ctx.PageCount, selectedPages, true, true)
+	if err != nil {
+		return 0, err
+	}
+	var sp []int
+	for i, v := range pages {
+		if v {
+			sp = append(sp, i)
+		}
+	}
+	sort.Ints(sp)
+	for _, p := range sp {
+		for _, objNr := range pdfcpu.ImageObjNrs(ctx, p) {
+			obj := ctx.Optimize.ImageObjects[objNr]
+			if obj == nil || obj.ImageDict == nil {
+				skipped++
+				continue
+			}
+			name, ok := obj.ResourceNames[p-1]
+			if !ok {
+				skipped++
+				continue
+			}
+			w, h := imageSide(ctx.XRefTable, obj.ImageDict.Dict["Width"]), imageSide(ctx.XRefTable, obj.ImageDict.Dict["Height"])
+			if w <= 0 || h <= 0 || w*h > maxPixels {
+				skipped++
+				continue
+			}
+			img, ok := extractOne(ctx, obj.ImageDict, name, objNr)
+			if !ok {
+				skipped++
+				continue
+			}
+			img.PageNr = p
+			if err := digest(*img); err != nil {
+				return skipped, err
+			}
+		}
+	}
+	return skipped, nil
+}
+
+// imageSide is an image's /Width or /Height, or 0 when it is not a number.
+func imageSide(xt *model.XRefTable, o types.Object) int64 {
+	if i, err := xt.DereferenceInteger(o); err == nil && i != nil {
+		return int64(i.Value())
+	}
+	return 0
+}
+
+// extractOne is pdfcpu's extraction of one image, with a panic in its renderer taken as a failure of that image.
+func extractOne(ctx *model.Context, sd *types.StreamDict, name string, objNr int) (img *model.Image, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			img, ok = nil, false
+		}
+	}()
+	img, err := pdfcpu.ExtractImage(context.Background(), ctx, sd, false, name, objNr, false)
+	return img, err == nil && img != nil
+}
+
 // MergeRaw is `api.MergeRaw` without a divider page (merge.go:61): the first document is the destination and each
 // later one is merged into it, then the closing pass — through `Optimize`, so it is budgeted over the MERGED
 // context, which no part's own budget bounds (two parts' forms of one `/Length` are compared with each other).

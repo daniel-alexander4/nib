@@ -45,6 +45,15 @@ func treeBlocks(t pdfops.StructureTree) (map[int][]docmodel.Block, map[*docmodel
 			descendants(k, kind, fn)
 		}
 	}
+	// figuresIn emits the pictures an element's kids hold, after the element's own block: a Figure inside a P or a
+	// Caption is not reached by a walk that emits such an element whole (/pending 941 #11).
+	figuresIn := func(i int) {
+		descendants(i, "Figure", func(k int) {
+			im := &docmodel.Image{Alt: els[k].Alt}
+			boxes[im] = [4]float64(els[k].Place)
+			emit(els[k].Page, docmodel.Block{Kind: docmodel.Figure, Image: im})
+		})
+	}
 	cellsOf := func(row int) []docmodel.Cell {
 		var cells []docmodel.Cell
 		for _, k := range els[row].Kids {
@@ -100,6 +109,7 @@ func treeBlocks(t pdfops.StructureTree) (map[int][]docmodel.Block, map[*docmodel
 			if sp := text(e); sp != nil {
 				emit(e.Page, docmodel.Block{Kind: docmodel.Heading, Level: lvl, Spans: sp})
 			}
+			figuresIn(i)
 		case "LI":
 			own := e.Text
 			var nested []int
@@ -140,6 +150,7 @@ func treeBlocks(t pdfops.StructureTree) (map[int][]docmodel.Block, map[*docmodel
 			if sp := text(e); sp != nil {
 				emit(e.Page, docmodel.Block{Kind: docmodel.Paragraph, Spans: sp})
 			}
+			figuresIn(i)
 		default:
 			if len(e.Kids) == 0 {
 				if sp := text(e); sp != nil {

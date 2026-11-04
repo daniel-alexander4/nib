@@ -351,8 +351,12 @@ func lineSpans(sp displaySpace, links PageLinkSet, ln textLine) []ExportSpan {
 		if from > to || to > len(ln.text) || !validCut(ln.text, from, to) {
 			return nil
 		}
-		s := ExportSpan{Text: ln.text[from:to], Bold: r.bold, Italic: r.italic}
+		s := ExportSpan{Text: ln.text[from:to], Bold: r.drawsBold(), Italic: r.italic}
 		if len(links.Links) > 0 {
+			if pieces := linkPieces(sp, links, r, s); pieces != nil {
+				out = append(out, pieces...)
+				continue
+			}
 			b := sp.rect(runBox(r))
 			if l, ok := links.At((b[0]+b[2])/2, (b[1]+b[3])/2); ok {
 				s.Link = l.URI
@@ -387,7 +391,7 @@ func joinPictures(pdf []byte, pages []int, out []ExportPage) error {
 	for i, p := range pages {
 		sel[i] = fmt.Sprint(p)
 	}
-	digest := func(img model.Image, _ bool, _ int) error {
+	digest := func(img model.Image) error {
 		if byObj[img.ObjNr] != nil {
 			return nil
 		}
@@ -424,22 +428,12 @@ func joinPictures(pdf []byte, pages []int, out []ExportPage) error {
 		}
 		return nil
 	}
-	// One pass over the pages. pdfcpu refuses a page over one picture it cannot render and a generic fault panics, so a
-	// pass that fails is redone a page at a time: a page that still fails keeps its figures as `not-extracted`, the
-	// others keep theirs, and the export never fails for a picture.
-	run := func(sel []string) (err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("image extraction panicked: %v", r)
-			}
-		}()
-		return pdfread.ExtractImages(pdf, sel, digest)
-	}
-	if err := run(sel); err != nil {
-		for _, s := range sel {
-			_ = run([]string{s})
-		}
-	}
+	// One pass over the pages, one image at a time. pdfcpu refuses a page over one picture it cannot render and a generic
+	// fault panics; `ExtractImagesEach` skips that picture, so the others keep theirs and the skipped one stays
+	// `not-extracted` (the export never fails for a picture). It used to redo a failed pass a page at a time, reading and
+	// optimizing the whole file again for each (/pending 941 #3). A pass that cannot start (a budget refusal) fails every
+	// figure the same way.
+	_, _ = pdfread.ExtractImagesEach(pdf, sel, int64(exportImagePixels), digest)
 	for pi := range out {
 		for fi := range out[pi].Figures {
 			f := &out[pi].Figures[fi]

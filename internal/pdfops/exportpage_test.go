@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 )
 
@@ -233,5 +237,179 @@ func TestExportPageCarriesItsFacts(t *testing.T) {
 				t.Errorf("styled-linked: %+v", p[0])
 			}
 		}
+	}
+}
+
+// A page whose pictures include one pdfcpu cannot render keeps the others: the pass skips that picture and counts it,
+// and the file is read once (/pending 941 #3).
+func TestExportAPictureThatCannotBeRenderedDoesNotCostItsNeighbours(t *testing.T) {
+	var pdf []byte
+	for _, f := range testpdf.ExportPictures() {
+		if f.Name == "picture-stencil-beside-plain" {
+			pdf = f.PDF
+		}
+	}
+	p := pictureFixture(t, "picture-stencil-beside-plain")
+	carried := 0
+	for _, f := range p.Figures {
+		if len(f.Data) > 0 {
+			carried++
+		}
+	}
+	if carried != 1 {
+		t.Fatalf("the plain neighbour of an unrenderable stencil is carried: %d figures with data (%+v)", carried, p.Figures)
+	}
+	seen := 0
+	skipped, err := pdfread.ExtractImagesEach(pdf, nil, 1<<40, func(model.Image) error { seen++; return nil })
+	if err != nil || seen+skipped != 2 {
+		t.Fatalf("seen %d skipped %d err %v, want the two images accounted for", seen, skipped, err)
+	}
+}
+
+// The pixel cap is applied from the dictionary, before pdfcpu decodes: a picture over it is never handed to the
+// renderer, even when it shares a page with one that is carried (/pending 941 #4).
+func TestExportPixelCapStopsBeforeTheDecode(t *testing.T) {
+	var pdf []byte
+	for _, f := range testpdf.ExportPictures() {
+		if f.Name == "picture-twice" {
+			pdf = f.PDF
+		}
+	}
+	seen := 0
+	skipped, err := pdfread.ExtractImagesEach(pdf, nil, 3, func(model.Image) error { seen++; return nil })
+	if err != nil || seen != 0 || skipped != 1 {
+		t.Fatalf("2x2 image under a cap of 3 px: seen %d skipped %d err %v, want 0 seen, 1 skipped", seen, skipped, err)
+	}
+	seen = 0
+	if _, err := pdfread.ExtractImagesEach(pdf, nil, 4, func(model.Image) error { seen++; return nil }); err != nil || seen == 0 {
+		t.Fatalf("2x2 image at a cap of 4 px (the control): seen %d err %v", seen, err)
+	}
+}
+
+func TestImageCauseReadsWhatTheDictionaryHides(t *testing.T) {
+	icc := func(n int) types.Object { return types.StreamDict{Dict: types.Dict{"N": types.Integer(n)}} }
+	xt := &model.XRefTable{Table: map[int]*model.XRefTableEntry{
+		1: {Object: types.Name("JBIG2Decode")},
+		2: {Object: icc(4)},
+		3: {Object: icc(3)},
+		4: {Object: types.Name("FlateDecode")},
+		5: {Object: types.Array{types.Name("DeviceCMYK")}},
+		6: {Object: types.Array{types.Name("ICCBased"), *types.NewIndirectRef(2, 0)}},
+	}}
+	ref := func(n int) types.Object { return *types.NewIndirectRef(n, 0) }
+	base := func(extra types.Dict) types.Dict {
+		d := types.Dict{"Width": types.Integer(2), "Height": types.Integer(2), "ColorSpace": types.Name("DeviceRGB"), "BitsPerComponent": types.Integer(8)}
+		for k, v := range extra {
+			d[k] = v
+		}
+		return d
+	}
+	for name, c := range map[string]struct {
+		d    types.Dict
+		want string
+	}{
+		"control":                  {base(nil), ""},
+		"default decode":           {base(types.Dict{"Decode": types.Array{types.Integer(0), types.Integer(1), types.Integer(0), types.Integer(1), types.Integer(0), types.Integer(1)}}), ""},
+		"inverted decode":          {base(types.Dict{"Decode": types.Array{types.Integer(1), types.Integer(0), types.Integer(1), types.Integer(0), types.Integer(1), types.Integer(0)}}), PlaceholderColour},
+		"indirect filter":          {base(types.Dict{"Filter": ref(1)}), PlaceholderFilter},
+		"indirect filter element":  {base(types.Dict{"Filter": types.Array{ref(4), ref(1)}}), PlaceholderFilter},
+		"icc 4":                    {base(types.Dict{"ColorSpace": types.Array{types.Name("ICCBased"), ref(2)}}), PlaceholderColour},
+		"icc 3":                    {base(types.Dict{"ColorSpace": types.Array{types.Name("ICCBased"), ref(3)}}), ""},
+		"indexed over cmyk":        {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), types.Name("DeviceCMYK"), types.Integer(1), types.StringLiteral("")}}), PlaceholderColour},
+		"indexed over icc 4":       {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), ref(6), types.Integer(1), types.StringLiteral("")}}), PlaceholderColour},
+		"indexed over rgb":         {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), types.Name("DeviceRGB"), types.Integer(1), types.StringLiteral("")}}), ""},
+		"indexed default decode":   {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), types.Name("DeviceRGB"), types.Integer(1), types.StringLiteral("")}, "Decode": types.Array{types.Integer(0), types.Integer(255)}}), ""},
+		"indexed reversed decode":  {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), types.Name("DeviceRGB"), types.Integer(1), types.StringLiteral("")}, "Decode": types.Array{types.Integer(255), types.Integer(0)}}), PlaceholderColour},
+		"decode narrowed":          {base(types.Dict{"Decode": types.Array{types.Integer(0), types.Float(0.5), types.Integer(0), types.Float(0.5), types.Integer(0), types.Float(0.5)}}), PlaceholderColour},
+		"decode shifted":           {base(types.Dict{"Decode": types.Array{types.Float(0.5), types.Integer(1), types.Float(0.5), types.Integer(1), types.Float(0.5), types.Integer(1)}}), PlaceholderColour},
+		"decode of odd length":     {base(types.Dict{"Decode": types.Array{types.Integer(0), types.Integer(1), types.Integer(0)}}), PlaceholderColour},
+		"indexed decode wrong top": {base(types.Dict{"ColorSpace": types.Array{types.Name("Indexed"), types.Name("DeviceRGB"), types.Integer(1), types.StringLiteral("")}, "Decode": types.Array{types.Integer(0), types.Integer(100)}}), PlaceholderColour},
+		"over the pixel cap":       {base(types.Dict{"Width": types.Integer(20000), "Height": types.Integer(20000)}), PlaceholderTooBig},
+		"indirect size over cap":   {base(types.Dict{"Width": types.Integer(1 << 20), "Height": types.Integer(1 << 20)}), PlaceholderTooBig},
+		"cmyk device":              {base(types.Dict{"ColorSpace": ref(5)}), PlaceholderColour},
+	} {
+		if got := imageCause(xt, c.d); got != c.want {
+			t.Errorf("%s: imageCause = %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+func spacedRun(text string, x float64) textRun {
+	r := textRun{text: text, decoded: true, x: x, y: 100, size: 10}
+	for _, c := range text {
+		r.glyphs = append(r.glyphs, runGlyph{text: string(c), decoded: true, advance: 10})
+	}
+	r.width = 10 * float64(len(r.glyphs))
+	return r
+}
+
+// A link that covers part of a run links that part (/pending 941 #8). A word is in a link when the link holds half its
+// glyphs; a run whose glyphs cannot be laid along it is judged by its own centre.
+func TestALinkOverPartOfARunLinksThatPart(t *testing.T) {
+	sp := displaySpace{box: [4]float64{0, 0, 200, 200}, w: 200, h: 200}
+	const uri = "https://x.example/"
+	type span struct {
+		text string
+		link bool
+	}
+	cases := []struct {
+		name  string
+		x0    float64 // the link's left and right edge, in points (glyph i spans 10i..10i+10)
+		x1    float64
+		mod   func(*textRun)
+		spans []span
+	}{
+		{"exactly a word", 40, 80, nil, []span{{"see ", false}, {"docs", true}, {" now", false}}},
+		{"half a word links the word", 40, 60, nil, []span{{"see ", false}, {"docs", true}, {" now", false}}},
+		{"under half a word links nothing", 40, 49, nil, []span{{"see docs now", false}}},
+		{"two words of one link take the space between", 40, 120, nil, []span{{"see ", false}, {"docs now", true}}},
+		{"turned: the run's own centre", 40, 80, func(r *textRun) { r.rotated = true }, []span{{"see docs now", true}}},
+		{"vertical: the run's own centre", 40, 80, func(r *textRun) { r.vertical = true }, []span{{"see docs now", true}}},
+		{"reversed: the run's own centre", 40, 80, func(r *textRun) { r.reversed = true }, []span{{"see docs now", true}}},
+		{"glyphs that are not the span's text: the run's own centre", 40, 80, func(r *textRun) { r.glyphs = r.glyphs[:len(r.glyphs)-1] }, []span{{"see docs now", true}}},
+	}
+	for _, c := range cases {
+		links := PageLinkSet{Links: []PageLink{{Rect: MapRect{c.x0 / 200, 0, c.x1 / 200, 1}, URI: uri}}}
+		r := spacedRun("see docs now", 0)
+		if c.mod != nil {
+			c.mod(&r)
+		}
+		got := lineSpans(sp, links, textLine{runs: []textRun{r}, starts: []int{0}, text: r.text})
+		var have []span
+		for _, g := range got {
+			have = append(have, span{g.Text, g.Link == uri})
+		}
+		if len(have) != len(c.spans) {
+			t.Errorf("%s: spans %+v, want %+v", c.name, have, c.spans)
+			continue
+		}
+		for i := range have {
+			if have[i] != c.spans[i] {
+				t.Errorf("%s: spans %+v, want %+v", c.name, have, c.spans)
+				break
+			}
+		}
+	}
+}
+
+// A run drawn filled-and-stroked (Tr 2) is bold in the export as it is in the page map (/pending 941 #10).
+func TestAFauxBoldRunIsBoldInTheExport(t *testing.T) {
+	r := textRun{text: "heavy", x: 0, y: 100, size: 10, width: 50}
+	r.state.tr = 2
+	ln := textLine{runs: []textRun{r}, starts: []int{0}, text: r.text}
+	got := lineSpans(displaySpace{box: [4]float64{0, 0, 200, 200}, w: 200, h: 200}, PageLinkSet{}, ln)
+	if len(got) != 1 || !got[0].Bold {
+		t.Fatalf("spans = %+v, want one bold span", got)
+	}
+	if !r.drawsBold() {
+		t.Fatal("drawsBold")
+	}
+	r.state.tr = 0
+	if r.drawsBold() {
+		t.Fatal("a plain run is not bold")
+	}
+	r.bold = true
+	if !r.drawsBold() {
+		t.Fatal("a bold font is bold at Tr 0")
 	}
 }
