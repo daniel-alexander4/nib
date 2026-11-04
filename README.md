@@ -409,6 +409,16 @@ turned away before any tool starts. ImageMagick is run with a policy file of Nib
 HEIC and PNG formats and no external programs or `@file` paths. I tested this with libheif 1.17 and libde265
 1.0.15; I did not run it against ImageMagick itself. A file holding several pictures opens at the first one.
 
+**Saved web pages** (`.html`, `.htm`, `.xhtml`) open through a Chromium-family browser (Chrome, Chromium, Edge or
+Brave) that Nib finds and never bundles; Firefox cannot print a page headlessly and does not count. Nib does
+not hand the browser your file. It rebuilds the page from a short list of tags (no scripts, frames, forms or
+outside style sheets; only pictures that are inside the page), serves that copy once from a port only this
+computer can reach, and starts the browser with every other web address switched off. A page that tries to
+read a file on your disk or to contact a server printed nothing of either in my tests (eleven tricks, each
+shown to work when the protection is removed), and opening a page fetches nothing. Before first use Nib has
+the browser print a test page and skips one that cannot, which is what happens with a snap-packaged Chromium.
+Links in the page stay links. I tested Chrome 157 and Chromium 156 on Linux; Windows and macOS are not run.
+
 The source file is never written: the conversion works on a copy in the temporary
 directory, and the result opens as a new document with no file behind it, so *Save*
 asks for a name. The copy is removed when the conversion ends. If Nib is killed

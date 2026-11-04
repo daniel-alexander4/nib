@@ -70,7 +70,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
-  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'),
+  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'), browserMissing: $('browserMissing'), browserRecheck: $('browserRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -400,6 +400,7 @@ async function repointKey() {
     els.repointGo.disabled = false;
   }
 }
+let browserAvailable = false; // a Chromium-family browser that prints a test page (from /api/status) → saved web pages open (ADR-200)
 let heifAvailable = false; // a HEIF decoder found (from /api/status) → HEIC pictures open (ADR-199)
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
@@ -593,6 +594,7 @@ function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
   heifAvailable = !!st.heif;
+  browserAvailable = !!st.browser;
   loAvailable = !!st.libreoffice;
   // Both pickers' `accept` are built from the server's format table (pdfops.Formats) — no list of
   // extensions lives in the page. The import picker drops a format whose tool this machine lacks.
@@ -611,6 +613,8 @@ function applyStatus(st) {
   // The HEIF decoder's notice (ADR-199): the same shape again.
   if (els.heifMissing) els.heifMissing.hidden = heifAvailable;
   if (els.heifRecheck) els.heifRecheck.hidden = heifAvailable;
+  if (els.browserMissing) els.browserMissing.hidden = browserAvailable;
+  if (els.browserRecheck) els.browserRecheck.hidden = browserAvailable;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     els.authOverlay.hidden = true;
@@ -4619,6 +4623,7 @@ els.officeOpenBtn.onclick = () => els.officeInput.click();
 if (els.officeRecheck) els.officeRecheck.onclick = () => refreshStatus();
 if (els.psRecheck) els.psRecheck.onclick = () => refreshStatus();
 if (els.heifRecheck) els.heifRecheck.onclick = () => refreshStatus();
+if (els.browserRecheck) els.browserRecheck.onclick = () => refreshStatus();
 els.officeInput.onchange = async () => {
   const file = els.officeInput.files[0];
   els.officeInput.value = '';

@@ -30,6 +30,7 @@ import (
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
 
+	"nib/internal/browserrender"
 	"nib/internal/pdfops"
 )
 
@@ -565,6 +566,18 @@ func TestAHandoffEventCarriesWhatWasImportedOrWhyItWasRefused(t *testing.T) {
 
 func TestThePostScriptRefusalsAreAnsweredAsRefusals(t *testing.T) {
 	for _, err := range []error{pdfops.ErrGhostscriptTooOld, pdfops.ErrGhostscriptNotConfined, pdfops.ErrPostScriptUnreadable} {
+		status, msg := importRefusal(fmt.Errorf("wrapped: %w", err))
+		if status != http.StatusUnprocessableEntity || msg == "" {
+			t.Errorf("%v: answered %d %q", err, status, msg)
+		}
+		if !isImportRefusal(err) {
+			t.Errorf("%v is not an import refusal, so a path open would report it as a disk error", err)
+		}
+	}
+}
+
+func TestTheBrowserRefusalsAreAnsweredAsRefusals(t *testing.T) {
+	for _, err := range []error{pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed} {
 		status, msg := importRefusal(fmt.Errorf("wrapped: %w", err))
 		if status != http.StatusUnprocessableEntity || msg == "" {
 			t.Errorf("%v: answered %d %q", err, status, msg)

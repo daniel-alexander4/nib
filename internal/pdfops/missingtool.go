@@ -39,6 +39,7 @@ const (
 	ToolLibreOffice
 	ToolGhostscript
 	ToolHEIF
+	ToolBrowser
 )
 
 // MissingToolFor classifies err. The bool is false for every other error, so a caller reads
@@ -56,6 +57,8 @@ func MissingToolFor(err error) (MissingTool, bool) {
 		return ToolGhostscript, true
 	case errors.Is(err, ErrHEIFMissing):
 		return ToolHEIF, true
+	case errors.Is(err, ErrBrowserMissing):
+		return ToolBrowser, true
 	}
 	return ToolNone, false
 }
@@ -69,6 +72,8 @@ func (t MissingTool) Name() string {
 		return "Ghostscript"
 	case ToolHEIF:
 		return "a HEIF decoder (libheif's heif-dec, or ImageMagick)"
+	case ToolBrowser:
+		return "a Chromium-family browser (Chrome, Chromium, Edge or Brave)"
 	}
 	return ""
 }
@@ -84,6 +89,8 @@ func (t MissingTool) Vendor() string {
 		return "https://www.ghostscript.com/"
 	case ToolHEIF:
 		return "https://github.com/strukturag/libheif"
+	case ToolBrowser:
+		return "https://www.chromium.org/getting-involved/download-chromium/"
 	}
 	return ""
 }

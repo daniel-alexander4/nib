@@ -50,6 +50,8 @@ func sniffFamily(head []byte) Family {
 		return FamilyPostScript
 	case isHEIF(head):
 		return FamilyHEIF
+	case isHTML(head):
+		return FamilyHTML
 	}
 	return FamilyNone
 }
@@ -115,6 +117,19 @@ func classify(head []byte, name string) (Format, error) {
 			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a HEIC picture", ErrExtensionDisagrees, named.Label)
 		}
 		return heifRow(), nil
+	case FamilyHTML:
+		// Markup is read by a browser, so a name that says text keeps it text (a Markdown file may open with a
+		// tag) and a name that says nothing is not guessed (a URL's path may end in anything).
+		if hasRow && named.Family == FamilyText {
+			return named, nil
+		}
+		if !hasRow {
+			return Format{}, fmt.Errorf("%w: it is a web page but its name does not say so", ErrExtensionDisagrees)
+		}
+		if named.Family != fam {
+			return Format{}, fmt.Errorf("%w: the name says %s, the contents are a web page", ErrExtensionDisagrees, named.Label)
+		}
+		return named, nil
 	case FamilyZip, FamilyOLE, FamilyRTF:
 		if !hasRow {
 			return Format{}, fmt.Errorf("%w: it is a packaged document but its name does not say which kind", ErrExtensionDisagrees)
@@ -133,6 +148,10 @@ func classify(head []byte, name string) (Format, error) {
 		if !looksLikeText(head) {
 			return Format{}, ErrNotText
 		}
+		return named, nil
+	}
+	// A page saved as a fragment (`<p>hello</p>`) has no html, head or body tag to sniff: the name says it.
+	if hasRow && named.Family == FamilyHTML && looksLikeText(head) {
 		return named, nil
 	}
 	if hasRow {

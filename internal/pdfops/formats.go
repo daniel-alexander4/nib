@@ -43,6 +43,7 @@ const (
 	FamilyRTF                      // Rich Text
 	FamilyPostScript               // a PostScript program or EPS file: `%!` or a DOS EPS header
 	FamilyHEIF                     // a HEIC / HEIF picture: an ISO base media `ftyp` box naming a HEIF brand
+	FamilyHTML                     // a web page: markup that opens `<!doctype html` or `<html`, or carries an `<html`, `<head` or `<body` tag early
 )
 
 const (
@@ -76,6 +77,7 @@ var formats = []Format{
 	{Key: "ps", Label: "PostScript", Exts: []string{"ps"}, MIME: []string{"application/postscript"}, Tool: ToolGhostscript, Family: FamilyPostScript},
 	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript},
 	{Key: "heic", Label: "HEIC / HEIF image", Exts: []string{"heic", "heif"}, MIME: []string{"image/heic", "image/heif"}, Tool: ToolHEIF, Family: FamilyHEIF},
+	{Key: "html", Label: "Web page (HTML)", Exts: []string{"html", "htm", "xhtml"}, MIME: []string{"text/html", "application/xhtml+xml"}, Tool: ToolBrowser, Family: FamilyHTML},
 	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
 }
 
@@ -116,6 +118,8 @@ func FormatAvailable(f Format) bool {
 		return GhostscriptAvailable()
 	case ToolHEIF:
 		return HEIFAvailable()
+	case ToolBrowser:
+		return BrowserAvailable()
 	}
 	return false
 }

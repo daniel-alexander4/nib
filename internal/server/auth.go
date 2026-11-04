@@ -276,6 +276,7 @@ type statusResponse struct {
 	PinnedColors          []string                     `json:"pinnedColors,omitempty"`          // colours the user keeps beside them (/pending 930)
 	MarkupStyles          map[string]vault.MarkupStyle `json:"markupStyles,omitempty"`          // each markup tool's last style (/pending 930)
 	Version               string                       `json:"version"`                         // running build, shown in the About dialog
+	Browser               bool                         `json:"browser"`                         // a Chromium-family browser found that prints a test page → web pages can be opened
 	HEIF                  bool                         `json:"heif"`                            // a HEIF decoder found (heif-dec, heif-convert, magick) → HEIC pictures can be opened (ADR-199)
 	Ghostscript           bool                         `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
 	LibreOffice           bool                         `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
@@ -318,6 +319,7 @@ func (s *Server) currentStatus() statusResponse {
 	st.Version = s.version
 	st.Ghostscript = pdfops.GhostscriptAvailable()
 	st.HEIF = pdfops.HEIFAvailable()
+	st.Browser = pdfops.BrowserAvailable()
 	st.LibreOffice = pdfops.LibreOfficeAvailable()
 	st.Formats = formatViews()
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""

@@ -277,6 +277,19 @@ test('with no HEIF decoder, the File card says HEIC cannot be opened and offers 
   }
 });
 
+test('with no browser, the File card says saved web pages cannot be opened and offers a way back (ADR-200)', () => {
+  const shown = (sel) => { const el = doc.querySelector(sel); return !!el && !el.hidden; };
+  assert.ok(shown('#browserMissing'), 'nothing tells the user why their saved web page cannot be opened');
+  assert.ok(shown('#browserRecheck'), 'there is no way to re-ask after installing a browser');
+  const link = doc.querySelector('#browserMissing a');
+  assert.ok(link && /^https:\/\//.test(link.getAttribute('href') || ''), 'the notice carries no https link');
+  assert.equal(link.getAttribute('rel'), 'noopener');
+  const apply = bodyOf('function applyStatus(st) {');
+  for (const re of [/els\.browserMissing\.hidden = browserAvailable/, /els\.browserRecheck\.hidden = browserAvailable/]) {
+    assert.match(apply, re, 'the browser notice is not tied to browserAvailable in applyStatus');
+  }
+});
+
 test('with no Ghostscript, a refused PDF/A says a tool would have converted it', () => {
   // Census rather than a driven click, and deliberately: reaching the real branch needs an open
   // document and the modal, and this file's document state belongs to the tab-closing test above.

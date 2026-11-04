@@ -10,7 +10,7 @@ import (
 //
 // `taskkill` ends a process tree, and `%SystemRoot%\System32` is where Windows' own copy of it lives.
 // Taking whatever PATH answers first is how a program that kills processes becomes a program that does
-// something else, and `internal/browser.findChromium` learned the general form of this the other way
+// something else, and `internal/browser.FindChromium` learned the general form of this the other way
 // round (ADR-040): PATH is not where Windows keeps things.
 //
 // **What it cannot assert is the spelling.** `filepath.Join` answers with the host's separator, so on

@@ -818,8 +818,8 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		"internal/server/roots_other.go":   "already contains every mounted",
 		// Who owns the connection a launch key is traded on (ADR-157): Linux asks the kernel's
 		// socket diagnostics; elsewhere nothing names a TCP socket's owner, and the file says so.
-		"internal/server/launchpeer_linux.go": "syscall.AF_NETLINK",
-		"internal/server/launchpeer_other.go": "ADR-157's declared gap",
+		"internal/peercred/peercred_linux.go": "syscall.AF_NETLINK",
+		"internal/peercred/peercred_other.go": "ADR-157's declared gap",
 		// The system Downloads folder and the default browser (ADR-102): Windows asks the shell and
 		// the registry; elsewhere the desktop's own file is parsed, and macOS's unread default
 		// browser is a gap the file declares.

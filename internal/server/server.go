@@ -32,6 +32,7 @@ import (
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/pdfread"
+	"nib/internal/peercred"
 	"nib/internal/sign"
 	"nib/internal/vault"
 
@@ -282,7 +283,7 @@ type Server struct {
 	// launchPeerOwner stands in for the kernel's answer to "who owns the connection this trade
 	// arrived on" (launchpeer.go, ADR-157); nil outside tests. peerUnknownOnce says once that the
 	// question cannot be asked here.
-	launchPeerOwner func(local, peer netip.AddrPort) (uint32, peerState)
+	launchPeerOwner func(local, peer netip.AddrPort) (uint32, peercred.State)
 	peerUnknownOnce sync.Once
 
 	// legMu guards legs: the delivery round's in-flight leg, per ceremony (/pending 370).

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+
+	"nib/internal/peercred"
 )
 
 // Who is trading a launch key (ADR-157, `/pending 701`).
@@ -25,38 +27,31 @@ import (
 // root. Everything else trades as it always did —
 //
 //   - root: it reads this process's memory already, and a relay root runs is root's to vouch for;
-//   - no such socket (`peerGone`): the far end is not a socket of this machine — a peer reached
+//   - no such socket (`peercred.Gone`): the far end is not a socket of this machine — a peer reached
 //     through address translation that only root can set up — or it has closed and cannot be answered;
-//   - the kernel will not say (`peerUnknown`): another platform, or a sandbox without the socket
+//   - the kernel will not say (`peercred.Unknown`): another platform, or a sandbox without the socket
 //     diagnostics. Said once in the log, because there the command line is as exposed as it was.
 //
 // A Nib that does not open is worse than the gap, so nothing here refuses on a doubt.
-type peerState int
-
-const (
-	peerUnknown peerState = iota // the kernel would not answer, or this platform cannot ask
-	peerGone                     // no live socket of this machine is the far end
-	peerFound                    // the far end is a socket of this machine, owned by the returned user
-)
 
 // ownerOfPeer reports who owns the far end of the connection r arrived on. A field on the Server
-// (`launchPeerOwner`) stands in for it in tests; `socketOwner` is the platform's answer.
-func (s *Server) ownerOfPeer(r *http.Request) (uint32, peerState) {
+// (`launchPeerOwner`) stands in for it in tests; `peercred.Owner` is the platform's answer.
+func (s *Server) ownerOfPeer(r *http.Request) (uint32, peercred.State) {
 	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	if local == nil {
-		return 0, peerUnknown
+		return 0, peercred.Unknown
 	}
 	l, err1 := netip.ParseAddrPort(local.String())
 	p, err2 := netip.ParseAddrPort(r.RemoteAddr)
 	if err1 != nil || err2 != nil {
-		return 0, peerUnknown
+		return 0, peercred.Unknown
 	}
 	l = netip.AddrPortFrom(l.Addr().Unmap().WithZone(""), l.Port())
 	p = netip.AddrPortFrom(p.Addr().Unmap().WithZone(""), p.Port())
 	if s.launchPeerOwner != nil {
 		return s.launchPeerOwner(l, p)
 	}
-	return socketOwner(l, p)
+	return peercred.Owner(l, p)
 }
 
 // tradedByAnotherUser is the ONE question the trade asks about its caller: does the kernel name
@@ -64,14 +59,14 @@ func (s *Server) ownerOfPeer(r *http.Request) (uint32, peerState) {
 func (s *Server) tradedByAnotherUser(r *http.Request) bool {
 	uid, state := s.ownerOfPeer(r)
 	switch state {
-	case peerFound:
+	case peercred.Found:
 		me := uint32(os.Geteuid())
 		if uid == me || uid == 0 {
 			return false
 		}
 		log.Printf("refused a launch key offered by user %d: this Nib runs as user %d (ADR-157)", uid, me)
 		return true
-	case peerUnknown:
+	case peercred.Unknown:
 		s.peerUnknownOnce.Do(func() {
 			log.Printf("cannot tell which user trades a launch key on this system; a key read from the browser's command line by another user could be traded by them (ADR-157)")
 		})

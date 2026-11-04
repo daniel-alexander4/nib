@@ -306,6 +306,12 @@
         <a href="https://github.com/strukturag/libheif" target="_blank" rel="noopener">libheif</a>'s
         <code>heif-dec</code> (or ImageMagick built with HEIC support), then check again.</p>
       <button id="heifRecheck" type="button" hidden>Check again for a HEIF decoder</button>
+      <!-- The same notice for saved web pages (ADR-200): a static link, hidden while a browser that prints a test page is found. -->
+      <p id="browserMissing" class="libhint" role="status" aria-live="polite" hidden>Nib couldn't find a
+        <strong>Chromium-family browser</strong> it can print with, so saved web pages can't be opened. Install
+        <a href="https://www.chromium.org/getting-involved/download-chromium/" target="_blank" rel="noopener">Chromium</a>,
+        Chrome, Edge or Brave, then check again. A snap-packaged Chromium may not work.</p>
+      <button id="browserRecheck" type="button" hidden>Check again for a browser</button>
       <!-- /pending 471: the language a converted document is declared in, for screen readers.
            Pre-filled from this computer's language; "Not specified" declares nothing new. -->
       <select id="docLang" aria-label="Document language" title="The language the document is written in — declared for screen readers when it is converted">

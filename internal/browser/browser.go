@@ -34,7 +34,7 @@ func fileExists(path string) bool {
 // session the moment the user closed the window. Returning it is still useful for a
 // caller that wants the handle; nothing now depends on that caller remembering.
 func Open(url string) (*exec.Cmd, error) {
-	if path, ok := findChromium(); ok {
+	if path, ok := FindChromium(); ok {
 		appArgs := []string{"--app=" + url, "--new-window"}
 		if runtime.GOOS == "linux" {
 			// Set a stable WM_CLASS so the panel can match this window to
@@ -129,8 +129,8 @@ func reap(cmd *exec.Cmd) {
 	}()
 }
 
-// findChromium returns the first Chromium-family browser found for the OS.
-func findChromium() (string, bool) {
+// FindChromium returns the first Chromium-family browser found for the OS.
+func FindChromium() (string, bool) {
 	for _, c := range chromiumCandidates() {
 		if path, err := exec.LookPath(c); err == nil {
 			return path, true

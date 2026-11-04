@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/netip"
+	"nib/internal/peercred"
 	"os"
 	"testing"
 )
@@ -12,9 +13,9 @@ import (
 // connection it arrived on.
 
 // tradeAs trades key at ts with the kernel's answer replaced by (uid, state).
-func tradeAs(t *testing.T, srv *Server, url, key string, uid uint32, state peerState) int {
+func tradeAs(t *testing.T, srv *Server, url, key string, uid uint32, state peercred.State) int {
 	t.Helper()
-	srv.launchPeerOwner = func(_, _ netip.AddrPort) (uint32, peerState) { return uid, state }
+	srv.launchPeerOwner = func(_, _ netip.AddrPort) (uint32, peercred.State) { return uid, state }
 	req, _ := http.NewRequest(http.MethodPost, url+"/api/launch", nil)
 	req.Header.Set(headerLaunch, key)
 	res, err := (&http.Client{}).Do(req)
@@ -36,10 +37,10 @@ func TestALaunchKeyOfferedByAnotherUserIsRefusedUnspent(t *testing.T) {
 		other = 1
 	}
 	key := srv.MintLaunchKey()
-	if code := tradeAs(t, srv, ts.URL, key, other, peerFound); code != http.StatusForbidden {
+	if code := tradeAs(t, srv, ts.URL, key, other, peercred.Found); code != http.StatusForbidden {
 		t.Fatalf("a key offered on another user's connection traded with %d, want 403", code)
 	}
-	if code := tradeAs(t, srv, ts.URL, key, me, peerFound); code != http.StatusOK {
+	if code := tradeAs(t, srv, ts.URL, key, me, peercred.Found); code != http.StatusOK {
 		t.Fatalf("after another user's refused attempt the window's own trade answered %d, want 200: the refusal spent the key", code)
 	}
 }
@@ -52,15 +53,15 @@ func TestOnlyANamedOtherUserIsRefused(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		uid   uint32
-		state peerState
+		state peercred.State
 	}{
-		{"this user", me, peerFound},
-		{"root", 0, peerFound},
-		{"no such socket on this machine", 0, peerGone},
-		{"the kernel will not say", 0, peerUnknown},
+		{"this user", me, peercred.Found},
+		{"root", 0, peercred.Found},
+		{"no such socket on this machine", 0, peercred.Gone},
+		{"the kernel will not say", 0, peercred.Unknown},
 		// An answer that is not "found" names nobody, whatever number rides with it.
-		{"unknown with a stray number", me + 7, peerUnknown},
-		{"gone with a stray number", me + 7, peerGone},
+		{"unknown with a stray number", me + 7, peercred.Unknown},
+		{"gone with a stray number", me + 7, peercred.Gone},
 	} {
 		if code := tradeAs(t, srv, ts.URL, srv.MintLaunchKey(), c.uid, c.state); code != http.StatusOK {
 			t.Errorf("%s: the trade answered %d, want 200", c.name, code)
@@ -73,9 +74,9 @@ func TestOnlyANamedOtherUserIsRefused(t *testing.T) {
 func TestTheTradeAsksAboutTheConnectionItArrivedOn(t *testing.T) {
 	ts, srv := startServerWith(t)
 	var local, peer netip.AddrPort
-	srv.launchPeerOwner = func(l, p netip.AddrPort) (uint32, peerState) {
+	srv.launchPeerOwner = func(l, p netip.AddrPort) (uint32, peercred.State) {
 		local, peer = l, p
-		return 0, peerUnknown
+		return 0, peercred.Unknown
 	}
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/launch", nil)
 	req.Header.Set(headerLaunch, srv.MintLaunchKey())

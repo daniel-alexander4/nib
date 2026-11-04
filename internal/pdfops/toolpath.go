@@ -25,7 +25,7 @@ import (
 // is a claim, and a claim has to be true for the user who already installed it.
 //
 // **`internal/browser` already made this exact decision, in the opposite direction**, and
-// this is its shape: `findChromium` tries `LookPath` and then absolute per-OS candidates,
+// this is its shape: `FindChromium` tries `LookPath` and then absolute per-OS candidates,
 // because a bundle install is invisible to PATH. What is NOT copied is its `fileExists`,
 // which stats only — see `runnable`.
 //

@@ -1,6 +1,6 @@
 //go:build linux
 
-package server
+package peercred
 
 import (
 	"bytes"
@@ -29,36 +29,36 @@ const (
 	tcpListen        = 10
 )
 
-// socketOwner reports the user owning the socket whose own address is peer and whose far end is
+// Owner reports the user owning the socket whose own address is peer and whose far end is
 // local — the other end of a connection this process accepted.
 //
 // **It asks about this process's OWN end first.** That socket certainly exists, so a kernel that
 // cannot find it is one whose answers mean nothing here (a sandbox that implements the call and
 // not the table), and "no such socket" for the far end must not then read as "gone".
-func socketOwner(local, peer netip.AddrPort) (uint32, peerState) {
+func Owner(local, peer netip.AddrPort) (uint32, State) {
 	if local.Addr().Is4() != peer.Addr().Is4() {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	fd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_DGRAM|syscall.SOCK_CLOEXEC, netlinkSockDiag)
 	if err != nil {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	defer syscall.Close(fd)
 	// A kernel that never answers must not hold the window's first request for ever.
 	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Sec: 1}); err != nil {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	// **The question is asked as the kernel asks it when it delivers a packet**: for the socket
 	// that would receive what arrives for these four numbers ON THE LOOPBACK INTERFACE. Asked with
 	// no interface, a socket its owner has bound to `lo` (SO_BINDTODEVICE needs no privilege) is
 	// not found — measured — and would have read as "gone".
 	for _, ifindex := range loopbackInterfaces() {
-		if _, state := diagOwner(fd, local, peer, ifindex); state != peerFound {
+		if _, state := diagOwner(fd, local, peer, ifindex); state != Found {
 			continue
 		}
 		return diagOwner(fd, peer, local, ifindex)
 	}
-	return 0, peerUnknown
+	return 0, Unknown
 }
 
 // loopbackInterfaces lists the interfaces a loopback connection's packets arrive on — `lo`.
@@ -77,7 +77,7 @@ func loopbackInterfaces() []uint32 {
 }
 
 // diagOwner asks for the one TCP socket bound to src and connected to dst that receives on ifindex.
-func diagOwner(fd int, src, dst netip.AddrPort, ifindex uint32) (uint32, peerState) {
+func diagOwner(fd int, src, dst netip.AddrPort, ifindex uint32) (uint32, State) {
 	ne := binary.NativeEndian
 	req := make([]byte, nlHdrLen+diagReqLen)
 	ne.PutUint32(req[0:], uint32(len(req)))
@@ -100,44 +100,44 @@ func diagOwner(fd int, src, dst netip.AddrPort, ifindex uint32) (uint32, peerSta
 		id[i] = 0xff // INET_DIAG_NOCOOKIE
 	}
 	if err := syscall.Sendto(fd, req, 0, &syscall.SockaddrNetlink{Family: syscall.AF_NETLINK}); err != nil {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	buf := make([]byte, 4096)
 	n, from, err := syscall.Recvfrom(fd, buf, 0)
 	if err != nil || n < nlHdrLen {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	// Only the kernel's answer counts.
 	if nl, ok := from.(*syscall.SockaddrNetlink); !ok || nl.Pid != 0 {
-		return 0, peerUnknown
+		return 0, Unknown
 	}
 	body := buf[nlHdrLen:n]
 	switch ne.Uint16(buf[4:]) {
 	case nlmsgError:
 		if len(body) >= 4 && syscall.Errno(-int32(ne.Uint32(body))) == syscall.ENOENT {
-			return 0, peerGone
+			return 0, Gone
 		}
-		return 0, peerUnknown
+		return 0, Unknown
 	case sockDiagByFamily:
 		if len(body) < diagMsgLen {
-			return 0, peerUnknown
+			return 0, Unknown
 		}
 		// With no connection on these four numbers the kernel answers with a LISTENER on the
 		// source address instead; that is somebody else's socket, and a closed connection waiting
 		// out its timer reports no owner at all. Neither is the far end of a live connection.
 		if state := body[1]; state == tcpListen || state == tcpTimeWait {
-			return 0, peerGone
+			return 0, Gone
 		}
 		// The answer must be about the socket that was asked for.
 		if !bytes.Equal(body[diagIDOff:diagIDOff+36], id[:36]) {
-			return 0, peerGone
+			return 0, Gone
 		}
 		// A socket nobody holds any more — closed by its owner, still finishing — has no inode,
 		// and the kernel reports its owner as 0. That is not root.
 		if ne.Uint32(body[diagInodeOff:]) == 0 {
-			return 0, peerGone
+			return 0, Gone
 		}
-		return ne.Uint32(body[diagUIDOff:]), peerFound
+		return ne.Uint32(body[diagUIDOff:]), Found
 	}
-	return 0, peerUnknown
+	return 0, Unknown
 }
