@@ -178,3 +178,21 @@ func TestATurnedRunPartlyOnThePageIsNotOffPage(t *testing.T) {
 		}
 	}
 }
+
+// An artifact run is counted once, by the last cause to see it: a covered artifact is Covered, not ArtifactText, and a run of
+// white space is not text (/pending 949).
+func TestAnArtifactRunIsCountedOnceAndOnlyWhenItIsText(t *testing.T) {
+	big := [4]float64{0, 0, 1000, 1000}
+	art := visRun(1, 0, 0, 50, 10, 0)
+	art.artifact = true
+	blank := visRun(2, 0, 100, 50, 10, 0)
+	blank.artifact, blank.text = true, "  "
+	off := visRun(3, 5000, 0, 50, 10, 0)
+	off.artifact = true
+	plain := visRun(4, 0, 200, 50, 10, 0) // ordinary content is not an artifact
+	pr := pageRuns{runs: []textRun{art, blank, off, plain}}
+	v := visibleRuns(&pr, big)
+	if v.ArtifactText != 1 || v.OffPage != 1 {
+		t.Fatalf("ArtifactText=%d OffPage=%d, want 1 and 1: one counted artifact, one off-page, white space and plain text not counted", v.ArtifactText, v.OffPage)
+	}
+}

@@ -129,6 +129,9 @@ type Report struct {
 	OffPage       int
 	CoverUntested int
 	UnreadGlyphs  int
+	// ArtifactText counts runs of text the document marks as an artifact (page numbers, running headers, watermarks), left
+	// out of every export (/pending 949).
+	ArtifactText int
 	// RunningSetAside counts running headers and footers a tagged page's tree does not hold, left out of that page.
 	RunningSetAside int
 	// NoTextPages counts pages that draw no glyph at all (a scan, or text drawn as outlines); SkippedImages counts pictures

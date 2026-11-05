@@ -89,6 +89,7 @@ func Read(ctx context.Context, pdf []byte, opts Options) (docmodel.Document, err
 		rep.OffPage += v.OffPage
 		rep.CoverUntested += v.CoverUntested
 		rep.UnreadGlyphs += v.UnreadGlyphs
+		rep.ArtifactText += v.ArtifactText
 		rep.UnstyledLines += ep.UnstyledLines
 		if ep.NoText {
 			rep.NoTextPages++
@@ -181,8 +182,8 @@ func imageOf(f pdfops.ExportFigure) *docmodel.Image {
 
 // scanned gives a page that draws no text and one picture over most of it that picture as its content (D20).
 //
-// **"Draws no text" is the page's own fact (`ExportPage.NoText`, no glyph in any stream), not "none survived the
-// visibility rules"**: a page whose text sits under a later opaque picture, or off the page, draws text, and calling it
+// **"Draws no text" is the page's own fact (`ExportPage.NoText`, no glyph in any stream: `readPageExportLayout` sets it from
+// the walk and not from the grouping), not "none survived the visibility rules"**: a page whose text sits under a later opaque picture, or off the page, draws text, and calling it
 // a scan would name it "Scanned page N" and send it to the reader as a picture (/pending 941 #12).
 func scanned(blocks []docmodel.Block, ep pdfops.ExportPage, rep *docmodel.Report) []docmodel.Block {
 	if hasText(blocks) || !ep.NoText {

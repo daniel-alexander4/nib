@@ -88,7 +88,13 @@ func TestExportFidelityCorpus(t *testing.T) {
 			tot.slowest = el
 		}
 		perPage = append(perPage, el/time.Duration(max(1, len(ref))))
-		excl := doc.Report.CoveredText + doc.Report.MaybeCovered + doc.Report.HiddenText + doc.Report.HiddenLayer + doc.Report.OffPage + doc.Report.UnreadGlyphs + doc.Report.RunningSetAside + doc.Report.CoverUntested
+		// A page is explained by ITS OWN counts: the document's totals explained seven pages whose loss had another cause
+		// (/pending 949). Running furniture a tagged page's tree did not hold is counted for the document only.
+		pageExcl := map[int]int{}
+		for _, ep := range ed.Pages {
+			v := ep.Visibility
+			pageExcl[ep.Page] = v.Covered + v.MaybeCovered + v.HiddenText + v.HiddenLayer + v.OffPage + v.UnreadGlyphs + v.CoverUntested + v.ArtifactText + doc.Report.RunningSetAside
+		}
 		byPage := map[int]map[string]int{}
 		for _, b := range doc.Blocks {
 			m := byPage[b.Page]
@@ -146,7 +152,7 @@ func TestExportFidelityCorpus(t *testing.T) {
 				tot.perfectPages++
 			case lost == 0:
 				tot.extraOnlyPages++ // the model holds more than the reference (list markers, the tree's own text); nothing is missing
-			case excl > 0:
+			case pageExcl[pt.Page] > 0:
 				tot.explainedPages++
 			default:
 				tot.unexplainedPages++

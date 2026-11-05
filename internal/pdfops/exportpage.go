@@ -128,7 +128,7 @@ type ExportPage struct {
 	Figures    []ExportFigure
 	// Blocks are the page's paragraphs, tables and pictures in the proposal's order and with its roles.
 	Blocks []ExportBlock
-	// NoText says the page draws no glyph.
+	// NoText says the page draws no glyph (the walk's fact, not "no line survived": an artifact-only page draws text, /pending 952).
 	NoText bool
 	// Width and Height are the displayed page in points (`displaySpace`): what a positioned writer scales Rect by.
 	Width, Height float64

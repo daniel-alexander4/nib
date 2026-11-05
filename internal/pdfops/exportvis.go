@@ -3,6 +3,8 @@ package pdfops
 import (
 	"math"
 	"sort"
+	"strings"
+	"unicode"
 )
 
 // What an export may read of a page (PLAN-import-export D30, R2, X6): only text a reader could see. A run is dropped,
@@ -33,6 +35,11 @@ type ExportVisibility struct {
 	// UnreadGlyphs counts glyphs of the runs kept that have no text the document lets nib read (`PageMap.Unread`): the
 	// page prints more than the export holds.
 	UnreadGlyphs int
+	// ArtifactText counts runs of text the page draws inside an `/Artifact` sequence (a page number, a running header, a
+	// watermark): the document says it is not content, so no line takes it (`joinsALine`). It was dropped with no count,
+	// and 87 corpus pages lost text the report never named (/pending 949). Counted after every other drop, so a run is
+	// named once, by the first cause that took it.
+	ArtifactText int
 }
 
 // Add sums o into v.
@@ -44,6 +51,7 @@ func (v *ExportVisibility) Add(o ExportVisibility) {
 	v.HiddenText += o.HiddenText
 	v.CoverUntested += o.CoverUntested
 	v.UnreadGlyphs += o.UnreadGlyphs
+	v.ArtifactText += o.ArtifactText
 }
 
 // coverBudget bounds the comparisons one page's cover test makes. A variable so a test can lower it.
@@ -212,6 +220,9 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 	}
 	pr.runs = out
 	for _, r := range out {
+		if r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
+			v.ArtifactText++
+		}
 		if !r.decoded {
 			for _, g := range r.glyphs {
 				if !g.decoded {

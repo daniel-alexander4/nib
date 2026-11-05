@@ -236,3 +236,17 @@ func TestASlidesExportPastTheCapIsRefusedBeforeTheRead(t *testing.T) {
 		t.Errorf("the read began (%d context observations) before the page count was refused", n)
 	}
 }
+
+// The slides path sums the reader's visibility counts itself (it does not call read.Read), so each count is carried there too:
+// text the document marks as an artifact is named on a deck as on a document (/pending 949).
+func TestASlidesExportNamesTheArtifactTextItLeftOut(t *testing.T) {
+	var pdf []byte
+	for _, f := range testpdf.ExportModelSet() {
+		if f.Name == "vis-artifact" {
+			pdf = f.PDF
+		}
+	}
+	if _, rep, _, err := slidesOf(context.Background(), pdf, "t"); err != nil || rep.ArtifactText != 1 {
+		t.Fatalf("slides: ArtifactText = %d, err %v, want 1", rep.ArtifactText, err)
+	}
+}
