@@ -256,7 +256,7 @@ func TestTaggingRefusesWhenTheStructureAndTheStREAMDisagree(t *testing.T) {
 		if terr != nil {
 			return terr
 		}
-		return tagOnePage(ctx, tree, 1, short, nil)
+		return tagOnePage(ctx, tree, 1, short, nil, nil)
 	})
 	if err == nil {
 		t.Fatal("tagging accepted a structure describing one fewer run than the page draws — " +
@@ -384,21 +384,26 @@ func longMarkdownTable(rows int) string {
 	return b.String()
 }
 
-// /pending 938: the header repeated on a continuation page is a header row again, so every Table element the tagger
-// writes (one a page) has header cells with Scope Column, and none is a table of data cells with no headers.
-func TestEveryPageOfATableCarriesItsHeaderCells(t *testing.T) {
+// /pending 938, 951: a table that crosses pages is ONE Table with its header row once; the header drawn again on a
+// continuation page is an /Artifact, so a reader is not told it a second time and no page has a second table.
+func TestATableAcrossPagesIsOneTableWithItsHeaderOnce(t *testing.T) {
 	out, err := tagMarkdown([]byte(longMarkdownTable(200)), authoringFaces(), markdownFallbackFonts())
 	if err != nil {
 		t.Fatalf("tagMarkdown: %v", err)
 	}
 	kinds := elementKinds(t, out)
-	if kinds["Table"] < 3 || kinds["TH"] != 2*kinds["Table"] || kinds["TD"] != 400 || kinds["TR"] != 201+kinds["Table"]-1 {
-		t.Errorf("tree %v: want 2 TH per Table (one header row each), 400 TD and a TR per row plus a repeated header per continuation", kinds)
+	if kinds["Table"] != 1 || kinds["TR"] != 201 || kinds["TH"] != 2 || kinds["TD"] != 400 {
+		t.Errorf("tree %v: want 1 Table, 201 TR (the header once and 200 rows), 2 TH, 400 TD", kinds)
 	}
-	for p := 1; p <= kinds["Table"]; p++ {
-		if c := string(pageContentOf(t, out, p)); !strings.Contains(c, "/TH <<") {
-			t.Errorf("page %d has no header cell", p)
-		}
+	p1, p2 := string(pageContentOf(t, out, 1)), string(pageContentOf(t, out, 2))
+	if !strings.Contains(p1, "/TH <<") {
+		t.Error("page 1 does not carry the real header cells")
+	}
+	if strings.Contains(p2, "/TH <<") {
+		t.Error("page 2 tags its repeated header as TH")
+	}
+	if n := strings.Count(p2, "/Artifact BMC"); n < 2 {
+		t.Errorf("page 2 brackets %d artifact run(s) for a two-cell header, want at least 2", n)
 	}
 }
 

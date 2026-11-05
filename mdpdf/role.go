@@ -99,4 +99,7 @@ type Role struct {
 	// are consecutive blocks, which is all the tagger needs to nest Table > TR > TH/TD in draw order.
 	Table, Row int
 	Head       bool
+	// Repeat marks a header row drawn again at the top of a page the table continues onto: the tagger brackets it as
+	// an /Artifact and writes no element for it, so the table's one header is the one on its first page (ADR-211).
+	Repeat bool
 }
