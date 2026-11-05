@@ -156,7 +156,12 @@ func readPageExportLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWa
 	if pr.noText {
 		return pageLayout{noText: true}, pr.images, vis, nil
 	}
-	return groupRunsAndTables(pr.runs, pr.shapes), pr.images, vis, nil
+	l := groupRunsAndTables(pr.runs, pr.shapes)
+	// `groupRuns` says noText when no LINE survives, which is also so for a page whose only text is an artifact, white
+	// space, covered or off the page. The export's NoText is "no glyph in any stream" (pr.noText, settled above), and a page
+	// that draws text is not a scan (/pending 952; /pending 941 #12 guarded this only with a hand-built page).
+	l.noText = false
+	return l, pr.images, vis, nil
 }
 
 // pageFigure is an image the page draws that a Figure is proposed for (ADR-122).

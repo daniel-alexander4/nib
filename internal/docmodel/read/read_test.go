@@ -48,6 +48,7 @@ func TestVisibilityOutcomes(t *testing.T) {
 		{"vis-softmask-over", "text under a box", "", func(r docmodel.Report) bool { return r.CoveredText == 0 }, "covered=0"},
 		{"vis-layer-off", "kept heading words", "text under a box", func(r docmodel.Report) bool { return r.HiddenLayer == 1 }, "hiddenLayer=1"},
 		{"vis-offpage", "kept heading words", "far off", func(r docmodel.Report) bool { return r.OffPage == 1 }, "offPage=1"},
+		{"vis-artifact", "kept heading words", "text under a box", func(r docmodel.Report) bool { return r.ArtifactText == 1 }, "artifactText=1"},
 		{"vis-scan-header", "scanned body words", "", func(r docmodel.Report) bool { return r.HiddenText == 0 }, "hidden OCR kept"},
 		{"vis-hidden-over-visible", "kept heading words", "", func(r docmodel.Report) bool { return r.HiddenText == 1 && strings.Count(r.Source, "x") == 0 }, "hiddenText=1"},
 	}
@@ -248,5 +249,22 @@ func TestTheReaderCountsTheTextDirectionControlsAWriterWillDrop(t *testing.T) {
 	}
 	if got := docmodel.Clean(text(d)); strings.ContainsAny(got, "‮⁦") || docmodel.BidiControls(got) != 0 {
 		t.Errorf("Clean left a control in %q", got)
+	}
+}
+
+// A page whose only text is an artifact draws text: the export counts it, does not call the page a scan, and does not say
+// "no text" (/pending 949, 952). `TestAPageThatDrawsTextIsNotAScan` builds NoText by hand; this goes through the reader.
+func TestAPageWhoseOnlyTextIsAnArtifactIsCountedAndIsNotAScan(t *testing.T) {
+	for _, name := range []string{"vis-artifact-only", "vis-artifact-over-picture"} {
+		d := fixture(t, name)
+		if d.Report.ArtifactText != 1 {
+			t.Errorf("%s: ArtifactText = %d, want 1", name, d.Report.ArtifactText)
+		}
+		if d.Report.NoTextPages != 0 || len(d.Report.ScannedPages) != 0 {
+			t.Errorf("%s: a page that draws text was called no-text (%d) or a scan (%v)", name, d.Report.NoTextPages, d.Report.ScannedPages)
+		}
+		if strings.Contains(text(d), "kept heading words") {
+			t.Errorf("%s: artifact text was exported as content: %q", name, text(d))
+		}
 	}
 }

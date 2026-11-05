@@ -10655,6 +10655,7 @@ function exportReport(f) {
   if (n(f.coveredText)) s.push(plural(n(f.coveredText), 'piece', 'pieces') + ' of text hidden under a shape was left out.');
   if (n(f.hiddenText)) s.push(plural(n(f.hiddenText), 'piece', 'pieces') + ' of invisible text was left out.');
   if (n(f.offPage)) s.push(plural(n(f.offPage), 'piece', 'pieces') + ' of text outside the page was left out.');
+  if (n(f.artifactText)) s.push(plural(n(f.artifactText), 'piece', 'pieces') + ' of text the document marks as decoration (page numbers, running headers, watermarks) ' + (n(f.artifactText) === 1 ? 'was' : 'were') + ' left out.');
   if (n(f.unreadGlyphs)) s.push(plural(n(f.unreadGlyphs), 'character', 'characters') + ' could not be read as text.');
   if (n(f.tablesAsText)) s.push(plural(n(f.tablesAsText), 'table', 'tables') + ' too large to keep as a table ' + (n(f.tablesAsText) === 1 ? 'is' : 'are') + ' written as lines of text, one line per row.');
   if (n(f.bidiControls)) s.push(plural(n(f.bidiControls), 'text-direction control', 'text-direction controls') + ' ' + (n(f.bidiControls) === 1 ? 'was' : 'were') + ' removed from the text.');

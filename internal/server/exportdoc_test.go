@@ -176,6 +176,12 @@ func TestTheExportFactsCarryTheTextDirectionControlsRemoved(t *testing.T) {
 	}
 }
 
+func TestTheExportFactsCarryTheArtifactTextLeftOut(t *testing.T) {
+	if f := factsOf(docmodel.Report{ArtifactText: 4}, false, 0); f.ArtifactText != 4 {
+		t.Errorf("ArtifactText = %d, want 4", f.ArtifactText)
+	}
+}
+
 func exportSVG(t *testing.T, base string, c *http.Client, csrf, id, query string) (int, []byte, http.Header) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, base+"/api/export/svg?"+query, nil)
