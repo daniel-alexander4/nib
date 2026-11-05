@@ -109,8 +109,9 @@ func KillConverters() int {
 		// property this function states is that the converters are ended BEFORE Nib leaves, so it waits for each
 		// group to have no member. Bounded by the select below; a group that never goes is reported by its absence
 		// from the count of groups that did, not waited on.
+		wait := time.Now().Add(killWait)
 		for _, pid := range pids {
-			for !groupGone(pid) {
+			for !groupGone(pid) && time.Now().Before(wait) {
 				time.Sleep(time.Millisecond)
 			}
 		}
