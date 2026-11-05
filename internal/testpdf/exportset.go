@@ -32,6 +32,11 @@ var (
 		"endcmap CMapName currentdict /CMap defineresource pop end end"
 )
 
+// bidiMap is ExportBidi's /ToUnicode: three Hebrew letters and two text-direction controls (/pending 947).
+const bidiMap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Adobe-Identity-UCS def /CMapType 2 def " +
+	"1 begincodespacerange <0000> <FFFF> endcodespacerange 5 beginbfchar <0001> <05D0> <0002> <05D1> <0003> <05D2> <0004> <202E> <0005> <2066> endbfchar " +
+	"endcmap CMapName currentdict /CMap defineresource pop end end"
+
 func stream(body string) string {
 	return fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(body), body)
 }
@@ -146,4 +151,12 @@ func ExportPictureTwoPages() []byte {
 		2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
 		3: page(7), 4: page(8), 6: im, 7: stream(draw), 8: stream(draw),
 	})
+}
+
+// ExportBidi is a page of three Hebrew letters with three text-direction controls between them (U+202E twice and
+// U+2066 once), drawn through a ToUnicode that maps the controls like any other code (/pending 947): the shape of the
+// "invoice_‮fdp.exe" spoof, in a document the reader can open.
+func ExportBidi() ExportFixture {
+	rtl := "BT /F1 12 Tf 400 700 Td <000100040002000500030004> Tj ET\n"
+	return ExportFixture{"bidi-controls", onePageWith(rtl, "/Font << /F1 5 0 R >>", "", map[int]string{5: exportHebrew, 7: hebrewCID, 8: stream(bidiMap)}), "three text-direction controls in a Hebrew line"}
 }

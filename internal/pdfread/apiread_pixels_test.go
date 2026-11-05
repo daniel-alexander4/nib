@@ -1,8 +1,12 @@
 package pdfread
 
 import (
+	"context"
 	"math"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // The cap is on the area the file DECLARES, read as 64-bit integers: a product of two large sides wraps negative and
@@ -43,5 +47,26 @@ func TestPixelsOverCatchesAProductThatWrapsWithinTheCap(t *testing.T) {
 	}
 	if pixelsOver(max, 1, max) {
 		t.Error("a picture exactly at the cap was refused")
+	}
+}
+
+// extractOne takes a panic in pdfcpu's renderer as a failure of that one image (/pending 945, 941 #3). No fixture makes
+// the renderer panic on demand, so the renderer is replaced by one that does; without the recover this test panics. The
+// control: a renderer that returns an image is handed through.
+func TestExtractOneTakesARendererPanicAsAFailedImage(t *testing.T) {
+	defer func(f func(context.Context, *model.Context, *types.StreamDict, bool, string, int, bool) (*model.Image, error)) {
+		extractImage = f
+	}(extractImage)
+	extractImage = func(context.Context, *model.Context, *types.StreamDict, bool, string, int, bool) (*model.Image, error) {
+		return &model.Image{}, nil
+	}
+	if img, ok := extractOne(context.Background(), nil, nil, "Im0", 1); !ok || img == nil {
+		t.Fatalf("control: extractOne = %v, %v", img, ok)
+	}
+	extractImage = func(context.Context, *model.Context, *types.StreamDict, bool, string, int, bool) (*model.Image, error) {
+		panic("renderer fault")
+	}
+	if img, ok := extractOne(context.Background(), nil, nil, "Im0", 1); ok || img != nil {
+		t.Fatalf("extractOne = %v, %v; want a failed image and no panic", img, ok)
 	}
 }

@@ -45,6 +45,8 @@ const (
 // Counts is what the file carries, for the caller's header: nothing here is text of the document.
 type Counts struct {
 	Slides, TextBoxes, Pictures, Placeholders, DroppedLinks int
+	// BidiControls counts the text-direction controls Clean removed from the text boxes (/pending 947).
+	BidiControls int
 }
 
 // ErrTooLarge is the pictures, each distinct one counted once, past MaxMediaBytes.
@@ -77,6 +79,7 @@ func Write(ctx context.Context, doc pdfops.ExportDoc, title string) ([]byte, Cou
 	if len(doc.Pages) > MaxSlides {
 		return nil, c, ErrTooManySlides
 	}
+	lang := xmlw.LangTag(doc.Lang) // the catalog's /Lang, else "und" — never a language nobody said (/pending 948)
 	finite := func(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 	// One slide size for the deck: the first page's, because a presentation has one. A later page of another size is
 	// scaled to fit it, never cropped.
@@ -132,25 +135,41 @@ func Write(ctx context.Context, doc pdfops.ExportDoc, title string) ([]byte, Cou
 			}
 			s.id++
 			c.TextBoxes++
+			// A right-to-left paragraph is set right to left and against the box's right edge: without `rtl` its words
+			// are laid out left to right in whatever face the program substitutes (/pending 948). The direction is
+			// docmodel's one count of letters, the reader's rule for a block.
+			pPr := ""
+			if docmodel.DirOf(p.Text()) == "rtl" {
+				pPr = `<a:pPr algn="r" rtl="1"/>`
+			}
 			fmt.Fprintf(&s.xml, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="Text %d"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%s" y="%s"/><a:ext cx="%s" cy="%s"/></a:xfrm>`+
-				`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p>`,
-				s.id, s.id, ff(x), ff(y), ff(cx), ff(cy))
+				`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p>%s`,
+				s.id, s.id, ff(x), ff(y), ff(cx), ff(cy), pPr)
 			for _, sp := range p.Spans {
 				if sp.Link != "" {
 					c.DroppedLinks++
 				}
+				c.BidiControls += docmodel.BidiControls(sp.Text)
 				t := docmodel.Clean(sp.Text)
 				if t == "" {
 					continue
 				}
-				attr := ` lang="en-US" sz="` + strconv.Itoa(sz) + `"`
+				attr := ` lang="` + lang + `" sz="` + strconv.Itoa(sz) + `"`
 				if sp.Bold {
 					attr += ` b="1"`
 				}
 				if sp.Italic {
 					attr += ` i="1"`
 				}
-				s.xml.WriteString(`<a:r><a:rPr` + attr + ` dirty="0"/><a:t>` + xmlw.Esc(t) + `</a:t></a:r>`)
+				// A line break in the text (U+2028 becomes one in Clean) is a break in the paragraph; a newline in <a:t> is a space.
+				for i, part := range strings.Split(t, "\n") {
+					if i > 0 {
+						s.xml.WriteString(`<a:br><a:rPr` + attr + ` dirty="0"/></a:br>`)
+					}
+					if part != "" {
+						s.xml.WriteString(`<a:r><a:rPr` + attr + ` dirty="0"/><a:t>` + xmlw.Esc(part) + `</a:t></a:r>`)
+					}
+				}
 			}
 			s.xml.WriteString(`</a:p></p:txBody></p:sp>`)
 		}
@@ -181,8 +200,8 @@ func Write(ctx context.Context, doc pdfops.ExportDoc, title string) ([]byte, Cou
 			if len(f.Data) == 0 || mt == "" {
 				c.Placeholders++
 				fmt.Fprintf(&s.xml, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="Picture %d" descr="%s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%s" y="%s"/><a:ext cx="%s" cy="%s"/></a:xfrm>`+
-					`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="9525"><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:ln></p:spPr><p:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1200" dirty="0"/><a:t>%s</a:t></a:r></a:p></p:txBody></p:sp>`,
-					s.id, fi+1, xmlw.Esc(alt), ff(x), ff(y), ff(cx), ff(cy), xmlw.Esc("[Picture: not carried]"))
+					`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="9525"><a:solidFill><a:srgbClr val="808080"/></a:solidFill></a:ln></p:spPr><p:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="%s" sz="1200" dirty="0"/><a:t>%s</a:t></a:r></a:p></p:txBody></p:sp>`,
+					s.id, fi+1, xmlw.Esc(alt), ff(x), ff(y), ff(cx), ff(cy), lang, xmlw.Esc("[Picture: not carried]"))
 				continue
 			}
 			c.Pictures++

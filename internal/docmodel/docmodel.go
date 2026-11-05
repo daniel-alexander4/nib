@@ -139,6 +139,8 @@ type Report struct {
 	UnstyledLines int
 	// TablesAsText counts tables past the bounds in bound.go, written as one line per row.
 	TablesAsText int
+	// BidiControls counts the text-direction embedding, override and isolate controls Clean removes from the text (/pending 947).
+	BidiControls int
 }
 
 // Document is the model.

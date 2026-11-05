@@ -2,6 +2,7 @@ package docmodel
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -49,13 +50,80 @@ func forbidden(r rune) bool {
 		return false
 	case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f, r == 0xfffe, r == 0xffff:
 		return true
-	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0xfeff, r == 0x2028, r == 0x2029:
+	case IsBidiControl(r), r == 0xfeff, r == 0x2028, r == 0x2029:
 		return true
 	}
 	return false
 }
 
+// IsBidiControl says r is one of the embedding, override and isolate controls (U+202A-U+202E, U+2066-U+2069) that Clean
+// drops; it is the ONE definition, so the count the export reports (/pending 947) and the drop cannot disagree. The
+// plain marks U+200E, U+200F and U+061C are not these and are kept.
+func IsBidiControl(r rune) bool {
+	return r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069
+}
+
+// BidiControls is how many of those controls s holds, which is how many Clean will drop from it.
+func BidiControls(s string) (n int) {
+	for _, r := range s {
+		if IsBidiControl(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// BidiControlsIn counts the controls Clean will drop from the model's text — the four fields a writer reads: a span's
+// Text, a block's Marker, an image's Alt and the Meta Title (TestEveryModelStringIsCountedOrNamed holds that a string
+// field added to the model is counted or named an exemption). The reader puts the sum in Report.BidiControls, so the
+// export can say text-direction controls were removed instead of removing them silently.
+func BidiControlsIn(d Document) (n int) {
+	n = BidiControls(d.Meta.Title)
+	spans := func(ss []Span) {
+		for _, sp := range ss {
+			n += BidiControls(sp.Text)
+		}
+	}
+	for _, b := range d.Blocks {
+		n += BidiControls(b.Marker)
+		spans(b.Spans)
+		for _, row := range b.Rows {
+			for _, c := range row {
+				for _, p := range c.Paragraphs {
+					spans(p)
+				}
+			}
+		}
+		if b.Image != nil {
+			n += BidiControls(b.Image.Alt)
+		}
+	}
+	return n
+}
+
 // OneLine is Clean with every run of whitespace, newlines and tabs included, folded to a single space.
 func OneLine(s string) string {
 	return strings.Join(strings.Fields(Clean(s)), " ")
+}
+
+// Letters is how many right-to-left letters and how many other letters s holds: the one count a direction is read from
+// (ADR-009), by the model reader for a block and by the positioned writer for a paragraph.
+func Letters(s string) (rtl, ltr int) {
+	for _, r := range s {
+		switch {
+		case unicode.In(r, unicode.Hebrew, unicode.Arabic, unicode.Syriac, unicode.Thaana, unicode.Nko):
+			rtl++
+		case unicode.IsLetter(r):
+			ltr++
+		}
+	}
+	return rtl, ltr
+}
+
+// DirOf is "rtl" when right-to-left letters outnumber the rest in s, else "ltr".
+func DirOf(s string) string {
+	if rtl, ltr := Letters(s); rtl > ltr {
+		return "rtl"
+	}
+	return "ltr"
 }

@@ -11,7 +11,6 @@ package read
 import (
 	"context"
 	"strings"
-	"unicode"
 
 	"nib/internal/docmodel"
 	"nib/internal/pdfops"
@@ -121,6 +120,7 @@ func Read(ctx context.Context, pdf []byte, opts Options) (docmodel.Document, err
 		rep.Source = docmodel.SourceProposal
 	}
 	doc.Meta.Dir = majorityDir(doc.Blocks)
+	rep.BidiControls = docmodel.BidiControlsIn(doc)
 	return doc, nil
 }
 
@@ -428,21 +428,15 @@ func maxf(a, b float64) float64 {
 
 // letterCounts is how many right-to-left letters and how many other letters the block's text and cells hold.
 func letterCounts(b docmodel.Block) (rtl, ltr int) {
-	count := func(s string) {
-		for _, r := range s {
-			switch {
-			case unicode.In(r, unicode.Hebrew, unicode.Arabic, unicode.Syriac, unicode.Thaana, unicode.Nko):
-				rtl++
-			case unicode.IsLetter(r):
-				ltr++
-			}
-		}
+	add := func(str string) {
+		r, l := docmodel.Letters(str)
+		rtl, ltr = rtl+r, ltr+l
 	}
-	count(b.Text())
+	add(b.Text())
 	for _, row := range b.Rows {
 		for _, c := range row {
 			for _, p := range c.Paragraphs {
-				count(plain(p))
+				add(plain(p))
 			}
 		}
 	}

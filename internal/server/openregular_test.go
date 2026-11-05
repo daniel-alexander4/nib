@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,5 +63,40 @@ func TestOpeningAFIFOCannotBlock(t *testing.T) {
 			w.Close()
 		}
 		t.Fatal("openRegular blocked opening a FIFO with no writer")
+	}
+}
+
+// An open that failed for the machine's reasons is not "file not found" (/pending 946 I9): no descriptors left and an I/O
+// error are a 500 that names the open; the path-shaped errors stay 404, and permission stays 403.
+func TestAFailedOpenIsAnsweredByWhatFailed(t *testing.T) {
+	for name, c := range map[string]struct {
+		err    error
+		status int
+		kind   refusalKind
+	}{
+		"missing":             {syscall.ENOENT, 404, refuseUnopenable},
+		"parent is a file":    {syscall.ENOTDIR, 404, refuseUnopenable},
+		"loop of links":       {syscall.ELOOP, 404, refuseUnopenable},
+		"name too long":       {syscall.ENAMETOOLONG, 404, refuseUnopenable},
+		"permission":          {syscall.EACCES, 403, refuseUnreadable},
+		"no descriptors left": {syscall.EMFILE, 500, refuseUnreadable},
+		"system table full":   {syscall.ENFILE, 500, refuseUnreadable},
+		"i/o error":           {syscall.EIO, 500, refuseUnreadable},
+	} {
+		ref := openRefusal(&fs.PathError{Op: "open", Path: "p", Err: c.err})
+		if ref.status != c.status || ref.kind != c.kind {
+			t.Errorf("%s: %d kind %v, want %d kind %v", name, ref.status, ref.kind, c.status, c.kind)
+		}
+	}
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ref := openRegular(a); ref == nil || ref.status != 404 {
+		t.Errorf("a loop of links through openRegular: %+v, want 404", ref)
 	}
 }
