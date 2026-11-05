@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"nib/internal/pdfops"
 )
 
 // The build & verify contract lives in CONTRIBUTING.md, and this is what stops it
@@ -1432,6 +1434,40 @@ func TestPackageShipsTheLicenceAndNotices(t *testing.T) {
 		}
 		if got != want.dst {
 			t.Errorf("build/nfpm.yaml installs %s to %q, want %q — %s", want.src, got, want.dst, want.why)
+		}
+	}
+}
+
+// The README's list of what Nib opens is the format table's (PLAN-import-export P06.S01 / Y15): every
+// extension of every row appears, as `.ext`, in the section that lists them. A row added without the README
+// naming it fails here. The stimulus is the scan finding the section and a non-empty table.
+func TestREADMENamesEveryExtensionTheFormatTableOpens(t *testing.T) {
+	b, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(b)
+	at := strings.Index(readme, "### Open an office or Markdown document")
+	if at == -1 {
+		t.Fatal("the README no longer has the section this checks")
+	}
+	sec := readme[at:]
+	if end := strings.Index(sec[4:], "\n### "); end != -1 {
+		sec = sec[:end+4]
+	}
+	rows := pdfops.Formats()
+	if len(rows) < 20 {
+		t.Fatalf("the format table has %d rows: the scan is not reading it", len(rows))
+	}
+	intro := sec
+	if i := strings.Index(intro, "**imported**"); i != -1 {
+		intro = intro[:i]
+	}
+	for _, f := range rows {
+		for _, e := range f.Exts {
+			if !strings.Contains(intro, "."+e) {
+				t.Errorf("the README's opening list does not name .%s (%s)", e, f.Key)
+			}
 		}
 	}
 }

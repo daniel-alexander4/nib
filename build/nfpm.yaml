@@ -26,6 +26,15 @@ description: |
 recommends:
   - chromium | chromium-browser | google-chrome-stable | firefox
   - xdg-utils
+# Suggests, not Recommends: each of these opens one family of files and none is needed to run Nib.
+# apt does not install suggests by default, and LibreOffice alone is several hundred megabytes, so a
+# default install should not carry it for someone who only signs PDFs. The README says which format
+# needs which program, and Nib names the missing one when a file needs it.
+suggests:
+  - libreoffice
+  - ghostscript
+  - poppler-utils
+  - libheif-examples
 contents:
   - src: dist/nib
     dst: /usr/bin/nib
