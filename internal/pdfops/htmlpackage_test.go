@@ -7,7 +7,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -277,4 +282,90 @@ func TestAnEPUBsChaptersTogetherAreBounded(t *testing.T) {
 	if _, err := epubToHTML(epubZip(t, nil)); !errors.Is(err, ErrPackageTooBig) {
 		t.Errorf("err = %v", err)
 	}
+}
+
+// /pending 931: the saved-page packages were rendered through the browser once, with a benign page. Every vector of the
+// HTML door's table (X5) is run through each of them too, with the same positive control (the page from file:, no
+// protections, must print the secret or reach the canary) and the same two observables: the secret never prints and
+// the loopback canary is never asked. A package becomes ONE page and takes the HTML door's path, so this is the proof
+// that nothing about being unpacked first reopens a hole the page itself would not have.
+func TestEveryVectorIsKeptOutOfAMHTMLAndAnEPUB(t *testing.T) {
+	chromium := needBrowser(t)
+	work := t.TempDir()
+	secretPath := filepath.Join(work, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte(secretWord), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int64
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/css")
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+	canary := "http://" + ln.Addr().String()
+	secretURL := "file://" + secretPath
+
+	check := func(t *testing.T, kind string, pdf []byte, err error, before int64) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		text := pdfText(t, pdf)
+		if !strings.Contains(text, benignWord) {
+			t.Errorf("INCONCLUSIVE: the benign sentinel is missing from the %s output (%q)", kind, text)
+		}
+		if strings.Contains(text, secretWord) {
+			t.Errorf("the %s printed the secret", kind)
+		}
+		if n := hits.Load() - before; n != 0 {
+			t.Errorf("the %s reached the canary %d times", kind, n)
+		}
+	}
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			page := hostilePage(v, secretURL, canary)
+			pagePath := filepath.Join(work, strings.ReplaceAll(v.name, " ", "_")+".html")
+			if err := os.WriteFile(pagePath, []byte(page), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before := hits.Load()
+			ctl, _ := renderFromFile(t, chromium, pagePath)
+			fired := hits.Load() > before
+			if v.reads {
+				fired = ctl != nil && strings.Contains(pdfText(t, ctl), secretWord)
+			}
+			if !fired {
+				t.Errorf("INCONCLUSIVE: the positive control did not fire for %s on %s", v.name, chromium)
+				return
+			}
+			before = hits.Load()
+			pdf, err := ConvertMHTMLToPDF(context.Background(), mhtml(t, mpart("Content-Type: text/html; charset=utf-8", page)))
+			check(t, "MHTML", pdf, err, before)
+
+			before = hits.Load()
+			pdf, err = ConvertEPUBToPDF(context.Background(), epubZip(t, func(f map[string]string, _ *[]string) {
+				f["OEBPS/ch1.xhtml"] = page
+				f["OEBPS/text/ch2.xhtml"] = "<html><body><h1>Chapter Two</h1></body></html>"
+			}))
+			check(t, "EPUB", pdf, err, before)
+		})
+	}
+
+	// Package-only vectors: a part that CLAIMS the canary's or the secret's address as its own name. The page may use
+	// it, and it is inlined from the package's bytes; nothing is fetched from either address.
+	t.Run("a part named by an address", func(t *testing.T) {
+		png := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+		page := "<!doctype html><html><body><p>" + benignWord + "</p><img src=\"" + canary + "/named.png\" alt=x><img src=\"" + secretURL + "\" alt=y></body></html>"
+		before := hits.Load()
+		pdf, err := ConvertMHTMLToPDF(context.Background(), mhtml(t,
+			mpart("Content-Type: text/html", page),
+			mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-Location: "+canary+"/named.png", png),
+			mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-Location: "+secretURL, png)))
+		check(t, "MHTML with named parts", pdf, err, before)
+	})
 }
