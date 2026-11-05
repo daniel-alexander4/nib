@@ -338,7 +338,6 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 	return res, nil
 }
 
-// missingToolFor is the sentinel a gated format's absent tool is refused with; MissingToolFor classifies it.
 // unavailableToolFor is why f's tool cannot be used. A browser that was FOUND and cannot print here (a snap-confined
 // build, a root-run sandbox) is `ErrBrowserCannotRender`, which says so; reporting it as "could not find" sent the user to
 // install what they had (/pending 942).
@@ -349,6 +348,7 @@ func unavailableToolFor(f Format) error {
 	return missingToolFor(f)
 }
 
+// missingToolFor is the sentinel a gated format's absent tool is refused with; MissingToolFor classifies it.
 func missingToolFor(f Format) error {
 	switch f.Tool {
 	case ToolLibreOffice:
