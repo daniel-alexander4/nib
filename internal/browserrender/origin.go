@@ -41,6 +41,9 @@ const Host = "nib-render.test"
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none'; " +
 	"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
+// maxRequestHeader bounds a request's header block. Chromium's GET for the page is well under a kilobyte.
+const maxRequestHeader = 8 << 10
+
 // Lifetime is the hard limit on an origin whatever the browser does. It is not shorter than the render's own timeout
 // (`pdfops.htmlRenderTimeout`, pinned by a test there): an origin that expired first made a slow cold start of the
 // browser read as a browser that never asked for the page (`ErrNotServed`, /pending 942).
@@ -60,12 +63,10 @@ type Origin struct {
 	// ownerOf answers "who owns the far end of this connection"; a test replaces it.
 	ownerOf func(local, peer netip.AddrPort) (uint32, peercred.State)
 
-	consumed  atomic.Bool   // the token path has been asked for once
-	served    atomic.Bool   // the whole document was written to that one request
-	refused   atomic.Int64  // requests answered 404 (a wrong host, a wrong user, a wrong path, a second ask)
-	done      chan struct{} // closed when the document has been handled
-	once      sync.Once
-	closeOnce sync.Once // Close is reached from the lifetime timer and from the render's defer
+	consumed  atomic.Bool  // the token path has been asked for once
+	served    atomic.Bool  // the whole document was written to that one request
+	refused   atomic.Int64 // requests answered 404 (a wrong host, a wrong user, a wrong path, a second ask)
+	closeOnce sync.Once    // Close is reached from the lifetime timer and from the render's defer
 	closed    chan struct{}
 }
 
@@ -90,7 +91,6 @@ func listen(doc []byte, ownerOf func(local, peer netip.AddrPort) (uint32, peercr
 		token:   hex.EncodeToString(raw[:]),
 		doc:     doc,
 		ownerOf: ownerOf,
-		done:    make(chan struct{}),
 		closed:  make(chan struct{}),
 	}
 	if o.ownerOf == nil {
@@ -99,7 +99,12 @@ func listen(doc []byte, ownerOf func(local, peer netip.AddrPort) (uint32, peercr
 	o.srv = &http.Server{
 		Handler:           http.HandlerFunc(o.handle),
 		ReadHeaderTimeout: 5 * time.Second,
-		ConnContext:       func(ctx context.Context, c net.Conn) context.Context { return ctx },
+		// What one request may cost (/pending 944 h): the browser sends one short GET, so the whole request is read in
+		// seconds and its header block is a few hundred bytes. The Go defaults (no read timeout, 1 MiB of headers) are
+		// the cheap thing a local stranger could make this listener do for the lifetime of the origin.
+		ReadTimeout:    10 * time.Second,
+		MaxHeaderBytes: maxRequestHeader,
+		ConnContext:    func(ctx context.Context, c net.Conn) context.Context { return ctx },
 	}
 	go func() {
 		defer safe.Recover("render origin serve")
@@ -150,11 +155,13 @@ func (o *Origin) handle(w http.ResponseWriter, r *http.Request) {
 		o.deny(w)
 		return
 	}
-	if !o.peerIsMe(r) {
+	// The cheap comparison first: a request for a path that is not the token never reaches the kernel lookup
+	// (a netlink round trip per stranger's request, /pending 944 h).
+	if r.URL.Path != "/"+o.token {
 		o.deny(w)
 		return
 	}
-	if r.URL.Path != "/"+o.token {
+	if !o.peerIsMe(r) {
 		o.deny(w)
 		return
 	}
@@ -174,9 +181,6 @@ func (o *Origin) handle(w http.ResponseWriter, r *http.Request) {
 	if err == nil && n == len(o.doc) {
 		o.served.Store(true)
 	}
-	// Shutdown waits on a Chromium pre-connect that never ends (~5 s, measured by the plan), so it is asked
-	// from a goroutine of its own and bounded; the handler only signals.
-	o.once.Do(func() { close(o.done) })
 }
 
 // peerIsMe: a request is answered only when the kernel names this user as the owner of the connection, or
@@ -200,9 +204,6 @@ func (o *Origin) peerIsMe(r *http.Request) bool {
 	}
 	return false
 }
-
-// Done is closed once the document has been handled.
-func (o *Origin) Done() <-chan struct{} { return o.done }
 
 // Close ends the origin: Shutdown bounded at one second, then Close. Safe to call more than once.
 func (o *Origin) Close() {
