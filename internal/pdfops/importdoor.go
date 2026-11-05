@@ -173,7 +173,7 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 	}
 	// Options that are Markdown's own, asked of a document a converter lays out: refused before a tool is looked
 	// for, so the answer does not depend on what is installed.
-	if f.Family != FamilyText && f.Key != "markdown" && (o.Markdown.PageSize != "" || o.Markdown.Margin != 0 || o.Markdown.Vars != nil || o.Markdown.ImageDir != "") && !f.Image {
+	if f.Family != FamilyText && f.Key != "markdown" && optionsNeedMarkdown("."+f.Key, o.Markdown) && !f.Image {
 		return nil, ErrOptionsNeedMarkdown
 	}
 	if f.Tool != ToolNone && !FormatAvailable(f) {

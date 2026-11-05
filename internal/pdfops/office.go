@@ -103,7 +103,13 @@ func ConvertDocToPDF(ctx context.Context, data []byte, ext string) ([]byte, erro
 
 // ErrOptionsNeedMarkdown is a page size, margin or placeholder asked of a document LibreOffice converts: those are
 // Markdown's, and silently ignoring them would hand back a document that is not what was asked for.
-var ErrOptionsNeedMarkdown = errors.New("page size, margin, placeholders and images apply to Markdown only; this document is converted by LibreOffice, which sets its own")
+var ErrOptionsNeedMarkdown = errors.New("page size and margin apply to Markdown only, placeholders to Markdown, DOCX and ODT, and images to Markdown only; this document is converted by LibreOffice, which sets its own")
+
+// optionsNeedMarkdown is an option Markdown owns asked of a document it does not convert: a page size, a margin and
+// images are Markdown's alone, and placeholders are also a DOCX's or an ODT's (FillOfficeTemplate).
+func optionsNeedMarkdown(ext string, o mdpdf.Options) bool {
+	return o.PageSize != "" || o.Margin != 0 || o.ImageDir != "" || (o.Vars != nil && !SupportedTemplateExt(ext))
+}
 
 // ConvertDocToPDFWith is ConvertDocToPDF with the Markdown conversion's options (mdpdf.Options): the page, its
 // margin, and `{{key}}` placeholders (RelaxTax, ADR-183). Any option on a non-Markdown document is
@@ -115,8 +121,17 @@ func ConvertDocToPDFWith(ctx context.Context, data []byte, ext string, opts mdpd
 		pdf, _, err := textImport(ctx, data, f, ImportOptions{Markdown: opts})
 		return pdf, err
 	}
-	if !SupportedMarkdownExt(ext) && (opts.PageSize != "" || opts.Margin != 0 || opts.Vars != nil || opts.ImageDir != "") {
+	if !SupportedMarkdownExt(ext) && optionsNeedMarkdown(ext, opts) {
 		return nil, ErrOptionsNeedMarkdown
+	}
+	if SupportedTemplateExt(ext) && opts.Vars != nil {
+		// The placeholders are filled in the package before LibreOffice reads it (ADR-209); the converter then
+		// sees an ordinary document.
+		filled, err := FillOfficeTemplate(data, ext, opts.Vars)
+		if err != nil {
+			return nil, err
+		}
+		data = filled
 	}
 	if SupportedMarkdownExt(ext) {
 		// The conversion ends with the caller's context, mid-layout and not only before it (mdpdf.Options.Context).
