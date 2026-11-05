@@ -1039,3 +1039,5 @@ home today.
   — PLAN-import-export P05.S03: `internal/pptxexport`, `format=pptx` on `/api/export/document`; a text box per paragraph and table cell where the page sets it, pictures placed; the reader's visibility rule applies; Impress reads it back.
 - [ADR-207](207-the-one-teardown-closes-every-live-directory-and-every-outside-tool-waits-at-the-gate.md) — **The one teardown closes every live directory, and every outside tool waits at the gate**
   — /pending 940: `tempdir.CloseAll` from `Server.Shutdown`; the PDF/A Ghostscript route takes ctx and an `ImportGate` slot; the CLI import is signal-cancelled; the off-Linux gaps are logged at start.
+- [ADR-208](208-p05-phase-close-an-svg-tool-waits-at-the-gate-a-sheet-is-judged-whole-and-a-picture-is-one-part.md) — **P05 phase close: the SVG tool waits at the gate, a style sheet is judged whole, a repeated picture is one part**
+  — the SVG route takes an `ImportGate` slot and names its failures; an SVG `<style>` split by a comment is judged whole; PowerPoint pictures paint first, repeat as one part, and the writer observes ctx.

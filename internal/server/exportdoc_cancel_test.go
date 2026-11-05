@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -15,6 +16,7 @@ import (
 
 	"nib/internal/docmodel/read"
 	"nib/internal/docwrite/wtest"
+	"nib/internal/pptxexport"
 	"nib/internal/testpdf"
 )
 
@@ -39,6 +41,9 @@ func (c *tripCtx) Err() error {
 func TestEveryWriterObservesTheContextAndHonoursIt(t *testing.T) {
 	d := wtest.Hostile()
 	for name, f := range exportFormats {
+		if f.slides {
+			continue // no flowing writer: TestASlidesExportStopsOnACancel holds the PowerPoint path
+		}
 		t.Run(name, func(t *testing.T) {
 			probe := &tripCtx{Context: context.Background()}
 			out, err := f.write(probe, d)
@@ -184,5 +189,50 @@ func TestACancelledPageImageExportAnswersNothing(t *testing.T) {
 		if rec := post(cancelled, f); rec.Body.Len() != 0 {
 			t.Errorf("%s of a cancelled request answered %d: %s", f, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// The slides path reads, builds and zips under the request's context: a cancel before the call, and one landing at
+// the writer's own observation points, ends it with the context's error and no bytes.
+func TestASlidesExportStopsOnACancel(t *testing.T) {
+	var pdf []byte
+	for _, f := range testpdf.ExportSet() {
+		if f.Name == "covered" {
+			pdf = f.PDF
+		}
+	}
+	if body, _, _, err := slidesOf(context.Background(), pdf, "t"); err != nil || len(body) == 0 {
+		t.Fatalf("a live context: %d bytes, %v", len(body), err)
+	}
+	probe := &tripCtx{Context: context.Background()}
+	if _, _, _, err := slidesOf(probe, pdf, "t"); err != nil {
+		t.Fatal(err)
+	}
+	total := probe.calls.Load()
+	for n := int64(1); n <= total; n++ {
+		body, _, _, err := slidesOf(&tripCtx{Context: context.Background(), n: n}, pdf, "t")
+		if !errors.Is(err, context.Canceled) || body != nil {
+			t.Fatalf("a cancel at observation %d of %d: %d bytes, err %v", n, total, len(body), err)
+		}
+	}
+}
+
+// The page count is asked before the read: a document past the slide cap is refused without a page being laid out
+// (the read observes the context first, so an unobserved context proves it never started).
+func TestASlidesExportPastTheCapIsRefusedBeforeTheRead(t *testing.T) {
+	pages := make([]string, pptxexport.MaxSlides+1)
+	for i := range pages {
+		pages[i] = "p"
+	}
+	pdf, err := testpdf.Text(pages...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &tripCtx{Context: context.Background()}
+	if _, _, _, err := slidesOf(probe, pdf, "t"); !errors.Is(err, pptxexport.ErrTooManySlides) {
+		t.Fatalf("%v, want ErrTooManySlides", err)
+	}
+	if n := probe.calls.Load(); n != 0 {
+		t.Errorf("the read began (%d context observations) before the page count was refused", n)
 	}
 }

@@ -149,7 +149,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"before any hop-mapping assertion runs.",
 		// ADR-185 (P01.S02a): the import door's test seams. The gate's acquire/depth readers are what its own and the
 		// server's gate tests drive; production reaches the gate only through Run/RunWait.
-		"(*Gate).Acquire":     "test-only — the bare slot grab; production takes a slot through Run, which adds the budget and the admit check.",
 		"(*Gate).AcquireWait": "test-only — the unbounded grab, driven by the gate's tests; production uses RunWait.",
 		"(*Gate).Held":        "test-only — slots in use, read by the gate and server tests (a leaked slot is the defect they hold).",
 		"(*Gate).Queued":      "test-only — queue depth, read by the gate and server tests.",

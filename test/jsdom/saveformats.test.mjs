@@ -852,6 +852,7 @@ test('Document as… opens no dialog when the view changed while the body was re
   ledger.querySelector('.tabclose').click();
   await settle();
   assert.equal(opened, false, 'a dialog for the document pressed on opened after the body was read over another');
+});
 
 test('SVG writes the server\'s drawing of this page, and without pdftocairo it stays on the line with its reason (ADR-205)', async () => {
   await open('svgdoc.pdf');

@@ -58,6 +58,8 @@ func sanitizeSVG(data []byte) ([]byte, float64, float64, error) {
 	var w, h float64
 	depth, elements, skip := 0, 0, 0 // skip: depth inside a removed subtree
 	var openNames []string
+	roots := 0
+	var styleText strings.Builder // a <style>'s text is judged whole: a comment or CDATA splits it into tokens
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -84,6 +86,11 @@ func sanitizeSVG(data []byte) ([]byte, float64, float64, error) {
 				return bad("it has more than %d elements", svgMaxElements)
 			}
 			name := t.Name.Local
+			if depth == 1 {
+				if roots++; roots > 1 {
+					return bad("it has more than one picture in it")
+				}
+			}
 			if depth == 1 && (t.Name.Space != svgNS || name != "svg") {
 				return bad("it is not an SVG picture")
 			}
@@ -120,6 +127,12 @@ func sanitizeSVG(data []byte) ([]byte, float64, float64, error) {
 			}
 			n := openNames[len(openNames)-1]
 			openNames = openNames[:len(openNames)-1]
+			if n == "style" {
+				if cssIsInert(styleText.String()) {
+					_ = xml.EscapeText(&out, []byte(styleText.String()))
+				}
+				styleText.Reset()
+			}
 			if n != "" {
 				out.WriteString("</" + n + ">")
 			}
@@ -127,7 +140,8 @@ func sanitizeSVG(data []byte) ([]byte, float64, float64, error) {
 			if skip > 0 || len(openNames) == 0 {
 				continue
 			}
-			if openNames[len(openNames)-1] == "style" && !cssIsInert(string(t)) {
+			if openNames[len(openNames)-1] == "style" {
+				styleText.Write(t)
 				continue
 			}
 			_ = xml.EscapeText(&out, t)
@@ -142,6 +156,7 @@ func sanitizeSVG(data []byte) ([]byte, float64, float64, error) {
 // keptSVGAttrs writes the attributes of a kept element that cannot run or fetch.
 func keptSVGAttrs(t xml.StartElement, el string) string {
 	var b strings.Builder
+	seen := map[string]bool{} // href and xlink:href, or a:x and x, can land on one name; the second is dropped
 	for _, a := range t.Attr {
 		sp, local := a.Name.Space, a.Name.Local
 		var out string
@@ -183,6 +198,10 @@ func keptSVGAttrs(t xml.StartElement, el string) string {
 		if low == "style" && !cssIsInertAllowingFragments(v) {
 			continue
 		}
+		if seen[out] {
+			continue
+		}
+		seen[out] = true
 		b.WriteString(" " + out + `="`)
 		var esc bytes.Buffer
 		_ = xml.EscapeText(&esc, []byte(v))

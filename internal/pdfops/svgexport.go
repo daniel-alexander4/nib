@@ -56,9 +56,20 @@ func ExportPageSVG(ctx context.Context, pdf []byte, page int) ([]byte, error) {
 	if exe == "" {
 		return nil, ErrPdftocairoMissing
 	}
-	if n, err := PageCount(pdf); err != nil || page < 1 || page > n {
+	n, err := PageCount(pdf)
+	if err != nil {
+		// A document that does not parse (damaged, encrypted) is not "a page the document lacks".
+		return nil, fmt.Errorf("%w: %v", ErrSVGUnreadable, err)
+	}
+	if page < 1 || page > n {
 		return nil, ErrSVGPage
 	}
+	// The converters' gate (ADR-185): a process per request would be unbounded across parallel requests.
+	release, err := ImportGate.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	dir, err := tempdir.New("svgexport")
 	if err != nil {
 		return nil, err
@@ -74,7 +85,11 @@ func ExportPageSVG(ctx context.Context, pdf []byte, page int) ([]byte, error) {
 	cmd.Env = toolEnv(os.Environ(), dir.Path())
 	body, err := runConvert(ctx, cmd, out, "pdftocairo", dir)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrConverterOverMemory) || errors.Is(err, ErrConvertedTooLarge) || errors.Is(err, ErrShuttingDown) || ctx.Err() != nil {
+			return nil, err
+		}
+		// A non-zero exit, a timeout or no output: the tool could not draw this page.
+		return nil, fmt.Errorf("%w: %v", ErrSVGUnreadable, err)
 	}
 	if !isSVGDrawing(body) {
 		return nil, ErrSVGUnreadable

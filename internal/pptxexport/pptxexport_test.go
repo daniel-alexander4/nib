@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,7 +103,7 @@ func TestOneSlidePerPageWithPositionedBoxes(t *testing.T) {
 		{Page: 2, Width: 612, Height: 792},
 		{Page: 3, Width: 612, Height: 792, Paragraphs: []pdfops.ExportParagraph{para("third", false, pdfops.MapRect{0, 0, 1, 1}, 12)}},
 	}}
-	out, c, err := Write(doc, `a "title" & <b>`)
+	out, c, err := Write(context.Background(), doc, `a "title" & <b>`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestEveryPartIsReferencedAndTyped(t *testing.T) {
 		{Rect: pdfops.MapRect{0.1, 0.1, 0.5, 0.5}, Ext: "png", Data: []byte{0x89, 'P', 'N', 'G'}},
 		{Rect: pdfops.MapRect{0.5, 0.5, 0.9, 0.9}, Placeholder: pdfops.PlaceholderMasked},
 	}}}}
-	out, c, err := Write(doc, "t")
+	out, c, err := Write(context.Background(), doc, "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,21 +172,21 @@ func TestEveryPartIsReferencedAndTyped(t *testing.T) {
 
 func TestLinksAreDroppedAndCounted(t *testing.T) {
 	p := pdfops.ExportParagraph{Spans: []pdfops.ExportSpan{{Text: "see ", Link: ""}, {Text: "here", Link: "https://example.org"}}, Rect: pdfops.MapRect{0, 0, 1, 1}, Size: 10}
-	out, c, _ := Write(pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100, Paragraphs: []pdfops.ExportParagraph{p}}}}, "t")
+	out, c, _ := Write(context.Background(), pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100, Paragraphs: []pdfops.ExportParagraph{p}}}}, "t")
 	if c.DroppedLinks != 1 || strings.Contains(string(wtest.Open(t, out).Files["ppt/slides/slide1.xml"]), "example.org") {
 		t.Errorf("dropped links = %d", c.DroppedLinks)
 	}
 }
 
 func TestTooManyPagesRefused(t *testing.T) {
-	_, _, err := Write(pdfops.ExportDoc{Pages: make([]pdfops.ExportPage, MaxSlides+1)}, "t")
+	_, _, err := Write(context.Background(), pdfops.ExportDoc{Pages: make([]pdfops.ExportPage, MaxSlides+1)}, "t")
 	if err != ErrTooManySlides {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestHugePageIsScaledToPowerPointsCeiling(t *testing.T) {
-	out, _, _ := Write(pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 14400, Height: 7200}}}, "t")
+	out, _, _ := Write(context.Background(), pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 14400, Height: 7200}}}, "t")
 	if !strings.Contains(string(wtest.Open(t, out).Files["ppt/presentation.xml"]), `cx="51206400" cy="25603200"`) {
 		t.Error("not clamped")
 	}
@@ -202,7 +204,7 @@ func TestFromRealPagesCoveredTextIsNotOnASlide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := Write(doc, "t")
+	out, _, err := Write(context.Background(), doc, "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ func TestFromRealPagesPicturesArePlaced(t *testing.T) {
 		}
 	}
 	doc, _ := pdfops.ExportRead(context.Background(), pdf, nil)
-	out, c, _ := Write(doc, "t")
+	out, c, _ := Write(context.Background(), doc, "t")
 	pkg, d := read(t, out)
 	if c.Pictures != 1 || d.pics != 1 || len(pkg.Files["ppt/media/image1.jpg"]) == 0 {
 		t.Errorf("pictures = %d, p:pic = %d, media = %v", c.Pictures, d.pics, pkg.Order)
@@ -242,7 +244,7 @@ func TestImpressReadsItBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := Write(doc, "t")
+	out, _, err := Write(context.Background(), doc, "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestTableCellsItalicBlanksAndBoxesStayOnTheSlide(t *testing.T) {
 		// a page of another shape is fitted inside the deck's slide, not stretched over it
 		{Page: 2, Width: 200, Height: 100, Paragraphs: []pdfops.ExportParagraph{para("wide", false, pdfops.MapRect{0, 0, 1, 1}, 10)}},
 	}}
-	out, c, err := Write(doc, "t")
+	out, c, err := Write(context.Background(), doc, "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,5 +340,136 @@ func TestTableCellsItalicBlanksAndBoxesStayOnTheSlide(t *testing.T) {
 	}
 	if w := xfs[1][0]; w.cx != 1270000 || w.cy != 635000 || w.y != 317500 {
 		t.Errorf("a 2:1 page on a square deck should fill the width and sit centred: %+v", w)
+	}
+}
+
+func fig(data string, r pdfops.MapRect) pdfops.ExportFigure {
+	return pdfops.ExportFigure{Rect: r, Ext: "png", Data: []byte(data)}
+}
+
+// Pictures come first in the tree (its order is the stacking order) so text over a picture stays on top.
+func TestPicturesArePaintedBeforeText(t *testing.T) {
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100,
+		Paragraphs: []pdfops.ExportParagraph{para("over", false, pdfops.MapRect{0.1, 0.1, 0.5, 0.2}, 10)},
+		Figures:    []pdfops.ExportFigure{fig("PNG1", pdfops.MapRect{0, 0, 1, 1})}}}}
+	out, _, err := Write(context.Background(), doc, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, _ := read(t, out)
+	s := string(pkg.Files["ppt/slides/slide1.xml"])
+	if pi, ti := strings.Index(s, "<p:pic>"), strings.Index(s, "<p:sp>"); pi < 0 || ti < 0 || pi > ti {
+		t.Errorf("picture at %d, text at %d: the picture must come first", pi, ti)
+	}
+}
+
+// One picture drawn on many pages is one part with a relationship per slide.
+func TestARepeatedPictureIsOnePart(t *testing.T) {
+	pg := func(n int) pdfops.ExportPage {
+		return pdfops.ExportPage{Page: n, Width: 100, Height: 100, Figures: []pdfops.ExportFigure{fig("SAME", pdfops.MapRect{0, 0, 1, 1})}}
+	}
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{pg(1), pg(2), pg(3)}}
+	out, c, err := Write(context.Background(), doc, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, d := read(t, out)
+	media := 0
+	for _, n := range pkg.Order {
+		if strings.HasPrefix(n, "ppt/media/") {
+			media++
+		}
+	}
+	if media != 1 || c.Pictures != 3 || d.pics != 3 {
+		t.Errorf("media parts = %d, pictures = %d, p:pic = %d; want 1, 3, 3", media, c.Pictures, d.pics)
+	}
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(string(pkg.Files["ppt/slides/_rels/slide"+itoa(i)+".xml.rels"]), "../media/image1.png") {
+			t.Errorf("slide %d does not reference the shared part", i)
+		}
+	}
+}
+
+func TestPicturesPastTheCeilingAreRefused(t *testing.T) {
+	old := maxMediaBytes
+	maxMediaBytes = 10
+	defer func() { maxMediaBytes = old }()
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100,
+		Figures: []pdfops.ExportFigure{fig("123456", pdfops.MapRect{0, 0, 1, 1}), fig("abcdef", pdfops.MapRect{0, 0, 1, 1})}}}}
+	if _, _, err := Write(context.Background(), doc, "t"); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("%v, want ErrTooLarge", err)
+	}
+	// distinct pictures are charged once each; a repeat is free
+	doc.Pages[0].Figures[1] = fig("123456", pdfops.MapRect{0, 0, 1, 1})
+	if _, _, err := Write(context.Background(), doc, "t"); err != nil {
+		t.Fatalf("a repeated picture was charged twice: %v", err)
+	}
+}
+
+func TestACancelledWriteStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := Write(ctx, pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100}}}, "t"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("%v, want context.Canceled", err)
+	}
+}
+
+// A page over the 56 in ceiling is shrunk ONCE: text is sized by the same factor as the box, not its square.
+func TestAHugePagesTextIsScaledOnce(t *testing.T) {
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 14400, Height: 7200,
+		Paragraphs: []pdfops.ExportParagraph{para("x", false, pdfops.MapRect{0, 0, 0.5, 0.5}, 400)}}}}
+	out, _, err := Write(context.Background(), doc, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, d := read(t, out)
+	k := float64(maxSlideEMU) / (14400 * emuPerPt) // the deck's shrink
+	want := int(400*k*100 + 0.5)
+	got, _ := strconv.Atoi(d.sizes[0])
+	if got < want-1 || got > want+1 {
+		t.Errorf("size = %d, want about %d (400 pt x %.4f)", got, want, k)
+	}
+}
+
+func TestANonFinitePageSizeFallsBackToLetter(t *testing.T) {
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: math.Inf(1), Height: math.NaN()}}}
+	out, _, err := Write(context.Background(), doc, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, _ := read(t, out)
+	if !strings.Contains(string(pkg.Files["ppt/presentation.xml"]), `<p:sldSz cx="7772400" cy="10058400"/>`) {
+		t.Errorf("slide size: %s", pkg.Files["ppt/presentation.xml"])
+	}
+}
+
+type tripCtx struct {
+	context.Context
+	n, calls int
+}
+
+func (c *tripCtx) Err() error {
+	c.calls++
+	if c.n > 0 && c.calls >= c.n {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A cancel landing at ANY observation the writer makes ends it with no bytes, including the one before the zip.
+func TestACancelAtEveryObservationStopsTheWriter(t *testing.T) {
+	doc := pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100}, {Page: 2, Width: 100, Height: 100}}}
+	probe := &tripCtx{Context: context.Background()}
+	if _, _, err := Write(probe, doc, "t"); err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n <= probe.calls; n++ {
+		out, _, err := Write(&tripCtx{Context: context.Background(), n: n}, doc, "t")
+		if !errors.Is(err, context.Canceled) || out != nil {
+			t.Errorf("cancel at observation %d of %d: %d bytes, %v", n, probe.calls, len(out), err)
+		}
+	}
+	if probe.calls < len(doc.Pages)+1 {
+		t.Errorf("only %d observations for %d pages: the per-slide and pre-zip checks are not both there", probe.calls, len(doc.Pages))
 	}
 }

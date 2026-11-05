@@ -17,6 +17,7 @@ import (
 	"nib/internal/docwrite/markdown"
 	"nib/internal/docwrite/odt"
 	"nib/internal/docwrite/text"
+	"nib/internal/gate"
 	"nib/internal/pdfops"
 	"nib/internal/pptxexport"
 	"nib/internal/sign"
@@ -168,6 +169,9 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, pptxexport.ErrTooManySlides):
 			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has more pages than a presentation Nib writes", "cause": "too-many-pages"})
 			return
+		case errors.Is(err, pptxexport.ErrTooLarge):
+			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document's pictures are more than a presentation Nib writes", "cause": "too-large"})
+			return
 		case err != nil && !errors.Is(err, errSlidesUnwritten):
 			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "Nib could not read this document's text", "cause": "unreadable"})
 			return
@@ -249,8 +253,11 @@ func (s *Server) handleExportSVG(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, pdfops.ErrSVGPage):
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error(), "cause": "page"})
 		return
-	case errors.Is(err, pdfops.ErrSVGUnreadable), errors.Is(err, pdfops.ErrConvertedTooLarge):
+	case errors.Is(err, pdfops.ErrSVGUnreadable), errors.Is(err, pdfops.ErrConvertedTooLarge), errors.Is(err, pdfops.ErrConverterOverMemory):
 		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "pdftocairo could not draw that page as an SVG", "cause": "unreadable"})
+		return
+	case errors.Is(err, gate.ErrQueueFull), errors.Is(err, pdfops.ErrShuttingDown):
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error(), "cause": "busy"})
 		return
 	default:
 		httpError(w, http.StatusInternalServerError, "could not write the SVG")
@@ -277,6 +284,10 @@ var errSlidesUnwritten = errors.New("the presentation was not written")
 // writes a slide per page. The report is built from the same counters the flowing export fills, so the header says the
 // same things (Y3); empty says the pages held neither text nor a picture.
 func slidesOf(ctx context.Context, data []byte, title string) (body []byte, rep docmodel.Report, empty bool, err error) {
+	// The count is asked before the read: the read lays out and decodes every page, and the cap is on the writer's output.
+	if n, perr := pdfops.PageCount(data); perr == nil && n > pptxexport.MaxSlides {
+		return nil, rep, false, pptxexport.ErrTooManySlides
+	}
 	ed, err := pdfops.ExportRead(ctx, data, nil)
 	if err != nil {
 		return nil, rep, false, err
@@ -302,6 +313,9 @@ func slidesOf(ctx context.Context, data []byte, title string) (body []byte, rep 
 		if ep.NoText {
 			rep.NoTextPages++
 		}
+		for cause, n := range ep.DroppedLinks { // the reader's own count, which includes links on no span
+			rep.DroppedLinks[cause] += n
+		}
 		carried := false
 		for _, f := range ep.Figures {
 			if f.Placeholder != "" {
@@ -317,14 +331,14 @@ func slidesOf(ctx context.Context, data []byte, title string) (body []byte, rep 
 			any = true
 		}
 	}
-	body, counts, err := pptxexport.Write(ed, title)
+	body, counts, err := pptxexport.Write(ctx, ed, title)
 	if err != nil {
-		if errors.Is(err, pptxexport.ErrTooManySlides) {
+		if errors.Is(err, pptxexport.ErrTooManySlides) || errors.Is(err, pptxexport.ErrTooLarge) || ctx.Err() != nil {
 			return nil, rep, false, err
 		}
 		return nil, rep, false, errSlidesUnwritten
 	}
-	if counts.DroppedLinks > 0 {
+	if counts.DroppedLinks > 0 && len(rep.DroppedLinks) == 0 {
 		rep.DroppedLinks["not-carried"] = counts.DroppedLinks
 	}
 	return body, rep, !any, nil

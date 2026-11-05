@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/testpdf"
 )
@@ -81,8 +82,9 @@ func TestExportPageSVGRefusesAPageTheDocumentLacks(t *testing.T) {
 			t.Errorf("page %d: %v, want ErrSVGPage", p, err)
 		}
 	}
-	if _, err := ExportPageSVG(context.Background(), []byte("not a pdf"), 1); !errors.Is(err, ErrSVGPage) {
-		t.Errorf("a non-PDF: %v, want ErrSVGPage", err)
+	// A document that does not parse is unreadable, not "a page it lacks".
+	if _, err := ExportPageSVG(context.Background(), []byte("not a pdf"), 1); !errors.Is(err, ErrSVGUnreadable) {
+		t.Errorf("a non-PDF: %v, want ErrSVGUnreadable", err)
 	}
 }
 
@@ -110,8 +112,8 @@ func TestExportPageSVGRefusesWhatIsNotADrawing(t *testing.T) {
 func TestExportPageSVGTakesAFailingToolAsAnError(t *testing.T) {
 	withFakeTool(t, `echo boom >&2; exit 1`)
 	_, err := ExportPageSVG(context.Background(), svgFixture(t), 1)
-	if err == nil || errors.Is(err, ErrSVGUnreadable) || !strings.Contains(err.Error(), "pdftocairo") {
-		t.Fatalf("%v, want a runConvert error naming pdftocairo", err)
+	if !errors.Is(err, ErrSVGUnreadable) || !strings.Contains(err.Error(), "pdftocairo") {
+		t.Fatalf("%v, want ErrSVGUnreadable naming pdftocairo (an exit status is a page the tool could not draw)", err)
 	}
 }
 
@@ -119,5 +121,28 @@ func TestPdftocairoArgsAskForExactlyOnePage(t *testing.T) {
 	got := strings.Join(pdftocairoArgs("a.pdf", "b.svg", 3), " ")
 	if got != "-svg -f 3 -l 3 a.pdf b.svg" {
 		t.Fatalf("args %q", got)
+	}
+}
+
+// The converters' gate bounds the tool: with every slot held, a request waits and a full queue is refused.
+func TestExportPageSVGWaitsAtTheConvertersGate(t *testing.T) {
+	withFakeTool(t, `for a; do o="$a"; done; echo "<svg/>" > "$o"`)
+	var rel []func()
+	for i := 0; i < ImportGate.Width(); i++ {
+		r, err := ImportGate.Acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel = append(rel, r)
+	}
+	defer func() {
+		for _, r := range rel {
+			r()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := ExportPageSVG(ctx, svgFixture(t), 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("with every slot held: %v, want to wait for the gate until the context ended", err)
 	}
 }

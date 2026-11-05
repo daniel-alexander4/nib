@@ -3,6 +3,7 @@ package pdfops
 import (
 	"context"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"math"
 	"net"
@@ -107,6 +108,7 @@ func TestSanitizeSVGRefusals(t *testing.T) {
 		"unclosed":      `<svg ` + ns + ` width="1" height="1"><g>`,
 		"too deep":      big,
 		"empty":         ``,
+		"two roots":     `<svg ` + ns + ` width="1" height="1"/><svg ` + ns + ` width="9" height="9"/>`,
 		"viewbox zero":  `<svg ` + ns + ` viewBox="0 0 0 5"/>`,
 		"viewbox inf":   `<svg ` + ns + ` viewBox="0 0 1e999 5"/>`,
 		"not UTF-8":     "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><svg " + ns + " width=\"1\" height=\"1\"/>",
@@ -286,5 +288,44 @@ func TestAnSVGOnAMachineWithNoBrowserNamesTheTool(t *testing.T) {
 	_, err := ConvertSVGToPDF(context.Background(), []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`))
 	if !errors.Is(err, ErrBrowserMissing) {
 		t.Errorf("err = %v, want ErrBrowserMissing", err)
+	}
+}
+
+// A comment or CDATA splits a <style>'s text into tokens; the sheet is judged whole, so a split @import or url( is
+// dropped and a plain rule is kept (phase-close review, P05).
+func TestASplitStyleSheetIsJudgedWhole(t *testing.T) {
+	const head = `<svg xmlns="http://www.w3.org/2000/svg" width="5" height="5">`
+	for name, css := range map[string]string{
+		"comment":   `@im<!---->port url(http://evil/x.css);`,
+		"cdata":     `@im<![CDATA[port]]> url(http://evil/c)`,
+		"url":       `a{fill:ur<!---->l(http://evil/p)}`,
+		"url cdata": `a{fill:ur<![CDATA[l(]]>http://evil/p)}`,
+	} {
+		out, _, _, err := sanitizeSVG([]byte(head + `<style>` + css + `</style></svg>`))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if l := strings.ToLower(string(out)); strings.Contains(l, "@import") || strings.Contains(l, "url(") || strings.Contains(l, "evil") {
+			t.Errorf("%s: the split sheet reached the output: %s", name, out)
+		}
+	}
+	out, _, _, err := sanitizeSVG([]byte(head + `<style>a{fill:re<!---->d}</style></svg>`))
+	if err != nil || !strings.Contains(string(out), "a{fill:red}") {
+		t.Errorf("a plain split sheet was not kept: %s, %v", out, err)
+	}
+}
+
+// href and xlink:href (or a prefixed twin) normalise to one name; the output must not carry it twice.
+func TestADuplicateAttributeIsWrittenOnce(t *testing.T) {
+	in := `<svg xmlns="http://www.w3.org/2000/svg" xmlns:s="http://www.w3.org/2000/svg" width="5" height="5"><g id="a"/><use href="#a" s:href="#a" x="1" s:x="2"/></svg>`
+	out, _, _, err := sanitizeSVG([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), " href="); n != 1 {
+		t.Errorf("href written %d times: %s", n, out)
+	}
+	if err := xml.Unmarshal(out, new(struct{})); err != nil {
+		t.Errorf("the output is not well-formed: %v", err)
 	}
 }

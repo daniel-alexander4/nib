@@ -9,7 +9,11 @@
 package pptxexport
 
 import (
+	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -26,6 +30,8 @@ const (
 	minSlideEMU = 914400 // 1 in
 	// MaxSlides bounds the package: a slide is a part, and an office reader holds them all.
 	MaxSlides = 2000
+	// MaxMediaBytes bounds the pictures the package holds, each distinct picture once.
+	MaxMediaBytes = 256 << 20
 )
 
 const (
@@ -41,7 +47,10 @@ type Counts struct {
 	Slides, TextBoxes, Pictures, Placeholders, DroppedLinks int
 }
 
-// ErrTooManySlides names the one refusal the writer makes of a document.
+// ErrTooLarge is the pictures, each distinct one counted once, past MaxMediaBytes.
+var ErrTooLarge = errors.New("pptxexport: the pictures are more than a presentation Nib writes")
+
+// ErrTooManySlides names the refusal the writer makes of a document with more than MaxSlides pages.
 var ErrTooManySlides = fmt.Errorf("pptxexport: more than %d pages", MaxSlides)
 
 type slide struct {
@@ -63,15 +72,16 @@ func clamp(v, lo, hi float64) float64 {
 }
 
 // Write builds the presentation. title is the name the caller confirmed.
-func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
+func Write(ctx context.Context, doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 	var c Counts
 	if len(doc.Pages) > MaxSlides {
 		return nil, c, ErrTooManySlides
 	}
+	finite := func(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 	// One slide size for the deck: the first page's, because a presentation has one. A later page of another size is
 	// scaled to fit it, never cropped.
 	w0, h0 := 612.0, 792.0
-	if len(doc.Pages) > 0 && doc.Pages[0].Width > 0 && doc.Pages[0].Height > 0 {
+	if len(doc.Pages) > 0 && doc.Pages[0].Width > 0 && doc.Pages[0].Height > 0 && finite(doc.Pages[0].Width) && finite(doc.Pages[0].Height) {
 		w0, h0 = doc.Pages[0].Width, doc.Pages[0].Height
 	}
 	k := 1.0
@@ -84,15 +94,20 @@ func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 	var entries []ziputil.Entry
 	var slides []*slide
 	media := 0
+	mediaBytes := 0
+	byContent := map[[32]byte]string{} // a picture drawn on many pages is one part with many relationships
 	exts := map[string]bool{}
 	for _, pg := range doc.Pages {
+		if err := ctx.Err(); err != nil {
+			return nil, c, err
+		}
 		s := &slide{id: 2}
 		s.xml.WriteString(hdr + `<p:sld ` + nsA + ` ` + nsR + ` ` + nsP + `><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
 			`<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`)
 		s.rels = append(s.rels, `<Relationship Id="rId1" Type="`+rel+`/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`)
 		// A page of another size than the deck's is fitted inside it.
 		pw, ph := pg.Width, pg.Height
-		if pw <= 0 || ph <= 0 {
+		if pw <= 0 || ph <= 0 || !finite(pw) || !finite(ph) {
 			pw, ph = w0, h0
 		}
 		fit := min(sw/(pw*emuPerPt), sh/(ph*emuPerPt))
@@ -110,8 +125,8 @@ func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 			if cx <= 0 || cy <= 0 {
 				return
 			}
-			cx = min(cx*1.06+emuPerPt, sw-x) // a substitute face is a little wider; the box is not the page
-			sz := int(clamp(p.Size*fit*k*100, 100, 400000))
+			cx = min(cx*1.06+emuPerPt, sw-x)              // a substitute face is a little wider; the box is not the page
+			sz := int(clamp(p.Size*fit*100, 100, 400000)) // fit already carries the deck's shrink (k)
 			if p.Size <= 0 {
 				sz = 1200
 			}
@@ -139,14 +154,18 @@ func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 			}
 			s.xml.WriteString(`</a:p></p:txBody></p:sp>`)
 		}
-		for _, p := range pg.Paragraphs {
-			box(p)
-		}
-		for _, t := range pg.Tables {
-			for _, row := range t.Rows {
-				for _, cell := range row {
-					for _, p := range cell.Paragraphs {
-						box(p)
+		// Text is written after the pictures: the order in the tree is the stacking order, and a picture drawn over
+		// text would hide it.
+		texts := func() {
+			for _, p := range pg.Paragraphs {
+				box(p)
+			}
+			for _, t := range pg.Tables {
+				for _, row := range t.Rows {
+					for _, cell := range row {
+						for _, p := range cell.Paragraphs {
+							box(p)
+						}
 					}
 				}
 			}
@@ -166,17 +185,27 @@ func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 					s.id, fi+1, xmlw.Esc(alt), ff(x), ff(y), ff(cx), ff(cy), xmlw.Esc("[Picture: not carried]"))
 				continue
 			}
-			media++
 			c.Pictures++
 			exts[f.Ext] = true
-			name := "ppt/media/image" + strconv.Itoa(media) + "." + f.Ext
-			entries = append(entries, ziputil.Entry{Name: name, Data: f.Data})
+			key := sha256.Sum256(append([]byte(f.Ext+"\x00"), f.Data...))
+			target, seen := byContent[key]
+			if !seen {
+				mediaBytes += len(f.Data)
+				if mediaBytes > maxMediaBytes {
+					return nil, c, ErrTooLarge
+				}
+				media++
+				target = "image" + strconv.Itoa(media) + "." + f.Ext
+				byContent[key] = target
+				entries = append(entries, ziputil.Entry{Name: "ppt/media/" + target, Data: f.Data})
+			}
 			rid := "rId" + strconv.Itoa(len(s.rels)+1)
-			s.rels = append(s.rels, `<Relationship Id="`+rid+`" Type="`+rel+`/image" Target="../media/image`+strconv.Itoa(media)+`.`+f.Ext+`"/>`)
+			s.rels = append(s.rels, `<Relationship Id="`+rid+`" Type="`+rel+`/image" Target="../media/`+target+`"/>`)
 			fmt.Fprintf(&s.xml, `<p:pic><p:nvPicPr><p:cNvPr id="%d" name="Picture %d" descr="%s"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>`+
 				`<p:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="%s" y="%s"/><a:ext cx="%s" cy="%s"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`,
 				s.id, fi+1, xmlw.Esc(alt), rid, ff(x), ff(y), ff(cx), ff(cy))
 		}
+		texts()
 		s.xml.WriteString(`</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`)
 		slides = append(slides, s)
 	}
@@ -246,6 +275,9 @@ func Write(doc pdfops.ExportDoc, title string) ([]byte, Counts, error) {
 			ziputil.Entry{Name: "ppt/slides/slide" + n + ".xml", Data: []byte(s.xml.String())},
 			ziputil.Entry{Name: "ppt/slides/_rels/slide" + n + ".xml.rels", Data: []byte(hdr + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` + strings.Join(s.rels, "") + `</Relationships>`)})
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, c, err
+	}
 	body, err := ziputil.Write(append(out, entries...))
 	return body, c, err
 }
@@ -259,3 +291,6 @@ const theme = hdr + `<a:theme xmlns:a="http://schemas.openxmlformats.org/drawing
 	`<a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>` +
 	`<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>` +
 	`<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`
+
+// maxMediaBytes is MaxMediaBytes as a variable so a test can lower it.
+var maxMediaBytes = MaxMediaBytes
