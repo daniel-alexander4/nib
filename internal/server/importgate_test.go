@@ -54,13 +54,18 @@ func uploadAs(ctx context.Context, c *http.Client, csrf, base, name string, body
 	return res.StatusCode
 }
 
+// officeDirs counts the office temporary directories THIS process has made. The root is per user and shared by every Nib
+// and every test run on the machine, and a directory's name carries its owner's pid (tempdir.New), so counting every
+// `nib-office-*` also counted another session's conversions starting and finishing between the two readings: the
+// before/after comparison below failed on an untouched HEAD (/pending 950).
 func officeDirs(t *testing.T) int {
 	t.Helper()
 	root := filepath.Join(os.TempDir(), "nib-"+strconv.Itoa(os.Getuid()))
 	ents, _ := os.ReadDir(root)
+	own := "nib-office-" + strconv.Itoa(os.Getpid()) + "-"
 	n := 0
 	for _, e := range ents {
-		if strings.HasPrefix(e.Name(), "nib-office-") {
+		if strings.HasPrefix(e.Name(), own) {
 			n++
 		}
 	}
