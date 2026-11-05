@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/safe"
 	"nib/internal/tempdir"
 )
 
@@ -168,9 +170,16 @@ func runConvertPick(ctx context.Context, cmd *exec.Cmd, pick func() string, tool
 	// refusal that names the ceiling, not as a converter that "could not convert".
 	stopWatch := watchMemory(cmd.Process.Pid, converterMemoryCeiling, memoryTick)
 	defer func() { stopWatch() }()
+	stopSize := watchOutputSize(cmd.Process.Pid, pick, outputCeiling, outputTick)
+	defer func() { stopSize() }()
 	waitErr := cmd.Wait()
 	if killed, _ := stopWatch(); killed {
 		return nil, ErrConverterOverMemory
+	}
+	// A converter that writes without end is stopped when its output passes the cap, not two minutes later when the
+	// timeout kills it and the volume is already full (/pending 944 f).
+	if tooBig := stopSize(); tooBig {
+		return nil, ErrConvertedTooLarge
 	}
 	if err := waitErr; err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -202,6 +211,51 @@ const memoryTick = 250 * time.Millisecond
 
 // ErrConverterOverMemory is a converter ended for exceeding its memory ceiling.
 var ErrConverterOverMemory = errors.New("the converter used more memory than Nib allows, so it was stopped")
+
+// outputCeiling is the size at which a RUNNING converter's output is cut off (a variable so a test can lower it), and
+// outputTick how often it is looked at. Between two looks a fast writer can pass the ceiling by what it writes in one
+// tick; that overshoot is bounded and the alternative was no bound until the process ended.
+var (
+	outputCeiling int64 = maxConvertedBytes
+	outputTick          = 250 * time.Millisecond
+)
+
+// watchOutputSize kills the converter's group when the file it is writing passes ceiling. pick is the same function
+// the result is read with, asked every tick (a path that does not exist yet is not over the ceiling). stop ends the
+// watch and reports whether it fired.
+func watchOutputSize(pgid int, pick func() string, ceiling int64, tick time.Duration) (stop func() bool) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	var mu sync.Mutex
+	fired := false
+	go func() {
+		defer safe.Recover("converter output watchdog")
+		defer close(finished)
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if fi, err := os.Stat(pick()); err == nil && fi.Size() > ceiling {
+					mu.Lock()
+					fired = true
+					mu.Unlock()
+					killGroup(pgid)
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() bool {
+		once.Do(func() { close(done); <-finished })
+		mu.Lock()
+		defer mu.Unlock()
+		return fired
+	}
+}
 
 // maxConvertedBytes bounds what a converter may hand back. The server's open cap (`maxPDFBytes`, ADR-008)
 // is the same figure and is still applied where the document is installed; this one stops the read.
