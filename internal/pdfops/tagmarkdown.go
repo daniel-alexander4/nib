@@ -240,7 +240,8 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	if len(imageGroups) != len(figures) {
 		return fmt.Errorf("pdfops: page %d paints %d picture(s) and the structure describes %d — refusing to tag content by position when the two do not correspond", pageNr, len(imageGroups), len(figures))
 	}
-	figured := map[int]bool{} // groups that became a Figure, so the artifact sweep leaves them
+	figured := map[int]bool{}                // groups that became a Figure, so the artifact sweep leaves them
+	cellElem := map[int]*types.IndirectRef{} // a table cell's TD or TH by its block, for a picture that sits in it
 	nextFig := 0
 	emitFigure := func() error {
 		f, g := figures[nextFig], groups[imageGroups[nextFig]]
@@ -248,7 +249,13 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		if f.Alt == "" {
 			return nil // decorative: the artifact sweep below marks it
 		}
-		mcid, elemRef, err := addMarkedElementUnder(ctx, tree, pageNr, "Figure", nil)
+		var inCell *types.IndirectRef // a picture in a table cell is the cell's child (/pending 938), not the Table's sibling
+		if f.Cell != 0 {
+			if inCell = cellElem[f.Cell]; inCell == nil {
+				return fmt.Errorf("pdfops: a picture sits in table cell %d and that cell has no element — refusing to tag it by position", f.Cell)
+			}
+		}
+		mcid, elemRef, err := addMarkedElementUnder(ctx, tree, pageNr, "Figure", inCell)
 		if err != nil {
 			return err
 		}
@@ -334,6 +341,9 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		mcid, elemRef, aerr := addMarkedElementUnder(ctx, tree, pageNr, structTypeFor(role), parent)
 		if aerr != nil {
 			return aerr
+		}
+		if role.Kind == mdpdf.RoleTableCell {
+			cellElem[role.Block] = elemRef
 		}
 		if role.Kind == mdpdf.RoleTableCell && role.Head {
 			// The header row heads its columns (PDF/UA 7.5): Scope through the one writer of a Table attribute.
