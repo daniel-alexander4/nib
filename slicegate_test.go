@@ -35,8 +35,17 @@ func TestEveryCommitTouchingATriggerPathRecordsTheSliceGate(t *testing.T) {
 	if err := exec.Command("git", "rev-parse", "--is-inside-work-tree").Run(); err != nil {
 		t.Skip("not a git work tree (a release tarball, or a vendored copy)")
 	}
-	// The baseline: the commit this check landed in. Everything from here on complies.
-	const baseline = "8074859"
+	// The baseline: the commit just before the one this check landed in, found by the FILE and not by a hash.
+	// A hash is a claim about history that a rewrite (`fixcommits` re-stamps every commit) silently falsifies: the
+	// literal `8074859` stopped being an ancestor of HEAD, the range became 1,720 commits, and this test judged
+	// September 2026 as if the rule had always held (/pending 950). The commit that ADDED this file is in every
+	// history that has the file, whatever its hash is now. Everything after it complies.
+	added, err := exec.Command("git", "log", "--diff-filter=A", "--format=%H", "--", "slicegate_test.go").Output()
+	if err != nil || len(strings.Fields(string(added))) == 0 {
+		t.Skipf("cannot find the commit that added this check (a shallow clone, or a copy without its history): %v", err)
+	}
+	adders := strings.Fields(string(added))
+	baseline := adders[len(adders)-1] + "^"
 	out, err := exec.Command("git", "log", "--format=%H", baseline+"..HEAD").Output()
 	if err != nil {
 		t.Skipf("cannot read the log from %s (a shallow clone, or a rebased history): %v", baseline, err)
