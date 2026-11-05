@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html/charset"
 
@@ -80,7 +81,7 @@ func (p *packagePictures) add(names []string, typ string, body []byte) {
 }
 
 func (p *packagePictures) resolver(base string) func(string) (string, bool) {
-	return func(src string) (string, bool) {
+	lookup := func(src string) (string, bool) {
 		if u, ok := p.byName[src]; ok {
 			return u, true
 		}
@@ -89,10 +90,28 @@ func (p *packagePictures) resolver(base string) func(string) (string, bool) {
 				return u, true
 			}
 		}
-		if rest, ok := strings.CutPrefix(src, "cid:"); ok {
-			if u, ok := p.byName["cid:"+rest]; ok {
+		if len(src) >= 4 && strings.EqualFold(src[:4], "cid:") { // the scheme is case-insensitive
+			if u, ok := p.byName["cid:"+src[4:]]; ok {
 				return u, true
 			}
+		}
+		return "", false
+	}
+	return func(src string) (string, bool) {
+		if u, ok := lookup(src); ok {
+			return u, true
+		}
+		// A reference is not always spelled as the part's own name (/pending 944 d): a `?query` or `#fragment` on it,
+		// and a percent-escape the name was stored without.
+		name := src
+		if i := strings.IndexAny(name, "?#"); i >= 0 {
+			name = name[:i]
+		}
+		if u, err := url.PathUnescape(name); err == nil {
+			name = u
+		}
+		if name != src {
+			return lookup(name)
 		}
 		return "", false
 	}
@@ -178,13 +197,26 @@ func walkMIME(h func(string) string, body io.Reader, depth int, parts *[]mimePar
 	}
 	data, err := decodePart(body, h("Content-Transfer-Encoding"))
 	if err != nil {
-		return err
+		if errors.Is(err, ErrPackageTooBig) {
+			return err
+		}
+		// One damaged leaf (a base64 body with a bad character) is a part with no body, not a message nobody can
+		// print: the page and the other pictures stay (/pending 944 b).
+		*parts = append(*parts, mimePart{typ: typ, location: strings.TrimSpace(h("Content-Location")), disp: disp,
+			cid: strings.Trim(strings.TrimSpace(h("Content-ID")), "<>")})
+		return nil
 	}
 	if *total += len(data); *total > packageAllBytes {
 		return ErrPackageTooBig
 	}
 	if typ == "text/html" || typ == "text/plain" {
-		if cs := params["charset"]; cs != "" {
+		cs := params["charset"]
+		if cs == "" && !utf8.Valid(data) {
+			// MIME's default is us-ascii, and mail that names no charset and is not UTF-8 is, in practice, Windows-1252
+			// (/pending 944 e): read it so, rather than print replacement characters.
+			cs = "windows-1252"
+		}
+		if cs != "" {
 			if r, cerr := charset.NewReaderLabel(cs, bytes.NewReader(data)); cerr == nil {
 				if conv, rerr := io.ReadAll(io.LimitReader(r, packagePartBytes*2)); rerr == nil {
 					data = conv
@@ -277,7 +309,7 @@ func epubToHTML(data []byte) ([]byte, error) {
 	members := map[string]int{}
 	files := a.Files()
 	for i, f := range files {
-		members[f.Name] = i
+		members[path.Clean(f.Name)] = i // `./OEBPS/x.xhtml` and `OEBPS//x.xhtml` are the member the manifest names
 	}
 	read := func(name string, max int64) ([]byte, bool) {
 		i, ok := members[name]
