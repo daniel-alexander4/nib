@@ -169,7 +169,7 @@ func ConvertStructuredWithOptions(md []byte, base *Faces, fallbacks []Font, opts
 	st := Structure{Pages: make([][]Role, len(l.runs)), Figures: make([][]Figure, len(l.runs))}
 	for i, page := range l.figs {
 		for _, f := range page {
-			st.Figures[i] = append(st.Figures[i], Figure{Before: f.before, Alt: f.alt})
+			st.Figures[i] = append(st.Figures[i], Figure{Before: f.before, Alt: f.alt, Cell: f.cell})
 		}
 	}
 	for i, page := range l.runs {

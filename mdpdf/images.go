@@ -36,6 +36,7 @@ type figure struct {
 	path       string
 	alt        string
 	before     int // the number of text runs already drawn on its page: where it sits in reading order
+	cell       int // the block ordinal of the table cell it sits in, 0 when it is not in one
 }
 
 // Figure is a picture's place in a page's reading order, as the tagger needs it: Before is how many of the page's text
@@ -43,6 +44,9 @@ type figure struct {
 type Figure struct {
 	Before int
 	Alt    string
+	// Cell is the Role.Block of the table cell the picture sits in, 0 when it is not in a cell: the tagger makes the
+	// Figure a child of that cell's TD, and not a sibling of the Table.
+	Cell int
 }
 
 // resolveImage turns an image destination written in a template into a file under dir, or refuses it. Only a relative
@@ -168,4 +172,52 @@ func (l *layout) figure(path string, w, h float64, alt string, indent float64) {
 	pg := len(l.figs) - 1
 	l.figs[pg] = append(l.figs[pg], figure{x: l.g.mx + indent, y: bottom, w: w, h: h, path: path, alt: alt, before: len(l.runs[pg])})
 	l.y = bottom - imageGap
+}
+
+// cellImage is a picture named in a table cell, resolved and measured, before the row's height is known.
+type cellImage struct {
+	path string
+	w, h float64 // points; scaled to the cell once its width is known
+	alt  string
+}
+
+// cellImages resolves every picture under a table cell when the caller asked for images (Options.ImageDir), under the
+// same caps and the same refusals as a picture in a paragraph.
+func (r *renderer) cellImages(n ast.Node) []cellImage {
+	if r.imageDir == "" || r.err != nil {
+		return nil
+	}
+	var out []cellImage
+	var find func(ast.Node)
+	find = func(p ast.Node) {
+		for c := p.FirstChild(); c != nil && r.err == nil; c = c.NextSibling() {
+			im, ok := c.(*ast.Image)
+			if !ok {
+				find(c)
+				continue
+			}
+			if r.nImages++; r.nImages > maxImages {
+				r.err = ErrTooManyImages
+				return
+			}
+			path, pw, ph, err := resolveImage(r.imageDir, string(im.Destination))
+			if err != nil {
+				r.err = err
+				return
+			}
+			out = append(out, cellImage{path: path, w: float64(pw) * imagePtPerPx, h: float64(ph) * imagePtPerPx, alt: r.altText(im)})
+		}
+	}
+	find(n)
+	return out
+}
+
+// fitCell scales a picture DOWN to the width of the cell and to maxH, never up, with its aspect kept.
+func (im *cellImage) fitCell(maxW, maxH float64) {
+	if im.w > maxW {
+		im.h, im.w = im.h*maxW/im.w, maxW
+	}
+	if im.h > maxH {
+		im.w, im.h = im.w*maxH/im.h, maxH
+	}
 }

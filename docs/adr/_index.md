@@ -1041,3 +1041,7 @@ home today.
   — /pending 940: `tempdir.CloseAll` from `Server.Shutdown`; the PDF/A Ghostscript route takes ctx and an `ImportGate` slot; the CLI import is signal-cancelled; the off-Linux gaps are logged at start.
 - [ADR-208](208-p05-phase-close-an-svg-tool-waits-at-the-gate-a-sheet-is-judged-whole-and-a-picture-is-one-part.md) — **P05 phase close: the SVG tool waits at the gate, a style sheet is judged whole, a repeated picture is one part**
   — the SVG route takes an `ImportGate` slot and names its failures; an SVG `<style>` split by a comment is judged whole; PowerPoint pictures paint first, repeat as one part, and the writer observes ctx.
+- [ADR-209](209-a-docx-or-odt-template-is-filled-from-the-paragraphs-text-and-a-split-placeholder-is-joined.md) — **a DOCX or ODT template is filled from the paragraph's text, and a split placeholder is joined**
+  — `FillOfficeTemplate` finds `{{key}}` in a paragraph's joined text (Word splits it across runs), writes the value where it begins, and refuses a tab, field or break inside the braces; the Markdown error types and rules otherwise.
+- [ADR-210](210-a-table-repeats-its-header-on-each-page-as-header-cells-and-a-picture-in-a-cell-is-the-cells-figure.md) — **a table repeats its header on each page as header cells, and a picture in a cell is the cell's figure**
+  — `mdpdf` measures every row first and redraws the header after a page break (skipped when it would not fit with the row); a cell's picture sits under its text and the tagger makes it the TD's child.
