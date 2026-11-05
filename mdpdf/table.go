@@ -25,6 +25,7 @@ type tableCell struct {
 	words []word
 	align east.Alignment
 	lines [][]word
+	imgs  []cellImage // pictures under the text, when Options.ImageDir asked for them
 }
 
 // table lays out a GFM table: columns sized to their text, cells wrapped inside them, a rule round every cell, the
@@ -50,7 +51,10 @@ func (r *renderer) table(t *east.Table, indent float64) {
 				continue
 			}
 			words := r.inlineStyled(cell, 0, isHead)
-			cells = append(cells, &tableCell{words: words, align: cell.Alignment})
+			cells = append(cells, &tableCell{words: words, align: cell.Alignment, imgs: r.cellImages(cell)})
+			if r.err != nil {
+				return
+			}
 		}
 		heads = append(heads, isHead) // goldmark gives the header's cells as direct children of the TableHeader node
 		rows = append(rows, cells)
@@ -77,20 +81,32 @@ func (r *renderer) table(t *east.Table, indent float64) {
 	lead := body.leading()
 	left := r.l.g.mx + indent
 
-	r.l.gap(paraGap)
+	// Every cell is wrapped and every row measured BEFORE any is drawn: a header repeated on a continuation page needs
+	// its height before the body row that forced the break is placed.
+	avail := r.l.g.top() - r.l.g.my
+	rowH := make([]float64, len(rows))
 	for ri, row := range rows {
-		rowLines := 1
+		inner := 0.0 // the tallest cell: its text, then each picture with a gap above it
 		for ci := 0; ci < cols; ci++ {
 			c := cellAt(row, ci)
 			c.lines = wrapWords(c.words, widths[ci]-2*tableCellPad)
-			rowLines = max(rowLines, len(c.lines))
+			cellH := float64(max(len(c.lines), 1)) * lead
+			for i := range c.imgs {
+				c.imgs[i].fitCell(widths[ci]-2*tableCellPad, avail/2)
+				cellH += imageGap + c.imgs[i].h
+			}
+			inner = max(inner, cellH)
 		}
-		h := float64(rowLines)*lead + 2*tableCellPad
-		if h > r.l.g.top()-r.l.g.my {
+		rowH[ri] = inner + 2*tableCellPad
+		if rowH[ri] > avail {
 			r.err = ErrTableRowTooTall
 			return
 		}
-		r.l.need(h)
+	}
+
+	// drawRow draws row ri at the cursor.
+	drawRow := func(ri int) {
+		row, h := rows[ri], rowH[ri]
 		y0 := r.l.y
 		pg := len(r.l.boxes) - 1
 		if ri == 0 || r.l.y == r.l.g.top() {
@@ -102,6 +118,7 @@ func (r *renderer) table(t *east.Table, indent float64) {
 			r.l.boxes[pg] = append(r.l.boxes[pg], box{x - ruleWeight/2, y0 - h, ruleWeight, h})
 			c := cellAt(row, ci)
 			prev := r.l.beginBlock(Role{Kind: RoleTableCell, Table: num, Row: ri, Head: heads[ri]})
+			blk := r.l.blocks
 			if len(c.lines) == 0 {
 				// An empty cell still has to be a cell: a row with fewer cells than its neighbours is not a
 				// regular table, and an element needs a run to be bracketed.
@@ -112,11 +129,39 @@ func (r *renderer) table(t *east.Table, indent float64) {
 				r.l.y = y0 - tableCellPad - lead*float64(li+1)
 				r.l.line(ln, x+tableCellPad+alignOffset(ln, c.align, widths[ci]-2*tableCellPad))
 			}
+			// Pictures sit under the cell's text, each in a figure of its own that names this cell (Figure.Cell).
+			top := y0 - tableCellPad - float64(max(len(c.lines), 1))*lead
+			for _, im := range c.imgs {
+				top -= imageGap + im.h
+				r.l.figs[pg] = append(r.l.figs[pg], figure{x: x + tableCellPad, y: top, w: im.w, h: im.h, path: im.path, alt: im.alt, before: len(r.l.runs[pg]), cell: blk})
+			}
 			r.l.role = prev
 			x += widths[ci]
 		}
 		r.l.boxes[pg] = append(r.l.boxes[pg], box{x - ruleWeight/2, y0 - h, ruleWeight, h})
 		r.l.y = y0 - h
+	}
+
+	// The header row(s) are the leading rows goldmark marked as the header. They repeat at the top of every page the
+	// table continues onto, when that page can hold them and the row that forced the break. The repeat is a header
+	// row again (TH, Scope Column) and not an artifact: the tagger writes one Table element per page, so a
+	// continuation page's Table would otherwise have no header cells at all (ADR-210).
+	headRows, headH := 0, 0.0
+	for headRows < len(rows) && heads[headRows] {
+		headH += rowH[headRows]
+		headRows++
+	}
+	r.l.gap(paraGap)
+	for ri := range rows {
+		h := rowH[ri]
+		if headRows > 0 && ri >= headRows && r.l.y-h < r.l.g.my && r.l.y < r.l.g.top() && headH+h <= avail {
+			r.l.newPage()
+			for hi := 0; hi < headRows; hi++ {
+				drawRow(hi)
+			}
+		}
+		r.l.need(h)
+		drawRow(ri)
 	}
 	r.l.gap(paraGap)
 }

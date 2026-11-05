@@ -1,9 +1,13 @@
 package pdfops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -369,4 +373,145 @@ func sortedKinds(m map[string]int) string {
 		fmt.Fprintf(&b, "%s:%d", k, m[k])
 	}
 	return b.String()
+}
+
+func longMarkdownTable(rows int) string {
+	var b strings.Builder
+	b.WriteString("# Parts\n\n| Name | Qty |\n|------|-----|\n")
+	for i := 0; i < rows; i++ {
+		fmt.Fprintf(&b, "| row%d | %d |\n", i, i)
+	}
+	return b.String()
+}
+
+// /pending 938: the header repeated on a continuation page is a header row again, so every Table element the tagger
+// writes (one a page) has header cells with Scope Column, and none is a table of data cells with no headers.
+func TestEveryPageOfATableCarriesItsHeaderCells(t *testing.T) {
+	out, err := tagMarkdown([]byte(longMarkdownTable(200)), authoringFaces(), markdownFallbackFonts())
+	if err != nil {
+		t.Fatalf("tagMarkdown: %v", err)
+	}
+	kinds := elementKinds(t, out)
+	if kinds["Table"] < 3 || kinds["TH"] != 2*kinds["Table"] || kinds["TD"] != 400 || kinds["TR"] != 201+kinds["Table"]-1 {
+		t.Errorf("tree %v: want 2 TH per Table (one header row each), 400 TD and a TR per row plus a repeated header per continuation", kinds)
+	}
+	for p := 1; p <= kinds["Table"]; p++ {
+		if c := string(pageContentOf(t, out, p)); !strings.Contains(c, "/TH <<") {
+			t.Errorf("page %d has no header cell", p)
+		}
+	}
+}
+
+// The tagged document with a repeated header still passes ua1 (veraPDF), apart from the identification nib refuses.
+func TestADocumentWithARepeatedHeaderPassesUA1(t *testing.T) {
+	vp := verapdfPath()
+	if vp == "" {
+		t.Skip("SKIP (not a pass): veraPDF is absent, so a repeated table header's conformance is UNCHECKED in this run")
+	}
+	tagged, err := ConvertDocToPDF(context.Background(), []byte(longMarkdownTable(200)), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	titled, err := SetTitle(tagged, "938")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := SetLang(titled, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(t.TempDir(), "t.pdf")
+	if err := os.WriteFile(f, final, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := ua1FailedClauses(t, vp, []string{f})["t.pdf"]
+	if got == nil {
+		t.Fatal("veraPDF could not validate the document")
+	}
+	delete(got, "5 t1")
+	if len(got) > 0 {
+		t.Errorf("a table with a repeated header fails %v; only `5 t1` is expected", sortedClauses(got))
+	}
+}
+
+func writeCellImageDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	im := image.NewRGBA(image.Rect(0, 0, 120, 60))
+	for y := 0; y < 60; y++ {
+		for x := 0; x < 120; x++ {
+			im.Set(x, y, color.RGBA{uint8(x * 2), uint8(y * 4), 80, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, im); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "logo.png"), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+const cellImageMarkdown = "# Parts\n\n| Part | Picture |\n|---|---|\n| Gear | ![A steel gear](logo.png) |\n| Bolt | ![](logo.png) |\n| Nut | text only |\n"
+
+// /pending 938: a described picture in a table cell is a Figure that is the CELL's child, a decorative one is an
+// artifact, and the tree is still self-consistent.
+func TestAPictureInATableCellIsAFigureInsideItsCell(t *testing.T) {
+	dir := writeCellImageDir(t)
+	out, err := ConvertDocToPDFWith(context.Background(), []byte(cellImageMarkdown), ".md", mdpdf.Options{ImageDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ClaimsTagging(out) {
+		t.Fatal("the conversion fell back to an untagged render: a picture in a cell could not be tagged")
+	}
+	tree, defects := checkTree(t, out)
+	if len(defects) > 0 {
+		t.Errorf("the tree is not self-consistent: %v", defects)
+	}
+	figs := 0
+	for _, e := range tree.elems {
+		if e.kind != "Figure" {
+			continue
+		}
+		figs++
+		if e.parent == nil || e.parent.kind != "TD" {
+			t.Errorf("a Figure's parent is %v, want TD", e.parent)
+		}
+	}
+	if figs != 1 {
+		t.Errorf("%d Figure element(s), want 1 (the described picture; the other is decorative)", figs)
+	}
+}
+
+func TestADocumentWithAPictureInATableCellPassesUA1(t *testing.T) {
+	vp := verapdfPath()
+	if vp == "" {
+		t.Skip("SKIP (not a pass): veraPDF is absent, so a picture in a table cell's conformance is UNCHECKED in this run")
+	}
+	out, err := ConvertDocToPDFWith(context.Background(), []byte(cellImageMarkdown), ".md", mdpdf.Options{ImageDir: writeCellImageDir(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	titled, err := SetTitle(out, "938")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := SetLang(titled, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(t.TempDir(), "t.pdf")
+	if err := os.WriteFile(f, final, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := ua1FailedClauses(t, vp, []string{f})["t.pdf"]
+	if got == nil {
+		t.Fatal("veraPDF could not validate the document")
+	}
+	delete(got, "5 t1")
+	if len(got) > 0 {
+		t.Errorf("a table with a picture in a cell fails %v; only `5 t1` is expected", sortedClauses(got))
+	}
 }

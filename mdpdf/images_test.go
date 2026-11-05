@@ -130,3 +130,50 @@ func TestAnImageAltTextTakesAPlaceholder(t *testing.T) {
 		t.Errorf("alt %q, %v", l.figs[0][0].alt, err)
 	}
 }
+
+// /pending 938: a picture in a table cell is placed in the cell, under its text, and the row grows to hold it; the
+// figure names the cell's block so the tagger can make it the cell's child.
+func TestAnImageInATableCellIsPlacedInTheCellAndTheRowGrowsToHoldIt(t *testing.T) {
+	dir := writeImages(t)
+	md := "| Logo | Note |\n|---|---|\n| ![The logo](logo.png) | beside |\n| plain | row |\n"
+	_, l, err := convert([]byte(md), nil, nil, Options{ImageDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.figs[0]) != 1 {
+		t.Fatalf("%d figures, want 1", len(l.figs[0]))
+	}
+	f := l.figs[0][0]
+	var cell *run
+	for i := range l.runs[0] {
+		if l.runs[0][i].role.Kind == RoleTableCell && l.runs[0][i].role.Block == f.cell {
+			cell = &l.runs[0][i]
+		}
+	}
+	if f.cell == 0 || cell == nil {
+		t.Fatalf("the figure names cell block %d, which has no run", f.cell)
+	}
+	if cell.role.Row != 1 || cell.role.Head {
+		t.Errorf("the cell is %+v, want the first body row", cell.role)
+	}
+	if f.y+f.h > cell.y {
+		t.Errorf("the picture's top %.1f is not under its cell's text line at %.1f", f.y+f.h, cell.y)
+	}
+	// The next row starts below the picture: no run of row 2 sits at or above the picture's bottom.
+	for _, r := range l.runs[0] {
+		if r.role.Kind == RoleTableCell && r.role.Row == 2 && r.y+float64(r.sty.size) > f.y {
+			t.Errorf("row 2 text at %.1f overlaps the picture (bottom %.1f)", r.y, f.y)
+		}
+	}
+	// Without ImageDir the cell is as it always was: no figure, and a shorter row.
+	_, l2, err := convert([]byte(md), nil, nil, Options{})
+	if err != nil || len(l2.figs[0]) != 0 {
+		t.Fatalf("without ImageDir: %v, %d figures", err, len(l2.figs[0]))
+	}
+	// An image that is refused in a cell is refused by name, as in a paragraph.
+	_, _, err = convert([]byte("| a |\n|---|\n| ![x](../up.png) |\n"), nil, nil, Options{ImageDir: dir})
+	var bad *ImageRefusedError
+	if !errors.As(err, &bad) {
+		t.Errorf("a cell image outside the folder: %v", err)
+	}
+}

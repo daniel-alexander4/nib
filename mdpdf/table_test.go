@@ -135,3 +135,76 @@ func TestATableWithAnEmptyCellKeepsItsShapeAndSplitsAcrossPages(t *testing.T) {
 		t.Errorf("a placeholder in a cell: %q %v", got, err)
 	}
 }
+
+func longTable(rows int) string {
+	var b strings.Builder
+	b.WriteString("| Name | Qty |\n|------|-----|\n")
+	for i := 0; i < rows; i++ {
+		fmt.Fprintf(&b, "| row%d | %d |\n", i, i)
+	}
+	return b.String()
+}
+
+// /pending 938: a table that crosses a page repeats its header row at the top of each continuation page, as header
+// cells again (the tagger writes one Table per page, so each Table needs its own).
+func TestATableHeaderRepeatsOnEveryContinuationPage(t *testing.T) {
+	_, l, err := convertOpts(t, longTable(200), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.runs) < 3 {
+		t.Fatalf("%d page(s): 200 rows should cross at least two page breaks", len(l.runs))
+	}
+	for p, page := range l.runs {
+		var head []string
+		for _, r := range page {
+			if r.role.Kind == RoleTableCell && r.role.Head {
+				head = append(head, r.text)
+				if r.role.Row != 0 {
+					t.Errorf("page %d: a header cell is row %d, want 0", p+1, r.role.Row)
+				}
+			}
+		}
+		if strings.Join(head, "|") != "Name|Qty" {
+			t.Errorf("page %d: header cells %v, want Name|Qty", p+1, head)
+		}
+		// The header is the first thing on the page and the first body row follows it, not overlaps it.
+		if !page[0].role.Head {
+			t.Errorf("page %d does not begin with the header", p+1)
+		}
+	}
+}
+
+// A header row plus the row that forced the break would not fit a page: nothing is repeated, and the table is
+// still laid out (the repeat is an aid, never a refusal).
+func TestAHeaderTooTallToRepeatIsLeftOnItsPage(t *testing.T) {
+	big := strings.Repeat("word ", 420)
+	md := "| " + big + " |\n|---|\n| " + big + " |\n| second |\n"
+	_, l, err := convertOpts(t, md, Options{})
+	if err != nil {
+		t.Fatalf("a table with two tall rows: %v", err)
+	}
+	for p, page := range l.runs {
+		for _, r := range page {
+			if r.role.Kind == RoleTableCell && r.role.Head && p > 0 {
+				t.Errorf("page %d repeats a header that left no room for the row after it", p+1)
+			}
+		}
+	}
+}
+
+// Without a header row (a table whose first row is not marked as one cannot occur in GFM, but a table of header
+// only can) nothing is repeated and nothing breaks.
+func TestATableOfOnlyAHeaderDoesNotRepeatIt(t *testing.T) {
+	_, l, err := convertOpts(t, "| a | b |\n|---|---|\n", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range l.runs {
+		for _, r := range page {
+			if r.role.Kind == RoleTableCell && !r.role.Head {
+				t.Error("a header-only table has a body cell")
+			}
+		}
+	}
+}
