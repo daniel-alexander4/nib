@@ -177,7 +177,7 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 		return nil, ErrOptionsNeedMarkdown
 	}
 	if f.Tool != ToolNone && !FormatAvailable(f) {
-		return nil, missingToolFor(f)
+		return nil, unavailableToolFor(f)
 	}
 
 	convert := func(ctx context.Context) (*ImportResult, error) {
@@ -339,6 +339,16 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 }
 
 // missingToolFor is the sentinel a gated format's absent tool is refused with; MissingToolFor classifies it.
+// unavailableToolFor is why f's tool cannot be used. A browser that was FOUND and cannot print here (a snap-confined
+// build, a root-run sandbox) is `ErrBrowserCannotRender`, which says so; reporting it as "could not find" sent the user to
+// install what they had (/pending 942).
+func unavailableToolFor(f Format) error {
+	if f.Tool == ToolBrowser && browserPath() != "" {
+		return ErrBrowserCannotRender
+	}
+	return missingToolFor(f)
+}
+
 func missingToolFor(f Format) error {
 	switch f.Tool {
 	case ToolLibreOffice:
