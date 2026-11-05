@@ -221,9 +221,11 @@ func TestACancelledReadStopsAtEveryPlaceItLooks(t *testing.T) {
 	}
 	total := probe.calls.Load()
 	const pages, pictures = 2, 2 // ExportPictureTwoPages draws one picture on each page
-	// The places, counted: ExportRead's entry (1), its page loop (2), each picture decoded (2), the pass's end (1),
-	// Read's entry after it (1) and its page loop (2). A place removed is a place a cancel is not seen at.
-	if want := int64(1 + pages + pictures + 1 + 1 + pages); total != want {
+	// The places, counted: ExportRead's entry (1), its page loop (2), each picture decoded (4 apiece: the pass's own look
+	// before it, and the three pdfcpu's renderer takes now that it is handed this context and not Background — /pending
+	// 946 I10), the pass's end (1), Read's entry after it (1) and its page loop (2). A place removed is a place a cancel is
+	// not seen at.
+	if want := int64(1 + pages + 4*pictures + 1 + 1 + pages); total != want {
 		t.Fatalf("Read looked at the context %d times for a %d-page document with %d pictures, want %d", total, pages, pictures, want)
 	}
 	for n := int64(1); n <= total; n++ {
@@ -231,5 +233,20 @@ func TestACancelledReadStopsAtEveryPlaceItLooks(t *testing.T) {
 		if err != context.Canceled || len(d.Blocks) != 0 {
 			t.Fatalf("a cancel at observation %d of %d: %d blocks, err %v — want context.Canceled and no document", n, total, len(d.Blocks), err)
 		}
+	}
+}
+
+// TestTheReaderCountsTheTextDirectionControlsAWriterWillDrop (/pending 947): the page holds three, the report says
+// three, and the count is the model's own (BidiControlsIn), so it is what Clean removes at the writers.
+func TestTheReaderCountsTheTextDirectionControlsAWriterWillDrop(t *testing.T) {
+	d, err := Read(context.Background(), testpdf.ExportBidi().PDF, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Report.BidiControls != 3 || docmodel.BidiControlsIn(d) != 3 {
+		t.Fatalf("Report.BidiControls = %d, model holds %d, want 3; text %q", d.Report.BidiControls, docmodel.BidiControlsIn(d), text(d))
+	}
+	if got := docmodel.Clean(text(d)); strings.ContainsAny(got, "‮⁦") || docmodel.BidiControls(got) != 0 {
+		t.Errorf("Clean left a control in %q", got)
 	}
 }

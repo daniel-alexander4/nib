@@ -1,14 +1,21 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"nib/internal/docmodel"
+	"nib/internal/gate"
+	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/docwrite/wtest"
 	"nib/internal/pdfops"
@@ -163,6 +170,12 @@ func TestTheExportFactsCarryTheTablesWrittenAsText(t *testing.T) {
 	}
 }
 
+func TestTheExportFactsCarryTheTextDirectionControlsRemoved(t *testing.T) {
+	if f := factsOf(docmodel.Report{BidiControls: 3}, false, 0); f.BidiControls != 3 {
+		t.Errorf("BidiControls = %d, want 3", f.BidiControls)
+	}
+}
+
 func exportSVG(t *testing.T, base string, c *http.Client, csrf, id, query string) (int, []byte, http.Header) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, base+"/api/export/svg?"+query, nil)
@@ -248,5 +261,107 @@ func TestThePowerPointRouteRefusesADocumentWithNothingToPlace(t *testing.T) {
 	}
 	if code, _, _ := exportDocument(t, ts.URL, c, csrf, dr.ID, "format=ppt"); code != 400 {
 		t.Errorf("unknown format = %d", code)
+	}
+}
+
+// ── /pending 948 (b): the SVG route's 503 and its moved-revision 409 ──
+
+func svgRouteDoc(t *testing.T) (*httptest.Server, *Server, *http.Client, string, string) {
+	t.Helper()
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dr := uploadPDF(t, ts.URL, c, csrf, "doc.pdf", exportFixture(t, "covered"))
+	return ts, srv, c, csrf, dr.ID
+}
+
+// A full queue at the converters' gate is a 503 `busy`, nothing started: the slot is held by the test, so the route's own
+// request finds none and no queue to wait in. The control is the same request with the slot free.
+func TestTheSVGRouteAnswersBusyWhenTheGateIsFull(t *testing.T) {
+	if !pdfops.PdftocairoAvailable() {
+		t.Skip("pdftocairo (poppler) not installed")
+	}
+	ts, _, c, csrf, id := svgRouteDoc(t)
+	g := gate.New(1, 0)
+	useGate(t, g)
+	release, err := g.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, body, _ := exportSVG(t, ts.URL, c, csrf, id, "page=1")
+	var e map[string]string
+	_ = json.Unmarshal(body, &e)
+	if code != 503 || e["cause"] != "busy" {
+		t.Errorf("a full gate = %d %s, want 503 cause busy", code, body)
+	}
+	release()
+	if code, _, _ := exportSVG(t, ts.URL, c, csrf, id, "page=1"); code != 200 {
+		t.Errorf("control: the same request with the slot free = %d, want 200", code)
+	}
+}
+
+// A document that moved while its page was being drawn is a 409 and the drawing is not sent. The request waits at the gate
+// (the test holds the one slot), the document's count moves, the slot is released, and the draw finishes against a
+// document that is no longer the one the request named.
+func TestTheSVGRouteRefusesADocumentThatMovedDuringTheDraw(t *testing.T) {
+	if !pdfops.PdftocairoAvailable() {
+		t.Skip("pdftocairo (poppler) not installed")
+	}
+	ts, srv, c, csrf, id := svgRouteDoc(t)
+	g := gate.New(1, 4)
+	useGate(t, g)
+	release, err := g.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		code int
+		body []byte
+	}
+	done := make(chan answer, 1)
+	go func() {
+		code, body, _ := exportSVG(t, ts.URL, c, csrf, id, "page=1")
+		done <- answer{code, body}
+	}()
+	// The request has read the document's revision before it reached the gate; wait until it is queued there.
+	deadline := time.Now().Add(10 * time.Second)
+	for g.Queued() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the request never reached the gate")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	srv.mu.Lock()
+	for _, d := range srv.docs {
+		d.rev++
+	}
+	srv.mu.Unlock()
+	release()
+	select {
+	case a := <-done:
+		if a.code != 409 || bytes.Contains(a.body, []byte("<svg")) {
+			t.Errorf("moved during the draw = %d %.100s, want 409 and no drawing", a.code, a.body)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("no answer")
+	}
+}
+
+// With no pdftocairo on PATH the route is a 503 `missing-tool` that names the tool. The tool is looked up once per
+// process, so this runs in a child that starts with an empty PATH: `go test` in the parent has usually found it already.
+func TestTheSVGRouteNamesAMissingTool(t *testing.T) {
+	if os.Getenv("NIB_SVG_NOTOOL_CHILD") == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTheSVGRouteNamesAMissingTool$", "-test.count=1")
+		cmd.Env = append(os.Environ(), "NIB_SVG_NOTOOL_CHILD=1", "PATH="+t.TempDir())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("the child (empty PATH) failed: %v\n%s", err, out)
+		}
+		return
+	}
+	ts, _, c, csrf, id := svgRouteDoc(t)
+	code, body, _ := exportSVG(t, ts.URL, c, csrf, id, "page=1")
+	var e map[string]string
+	_ = json.Unmarshal(body, &e)
+	if code != 503 || e["cause"] != "missing-tool" || !strings.Contains(e["error"], "pdftocairo") {
+		t.Errorf("no tool = %d %s, want 503 cause missing-tool naming pdftocairo", code, body)
 	}
 }

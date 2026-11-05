@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -260,7 +262,7 @@ func TestExportAPictureThatCannotBeRenderedDoesNotCostItsNeighbours(t *testing.T
 		t.Fatalf("the plain neighbour of an unrenderable stencil is carried: %d figures with data (%+v)", carried, p.Figures)
 	}
 	seen := 0
-	skipped, err := pdfread.ExtractImagesEach(pdf, nil, 1<<40, func(model.Image) error { seen++; return nil })
+	skipped, err := pdfread.ExtractImagesEach(context.Background(), pdf, nil, 1<<40, func(model.Image) error { seen++; return nil })
 	if err != nil || seen+skipped != 2 {
 		t.Fatalf("seen %d skipped %d err %v, want the two images accounted for", seen, skipped, err)
 	}
@@ -276,12 +278,12 @@ func TestExportPixelCapStopsBeforeTheDecode(t *testing.T) {
 		}
 	}
 	seen := 0
-	skipped, err := pdfread.ExtractImagesEach(pdf, nil, 3, func(model.Image) error { seen++; return nil })
+	skipped, err := pdfread.ExtractImagesEach(context.Background(), pdf, nil, 3, func(model.Image) error { seen++; return nil })
 	if err != nil || seen != 0 || skipped != 1 {
 		t.Fatalf("2x2 image under a cap of 3 px: seen %d skipped %d err %v, want 0 seen, 1 skipped", seen, skipped, err)
 	}
 	seen = 0
-	if _, err := pdfread.ExtractImagesEach(pdf, nil, 4, func(model.Image) error { seen++; return nil }); err != nil || seen == 0 {
+	if _, err := pdfread.ExtractImagesEach(context.Background(), pdf, nil, 4, func(model.Image) error { seen++; return nil }); err != nil || seen == 0 {
 		t.Fatalf("2x2 image at a cap of 4 px (the control): seen %d err %v", seen, err)
 	}
 }
@@ -411,5 +413,26 @@ func TestAFauxBoldRunIsBoldInTheExport(t *testing.T) {
 	r.bold = true
 	if !r.drawsBold() {
 		t.Fatal("a bold font is bold at Tr 0")
+	}
+}
+
+// A cancelled pass stops between pictures and says so, instead of finishing the page and leaving the caller to find the
+// context's error afterwards (/pending 946 I10). The control: the same document, not cancelled, hands its picture over.
+func TestAnImagePassObservesItsContextBetweenPictures(t *testing.T) {
+	var pdf []byte
+	for _, f := range testpdf.ExportPictures() {
+		if f.Name == "picture-twice" {
+			pdf = f.PDF
+		}
+	}
+	seen := 0
+	if _, err := pdfread.ExtractImagesEach(context.Background(), pdf, nil, 1<<40, func(model.Image) error { seen++; return nil }); err != nil || seen == 0 {
+		t.Fatalf("control: seen %d err %v", seen, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	seen = 0
+	if _, err := pdfread.ExtractImagesEach(ctx, pdf, nil, 1<<40, func(model.Image) error { seen++; return nil }); !errors.Is(err, context.Canceled) || seen != 0 {
+		t.Fatalf("a cancelled pass: seen %d err %v, want 0 pictures and context.Canceled", seen, err)
 	}
 }

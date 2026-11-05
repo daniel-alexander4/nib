@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -346,6 +347,19 @@ func (s *Server) idleGraceElapsed(gen uint64) {
 // trace that the interleaving above happened on a user's machine.
 const idleExitStoodDownMsg = "idle-exit grace ended with a window open; not exiting"
 
+// writeHandoff puts one hand-off on a window's stream; false says the write failed and the stream is over.
+func writeHandoff(w io.Writer, flusher http.Flusher, ev handoffNote) bool {
+	payload, err := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom, Seq: ev.seq})
+	if err != nil {
+		return false
+	}
+	if _, err := w.Write(append(append([]byte("event: handoff\ndata: "), payload...), '\n', '\n')); err != nil {
+		return false
+	}
+	flusher.Flush()
+	return true
+}
+
 // windowArrived is a window connecting: cancel any grace and count the window, under ONE hold of
 // `idle.mu`. Returns the new count, and the hand-off sequence the window's stream starts from.
 //
@@ -359,14 +373,13 @@ const idleExitStoodDownMsg = "idle-exit grace ended with a window open; not exit
 // it is counted. The stream used to take its starting sequence after this returned: a hand-off landing
 // in between was counted as taken by this window and was already behind it — the launch opened no
 // window and this one never showed the document, or never said the refusal.
-func (s *Server) windowArrived() (n int64, heardFrom uint64) {
+func (s *Server) windowArrived() (n int64, heardFrom uint64, owed []handoffNote) {
 	s.idle.mu.Lock()
 	t, at := s.stopIdleExitLocked(idleExitCauseWindow)
 	if s.idle.arrivedHook != nil {
 		s.idle.arrivedHook()
 	}
-	heardFrom = s.push.claim()
-	n = s.windows.n.Add(1)
+	heardFrom, owed, n = s.push.arrive(&s.windows.n)
 	counted := s.idle.countedHook
 	s.idle.mu.Unlock()
 	if counted != nil {
@@ -374,7 +387,7 @@ func (s *Server) windowArrived() (n int64, heardFrom uint64) {
 	}
 	s.push.arrived()
 	logIdleCancel(t, at, idleExitCauseWindow)
-	return n, heardFrom
+	return n, heardFrom, owed
 }
 
 // keepAliveForHandoff is the hand-off's cancel: it stops a running grace exactly as
@@ -508,10 +521,10 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("retry: " + strconv.Itoa(int(sseRetry/time.Millisecond)) + "\n\n"))
 	flusher.Flush()
 	// Cancel then count, under one hold of `idle.mu` — see windowArrived for why both halves.
-	n, lastHandoff := s.windowArrived()
+	n, lastHandoff, owed := s.windowArrived()
 	log.Printf("%s (%d open)", windowConnectedMsg, n)
 	defer func() {
-		left := s.windows.n.Add(-1)
+		left := s.push.depart(&s.windows.n, lastHandoff)
 		log.Printf("%s (%d open)", windowGoneMsg, left)
 		if left == 0 {
 			// Before the grace is armed, so a launch that cancels it finds the record
@@ -621,16 +634,19 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		}
 		// A launch handed this instance a document (ADR-086). Every one is sent, by sequence: the
 		// emit-on-difference rule above would swallow the second of two identical outcomes.
-		for _, ev := range s.push.since(lastHandoff) {
-			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom, Seq: ev.seq})
-			if hoErr != nil {
+		// A conversion announced while no window was open is owed to the first that connects, and is sent once, ahead of
+		// the rest and without moving `lastHandoff` (/pending 946 I2).
+		for _, ev := range owed {
+			if !writeHandoff(w, flusher, ev) {
 				return
 			}
-			if _, err := w.Write(append(append([]byte("event: handoff\ndata: "), hoPayload...), '\n', '\n')); err != nil {
+		}
+		owed = nil
+		for _, ev := range s.push.since(lastHandoff) {
+			if !writeHandoff(w, flusher, ev) {
 				return
 			}
 			lastHandoff = ev.seq
-			flusher.Flush()
 		}
 		// The open vault put itself back over an older copy (ADR-159). The state is the vault's and
 		// is sent on difference, so a window that connects afterwards hears the last one too — the

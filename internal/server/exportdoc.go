@@ -67,6 +67,7 @@ type ExportFacts struct {
 	OffPage             int          `json:"offPage"`
 	UnreadGlyphs        int          `json:"unreadGlyphs"`
 	TablesAsText        int          `json:"tablesAsText"`
+	BidiControls        int          `json:"bidiControls"`
 	Signed              bool         `json:"signed"`
 	UnappliedRedactions int          `json:"unappliedRedactions"`
 	Truncated           bool         `json:"truncated"`
@@ -84,7 +85,7 @@ func factsOf(rep docmodel.Report, signed bool, unapplied int) ExportFacts {
 	f := ExportFacts{
 		V: 1, FlaggedPages: []exportPage{}, ScannedPages: []int{}, Source: rep.Source, DroppedLinks: sum(rep.DroppedLinks), PlaceholderImages: sum(rep.Placeholders),
 		CoveredText: rep.CoveredText + rep.MaybeCovered, HiddenText: rep.HiddenText + rep.HiddenLayer, OffPage: rep.OffPage,
-		UnreadGlyphs: rep.UnreadGlyphs, TablesAsText: rep.TablesAsText, Signed: signed, UnappliedRedactions: unapplied,
+		UnreadGlyphs: rep.UnreadGlyphs, TablesAsText: rep.TablesAsText, BidiControls: rep.BidiControls, Signed: signed, UnappliedRedactions: unapplied,
 	}
 	for _, p := range rep.FlaggedPages {
 		f.FlaggedPages = append(f.FlaggedPages, exportPage{Page: p.Page, Cause: p.Cause})
@@ -338,6 +339,7 @@ func slidesOf(ctx context.Context, data []byte, title string) (body []byte, rep 
 		}
 		return nil, rep, false, errSlidesUnwritten
 	}
+	rep.BidiControls = counts.BidiControls
 	if counts.DroppedLinks > 0 && len(rep.DroppedLinks) == 0 {
 		rep.DroppedLinks["not-carried"] = counts.DroppedLinks
 	}

@@ -468,7 +468,7 @@ func joinPictures(ctx context.Context, pdf []byte, pages []int, out []ExportPage
 	// `not-extracted` (the export never fails for a picture). It used to redo a failed pass a page at a time, reading and
 	// optimizing the whole file again for each (/pending 941 #3). A pass that cannot start (a budget refusal) fails every
 	// figure the same way.
-	_, _ = pdfread.ExtractImagesEach(pdf, sel, int64(exportImagePixels), digest)
+	_, _ = pdfread.ExtractImagesEach(ctx, pdf, sel, int64(exportImagePixels), digest)
 	if err := ctx.Err(); err != nil {
 		return err // a cancelled pass is not a picture that could not be read
 	}

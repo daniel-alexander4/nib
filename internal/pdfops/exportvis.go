@@ -70,6 +70,18 @@ func inkBox(r textRun) [4]float64 {
 	return [4]float64{x0, r.y, x1, r.y + 0.7*r.size}
 }
 
+// reachBox is where a run may be on the page, for the off-page test: its box when it reads left to right, and for a
+// turned or vertical run the square inkBox draws about its origin. runBox extends x by the baseline's length, which is
+// not where a turned run's body is — a run set upward from below the page edge has its origin off the page and most of
+// it on it, and was counted off-page and left out (/pending 946 I11). A run is off the page only when the whole square
+// is.
+func reachBox(r textRun) [4]float64 {
+	if r.rotated || r.vertical {
+		return inkBox(r)
+	}
+	return runBox(r)
+}
+
 func boxHolds(outer, in [4]float64) bool {
 	const tol = 0.5
 	return in[0] >= outer[0]-tol && in[1] >= outer[1]-tol && in[2] <= outer[2]+tol && in[3] <= outer[3]+tol
@@ -142,7 +154,7 @@ func visibleRuns(pr *pageRuns, vis [4]float64) ExportVisibility {
 		case r.layerOff:
 			v.HiddenLayer++
 			continue
-		case !boxesMeet(runBox(r), vis):
+		case !boxesMeet(reachBox(r), vis):
 			v.OffPage++
 			continue
 		}

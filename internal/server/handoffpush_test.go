@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -301,5 +303,103 @@ func TestAConversionQueuedWhileLockedIsToldToTheWindowAtUnlock(t *testing.T) {
 	ev, ok := nextHandoff(t, lines, streamWait(t))
 	if !ok || ev.Result != "opened" || ev.ImportedFrom != "queued.png" {
 		t.Fatalf("the window heard %+v (arrived %v), want the queued file's conversion", ev, ok)
+	}
+}
+
+// ── /pending 946 (a): the window count, the hold and the departure share one lock ──
+
+func conv(p *handoffPush, n *atomic.Int64, name string) int64 { return p.tell(n, "opened", "", name) }
+
+// A conversion announced with no window open is owed to the first window and comes back APART from the stream's start:
+// nothing announced since is replayed (I2), and it is owed once (I1).
+func TestAHeldConversionIsOwedOnceAndReplaysNothingElse(t *testing.T) {
+	var p handoffPush
+	var n atomic.Int64
+	conv(&p, &n, "a.docx") // seq 1, held: no window
+	n.Add(1)               // a window already open for the next two
+	p.tell(&n, "refused", "no", "")
+	p.tell(&n, "focused", "", "")
+	n.Add(-1)
+	from, owed, count := p.arrive(&n)
+	if len(owed) != 1 || owed[0].importedFrom != "a.docx" || count != 1 || from != 3 {
+		t.Fatalf("arrive: from %d, owed %+v, count %d; want from 3 (the refusal and the focus are NOT replayed), one owed", from, owed, count)
+	}
+	if got := p.since(from); len(got) != 0 {
+		t.Errorf("since(from) = %+v, want nothing", got)
+	}
+	n.Add(-1)
+	if _, again, _ := p.arrive(&n); len(again) != 0 {
+		t.Errorf("the next window was owed %+v again", again)
+	}
+}
+
+// A window counted between the decision and the hold used to leave the note delivered by sequence AND still held, so a
+// reload replayed it (I1). Whichever side of the other each lands on, the conversion reaches the window exactly once and
+// nothing stays held while a window is open.
+func TestAWindowArrivingWhileAConversionIsAnnouncedHearsItExactlyOnce(t *testing.T) {
+	for i := 0; i < 3000; i++ {
+		var p handoffPush
+		var n atomic.Int64
+		var from uint64
+		var owed []handoffNote
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); conv(&p, &n, "a.docx") }()
+		go func() { defer wg.Done(); from, owed, _ = p.arrive(&n) }()
+		wg.Wait()
+		heard := len(owed) + len(p.since(from))
+		if heard != 1 {
+			t.Fatalf("run %d: the conversion reached the window %d times (owed %d, since %d)", i, heard, len(owed), len(p.since(from)))
+		}
+		for _, ev := range p.recent {
+			if ev.held {
+				t.Fatalf("run %d: a note stays held with a window open: it would be replayed to the next", i)
+			}
+		}
+	}
+}
+
+// The last window leaving takes with it a conversion it was never sent (I3): held again, for the next window. One it had
+// heard is not.
+func TestTheLastWindowLeavingHoldsWhatItNeverHeard(t *testing.T) {
+	var p handoffPush
+	var n atomic.Int64
+	n.Add(1)
+	conv(&p, &n, "late.docx") // announced to a window that is about to go
+	if left := p.depart(&n, 0); left != 0 {
+		t.Fatalf("left = %d", left)
+	}
+	if !p.recent[0].held {
+		t.Error("a conversion the last window never heard was not held for the next")
+	}
+	n.Store(1)
+	p.recent[0].held = false
+	p.depart(&n, 1)
+	if p.recent[0].held {
+		t.Error("control: a conversion the window had heard was held again")
+	}
+	n.Store(2)
+	p.recent[0].held = false
+	p.depart(&n, 0)
+	if p.recent[0].held {
+		t.Error("control: a window leaving while another is open held a note")
+	}
+}
+
+// The bound drops the oldest note that is not owed, never an owed conversion while a heard refusal could go (the
+// eviction half of 946 (a)).
+func TestTheBoundKeepsTheConversionsOwedToAWindow(t *testing.T) {
+	var p handoffPush
+	var none, one atomic.Int64
+	one.Store(1)
+	conv(&p, &none, "first.docx") // oldest, held
+	for i := 0; i < handoffKept; i++ {
+		p.tell(&one, "focused", "", "") // heard by the open window
+	}
+	if len(p.recent) != handoffKept {
+		t.Fatalf("%d notes kept, want the bound %d", len(p.recent), handoffKept)
+	}
+	if !p.recent[0].held || p.recent[0].importedFrom != "first.docx" {
+		t.Errorf("the owed conversion was evicted: %+v", p.recent[0])
 	}
 }

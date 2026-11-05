@@ -473,3 +473,69 @@ func TestACancelAtEveryObservationStopsTheWriter(t *testing.T) {
 		t.Errorf("only %d observations for %d pages: the per-slide and pre-zip checks are not both there", probe.calls, len(doc.Pages))
 	}
 }
+
+// TestTextDirectionControlsAreCountedWhereTheyAreDropped (/pending 947): the slide text goes through docmodel.Clean, and
+// the count is how many it removed — in a table cell as on the page, and none for the plain marks it keeps.
+func TestTextDirectionControlsAreCountedWhereTheyAreDropped(t *testing.T) {
+	r := pdfops.MapRect{0, 0, 1, 1}
+	p := pdfops.ExportParagraph{Spans: []pdfops.ExportSpan{{Text: "inv‮oice"}, {Text: "⁦x⁩ ‏"}}, Rect: r, Size: 10}
+	cell := pdfops.ExportParagraph{Spans: []pdfops.ExportSpan{{Text: "c‭"}}, Rect: r, Size: 10}
+	tbl := pdfops.ExportTable{Rows: [][]pdfops.ExportCell{{{Paragraphs: []pdfops.ExportParagraph{cell}}}}}
+	out, c, err := Write(context.Background(), pdfops.ExportDoc{Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100, Paragraphs: []pdfops.ExportParagraph{p}, Tables: []pdfops.ExportTable{tbl}}}}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BidiControls != 4 {
+		t.Errorf("BidiControls = %d, want 4", c.BidiControls)
+	}
+	if x := string(wtest.Open(t, out).Files["ppt/slides/slide1.xml"]); strings.ContainsAny(x, "‮⁦⁩‭") {
+		t.Error("a control reached the slide, so the count describes a drop that did not happen")
+	}
+}
+
+// ── /pending 948 (c): language, direction and line breaks ──
+
+func slideXML(t *testing.T, doc pdfops.ExportDoc) string {
+	t.Helper()
+	out, _, err := Write(context.Background(), doc, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(wtest.Open(t, out).Files["ppt/slides/slide1.xml"])
+}
+
+func oneParagraph(lang string, ps ...pdfops.ExportParagraph) pdfops.ExportDoc {
+	return pdfops.ExportDoc{Lang: lang, Pages: []pdfops.ExportPage{{Page: 1, Width: 100, Height: 100, Paragraphs: ps}}}
+}
+
+// The runs carry the catalog's language and "und" when there is none, never a language nobody said; a Hebrew paragraph is
+// right to left and against the right edge, a Latin one is untouched (the control) and a document's Latin paragraph in a
+// Hebrew document stays left to right.
+func TestTheSlidesCarryTheLanguageAndTheDirectionOfTheirText(t *testing.T) {
+	r := pdfops.MapRect{0, 0, 1, 1}
+	heb := para("שלום עולם", false, r, 10)
+	lat := para("hello world", false, r, 10)
+	x := slideXML(t, oneParagraph("he-IL", heb))
+	if !strings.Contains(x, `lang="he-IL"`) || strings.Contains(x, `lang="en-US"`) {
+		t.Errorf("language: %s", x)
+	}
+	if !strings.Contains(x, `<a:pPr algn="r" rtl="1"/>`) {
+		t.Errorf("a Hebrew paragraph is not right to left: %s", x)
+	}
+	y := slideXML(t, oneParagraph("", lat))
+	if strings.Contains(y, `rtl="1"`) || !strings.Contains(y, `lang="und"`) || strings.Contains(y, `lang="en-US"`) {
+		t.Errorf("a Latin paragraph with no /Lang: %s", y)
+	}
+	if z := slideXML(t, oneParagraph("he", lat)); strings.Contains(z, `rtl="1"`) {
+		t.Errorf("a Latin paragraph in a Hebrew document was set right to left: %s", z)
+	}
+}
+
+// A line break inside a paragraph's text is a break on the slide, and no text is lost around it.
+func TestALineBreakInTheTextIsABreakOnTheSlide(t *testing.T) {
+	p := para("first second", false, pdfops.MapRect{0, 0, 1, 1}, 10)
+	x := slideXML(t, oneParagraph("en", p))
+	if !strings.Contains(x, "<a:br>") || !strings.Contains(x, ">first<") || !strings.Contains(x, ">second<") || strings.Contains(x, "first\nsecond") {
+		t.Errorf("the break: %s", x)
+	}
+}

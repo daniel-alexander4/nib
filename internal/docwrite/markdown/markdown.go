@@ -195,7 +195,9 @@ func spans(sp []docmodel.Span) string {
 	ps := make([]piece, len(merged))
 	for i, s := range merged {
 		if strings.TrimSpace(docmodel.Clean(s.Text)) == "" {
-			ps[i] = piece{blank: s.Text != "", sp: s}
+			// blank is whitespace that SURVIVES Clean: a span of only a byte-order mark or a bidi control is nothing, and must not
+			// become the space between two styled runs (`foo`, U+FEFF, `bar`) (/pending 946 I4).
+			ps[i] = piece{blank: docmodel.Clean(s.Text) != "", sp: s}
 			continue
 		}
 		p := piece{sp: s}
@@ -204,6 +206,18 @@ func spans(sp []docmodel.Span) string {
 		p.e = escape(docmodel.OneLine(s.Text))
 		p.style = s.Bold || s.Italic
 		ps[i] = p
+	}
+	// nextIsLink is whether the next piece with text, from index j, is written as a link with no space before it.
+	nextIsLink := func(j int) bool {
+		for _, q := range ps[j:] {
+			if q.e != "" {
+				return !q.lead && q.sp.Link != "" && xmlw.SafeLink(q.sp.Link)
+			}
+			if q.blank {
+				return false
+			}
+		}
+		return false
 	}
 	var b strings.Builder
 	prev := rune(' ') // the character before the next piece: the start of a block counts as whitespace
@@ -243,6 +257,11 @@ func spans(sp []docmodel.Span) string {
 			}
 		}
 		closed = p.style && !linked
+		// A "!" ending the text, with a link written straight after it, is the start of image syntax: `Hello![x](u)` is a
+		// picture. Escaped only there (/pending 946 I5); a "!" anywhere else is a plain character.
+		if !p.style && !p.trail && strings.HasSuffix(e, "!") && nextIsLink(i+1) {
+			e = e[:len(e)-1] + `\!`
+		}
 		if p.style {
 			switch {
 			case s.Bold && s.Italic:

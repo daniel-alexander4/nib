@@ -99,6 +99,20 @@ func (s *Server) importOrRefuse(w http.ResponseWriter, ctx context.Context, src 
 	return res, true
 }
 
+// openRefusal is the answer to an open that failed (/pending 946 I9). A path that names nothing openable — missing, a
+// parent that is not a directory, a loop of links, too long, a device with no one behind it — is 404 as it always was; a
+// path Nib may not read is 403; and anything else (no descriptors left, an I/O error, no memory) is the machine's, not a
+// fact about the file, and is a 500 that says so instead of "file not found".
+func openRefusal(err error) *pathRefusal {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		return &pathRefusal{kind: refuseUnreadable, status: http.StatusForbidden, msg: "Nib is not allowed to read that file", err: err}
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR), errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENAMETOOLONG), errors.Is(err, syscall.ENXIO), errors.Is(err, syscall.EISDIR):
+		return &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
+	}
+	return &pathRefusal{kind: refuseUnreadable, status: http.StatusInternalServerError, msg: "Nib could not open that file", err: err}
+}
+
 // openRegular opens path and answers for the DESCRIPTOR: the file it returns is the one that was checked. A
 // stat followed by an open is two looks at a name, and a FIFO swapped in between would block the read under
 // `setupMu`; O_NONBLOCK makes the open itself unable to wait for a writer, and the descriptor's own Stat must
@@ -109,10 +123,7 @@ func (s *Server) importOrRefuse(w http.ResponseWriter, ctx context.Context, src 
 func openRegular(path string) (*os.File, os.FileInfo, *pathRefusal) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			return nil, nil, &pathRefusal{kind: refuseUnreadable, status: http.StatusForbidden, msg: "Nib is not allowed to read that file", err: err}
-		}
-		return nil, nil, &pathRefusal{kind: refuseUnopenable, status: http.StatusNotFound, msg: "file not found"}
+		return nil, nil, openRefusal(err)
 	}
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {

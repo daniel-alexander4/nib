@@ -1,11 +1,11 @@
 --- a/internal/server/window.go
 +++ b/internal/server/window.go
-@@ -621,7 +621,7 @@
+@@ -642,7 +642,7 @@
+ 			}
  		}
- 		// A launch handed this instance a document (ADR-086). Every one is sent, by sequence: the
- 		// emit-on-difference rule above would swallow the second of two identical outcomes.
+ 		owed = nil
 -		for _, ev := range s.push.since(lastHandoff) {
 +		for _, ev := range s.push.since(lastHandoff)[:0] {
- 			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result, Reason: ev.reason, ImportedFrom: ev.importedFrom, Seq: ev.seq})
- 			if hoErr != nil {
+ 			if !writeHandoff(w, flusher, ev) {
  				return
+ 			}

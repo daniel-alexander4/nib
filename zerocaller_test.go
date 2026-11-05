@@ -104,6 +104,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"ReadBack":               "test-support — the model's words in order within LibreOffice's text, and the words beyond them (ADR-194; /pending 941 #21).",
 		"SameWords":              "test-support — holds ReadBack's extra words to a pinned list, word for word (internal/docwrite/wtest; /pending 941 #21).",
 		"Hostile":                "test-support — the writers' hostile hand-built model (internal/docwrite/wtest); the three writers' tests read it (ADR-193).",
+		"ExportBidi":             "test-support — three text-direction controls in a Hebrew line; docmodel/read's test counts them (/pending 947).",
 		"ExportModelSet":         "test-support — the document model reader's fixtures (visibility, tree against proposal); docmodel/read's tests read them (ADR-192).",
 		"FormatMIMEs":            "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
 		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +

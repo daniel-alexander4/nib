@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,59 +66,87 @@ type handoffPush struct {
 
 // announce records one hand-off and wakes every window's stream.
 func (p *handoffPush) announce(result, reason, importedFrom string) {
-	p.announceNote(result, reason, importedFrom, false)
-}
-
-// hold records a conversion for a window that has not connected yet and returns its sequence.
-func (p *handoffPush) hold(importedFrom string) uint64 {
-	return p.announceNote("opened", "", importedFrom, true)
-}
-
-// release withdraws a hold: a window connected between the count being read and the note being kept, and
-// its stream will deliver the note by sequence.
-func (p *handoffPush) release(seq uint64) {
 	p.mu.Lock()
-	for i := range p.recent {
-		if p.recent[i].seq == seq {
-			p.recent[i].held = false
-		}
-	}
+	p.appendLocked(result, reason, importedFrom, false)
 	p.mu.Unlock()
 }
 
-// claim is the sequence a connecting window's stream starts from. A window hears the hand-offs that arrive while
-// it is open and never the ones before it connected: its boot restore already shows those documents, and
-// replaying a refusal to a window opened an hour later would be a notice about nothing. The one exception is a
-// held conversion — the restore shows the document, not that it was converted — which the first window is owed
-// once, so the start moves back to just before the oldest.
-func (p *handoffPush) claim() uint64 {
+// tell is the ONE decision "is a window here to hear it", made under the same lock that counts a window in and out
+// (/pending 946 I1, I3): with a window open the outcome is announced, and with none a conversion is held for the first
+// that connects — the restore shows its document, not that it was converted. Because arrive and depart take this lock
+// too, a window cannot be counted between the read and the hold (the note was delivered by sequence AND stayed held, so
+// a reload replayed it), and the count cannot be read as positive for a window that is already gone. Returns the
+// windows open.
+func (p *handoffPush) tell(n *atomic.Int64, result, reason, importedFrom string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	from := p.seq
+	if open := n.Load(); open > 0 {
+		p.appendLocked(result, reason, importedFrom, false)
+		return open
+	}
+	if result == "opened" && importedFrom != "" {
+		p.appendLocked(result, reason, importedFrom, true)
+	}
+	return 0
+}
+
+// arrive is a window connecting: under one hold it takes the sequence its stream starts from, collects the conversions
+// it is owed (clearing their hold), and counts the window. A window hears the hand-offs that arrive while it is open and
+// never the ones before it connected — its boot restore already shows those documents, and replaying a refusal to a
+// window opened an hour later would be a notice about nothing. A held conversion is the exception, and it is returned
+// APART, to be sent first and exactly once: the start used to move back to just before the oldest, which replayed every
+// refusal and focus announced since it too (/pending 946 I2).
+func (p *handoffPush) arrive(n *atomic.Int64) (from uint64, owed []handoffNote, count int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	from = p.seq
 	for i := range p.recent {
 		if p.recent[i].held {
-			if p.recent[i].seq-1 < from {
-				from = p.recent[i].seq - 1
-			}
+			owed = append(owed, p.recent[i])
 			p.recent[i].held = false
 		}
 	}
-	return from
+	return from, owed, n.Add(1)
 }
 
-func (p *handoffPush) announceNote(result, reason, importedFrom string, held bool) uint64 {
+// depart is a window leaving: it counts the window out, and when it was the last, any conversion announced after the last
+// thing it was sent was announced to a stream that will never write it, so it is held again for the next window
+// (/pending 946 I3). Returns the windows left.
+func (p *handoffPush) depart(n *atomic.Int64, heard uint64) int64 {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	left := n.Add(-1)
+	if left == 0 {
+		for i := range p.recent {
+			if ev := &p.recent[i]; ev.seq > heard && ev.result == "opened" && ev.importedFrom != "" {
+				ev.held = true
+			}
+		}
+	}
+	return left
+}
+
+// appendLocked keeps one note and wakes every stream. When the bound is passed the oldest note NOT held goes first: a held
+// conversion is owed to a window that has not connected, and dropping it for a refusal that every open window has already
+// heard loses the one notice nothing else can replay (/pending 946).
+func (p *handoffPush) appendLocked(result, reason, importedFrom string, held bool) uint64 {
 	p.seq++
 	seq := p.seq
 	p.recent = append(p.recent, handoffNote{seq: seq, result: result, reason: reason, importedFrom: importedFrom, held: held})
-	if len(p.recent) > handoffKept {
-		p.recent = p.recent[len(p.recent)-handoffKept:]
+	for len(p.recent) > handoffKept {
+		drop := 0
+		for i := range p.recent {
+			if !p.recent[i].held {
+				drop = i
+				break
+			}
+		}
+		p.recent = append(p.recent[:drop], p.recent[drop+1:]...)
 	}
 	if p.watch != nil {
 		close(p.watch)
 		p.watch = nil
 	}
-	p.mu.Unlock()
 	return seq
 }
 
@@ -186,17 +215,7 @@ func (s *Server) ExpectNoWindow() { s.push.arrived() }
 // tellWindows is the ONE door an outcome reaches the windows through (ADR-009): the open windows hear it by
 // sequence, and a conversion with no window open is held for the first that connects. Returns the windows open.
 func (s *Server) tellWindows(result, reason, importedFrom string) int64 {
-	if n := s.windows.n.Load(); n > 0 {
-		s.push.announce(result, reason, importedFrom)
-		return n
-	}
-	if result == "opened" && importedFrom != "" {
-		seq := s.push.hold(importedFrom)
-		if s.windows.n.Load() > 0 {
-			s.push.release(seq)
-		}
-	}
-	return 0
+	return s.push.tell(&s.windows.n, result, reason, importedFrom)
 }
 
 // windowHas decides whether the launch behind a hand-off should open a window, announces the

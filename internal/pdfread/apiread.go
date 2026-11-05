@@ -168,13 +168,13 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 //
 // The budget refusal of `ReadOptimizedOrRefuse` is still returned: a skipped optimize pass would report no images.
 // skipped counts both kinds of skip.
-func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, digest func(model.Image) error) (skipped int, err error) {
+func ExtractImagesEach(ctx context.Context, pdf []byte, selectedPages []string, maxPixels int64, digest func(model.Image) error) (skipped int, err error) {
 	defer fault.Catch(&err)
-	ctx, err := ReadOptimizedOrRefuse(pdf, apiConf(nil, model.EXTRACTIMAGES))
+	pc, err := ReadOptimizedOrRefuse(pdf, apiConf(nil, model.EXTRACTIMAGES))
 	if err != nil {
 		return 0, err
 	}
-	pages, err := api.PagesForPageSelection(ctx.PageCount, selectedPages, true, true)
+	pages, err := api.PagesForPageSelection(pc.PageCount, selectedPages, true, true)
 	if err != nil {
 		return 0, err
 	}
@@ -186,8 +186,11 @@ func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, dige
 	}
 	sort.Ints(sp)
 	for _, p := range sp {
-		for _, objNr := range pdfcpu.ImageObjNrs(ctx, p) {
-			obj := ctx.Optimize.ImageObjects[objNr]
+		for _, objNr := range pdfcpu.ImageObjNrs(pc, p) {
+			if err := ctx.Err(); err != nil {
+				return skipped, err // a cancelled pass stops between pictures; it is not a picture that could not be read (/pending 946 I10)
+			}
+			obj := pc.Optimize.ImageObjects[objNr]
 			if obj == nil || obj.ImageDict == nil {
 				skipped++
 				continue
@@ -197,12 +200,12 @@ func ExtractImagesEach(pdf []byte, selectedPages []string, maxPixels int64, dige
 				skipped++
 				continue
 			}
-			w, h := imageSide(ctx.XRefTable, obj.ImageDict.Dict["Width"]), imageSide(ctx.XRefTable, obj.ImageDict.Dict["Height"])
+			w, h := imageSide(pc.XRefTable, obj.ImageDict.Dict["Width"]), imageSide(pc.XRefTable, obj.ImageDict.Dict["Height"])
 			if pixelsOver(w, h, maxPixels) {
 				skipped++
 				continue
 			}
-			img, ok := extractOne(ctx, obj.ImageDict, name, objNr)
+			img, ok := extractOne(ctx, pc, obj.ImageDict, name, objNr)
 			if !ok {
 				skipped++
 				continue
@@ -230,14 +233,17 @@ func imageSide(xt *model.XRefTable, o types.Object) int64 {
 	return 0
 }
 
+// extractImage is pdfcpu's renderer for one image; a variable only so a test can make it panic (no fixture does on demand).
+var extractImage = pdfcpu.ExtractImage
+
 // extractOne is pdfcpu's extraction of one image, with a panic in its renderer taken as a failure of that image.
-func extractOne(ctx *model.Context, sd *types.StreamDict, name string, objNr int) (img *model.Image, ok bool) {
+func extractOne(ctx context.Context, pc *model.Context, sd *types.StreamDict, name string, objNr int) (img *model.Image, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			img, ok = nil, false
 		}
 	}()
-	img, err := pdfcpu.ExtractImage(context.Background(), ctx, sd, false, name, objNr, false)
+	img, err := extractImage(ctx, pc, sd, false, name, objNr, false)
 	return img, err == nil && img != nil
 }
 

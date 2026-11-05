@@ -280,3 +280,31 @@ func TestRunsOfOneStyleAreOneSpan(t *testing.T) {
 		t.Errorf("spans = %q, want %q", got, "**foo** c")
 	}
 }
+
+// A span that is only a byte-order mark or a bidi control is nothing once Clean has run, and writes nothing — it is not
+// the space between two styled runs (/pending 946 I4). The control: a real space between them stays one.
+func TestASpanOfOnlyDroppedCharactersWritesNoSpace(t *testing.T) {
+	b := docmodel.Span{Text: "foo", Bold: true}
+	i := docmodel.Span{Text: "bar", Italic: true}
+	for _, mid := range []string{"\ufeff", "\u202e", "\u2066\u2069"} {
+		if got := spans([]docmodel.Span{b, {Text: mid}, i}); strings.Contains(got, " ") {
+			t.Errorf("between %q: %q holds a space that no character of the document was", mid, got)
+		}
+	}
+	if got := spans([]docmodel.Span{b, {Text: " "}, i}); !strings.Contains(got, " ") {
+		t.Errorf("control: a real space between two styles vanished: %q", got)
+	}
+}
+
+// "!" before a link written straight after it is image syntax: it is escaped there and nowhere else (/pending 946 I5).
+func TestABangBeforeALinkIsNotAnImage(t *testing.T) {
+	link := docmodel.Span{Text: "docs", Link: "https://example.org/x"}
+	out := writeOK(docmodel.Document{Blocks: []docmodel.Block{{Kind: docmodel.Paragraph, Page: 1, Spans: []docmodel.Span{{Text: "Hello!"}, link}}}})
+	text, tags, _ := readHTML(t, render(t, out))
+	if tags["img"] != 0 || !strings.Contains(text, "Hello!") || !strings.Contains(text, "docs") {
+		t.Errorf("img=%d text=%q from %q: the bang made a picture or was lost", tags["img"], text, out)
+	}
+	if got := spans([]docmodel.Span{{Text: "Hello! there"}, link}); strings.Contains(got, `\!`) {
+		t.Errorf("a bang that is not before a link was escaped: %q", got)
+	}
+}

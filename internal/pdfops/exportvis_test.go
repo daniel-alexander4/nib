@@ -152,3 +152,29 @@ func TestHiddenTextOverTooManyPiecesIsKeptAndCounted(t *testing.T) {
 		t.Fatalf("HiddenText=%d CoverUntested=%d runs=%d of %d", v.HiddenText, v.CoverUntested, len(pr.runs), len(runs))
 	}
 }
+
+// A turned run is off the page only when the square that holds it however it points is (/pending 946 I11): one set upward
+// from below the bottom edge has its origin off the page and 150 pt of its body on it. The controls: the same run kept
+// upright is dropped there (its box is the strip below the page), and a turned run wholly past the edge is dropped.
+func TestATurnedRunPartlyOnThePageIsNotOffPage(t *testing.T) {
+	page := [4]float64{0, 0, 612, 792}
+	run := func(x, y float64, rotated bool) textRun {
+		r := visRun(1, x, y, 200, 10, 0)
+		r.rotated = rotated
+		return r
+	}
+	for name, c := range map[string]struct {
+		r    textRun
+		kept bool
+	}{
+		"turned, origin below the page, body on it": {run(100, -50, true), true},
+		"upright at the same origin (control)":      {run(100, -50, false), false},
+		"turned, wholly past the edge (control)":    {run(100, -500, true), false},
+	} {
+		pr := pageRuns{runs: []textRun{c.r}}
+		v := visibleRuns(&pr, page)
+		if kept := len(pr.runs) == 1; kept != c.kept || (v.OffPage == 1) == c.kept {
+			t.Errorf("%s: kept=%v OffPage=%d, want kept=%v", name, kept, v.OffPage, c.kept)
+		}
+	}
+}
