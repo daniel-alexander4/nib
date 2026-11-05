@@ -96,3 +96,36 @@ func TestAConverterOutputPastTheCapIsRefusedBeforeItIsRead(t *testing.T) {
 		t.Fatalf("an oversized output = %v, want ErrConvertedTooLarge", err)
 	}
 }
+
+// /pending 953: KillConverters returned once it had SIGNALLED, and a leader was still running a millisecond later in
+// 1 of 14 live Quits. Several converters at once, and the check made the instant it returns, with nothing waiting for
+// runConvert: every group must already be gone.
+func TestKillConvertersReturnsOnlyWhenEveryGroupIsGone(t *testing.T) {
+	defer reopenConverters(t)
+	const n = 8
+	cmds := make([]*exec.Cmd, n)
+	for i := range cmds {
+		cmds[i] = exec.CommandContext(context.Background(), "sh", "-c", "sleep 300 >/dev/null 2>&1 & sleep 300 >/dev/null 2>&1 & wait")
+		c := cmds[i]
+		go func() { _, _ = runConvert(context.Background(), c, "/nonexistent/never.pdf", "Fake", nil) }()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for LiveConverters() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d converters registered", LiveConverters(), n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	pids := make([]int, n)
+	for i, c := range cmds {
+		pids[i] = c.Process.Pid
+	}
+	if got := KillConverters(); got != n {
+		t.Fatalf("KillConverters signalled %d groups, want %d", got, n)
+	}
+	for _, pid := range pids {
+		if !groupGone(pid) {
+			t.Errorf("group %d still has a member after KillConverters returned", pid)
+		}
+	}
+}

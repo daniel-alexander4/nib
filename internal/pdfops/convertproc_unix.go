@@ -29,3 +29,11 @@ func killTreeOnCancel(cmd *exec.Cmd) {
 
 // killGroup ends the group led by pid. The group is the one `killTreeOnCancel`'s Setpgid made.
 func killGroup(pid int) { _ = syscall.Kill(-pid, syscall.SIGKILL) }
+
+// groupGone reports whether the group led by pid has no member left, a zombie included. SIGKILL is a request the kernel
+// finishes a moment later; this is the moment having passed. EPERM (a member under another user) cannot be waited on,
+// so it ends the wait.
+func groupGone(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == syscall.ESRCH || err == syscall.EPERM
+}

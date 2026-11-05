@@ -75,8 +75,8 @@ func LiveConverters() int {
 // killWait bounds KillConverters: a kill that cannot finish in this long is reported, not waited on.
 const killWait = time.Second
 
-// KillConverters ends every registered converter group and refuses new ones. It is synchronous and
-// bounded to killWait in total, and returns how many groups it signalled. Idempotent.
+// KillConverters ends every registered converter group and refuses new ones. It returns when each group has no
+// member left, bounded to killWait in total, and returns how many groups it signalled. Idempotent.
 func KillConverters() int {
 	converters.mu.Lock()
 	converters.closed = true
@@ -103,6 +103,16 @@ func KillConverters() int {
 		defer close(done)
 		for _, pid := range pids {
 			killGroup(pid)
+		}
+		// **Signalled is not gone** (/pending 953). SIGKILL is delivered, not completed, when `kill` returns: the
+		// leader was still running a millisecond later in 1 of 14 live Quits, and under load the window grows. The
+		// property this function states is that the converters are ended BEFORE Nib leaves, so it waits for each
+		// group to have no member. Bounded by the select below; a group that never goes is reported by its absence
+		// from the count of groups that did, not waited on.
+		for _, pid := range pids {
+			for !groupGone(pid) {
+				time.Sleep(time.Millisecond)
+			}
 		}
 	}()
 	select {

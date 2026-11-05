@@ -34,3 +34,6 @@ func killGroup(pid int) {
 	name, args := taskkillCommand(os.Getenv("SystemRoot"), pid)
 	_ = exec.Command(name, args...).Run()
 }
+
+// groupGone: `taskkill /T` ran to completion in killGroup, so there is nothing further to wait for.
+func groupGone(pid int) bool { return true }
