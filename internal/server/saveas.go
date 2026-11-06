@@ -248,5 +248,11 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
+	// /pending 957: a PDF written here is a file with a path, and it is the only way a dropped file, an upload,
+	// a URL document or a combine ever gets one. It is listed so it can be opened again; an export in
+	// another format is not a document Nib opened as itself, and is not. By the NAME the person chose: the import-door census (D8) forbids this route classifying bytes.
+	if strings.EqualFold(filepath.Ext(target), ".pdf") {
+		recordRecent(vaultFrom(r), target)
+	}
 	writeJSON(w, map[string]string{"path": target})
 }
