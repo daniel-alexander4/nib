@@ -191,7 +191,11 @@ func run() int {
 	// constructed Server must not assume.
 	s.EnableDeliveryRearm()
 	// The browser question the status route reads is asked once now, in the background, not on a page load (/pending 942).
-	s.WarmImportProbes()
+	// Not when no window will be opened (NIB_NO_BROWSER, the harnesses'): nothing asks for the status, and a headless
+	// browser started by every test launch outlives a killed Nib and writes into a directory its test is removing.
+	if os.Getenv("NIB_NO_BROWSER") == "" {
+		s.WarmImportProbes()
+	}
 	srv := &http.Server{Handler: s.Handler()}
 	// A serve failure signals the main goroutine instead of exiting from here.
 	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit
