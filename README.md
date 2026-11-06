@@ -57,7 +57,7 @@ How Nib's feature set lines up against four commercial PDF editors, two popular 
 | ***Where the others are stronger*** ⁂ |  |  |  |  |  |  |  |  |  |
 | Edit what is already on a page — move, resize or replace images and drawings | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | 🟡 | ❌ |
 | Create a PDF from any program (a print-to-PDF printer) | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| Scan straight from a scanner | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 | ❌ |
+| Scan straight from a scanner | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 | ❌ |
 | Mobile apps (iOS / Android) | ❌ | ✅ | 🟡 | ❌ | ✅ | 🟡 | ✅ | ❌ | ❌ |
 | Signers sign in a web browser with nothing to install | ❌ | ✅ | 🟡 | 🟡 | 🟡 | ❌ | 🟡 | ❌ | ❌ |
 | Shared review with other people, live | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -410,6 +410,16 @@ so instead of failing on your file. The size the file declares is read first, an
 turned away before any tool starts. ImageMagick is run with a policy file of Nib's own that allows only the
 HEIC and PNG formats and no external programs or `@file` paths. I tested this with libheif 1.17 and libde265
 1.0.15; I did not run it against ImageMagick itself. A file holding several pictures opens at the first one.
+
+**Scanning** works where SANE's `scanimage` is installed, which in practice means Linux. Open & Import then shows
+Scan…, which asks `scanimage` for the scanners it can see (a network scanner takes several seconds to turn
+up), and scans one page from the glass or every sheet in the document feeder, in colour, grayscale or black and
+white at 100 to 600 dpi. Each page is a PNG that opens like any other picture, under the same 200-megapixel
+limit, and the pages are joined into one new document that is not saved until you save it. Nib talks to no scanner
+itself and the scanner name is passed to the tool as a single argument, only if it is one the list just gave.
+On Windows and macOS there is no Scan… button, because there is nothing for Nib to ask. I tested it against SANE's
+own virtual scanner, one page and a feeder run, and I saw `scanimage` list the network printer on my network; I
+did not scan on a physical flatbed or feeder.
 
 **Saved web pages** (`.html`, `.htm`, `.xhtml`) open through a Chromium-family browser (Chrome, Chromium, Edge or
 Brave) that Nib finds and never bundles; Firefox cannot print a page headlessly and does not count. Nib does

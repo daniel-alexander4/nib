@@ -280,6 +280,7 @@ const EXCLUDED = {
   pinPeerRequest: 'request body, read by its handler',
   removePeerRequest: 'request body, read by its handler',
   keptRemoveRequest: 'request body, read by its handler',  // P04.S02
+  scannerRequest: 'request body, read by its handler (ADR-213)',
   // /pending 819 (v1.182.4), widened by /pending 823: the 422 of every route that hands pdfops a page — redaction,
   // rotate/delete/crop/reorder, extract, the bake — when the request names a page the posted document does not have.
   // The page sends only pages it has, so it cannot provoke this; the readers are the server's own

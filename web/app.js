@@ -70,7 +70,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
-  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'), browserMissing: $('browserMissing'), browserRecheck: $('browserRecheck'),
+  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), scannerBtn: $('scannerBtn'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'), browserMissing: $('browserMissing'), browserRecheck: $('browserRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -402,6 +402,7 @@ async function repointKey() {
 }
 let browserAvailable = false; // a Chromium-family browser that prints a test page (from /api/status) → saved web pages open (ADR-200)
 let svgExportAvailable = false; // pdftocairo found (from /api/status) → a page can be saved as an SVG (ADR-205)
+let scannerAvailable = false; // scanimage found (from /api/status) → the Scan… button shows (/pending 903, ADR-213)
 let heifAvailable = false; // a HEIF decoder found (from /api/status) → HEIC pictures open (ADR-199)
 let gsAvailable = false; // Ghostscript installed (from /api/status) → offer the general PDF/A converter
 let loAvailable = false; // LibreOffice installed (from /api/status) → offer office-document → PDF conversion
@@ -595,6 +596,8 @@ function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
   heifAvailable = !!st.heif;
+  scannerAvailable = !!st.scanner;
+  if (els.scannerBtn) els.scannerBtn.hidden = !scannerAvailable;
   svgExportAvailable = !!st.svgExport;
   browserAvailable = !!st.browser;
   loAvailable = !!st.libreoffice;
@@ -13805,6 +13808,90 @@ async function refreshResume() {
     } finally { btn.disabled = false; }
   };
 }
+
+// --- scan from a scanner (/pending 903, ADR-213) -------------------------------------------------------------------
+// The dialog asks for the scanner list when it opens (finding a network scanner takes seconds, so /api/status never
+// does) and installs the result as one new document. A press of Cancel while a scan runs aborts the request, which
+// ends the scan on the server (the request's context kills the tool).
+const SCANNER_MODE_WORDS = { Color: 'Color', Gray: 'Grayscale', Lineart: 'Black and white' };
+let scannerSeq = 0; // a close or a second open makes a late answer stale
+let scannerAbort = null;
+function scannerSay(text) { $('scannerStatus').textContent = text; }
+function closeScanner() {
+  scannerSeq++;
+  if (scannerAbort) { scannerAbort.abort(); scannerAbort = null; }
+  $('scannerModal').hidden = true;
+  $('scannerGo').disabled = true;
+}
+async function openScanner() {
+  const mine = ++scannerSeq;
+  $('scannerModal').hidden = false;
+  const dev = $('scannerDevice');
+  dev.replaceChildren();
+  $('scannerGo').disabled = true;
+  scannerSay('Looking for scanners…');
+  $('scannerDevice').focus();
+  let res;
+  try { res = await apiFetch('/api/scanner/devices'); } catch { res = null; }
+  if (mine !== scannerSeq) return;
+  if (!res || !res.ok) { scannerSay(res ? await errText(res, 'could not look for scanners') : 'could not look for scanners'); return; }
+  const info = await res.json();
+  if (mine !== scannerSeq) return;
+  for (const d of info.devices || []) {
+    const o = document.createElement('option');
+    o.value = d.id; o.textContent = d.label;
+    dev.appendChild(o);
+  }
+  const mode = $('scannerMode');
+  mode.replaceChildren();
+  for (const m of info.modes || []) {
+    const o = document.createElement('option');
+    o.value = m; o.textContent = SCANNER_MODE_WORDS[m] || m;
+    mode.appendChild(o);
+  }
+  const dpi = $('scannerDpi');
+  dpi.replaceChildren();
+  for (const r of info.resolutions || []) {
+    const o = document.createElement('option');
+    o.value = String(r); o.textContent = r + ' dpi';
+    if (r === 300) o.selected = true;
+    dpi.appendChild(o);
+  }
+  if (!dev.options.length) { scannerSay('No scanner found. Check that it is switched on and connected, then open this again.'); return; }
+  scannerSay('');
+  $('scannerGo').disabled = false;
+}
+async function runScanner() {
+  if (scannerAbort || $('scannerGo').disabled) return;
+  const mine = scannerSeq;
+  const feeder = $('scannerSource').value === 'feeder';
+  scannerAbort = new AbortController();
+  const ctl = scannerAbort;
+  $('scannerGo').disabled = true;
+  scannerSay(feeder ? 'Scanning every sheet in the feeder…' : 'Scanning…');
+  let res;
+  try {
+    res = await apiFetch('/api/scanner/scan', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: $('scannerDevice').value, mode: $('scannerMode').value, dpi: Number($('scannerDpi').value), feeder }),
+    });
+  } catch (e) {
+    if (scannerAbort === ctl) scannerAbort = null;
+    if (mine === scannerSeq) { scannerSay('The scan was stopped.'); $('scannerGo').disabled = false; }
+    return;
+  }
+  if (scannerAbort === ctl) scannerAbort = null;
+  if (mine !== scannerSeq) return; // the dialog was closed; the server dropped the scan with the request
+  if (!res.ok) { scannerSay(await errText(res, 'could not scan')); $('scannerGo').disabled = false; return; }
+  const meta = await res.json();
+  closeScanner();
+  await installOpened(meta);
+  toast('Scanned. Save it to keep it, or use OCR to make it searchable.');
+}
+els.scannerBtn.onclick = openScanner;
+$('scannerGo').onclick = runScanner;
+$('scannerCancel').onclick = closeScanner;
 
 $('openRecentBtn').onclick = async () => {
   await refreshRecent();

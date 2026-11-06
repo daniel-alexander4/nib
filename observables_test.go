@@ -193,6 +193,7 @@ var published = map[string][]string{
 	"pdfops.SignatureWidget": {"internal/pdfops/attachments.go"},
 	// The format table row: `formatViews` (server/auth.go) reads every field into the status answer the page builds `accept` from.
 	// The import function's result (ADR-185): the doors read PDF, Name and Converted; the command line reads the two notes.
+	"pdfops.ScanDevice":   {"web/app.js", "internal/server/scanner.go"}, // the window lists id and label in the Scan… dialog (ADR-213)
 	"pdfops.ImportResult": {"internal/server/server.go", "internal/server/handoff.go", "internal/cli/commands.go"},
 	"pdfops.Format":       {"internal/server/auth.go", "internal/pdfops/formats.go", "internal/pdfops/importsniff.go"}, // Door is read by IsDoorExt, which listDir and the desktop-file test use
 	// **Discovered only from 2026-09-01, by being EMBEDDED (/pending 347).** `WatermarkStyle` is

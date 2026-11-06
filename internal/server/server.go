@@ -229,6 +229,10 @@ type Server struct {
 	// that method: constructing a Server must not put a socket on the network.
 	deliveryRearm atomic.Bool
 	version       string // running build version, reported by the update check and the About dialog
+	// scanKnown is the set of scanner names the last list gave (/pending 903). A scan is accepted only for a name in it:
+	// the route is handed a string, and a device name is a program's argument, not a place to take on trust.
+	scanMu    sync.Mutex
+	scanKnown map[string]bool
 	// revisionFlight collapses concurrent requests for one document's signed version into one walk (P02.S03, I5): a
 	// double click on a 512 MiB document would otherwise pay two full recoveries.
 	revisionFlight singleflight.Group
@@ -574,6 +578,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/reload", s.requireUnlocked(s.handleReload))
 	mux.HandleFunc("GET /api/listdir", s.requireUnlocked(s.handleListDir))
 	mux.HandleFunc("POST /api/write", s.requireUnlocked(s.handleWriteFile))
+	mux.HandleFunc("GET /api/scanner/devices", s.requireUnlocked(s.handleScannerDevices))
+	mux.HandleFunc("POST /api/scanner/scan", s.requireUnlocked(s.handleScannerScan))
 	mux.HandleFunc("POST /api/bake", s.requireUnlocked(s.handleBake))
 	mux.HandleFunc("POST /api/flags", s.requireUnlocked(s.handleFlags))
 	mux.HandleFunc("POST /api/form/author", s.requireUnlocked(s.handleFormAuthor))

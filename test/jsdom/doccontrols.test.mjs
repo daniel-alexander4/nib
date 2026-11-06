@@ -80,6 +80,8 @@ const EXEMPT = new Set([
   // They get up-front reasons rather than a blanket skip, per ADR-009.
   //
   // These CREATE or receive a document, so requiring one would be circular:
+  // Scan… CREATES a document from a scanner (ADR-213), so it needs none open.
+  'scannerBtn',
   'openMenuItem', 'openRecentBtn', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
   // Re-runs the converter probe. It acts on no document at all — it is a question about this
   // MACHINE ("can you find LibreOffice yet?"), asked after the user has installed it, and it is
