@@ -297,13 +297,17 @@ type formatView struct {
 }
 
 // formatViews renders the table for the status answer; availability is asked once per tool, not per row.
+// WarmImportProbes starts, in the background, the one expensive question the status route would otherwise ask on a page
+// load: whether the browser on this machine can print (/pending 942). The real binary calls it once at start-up.
+func (s *Server) WarmImportProbes() { pdfops.WarmBrowserProbe() }
+
 func formatViews() []formatView {
 	avail := map[pdfops.MissingTool]bool{}
 	var out []formatView
 	for _, f := range pdfops.Formats() {
 		ok, seen := avail[f.Tool]
 		if !seen {
-			ok = pdfops.FormatAvailable(f)
+			ok = pdfops.StatusFormatAvailable(f)
 			avail[f.Tool] = ok
 		}
 		v := formatView{Key: f.Key, Label: f.Label, Exts: f.Exts, MIME: f.MIME, Available: ok, Image: f.Image}
@@ -321,7 +325,7 @@ func (s *Server) currentStatus() statusResponse {
 	st.Ghostscript = pdfops.GhostscriptAvailable()
 	st.HEIF = pdfops.HEIFAvailable()
 	st.SVGExport = pdfops.PdftocairoAvailable()
-	st.Browser = pdfops.BrowserAvailable()
+	st.Browser = pdfops.BrowserAvailableNow() // never starts a browser on a page load (/pending 942)
 	st.LibreOffice = pdfops.LibreOfficeAvailable()
 	st.Formats = formatViews()
 	envAllows := os.Getenv("NIB_NO_UPDATE_CHECK") == ""

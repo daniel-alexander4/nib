@@ -190,6 +190,8 @@ func run() int {
 	// Twin of the DisarmSession call below: both are lifetime facts the binary owns and a
 	// constructed Server must not assume.
 	s.EnableDeliveryRearm()
+	// The browser question the status route reads is asked once now, in the background, not on a page load (/pending 942).
+	s.WarmImportProbes()
 	srv := &http.Server{Handler: s.Handler()}
 	// A serve failure signals the main goroutine instead of exiting from here.
 	// log.Fatalf calls os.Exit, which skips every deferred function AND the explicit

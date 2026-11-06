@@ -401,3 +401,73 @@ func TestAConfinedBrowserIsNotReportedAsMissing(t *testing.T) {
 		t.Errorf("no browser: %v", err)
 	}
 }
+
+func resetRenderCache(t *testing.T) {
+	t.Helper()
+	renderCache.mu.Lock()
+	renderCache.st = renderState{}
+	renderCache.mu.Unlock()
+	t.Cleanup(func() {
+		renderCache.mu.Lock()
+		renderCache.st = renderState{}
+		renderCache.mu.Unlock()
+	})
+}
+
+// /pending 942: the status route's answer never starts a browser and never waits for one.
+func TestTheStatusAnswerNeverStartsOrWaitsForTheBrowser(t *testing.T) {
+	needShell(t)
+	resetRenderCache(t)
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	stub := filepath.Join(dir, "chromium")
+	// A browser that records that it was started, then takes seconds to do anything.
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ntouch "+marker+"\nsleep 4\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := browserPath
+	browserPath = func() string { return stub }
+	defer func() { browserPath = old }()
+
+	start := time.Now()
+	if !BrowserAvailableNow() || !StatusFormatAvailable(Format{Tool: ToolBrowser}) {
+		t.Error("a found browser whose probe has not answered is reported unavailable")
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Errorf("the cold answer took %v", time.Since(start))
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the status answer started the browser")
+	}
+
+	// While a probe is running, the answer does not wait for the lock it holds.
+	probed := make(chan struct{})
+	go func() { defer close(probed); _ = renderProbeForTest(stub) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the probe never started the stub")
+		}
+	}
+	start = time.Now()
+	if !BrowserAvailableNow() {
+		t.Error("a probe in flight made the answer false")
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Errorf("the answer waited %v for a running probe", time.Since(start))
+	}
+	<-probed
+
+	// After the probe has answered, the cached verdict is the answer, and a browser that failed is not available.
+	if BrowserAvailableNow() || StatusFormatAvailable(Format{Tool: ToolBrowser}) {
+		t.Error("a browser whose probe failed is reported available")
+	}
+	browserPath = func() string { return "" }
+	if BrowserAvailableNow() {
+		t.Error("no browser is reported available")
+	}
+}
+
+func renderProbeForTest(stub string) error { return renderProbe(context.Background(), stub) }
