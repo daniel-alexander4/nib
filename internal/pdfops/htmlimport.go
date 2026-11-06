@@ -13,6 +13,7 @@ import (
 
 	"nib/internal/browser"
 	"nib/internal/browserrender"
+	"nib/internal/safe"
 	"nib/internal/tempdir"
 )
 
@@ -50,6 +51,51 @@ func BrowserAvailable() bool {
 		return false
 	}
 	return renderProbe(context.Background(), p) == nil
+}
+
+// BrowserAvailableNow is BrowserAvailable for a caller that must not wait: the status route answers a page load, and a
+// cold probe is a real headless browser (up to a minute) under renderCache.mu (/pending 942). It never starts a browser
+// and never waits for the lock a running probe holds. A cached verdict is returned as it is; while the probe has not
+// answered (the first second or two after start, or after one that did not finish), a browser that was FOUND is
+// reported as available, because a false "available" costs a named error at import and a false "unavailable" hides
+// the feature until the next status fetch.
+func BrowserAvailableNow() bool {
+	p := browserPath()
+	if p == "" {
+		return false
+	}
+	if !renderCache.mu.TryLock() {
+		return true // a probe is running
+	}
+	defer renderCache.mu.Unlock()
+	if fi, err := os.Stat(p); err == nil {
+		if c := renderCache.st; c.path == p && c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
+			return c.err == nil
+		}
+	}
+	return true // not asked yet
+}
+
+// StatusFormatAvailable is FormatAvailable for the status route: the same answer for every tool, except that a
+// browser's is BrowserAvailableNow and never starts one.
+func StatusFormatAvailable(f Format) bool {
+	if f.Tool == ToolBrowser {
+		return BrowserAvailableNow()
+	}
+	return FormatAvailable(f)
+}
+
+var browserWarm sync.Once
+
+// WarmBrowserProbe asks the question BrowserAvailable answers, once, in the background, so the status route has a
+// verdict to read and no request pays for it. The real binary calls it at start-up; a test or a CLI verb does not.
+func WarmBrowserProbe() {
+	browserWarm.Do(func() {
+		go func() {
+			defer safe.Recover("browser probe warm-up")
+			_ = BrowserAvailable()
+		}()
+	})
 }
 
 type renderState struct {
