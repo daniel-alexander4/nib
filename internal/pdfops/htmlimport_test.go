@@ -368,3 +368,36 @@ func TestAPageNestedPastTheParsersBoundIsRefusedNotWalked(t *testing.T) {
 		t.Errorf("an ordinary depth: %v", err)
 	}
 }
+
+// /pending 942: the origin outlives the render's timeout, or a slow cold start expires it and reads as "never asked".
+func TestTheOriginOutlivesTheRenderTimeout(t *testing.T) {
+	if browserrender.Lifetime < htmlRenderTimeout {
+		t.Fatalf("the origin lives %v and the render may take %v", browserrender.Lifetime, htmlRenderTimeout)
+	}
+}
+
+// /pending 942: a browser that is found and cannot print is reported as that, not as one that could not be found.
+func TestAConfinedBrowserIsNotReportedAsMissing(t *testing.T) {
+	needShell(t)
+	stub := filepath.Join(t.TempDir(), "chromium")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := browserPath
+	browserPath = func() string { return stub }
+	defer func() { browserPath = old }()
+	page := []byte("<!doctype html><html><body><p>words</p></body></html>")
+	src, size := BytesSource(page)
+	_, err := Import(context.Background(), src, size, "page.html", ImportOptions{})
+	if !errors.Is(err, ErrBrowserCannotRender) {
+		t.Fatalf("err = %v, want ErrBrowserCannotRender", err)
+	}
+	if _, missing := MissingToolFor(err); missing {
+		t.Errorf("a browser that was found is reported as a missing tool: %v", err)
+	}
+	// And with none at all, the old answer stands.
+	browserPath = func() string { return "" }
+	if _, err = Import(context.Background(), src, size, "page.html", ImportOptions{}); !errors.Is(err, ErrBrowserMissing) {
+		t.Errorf("no browser: %v", err)
+	}
+}

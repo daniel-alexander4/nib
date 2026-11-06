@@ -41,8 +41,10 @@ const Host = "nib-render.test"
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'none'; " +
 	"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
-// Lifetime is the hard limit on an origin whatever the browser does.
-const Lifetime = 30 * time.Second
+// Lifetime is the hard limit on an origin whatever the browser does. It is not shorter than the render's own timeout
+// (`pdfops.htmlRenderTimeout`, pinned by a test there): an origin that expired first made a slow cold start of the
+// browser read as a browser that never asked for the page (`ErrNotServed`, /pending 942).
+const Lifetime = 60 * time.Second
 
 // ErrNotServed: the browser finished without ever receiving the document, so whatever it wrote is not the page.
 var ErrNotServed = errors.New("the browser never received the page, so what it wrote is not the page")
