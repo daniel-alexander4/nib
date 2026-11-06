@@ -1,12 +1,16 @@
 package browserrender
 
 import (
+	"bufio"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,5 +168,47 @@ func TestCloseFromTwoPlacesAtOnceDoesNotPanic(t *testing.T) {
 			go func() { defer wg.Done(); o.Close() }()
 		}
 		wg.Wait()
+	}
+}
+
+// /pending 944 h: a request for a path that is not the token never asks the kernel who owns the connection.
+func TestAWrongPathIsRefusedBeforeTheKernelIsAsked(t *testing.T) {
+	var asked atomic.Int64
+	o := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) {
+		asked.Add(1)
+		return uint32(os.Geteuid()), peercred.Found
+	})
+	host := Host + ":" + fmtInt(o.Port())
+	if res, _ := get(t, o, "GET", host, "/nope"); res.StatusCode != 404 {
+		t.Fatalf("answered %d", res.StatusCode)
+	}
+	if asked.Load() != 0 {
+		t.Errorf("the owner lookup ran %d time(s) for a request that named the wrong path", asked.Load())
+	}
+	if res, _ := get(t, o, "GET", host, tokenPath(o)); res.StatusCode != 200 || asked.Load() != 1 {
+		t.Errorf("the right path: %d, lookups %d (want 200 and 1)", res.StatusCode, asked.Load())
+	}
+}
+
+// /pending 944 h: an oversized header block is refused and spends nothing; the one real request still works after it.
+func TestAnOversizedRequestIsRefusedAndTheUseIsNotSpent(t *testing.T) {
+	o := newOrigin(t, func(_, _ netip.AddrPort) (uint32, peercred.State) { return uint32(os.Geteuid()), peercred.Found })
+	c, err := net.DialTimeout("tcp4", "127.0.0.1:"+fmtInt(o.Port()), 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: %s:%d\r\nX-Pad: %s\r\n\r\n", tokenPath(o), Host, o.Port(), strings.Repeat("a", 3*maxRequestHeader))
+	line, _ := bufio.NewReader(c).ReadString('\n')
+	if !strings.Contains(line, "431") {
+		t.Errorf("status line %q, want 431", line)
+	}
+	if o.Served() {
+		t.Error("the document was served to an oversized request")
+	}
+	host := Host + ":" + fmtInt(o.Port())
+	if res, _ := get(t, o, "GET", host, tokenPath(o)); res.StatusCode != 200 {
+		t.Errorf("the real request after it answered %d", res.StatusCode)
 	}
 }
