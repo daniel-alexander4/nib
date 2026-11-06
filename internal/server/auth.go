@@ -297,10 +297,6 @@ type formatView struct {
 }
 
 // formatViews renders the table for the status answer; availability is asked once per tool, not per row.
-// WarmImportProbes starts, in the background, the one expensive question the status route would otherwise ask on a page
-// load: whether the browser on this machine can print (/pending 942). The real binary calls it once at start-up.
-func (s *Server) WarmImportProbes() { pdfops.WarmBrowserProbe() }
-
 func formatViews() []formatView {
 	avail := map[pdfops.MissingTool]bool{}
 	var out []formatView
@@ -315,6 +311,10 @@ func formatViews() []formatView {
 	}
 	return out
 }
+
+// WarmImportProbes starts, in the background, the one expensive question the status route would otherwise ask on a page
+// load: whether the browser on this machine can print (/pending 942). The real binary calls it once at start-up.
+func (s *Server) WarmImportProbes() { pdfops.WarmBrowserProbe() }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
 // with the UI preferences (update check, toolbar layout). NIB_NO_UPDATE_CHECK is
