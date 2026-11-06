@@ -277,6 +277,7 @@ type statusResponse struct {
 	MarkupStyles          map[string]vault.MarkupStyle `json:"markupStyles,omitempty"`          // each markup tool's last style (/pending 930)
 	Version               string                       `json:"version"`                         // running build, shown in the About dialog
 	Browser               bool                         `json:"browser"`                         // a Chromium-family browser found that prints a test page → web pages can be opened
+	Scanner               bool                         `json:"scanner"`                         // scanimage found → the Scan… button is shown (/pending 903, ADR-213)
 	HEIF                  bool                         `json:"heif"`                            // a HEIF decoder found (heif-dec, heif-convert, magick) → HEIC pictures can be opened (ADR-199)
 	SVGExport             bool                         `json:"svgExport"`                       // pdftocairo found → a page can be exported as an SVG file (ADR-205)
 	Ghostscript           bool                         `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
@@ -324,6 +325,7 @@ func (s *Server) currentStatus() statusResponse {
 	st.Version = s.version
 	st.Ghostscript = pdfops.GhostscriptAvailable()
 	st.HEIF = pdfops.HEIFAvailable()
+	st.Scanner = pdfops.ScannerAvailable()
 	st.SVGExport = pdfops.PdftocairoAvailable()
 	st.Browser = pdfops.BrowserAvailableNow() // never starts a browser on a page load (/pending 942)
 	st.LibreOffice = pdfops.LibreOfficeAvailable()

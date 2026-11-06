@@ -276,6 +276,9 @@
       <div class="tbgroup" data-label="Open &amp; Import" data-fold="1">
       <button id="openMenuItem">Open…</button>
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
+      <!-- Shown only where Nib found scanimage (`applyStatus`, /pending 903, ADR-213); hidden here so a machine
+           without it never sees a button that cannot work, even before /api/status answers. -->
+      <button id="scannerBtn" title="Scan pages straight from a scanner into a new document" hidden>Scan…</button>
       <button id="officeOpenBtn" title="Import a file as a PDF, choosing its language. The file picker lists what is accepted: Word, Excel, PowerPoint and OpenDocument files need LibreOffice, PostScript needs Ghostscript, HEIC needs a HEIF decoder, and web pages, e-books and saved pages need a Chromium-family browser">Import…</button>
       <input id="officeInput" type="file" hidden />
       <!-- Shown only when the server could not find LibreOffice (`applyStatus`). Until now the
@@ -2083,6 +2086,27 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="recentCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan from a scanner (/pending 903). The scanner list is asked for when this opens, because finding a network
+       scanner takes seconds; /api/status never asks. -->
+  <div id="scannerModal" hidden>
+    <div class="sigcard" role="dialog" aria-labelledby="scannerTitle">
+      <h3 id="scannerTitle">Scan</h3>
+      <label>Scanner <select id="scannerDevice"></select></label>
+      <label>Source <select id="scannerSource">
+        <option value="flatbed">Flatbed (one page)</option>
+        <option value="feeder">Document feeder (every sheet)</option>
+      </select></label>
+      <label>Mode <select id="scannerMode"></select></label>
+      <label>Resolution <select id="scannerDpi"></select></label>
+      <p id="scannerStatus" role="status" aria-live="polite"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="scannerCancel">Cancel</button>
+        <button id="scannerGo" disabled>Scan</button>
       </div>
     </div>
   </div>

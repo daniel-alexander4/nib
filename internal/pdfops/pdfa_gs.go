@@ -134,6 +134,13 @@ func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string, dir *t
 // ended, so a decoder that writes `out-1.png` where it was asked for `out.png` (libheif does, for a file
 // with several pictures) is read from where it wrote.
 func runConvertPick(ctx context.Context, cmd *exec.Cmd, pick func() string, tool string, dir *tempdir.Dir) ([]byte, error) {
+	return runConvertPickOK(ctx, cmd, pick, tool, dir, nil)
+}
+
+// runConvertPickOK is runConvertPick for a tool whose normal ending is a non-zero exit: okExit says which codes
+// count as success. scanimage in batch mode exits 7 when the feeder runs out of paper, which is how every
+// document-feeder run ends (/pending 903).
+func runConvertPickOK(ctx context.Context, cmd *exec.Cmd, pick func() string, tool string, dir *tempdir.Dir, okExit func(int) bool) ([]byte, error) {
 	stderr := &tailBuffer{max: 16 << 10}
 	cmd.Stderr = stderr
 	// **The timeout has to end the conversion, not only the process nib started** (`/pending 503`).
@@ -180,6 +187,9 @@ func runConvertPick(ctx context.Context, cmd *exec.Cmd, pick func() string, tool
 	// timeout kills it and the volume is already full (/pending 944 f).
 	if tooBig := stopSize(); tooBig {
 		return nil, ErrConvertedTooLarge
+	}
+	if ee := (*exec.ExitError)(nil); waitErr != nil && okExit != nil && errors.As(waitErr, &ee) && okExit(ee.ExitCode()) {
+		waitErr = nil
 	}
 	if err := waitErr; err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

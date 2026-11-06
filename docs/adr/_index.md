@@ -1049,3 +1049,5 @@ home today.
   — the tagger's table state is the document's; the repeated header carries `Role.Repeat` and becomes an `/Artifact` (supersedes ADR-210 decision 2).
 - [ADR-212](212-open-recent-is-written-through-one-door-and-a-ceremonys-own-copy-is-never-listed.md) — **Open Recent is written through one door, and a ceremony's own copy is never listed**
   — `recordRecent` for `handleOpen` and the hand-off; `ceremony.InStore` refuses `ceremonies/` and `ended/` by path; typed URL entries not built.
+- [ADR-213](213-a-scanner-is-read-through-scanimage-only-and-its-pages-are-pictures.md) — **a scanner is read through `scanimage` only, and its pages are pictures**
+  — Linux first; the list is asked at dialog open; a scan is accepted only for a listed name; a feeder run ends well only on the out-of-paper exit.
