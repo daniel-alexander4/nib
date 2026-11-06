@@ -14,3 +14,8 @@ Status: accepted, 2026-11-05 (/pending 490, v2.49.17). Narrows /pending 490's fi
    A URL would also store its query string, which can hold a credential, in the vault. These are the follow-up, not a gap in this decision.
 4. **Verified** red against each half: the ceremony check removed (live, ended and hand-off rows list the path), the hand-off call removed, `ended/`
    dropped from the store folders, the symlink resolution dropped, and a direct `AddRecent` call added.
+5. **A file named `.pdf` written by Save As is listed** (`handleWriteFile`, /pending 957, v2.49.18; decided with Dan 2026-11-05). It is the one way a dropped file, an
+   upload, a URL document or a combine gets a path; it goes through the same door, so a PDF saved inside the ceremony folder is refused and an export in
+   another format (Markdown, a ZIP) is not listed. **A URL document is never listed**, saved or not until then: a URL can carry a credential in its query string, and
+   stripping it can break the link. So there are no typed entries and still no vault change. Red against: the call removed, the PDF test dropped to
+   "any file name".

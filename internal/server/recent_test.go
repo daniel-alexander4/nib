@@ -38,10 +38,10 @@ func pdfAt(t *testing.T, dir, name string) string {
 	return p
 }
 
-// TestEveryRouteThatOpensByAPathIsListedUnlessItIsACeremonysOwnCopy is /pending 490's table: one row per
+// TestEveryRouteThatNamesAPathIsListedUnlessItIsACeremonysOwnCopy is /pending 490's table: one row per
 // way a path reaches Nib, each with the verdict it must get. The ceremony rows are the point of the
 // door — before it, `handleOpen` listed whatever path was typed, including one inside `~/nib/ceremonies`.
-func TestEveryRouteThatOpensByAPathIsListedUnlessItIsACeremonysOwnCopy(t *testing.T) {
+func TestEveryRouteThatNamesAPathIsListedUnlessItIsACeremonysOwnCopy(t *testing.T) {
 	ts, srv := startServerWith(t)
 	c, csrf := authedClient(t, ts)
 	srv.SetHandoffSecret("secret")
@@ -55,6 +55,20 @@ func TestEveryRouteThatOpensByAPathIsListedUnlessItIsACeremonysOwnCopy(t *testin
 			t.Fatalf("hand-off of %s = %d", p, code)
 		}
 	}
+	// save writes the file at path through Save As's route, with the bytes given.
+	save := func(data []byte) func(string) {
+		return func(p string) {
+			resp := writeFileReq(t, ts, c, csrf, filepath.Dir(p), filepath.Base(p), data, false)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("save of %s = %d", p, resp.StatusCode)
+			}
+		}
+	}
+	pdfBytes, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rows := []struct {
 		name   string
 		path   string
@@ -66,6 +80,9 @@ func TestEveryRouteThatOpensByAPathIsListedUnlessItIsACeremonysOwnCopy(t *testin
 		{"Open… typed inside the live ceremony folder", pdfAt(t, filepath.Join(root, "ceremonies", strings.Repeat("a", 32)), "c.pdf"), open, false},
 		{"Open… typed inside ended/", pdfAt(t, filepath.Join(root, "ended", strings.Repeat("b", 32)), "d.pdf"), open, false},
 		{"hand-off of a file inside the ceremony folder", pdfAt(t, filepath.Join(root, "ceremonies", strings.Repeat("c", 32)), "e.pdf"), handoff, false},
+		{"Save As of a PDF (a dropped file, an upload, a URL or a combine gets its path here)", filepath.Join(t.TempDir(), "saved.pdf"), save(pdfBytes), true},
+		{"Save As of an export that is not a PDF", filepath.Join(t.TempDir(), "export.md"), save([]byte("# not a pdf\n")), false},
+		{"Save As of a PDF into the ceremony folder", filepath.Join(root, "ceremonies", strings.Repeat("d", 32), "f.pdf"), save(pdfBytes), false},
 		{"a signed copy kept beside, not inside, the store", pdfAt(t, root, "kept.pdf"), open, true},
 	}
 	for _, r := range rows {

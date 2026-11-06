@@ -7,7 +7,7 @@ import (
 
 // recordRecent is the ONE door a path reaches Open Recent through (/pending 490, ADR-009). Two routes
 // open a document by a path the person or the OS named — `handleOpen` and `openHandedOff` — and both
-// call it; `TestOnlyTheRecentDoorAddsToRecent` fails a third caller of `AddRecent`.
+// call it, as does `handleWriteFile` for a PDF it wrote (the one way a path-less document gets a path); `TestOnlyTheRecentDoorAddsToRecent` fails a third caller of `AddRecent`.
 //
 // **A ceremony's own copy is never listed** (Dan, 2026-09-14: "the ceremony process is more important
 // than the open recent"). A recent entry would open the document without the ceremony's state, would go
@@ -18,7 +18,7 @@ import (
 //
 // Best-effort: a locked vault has nowhere to write, and failing to remember a file changes nothing the
 // person asked for. Routes with no path (a drop, an upload, a URL, a combine, an arrival) never reach
-// this door; that gap is declared in /pending 490's follow-up, not hidden here.
+// this door until they are saved (/pending 957); a URL is never listed, because it can carry a credential.
 func recordRecent(v *vault.Vault, path string) {
 	if v == nil || path == "" {
 		return
