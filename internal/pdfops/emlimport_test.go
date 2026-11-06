@@ -303,3 +303,21 @@ func TestAMessagesStyleSheetCannotReachNibsHeaderTable(t *testing.T) {
 		t.Error("the body is gone")
 	}
 }
+
+// /pending 944 (c): a picture the message names and the door will not take is an attachment not imported, counted and
+// said, not silently an alt text.
+func TestAPictureTheDoorRefusesIsCountedAsNotImported(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	svg := base64.StdEncoding.EncodeToString([]byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`))
+	page, _, dropped, err := emlToHTML(mixed(
+		mpart("Content-Type: text/html; charset=utf-8", `<p>Hi</p><img src="cid:ok"><img src="cid:vec"><img src="cid:empty">`),
+		mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <ok>", png),
+		mpart("Content-Type: image/svg+xml\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <vec>", svg),
+		mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <empty>", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped != 2 || !strings.Contains(string(page), "2 attachments were not imported") {
+		t.Errorf("dropped = %d, page = %q", dropped, page)
+	}
+}

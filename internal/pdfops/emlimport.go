@@ -181,7 +181,9 @@ func emlToHTML(data []byte) (page []byte, resolve func(string) (string, bool), d
 				dropped++ // a picture nothing can name is an attachment
 				continue
 			}
-			pics.add([]string{"cid:" + p.cid}, p.typ, p.body)
+			if !pics.add([]string{"cid:" + p.cid}, p.typ, p.body) {
+				dropped++ // empty, oversize, SVG or not a picture the door takes: an attachment not imported
+			}
 		}
 	}
 
