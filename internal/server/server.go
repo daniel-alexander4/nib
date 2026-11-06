@@ -990,7 +990,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, err.Error())
 		return
 	}
-	_ = vaultFrom(r).AddRecent(path) // best-effort; failure to record is non-fatal
+	recordRecent(vaultFrom(r), path)
 	resp := s.docResponse(installed)
 	resp.SameFileOpen = dup
 	resp.ImportedFrom = installed.imported

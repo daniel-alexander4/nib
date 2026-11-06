@@ -213,8 +213,10 @@ func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, 
 	_, focused, err = s.addDocCappedOrFocus(doc, path)
 	if err != nil {
 		imported = ""
+		return focused, imported, err
 	}
-	return focused, imported, err
+	recordRecent(s.unlockedVault(), path) // /pending 490: a double-clicked file is a file Nib opened
+	return focused, imported, nil
 }
 
 type errHandoff string

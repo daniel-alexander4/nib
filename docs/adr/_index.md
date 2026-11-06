@@ -1047,3 +1047,5 @@ home today.
   — `mdpdf` measures every row first and redraws the header after a page break (skipped when it would not fit with the row); a cell's picture sits under its text and the tagger makes it the TD's child.
 - [ADR-211](211-a-table-that-crosses-pages-is-one-table-and-its-repeated-header-is-an-artifact.md) — **a table that crosses pages is one Table, and its repeated header is an artifact**
   — the tagger's table state is the document's; the repeated header carries `Role.Repeat` and becomes an `/Artifact` (supersedes ADR-210 decision 2).
+- [ADR-212](212-open-recent-is-written-through-one-door-and-a-ceremonys-own-copy-is-never-listed.md) — **Open Recent is written through one door, and a ceremony's own copy is never listed**
+  — `recordRecent` for `handleOpen` and the hand-off; `ceremony.InStore` refuses `ceremonies/` and `ended/` by path; typed URL entries not built.
