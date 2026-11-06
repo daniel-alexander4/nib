@@ -443,3 +443,27 @@ func TestAnEPUBMemberNamedWithADotSlashIsStillFound(t *testing.T) {
 		t.Errorf("%v: chapter one missing from %q", err, out)
 	}
 }
+
+// /pending 944 (a): a chapter the spine names and the archive lacks is counted and said in the document.
+func TestAnEPUBSaysHowManyChaptersItCouldNotRead(t *testing.T) {
+	out, err := epubToHTML(epubZip(t, func(f map[string]string, order *[]string) {
+		delete(f, "OEBPS/text/ch2.xhtml")
+		kept := (*order)[:0]
+		for _, n := range *order {
+			if n != "OEBPS/text/ch2.xhtml" {
+				kept = append(kept, n)
+			}
+		}
+		*order = kept
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Chapter One") || !strings.Contains(string(out), "1 chapter could not be read and is not in this document.") {
+		t.Errorf("page = %q", out)
+	}
+	whole, err := epubToHTML(epubZip(t, nil))
+	if err != nil || strings.Contains(string(whole), "could not be read") {
+		t.Errorf("a whole book said it lost a chapter: %v %q", err, whole)
+	}
+}

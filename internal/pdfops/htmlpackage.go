@@ -53,14 +53,16 @@ type packagePictures struct {
 	total  int
 }
 
-func (p *packagePictures) add(names []string, typ string, body []byte) {
+// add keeps one picture under its names and reports whether it did: an empty, oversize, unsupported or SVG one is
+// refused, and a caller that counts what it did not import counts it (/pending 944 c).
+func (p *packagePictures) add(names []string, typ string, body []byte) bool {
 	if len(body) == 0 || len(body) > maxDataImage || p.total+len(body) > packageAllBytes {
-		return
+		return false
 	}
 	// The type is decided by the bytes, never by what the part says it is.
 	k, ok := sniffImage(body)
 	if !ok {
-		return
+		return false
 	}
 	mt := ""
 	for _, f := range Formats() {
@@ -69,7 +71,7 @@ func (p *packagePictures) add(names []string, typ string, body []byte) {
 		}
 	}
 	if !dataImageTypeOK(mt) {
-		return
+		return false
 	}
 	p.total += len(body)
 	u := "data:" + mt + ";base64," + base64.StdEncoding.EncodeToString(body)
@@ -78,6 +80,7 @@ func (p *packagePictures) add(names []string, typ string, body []byte) {
 			p.byName[n] = u
 		}
 	}
+	return true
 }
 
 func (p *packagePictures) resolver(base string) func(string) (string, bool) {
@@ -358,19 +361,24 @@ func epubToHTML(data []byte) ([]byte, error) {
 		}
 	}
 	var heads, bodies bytes.Buffer
-	n := 0
+	n, skipped := 0, 0
 	seen := map[string]bool{}
 	for _, ref := range opf.Spine {
 		if n >= epubChapters || heads.Len()+bodies.Len() > epubOutputBytes {
 			return nil, ErrPackageTooBig
 		}
 		name, ok := byID[ref.IDRef]
-		if !ok || seen[name] {
+		if !ok {
+			skipped++ // the spine names a chapter the manifest does not
+			continue
+		}
+		if seen[name] {
 			continue // a spine that names one chapter again is read once: each read charges its pictures again
 		}
 		seen[name] = true
 		b, ok := read(name, packagePartBytes)
 		if !ok {
+			skipped++ // missing from the archive, or over the part cap
 			continue
 		}
 		dir := path.Dir(name)
@@ -379,6 +387,7 @@ func epubToHTML(data []byte) ([]byte, error) {
 		}
 		out, _, err := sanitizeHTMLWith(b, pics.resolver(dir))
 		if err != nil {
+			skipped++
 			continue
 		}
 		hd, bd := splitOwnDocument(out)
@@ -391,6 +400,14 @@ func epubToHTML(data []byte) ([]byte, error) {
 	}
 	if n == 0 {
 		return nil, ErrPackageUnreadable
+	}
+	// A chapter that could not be read is said, in the document, as an email says its dropped attachments: the
+	// person holding the PDF is the one who needs to know it is not the whole book (/pending 944 a).
+	switch {
+	case skipped == 1:
+		bodies.WriteString("<p><i>1 chapter could not be read and is not in this document.</i></p>")
+	case skipped > 1:
+		fmt.Fprintf(&bodies, "<p><i>%d chapters could not be read and are not in this document.</i></p>", skipped)
 	}
 	return []byte("<!doctype html><html><head><meta charset=utf-8>" + heads.String() + "</head><body>" + bodies.String() + "</body></html>"), nil
 }
