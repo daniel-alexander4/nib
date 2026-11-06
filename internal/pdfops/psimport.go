@@ -26,11 +26,14 @@ import (
 //     alone in a directory of its own, stdin the null device, a lowered environment (toolEnv). One
 //     function builds them (`psArgs`) for the conversion AND the probe, so the probe cannot test flags the
 //     conversion does not use.
-//  2. **The build is asked, once, whether it holds** (`confineProbe`). A version number cannot say: a
-//     distribution backports a security fix and keeps the old number (Ubuntu 24.04 reports 10.02.1), and an
-//     upstream release can carry a bypass the number does not show. The probe runs a PostScript program that
-//     tries to read a file and to start a command, and requires both to be refused and the command not to
-//     have run. Measured on 10.02.1: with `-dSAFER` both refused; with `-dNOSAFER` both succeed.
+//  2. **The build is asked, once, whether SAFER is on** (`confineProbe`). A version number cannot say: a
+//     distribution backports a security fix and keeps the old number (Ubuntu 24.04 reports 10.02.1). The probe
+//     runs a PostScript program that tries to read a file and to start a command, and requires both to be
+//     refused and the command not to have run. Measured on 10.02.1: with `-dSAFER` both refused; with
+//     `-dNOSAFER` both succeed. **What it does NOT do is find a bypass of SAFER**: plain `-dSAFER` refuses both
+//     of those, so a build carrying CVE-2024-29510 (a SAFER bypass through `setpagedevice` and the `uniprint`
+//     device, fixed upstream in 10.03.1) passes it. A probe step for that bypass is /pending 943, deferred
+//     until it can be reproduced on a known-vulnerable build and shown to be refused on a fixed one.
 //  3. **A floor for what predates the confinement** (`gsFloor`): `-dSAFER` became the default, and
 //     `--permit-file-*` its vocabulary, in 9.50.
 //
