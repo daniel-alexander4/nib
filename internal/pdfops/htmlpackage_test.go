@@ -369,3 +369,77 @@ func TestEveryVectorIsKeptOutOfAMHTMLAndAnEPUB(t *testing.T) {
 		check(t, "MHTML with named parts", pdf, err, before)
 	})
 }
+
+// /pending 944 (b): one damaged base64 leaf is a part with no body. The page and the other pictures survive.
+func TestADamagedPictureLeafKeepsThePageAndTheOtherPictures(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	page, resolve, err := mhtmlToHTML(mhtml(t,
+		mpart("Content-Type: text/html", `<p>words</p><img src="cid:bad"><img src="cid:good">`),
+		mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <bad>", "!!!! not base64 !!!!"),
+		mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <good>", png)))
+	if err != nil {
+		t.Fatalf("a damaged leaf aborted the message: %v", err)
+	}
+	if !strings.Contains(string(page), "words") {
+		t.Errorf("the page was lost: %q", page)
+	}
+	if _, ok := resolve("cid:bad"); ok {
+		t.Error("a part with no body resolved")
+	}
+	if _, ok := resolve("cid:good"); !ok {
+		t.Error("the intact picture was lost with its damaged neighbour")
+	}
+}
+
+// /pending 944 (d): a reference is found by the part's name even when it is spelled with a query, a fragment, a
+// percent-escape or an upper-case scheme.
+func TestAPictureIsFoundWhateverWayTheReferenceIsSpelled(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	_, resolve, err := mhtmlToHTML(mhtml(t,
+		mpart("Content-Type: text/html", `<p>x</p>`),
+		mpart("Content-Type: image/png\r\nContent-Transfer-Encoding: base64\r\nContent-Location: http://saved.example/my pic.png\r\nContent-ID: <Logo>", png)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []string{"http://saved.example/my pic.png", "http://saved.example/my%20pic.png", "http://saved.example/my%20pic.png?v=2", "http://saved.example/my pic.png#top", "cid:Logo", "CID:Logo"} {
+		if _, ok := resolve(src); !ok {
+			t.Errorf("%q is not found", src)
+		}
+	}
+	for _, src := range []string{"http://saved.example/other.png", "cid:logo2", "../../etc/passwd"} {
+		if _, ok := resolve(src); ok {
+			t.Errorf("%q resolved to a part it does not name", src)
+		}
+	}
+}
+
+// /pending 944 (e): a text part that names no charset and is not UTF-8 is Windows-1252, not replacement characters.
+func TestATextPartWithNoCharsetThatIsNotUTF8IsReadAsWindows1252(t *testing.T) {
+	page, _, err := mhtmlToHTML(mhtml(t, mpart("Content-Type: text/html", "<p>caf\xe9 \x93quoted\x94</p>")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), "café “quoted”") {
+		t.Errorf("page = %q", page)
+	}
+	page, _, _ = mhtmlToHTML(mhtml(t, mpart("Content-Type: text/html", "<p>café</p>")))
+	if !strings.Contains(string(page), "café") {
+		t.Errorf("valid UTF-8 without a charset was changed: %q", page)
+	}
+}
+
+// /pending 944 (a): a member is found by the manifest's path whatever the archive spelled it as.
+func TestAnEPUBMemberNamedWithADotSlashIsStillFound(t *testing.T) {
+	out, err := epubToHTML(epubZip(t, func(f map[string]string, order *[]string) {
+		f["./OEBPS/ch1.xhtml"] = f["OEBPS/ch1.xhtml"]
+		delete(f, "OEBPS/ch1.xhtml")
+		for i, n := range *order {
+			if n == "OEBPS/ch1.xhtml" {
+				(*order)[i] = "./OEBPS/ch1.xhtml"
+			}
+		}
+	}))
+	if err != nil || !strings.Contains(string(out), "Chapter One") {
+		t.Errorf("%v: chapter one missing from %q", err, out)
+	}
+}
