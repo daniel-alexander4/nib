@@ -145,8 +145,8 @@ func longTable(rows int) string {
 	return b.String()
 }
 
-// /pending 938: a table that crosses a page repeats its header row at the top of each continuation page, as header
-// cells again (the tagger writes one Table per page, so each Table needs its own).
+// /pending 938, 951: a table that crosses a page repeats its header row at the top of each continuation page, marked as a
+// repeat (Role.Repeat) so the tagger can draw it as an artifact inside the one Table.
 func TestATableHeaderRepeatsOnEveryContinuationPage(t *testing.T) {
 	_, l, err := convertOpts(t, longTable(200), Options{})
 	if err != nil {
@@ -162,6 +162,9 @@ func TestATableHeaderRepeatsOnEveryContinuationPage(t *testing.T) {
 				head = append(head, r.text)
 				if r.role.Row != 0 {
 					t.Errorf("page %d: a header cell is row %d, want 0", p+1, r.role.Row)
+				}
+				if r.role.Repeat != (p > 0) {
+					t.Errorf("page %d: header cell Repeat = %v, want %v", p+1, r.role.Repeat, p > 0)
 				}
 			}
 		}

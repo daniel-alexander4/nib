@@ -175,12 +175,13 @@ func tagFromRolesAndFigures(pdf []byte, pages [][]mdpdf.Role, figures [][]mdpdf.
 		if terr != nil {
 			return terr
 		}
+		ts := newTableState() // one for the document: a table that crosses a page is one Table element (/pending 951)
 		for p := 1; p <= ctx.PageCount; p++ {
 			var figs []mdpdf.Figure
 			if p-1 < len(figures) {
 				figs = figures[p-1]
 			}
-			if err := tagOnePage(ctx, tree, p, pages[p-1], figs); err != nil {
+			if err := tagOnePage(ctx, tree, p, pages[p-1], figs, ts); err != nil {
 				return err
 			}
 		}
@@ -204,12 +205,25 @@ func tagFromRolesAndFigures(pdf []byte, pages [][]mdpdf.Role, figures [][]mdpdf.
 	return claimed, nil
 }
 
+// tableState is the table a document is inside while its pages are tagged: the Table element, the row being written and
+// which table and row they are. It outlives a page, because a table that crosses one is a single Table (ADR-211); a
+// block that is not a table cell closes it.
+type tableState struct {
+	tableRef, rowRef *types.IndirectRef
+	curTable, curRow int
+}
+
+func newTableState() *tableState { return &tableState{curRow: -1} }
+
 // tagOnePage brackets each run of one page and builds the elements that describe them.
 //
 // The runs arrive in draw order with a block ordinal; consecutive runs sharing an ordinal are one
 // element with several MCIDs, and a change of ordinal starts a new one. List items additionally
 // group: a run of `Lbl`/`LBody` blocks at one depth becomes one `L` holding an `LI` per pair.
-func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.Role, figures []mdpdf.Figure) error {
+func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.Role, figures []mdpdf.Figure, ts *tableState) error {
+	if ts == nil {
+		ts = newTableState()
+	}
 	d, _, err := tree.page(ctx, pageNr)
 	if err != nil {
 		return err
@@ -277,8 +291,6 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	listLevel := 0
 	// A table's cells arrive as consecutive blocks carrying their table and row (mdpdf.Role): a new table starts
 	// a Table, a new row a TR under it, and each cell is a TH or TD under the row. Any other block closes the table.
-	var tableRef, rowRef *types.IndirectRef
-	curTable, curRow := 0, -1
 
 	for i := 0; i < len(roles); {
 		// A picture drawn before this block's first run comes first in reading order.
@@ -294,6 +306,18 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		}
 		role := roles[i]
 
+		// A table's header row repeated at the top of a continuation page is drawn and says nothing new
+		// (/pending 951, ADR-211): an artifact with no element, and it leaves the table open so the rows that
+		// follow stay in the same Table.
+		if role.Kind == mdpdf.RoleTableCell && role.Repeat {
+			for k := i; k < j; k++ {
+				edit.InsertBefore(spans[k].start, []byte("/Artifact BMC\n"))
+				edit.InsertBefore(spans[k].end, []byte("\nEMC"))
+			}
+			i = j
+			continue
+		}
+
 		// Lists: an `L` wraps consecutive items at one depth, and each `Lbl`+`LBody` pair is an
 		// `LI`. A depth change or a non-list block closes the list.
 		inList := role.Kind == mdpdf.RoleMarker || role.Kind == mdpdf.RoleListItem
@@ -302,23 +326,23 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		}
 		var parent *types.IndirectRef
 		if role.Kind == mdpdf.RoleTableCell {
-			if tableRef == nil || role.Table != curTable {
+			if ts.tableRef == nil || role.Table != ts.curTable {
 				tr, terr := addGroupingElement(ctx, tree, "Table", nil)
 				if terr != nil {
 					return terr
 				}
-				tableRef, rowRef, curTable, curRow = tr, nil, role.Table, -1
+				ts.tableRef, ts.rowRef, ts.curTable, ts.curRow = tr, nil, role.Table, -1
 			}
-			if rowRef == nil || role.Row != curRow {
-				rr, rerr := addGroupingElement(ctx, tree, "TR", tableRef)
+			if ts.rowRef == nil || role.Row != ts.curRow {
+				rr, rerr := addGroupingElement(ctx, tree, "TR", ts.tableRef)
 				if rerr != nil {
 					return rerr
 				}
-				rowRef, curRow = rr, role.Row
+				ts.rowRef, ts.curRow = rr, role.Row
 			}
-			parent = rowRef
+			parent = ts.rowRef
 		} else {
-			tableRef, rowRef, curTable, curRow = nil, nil, 0, -1
+			ts.tableRef, ts.rowRef, ts.curTable, ts.curRow = nil, nil, 0, -1
 		}
 		if inList {
 			if listRef == nil {

@@ -1045,3 +1045,5 @@ home today.
   — `FillOfficeTemplate` finds `{{key}}` in a paragraph's joined text (Word splits it across runs), writes the value where it begins, and refuses a tab, field or break inside the braces; the Markdown error types and rules otherwise.
 - [ADR-210](210-a-table-repeats-its-header-on-each-page-as-header-cells-and-a-picture-in-a-cell-is-the-cells-figure.md) — **a table repeats its header on each page as header cells, and a picture in a cell is the cell's figure**
   — `mdpdf` measures every row first and redraws the header after a page break (skipped when it would not fit with the row); a cell's picture sits under its text and the tagger makes it the TD's child.
+- [ADR-211](211-a-table-that-crosses-pages-is-one-table-and-its-repeated-header-is-an-artifact.md) — **a table that crosses pages is one Table, and its repeated header is an artifact**
+  — the tagger's table state is the document's; the repeated header carries `Role.Repeat` and becomes an `/Artifact` (supersedes ADR-210 decision 2).

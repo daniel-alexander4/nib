@@ -104,8 +104,8 @@ func (r *renderer) table(t *east.Table, indent float64) {
 		}
 	}
 
-	// drawRow draws row ri at the cursor.
-	drawRow := func(ri int) {
+	// drawRow draws row ri at the cursor. repeat is a header drawn again on a continuation page (Role.Repeat).
+	drawRow := func(ri int, repeat bool) {
 		row, h := rows[ri], rowH[ri]
 		y0 := r.l.y
 		pg := len(r.l.boxes) - 1
@@ -117,7 +117,7 @@ func (r *renderer) table(t *east.Table, indent float64) {
 		for ci := 0; ci < cols; ci++ {
 			r.l.boxes[pg] = append(r.l.boxes[pg], box{x - ruleWeight/2, y0 - h, ruleWeight, h})
 			c := cellAt(row, ci)
-			prev := r.l.beginBlock(Role{Kind: RoleTableCell, Table: num, Row: ri, Head: heads[ri]})
+			prev := r.l.beginBlock(Role{Kind: RoleTableCell, Table: num, Row: ri, Head: heads[ri], Repeat: repeat})
 			blk := r.l.blocks
 			if len(c.lines) == 0 {
 				// An empty cell still has to be a cell: a row with fewer cells than its neighbours is not a
@@ -143,9 +143,8 @@ func (r *renderer) table(t *east.Table, indent float64) {
 	}
 
 	// The header row(s) are the leading rows goldmark marked as the header. They repeat at the top of every page the
-	// table continues onto, when that page can hold them and the row that forced the break. The repeat is a header
-	// row again (TH, Scope Column) and not an artifact: the tagger writes one Table element per page, so a
-	// continuation page's Table would otherwise have no header cells at all (ADR-210).
+	// table continues onto, when that page can hold them and the row that forced the break. The repeat carries
+	// Role.Repeat: the tagger draws it as an artifact inside the one Table (ADR-211).
 	headRows, headH := 0, 0.0
 	for headRows < len(rows) && heads[headRows] {
 		headH += rowH[headRows]
@@ -157,11 +156,11 @@ func (r *renderer) table(t *east.Table, indent float64) {
 		if headRows > 0 && ri >= headRows && r.l.y-h < r.l.g.my && r.l.y < r.l.g.top() && headH+h <= avail {
 			r.l.newPage()
 			for hi := 0; hi < headRows; hi++ {
-				drawRow(hi)
+				drawRow(hi, true)
 			}
 		}
 		r.l.need(h)
-		drawRow(ri)
+		drawRow(ri, false)
 	}
 	r.l.gap(paraGap)
 }
