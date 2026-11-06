@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,5 +128,35 @@ func TestKillConvertersReturnsOnlyWhenEveryGroupIsGone(t *testing.T) {
 		if !groupGone(pid) {
 			t.Errorf("group %d still has a member after KillConverters returned", pid)
 		}
+	}
+}
+
+// /pending 944 f: a converter that writes without end is stopped when its output passes the cap, while it is still
+// running; before this the size was read after the process had ended.
+func TestAConverterThatWritesWithoutEndIsStoppedAtTheOutputCap(t *testing.T) {
+	oldC, oldT := outputCeiling, outputTick
+	outputCeiling, outputTick = 4<<20, 20*time.Millisecond
+	defer func() { outputCeiling, outputTick = oldC, oldT }()
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	// A deadline of its own, so a watchdog that does not fire leaves a failed test and not a process writing for ever.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", `while :; do head -c 1048576 /dev/zero >> "$1"; sleep 0.01; done`, "sh", out)
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { _, err := runConvert(ctx, cmd, out, "Fake", nil); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrConvertedTooLarge) {
+			t.Fatalf("err = %v, want ErrConvertedTooLarge", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("a converter writing without end was not stopped")
+	}
+	if fi, err := os.Stat(out); err == nil && fi.Size() > 64<<20 {
+		t.Errorf("the output reached %d MiB before it was stopped", fi.Size()>>20)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Errorf("took %v", time.Since(start))
 	}
 }
