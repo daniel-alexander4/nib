@@ -1,4 +1,4 @@
-pkgbase = nib-git
+pkgbase = nib-pdf-git
 	pkgdesc = Complete PDF toolkit that runs entirely on your own machine (fill, OCR, redact, compare, sign, PDF/A) — git snapshot
 	pkgver = 2.50.4.r0.g0000000
 	pkgrel = 1
@@ -18,7 +18,8 @@ pkgbase = nib-git
 	provides = nib
 	conflicts = nib
 	conflicts = nib-bin
+	conflicts = nib-git
 	source = git+https://github.com/daniel-alexander4/nib.git
 	sha256sums = SKIP
 
-pkgname = nib-git
+pkgname = nib-pdf-git

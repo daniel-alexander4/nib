@@ -1631,12 +1631,14 @@ Three packages are maintained for the [Arch User Repository](https://aur.archlin
 ```sh
 yay -S nib        # build from source (stable release tarball)
 yay -S nib-bin    # prebuilt binary from the GitHub release (no Go toolchain)
-yay -S nib-git    # latest development snapshot from git HEAD
+yay -S nib-pdf-git # latest development snapshot from git HEAD
 ```
 (`yay` stands in for any AUR helper — `paru -S`, or `git clone` +
-`makepkg -si` by hand. The `PKGBUILD`s live in [`aur/`](aur/) in this repo.)
+`makepkg -si` by hand. The `PKGBUILD`s live in [`aur/`](aur/) in this repo:
+`aur/nib`, `aur/nib-bin`, `aur/nib-pdf-git`.)
 Only one of the three can be installed at a time — they conflict with each other
-and all provide `nib`.
+and all provide `nib`. (`nib-pdf-git` rather than `nib-git`: that name is already
+taken on the AUR by an unrelated, orphaned package.)
 
 ### Install on Fedora / RHEL / openSUSE
 Each release ships a `.rpm` alongside the `.deb` (see `dist/` after `./build.sh`):

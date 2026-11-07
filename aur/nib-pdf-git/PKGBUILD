@@ -1,7 +1,7 @@
 # Maintainer: 9M2PJU <9m2pju@gmail.com>
 # Nib development snapshot, built from upstream git HEAD.
 # Upstream: https://github.com/daniel-alexander4/nib
-pkgname=nib-git
+pkgname=nib-pdf-git
 pkgver=2.50.4.r0.g0000000
 pkgrel=1
 pkgdesc='Complete PDF toolkit that runs entirely on your own machine (fill, OCR, redact, compare, sign, PDF/A) — git snapshot'
@@ -19,7 +19,7 @@ optdepends=(
   'libheif: HEIC/HEIF photo import (heif-dec/heif-convert)'
 )
 provides=('nib')
-conflicts=('nib' 'nib-bin')
+conflicts=('nib' 'nib-bin' 'nib-git')
 source=('git+https://github.com/daniel-alexander4/nib.git')
 sha256sums=('SKIP')
 
