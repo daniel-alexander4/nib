@@ -4582,21 +4582,13 @@ async function openOrActivate(path) {
   return openPath(path);
 }
 
-// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — grouped
-// by the program it needs, a group whose program this computer lacks marked so (ADR-215). One line per group.
+// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — one line
+// each, alphabetical, with what it takes in parentheses beside it, and "not found" where this computer lacks the
+// program (ADR-215; Dan, 2026-11-07).
 function openTitle(fmts) {
-  const groups = new Map();
-  for (const f of fmts) {
-    const tool = f.tool || '';
-    if (!groups.has(tool)) groups.set(tool, { labels: [], available: !!f.available });
-    groups.get(tool).labels.push(f.label);
-  }
-  const lines = ['Open a PDF, or a file Nib converts to PDF:'];
-  for (const [tool, g] of groups) {
-    const head = !tool ? 'Built in' : g.available ? `Needs ${tool}` : `Needs ${tool}, not found on this computer`;
-    lines.push(`• ${head}: ${g.labels.join(', ')}`);
-  }
-  return lines.join('\n');
+  const why = (f) => (!f.tool ? 'built in' : f.available ? `needs ${f.tool}` : `needs ${f.tool}, not found on this computer`);
+  const rows = [...fmts].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  return ['Open a PDF, or a file Nib converts to PDF:', ...rows.map((f) => `• ${f.label} (${why(f)})`)].join('\n');
 }
 
 // NO_LANGUAGE is what an open with no dialog sends (Recent, the `?open=` restore): nothing, so the server keeps

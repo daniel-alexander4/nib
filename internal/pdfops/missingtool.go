@@ -1,6 +1,9 @@
 package pdfops
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // The one door onto "this failed because an optional converter is not there" (ADR-009).
 //
@@ -81,6 +84,14 @@ func (t MissingTool) Name() string {
 		return "poppler's pdftocairo"
 	}
 	return ""
+}
+
+// Short is the tool's name without the parenthetical that lists its alternatives ("a HEIF decoder", "a
+// Chromium-family browser"), for a place that sets it in parentheses of its own: Open…'s tooltip (ADR-215). Cut from
+// Name, so the two cannot disagree.
+func (t MissingTool) Short() string {
+	short, _, _ := strings.Cut(t.Name(), " (")
+	return short
 }
 
 // Vendor is the vendor's landing page — never a direct installer URL and never a mirror, so

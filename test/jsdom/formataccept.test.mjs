@@ -8,21 +8,22 @@ import assert from 'node:assert/strict';
 import { boot, BOOT_ROUTES } from './boot.mjs';
 
 const formats = [
-  { key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true },
   { key: 'zzz', label: 'Zzz', exts: ['zzz', 'zz'], mime: ['application/x-zzz'], available: true },
   { key: 'qqq', label: 'Qqq', exts: ['qqq'], mime: ['application/x-qqq'], available: false, tool: 'Qqqtool' },
   { key: 'rrr', label: 'Rrr', exts: ['rrr'], mime: ['application/x-rrr'], available: true, tool: 'Rrrtool' },
+  { key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true }, // last: the tooltip sorts
 ];
 const h = await boot({ routes: { '/api/status': { ...BOOT_ROUTES['/api/status'], formats } } });
 const { document: doc } = h;
 await h.settle();
 
-test('Open…\'s tooltip lists every format of the table, grouped by its tool, and marks a tool this computer lacks', () => {
+test('Open…\'s tooltip lists every format of the table alphabetically, what it takes in parentheses, a missing tool marked', () => {
   assert.equal(doc.getElementById('openMenuItem').title, [
     'Open a PDF, or a file Nib converts to PDF:',
-    '• Built in: PNG image, Zzz',
-    '• Needs Qqqtool, not found on this computer: Qqq',
-    '• Needs Rrrtool: Rrr',
+    '• PNG image (built in)',
+    '• Qqq (needs Qqqtool, not found on this computer)',
+    '• Rrr (needs Rrrtool)',
+    '• Zzz (built in)',
   ].join('\n'));
 });
 

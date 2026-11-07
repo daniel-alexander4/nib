@@ -1055,3 +1055,5 @@ home today.
   — `docResponse.dir` / `srcPath` for a converted document; `listdir?start=1` falls back to `~/nib` for a gone, unreadable or ceremony-store folder; one `startFolder` door.
 - [ADR-215](215-one-open-opens-every-format-by-path-and-every-format-is-offered-where-nib-is.md) — **one Open… opens every format by path, and every format is offered where Nib is offered**
   — the `Door` flag retired (listing, `nib.desktop`, Windows `nib register` read every row); Import… and `/api/office` gone, the language field in the Open dialog through `withLanguage` on `/api/open` and `/api/open-url`; a source read marked at the read (`sourceFile`); Open…'s tooltip from the table; the destination dialogs' full-path `~/nib` button.
+- [ADR-216](216-opens-tooltip-is-one-line-per-format-alphabetical.md) — **Open…'s tooltip is one line per format, alphabetical, with what it takes in parentheses**
+  — supersedes ADR-215 §5's grouping; the tool named short (`MissingTool.Short`) so parentheses do not nest.

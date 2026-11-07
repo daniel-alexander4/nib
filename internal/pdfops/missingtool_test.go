@@ -75,7 +75,12 @@ func TestEveryToolNamesItselfAndItsVendor(t *testing.T) {
 				tool.Name(), nf)
 		}
 	}
-	if ToolNone.Name() != "" || ToolNone.Vendor() != "" || ToolNone.NotFound() != "" {
+	for tool, want := range map[MissingTool]string{ToolLibreOffice: "LibreOffice", ToolHEIF: "a HEIF decoder", ToolBrowser: "a Chromium-family browser"} {
+		if got := tool.Short(); got != want {
+			t.Errorf("Short() for %s is %q, want %q", tool.Name(), got, want)
+		}
+	}
+	if ToolNone.Name() != "" || ToolNone.Vendor() != "" || ToolNone.NotFound() != "" || ToolNone.Short() != "" {
 		t.Error("ToolNone describes a tool; it is the not-a-missing-tool case and must stay empty")
 	}
 }
