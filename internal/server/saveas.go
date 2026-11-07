@@ -3,7 +3,7 @@ package server
 // Save-As / Export destination support: a directory browser (handleListDir) and
 // a writer (handleWriteFile) that back the UI's save dialog. Flatten, editable
 // save, finalize, and the ZIP/PNG exports all let the user pick a name and a
-// folder; the default folder is ~/nib. The browser can't choose a folder on
+// folder; the default folder is the open document's own (ADR-214), else ~/nib. The browser can't choose a folder on
 // its own (Chromium --app has no save dialog), so the server writes the bytes.
 
 import (
@@ -86,6 +86,13 @@ type listDirResponse struct {
 // the write step creates the folder.
 func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 	asked := strings.TrimSpace(r.URL.Query().Get("path"))
+	// `start=1` says the path is a dialog's SUGGESTED first folder (the open document's own, ADR-214), not
+	// one the person navigated to. A suggestion that is gone, is not a folder, cannot be read, or is
+	// Nib's own ceremony store (an export dropped there would sit among a ceremony's mirror) is answered
+	// as if nothing had been asked, so the dialog opens on ~/nib and not on an error row.
+	if r.URL.Query().Get("start") == "1" && !usableStart(asked) {
+		asked = ""
+	}
 	p := expandHome(asked)
 	if p == "" {
 		p = defaultOutputDir()
@@ -120,6 +127,25 @@ func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(resp.Dirs, func(i, j int) bool { return resp.Dirs[i].Name < resp.Dirs[j].Name })
 	sort.Slice(resp.Files, func(i, j int) bool { return resp.Files[i].Name < resp.Files[j].Name })
 	writeJSON(w, resp)
+}
+
+// usableStart reports whether a suggested start folder may be offered as the dialog's first one: an
+// absolute folder that exists, can be listed, and is not inside the ceremony store (ADR-214).
+// `ceremony.InStore` is the question `recordRecent` already asks (ADR-212), so there is one answer.
+func usableStart(dir string) bool {
+	if dir == "" || !filepath.IsAbs(dir) {
+		return false
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return false
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		return false
+	}
+	if root, err := ceremony.StoreRoot(); err == nil && ceremony.InStore(root, dir) {
+		return false
+	}
+	return true
 }
 
 // listDirReason classifies a failed listing as a short token the UI turns into a

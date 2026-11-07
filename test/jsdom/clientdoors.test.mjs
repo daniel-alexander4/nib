@@ -187,7 +187,7 @@ test('the three click-only surfaces go through the keyboard door, and the door d
 
   const outline = bodyOf('async function buildOutline(gen = view.docGen, owner = view) {');
   assert.match(outline, /makeActivatable\(a, /, 'outline entries are <a> with no href — not focusable — and do not use the door');
-  const browse = bodyOf('async function browseDir(path, t = saveAsDirEls(), onFile = null) {');
+  const browse = bodyOf('async function browseDir(path, t = saveAsDirEls(), onFile = null, start = false) {');
   assert.match(browse, /if \(onclick\) makeActivatable\(li, onclick\);/, 'folder rows are click-only again');
   assert.doesNotMatch(browse, /li\.onclick = /, 'a folder row sets its own onclick, bypassing the door');
 });

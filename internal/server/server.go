@@ -134,8 +134,13 @@ type document struct {
 	// says once when the import happens, and it rides only on the answer of the route that did the import —
 	// never on `/api/docs`, or a second window would announce every import again (Y1).
 	imported string
-	data     []byte
-	sig      sign.Status
+	// srcPath is the file a CONVERTED document was made from (a photo, a .docx), or "" for every other
+	// document (ADR-214). `path` stays empty for these on purpose (a Save through it would destroy the
+	// file the person opened), so this is the one place their folder survives; the save dialogs start
+	// there. Written once before registration, like `path`, and never read to write anything.
+	srcPath string
+	data    []byte
+	sig     sign.Status
 	// rev counts the installs of `data` since this document was registered: 0 as opened, +1 at every
 	// write of `data`. Written only by `install` (ADR-146), under s.mu; sent as docResponse.Rev and
 	// echoed by the routes that commit a client's posted bytes. See commitMutation.
@@ -741,10 +746,14 @@ type docResponse struct {
 	// every request silently takes docFor's compatibility default, which is the
 	// unpinned path D7 exists to prevent. Omitted when nothing is open, so the
 	// empty docResponse stays byte-identical to what it was before.
-	ID        string      `json:"id,omitempty"`
-	Name      string      `json:"name"`
-	Path      string      `json:"path"`      // empty => upload origin, no in-place save
-	CanSave   bool        `json:"canSave"`   // true when a save would overwrite Path
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`    // empty => upload origin, no in-place save
+	CanSave bool   `json:"canSave"` // true when a save would overwrite Path
+	// Dir is the folder the document came from, for the save dialogs to start in (ADR-214): the folder of
+	// Path, or of the file a converted document was made from. Empty when there is none (an upload, a URL,
+	// a combine, an arrival) or when the path is not absolute. A SUGGESTION: /api/listdir vets it.
+	Dir       string      `json:"dir,omitempty"`
 	Signature sign.Status `json:"signature"` // untampered / modified / unsigned
 	// UnverifiedSigners is how many of this document's signatures are by an identity this
 	// machine cannot vouch for — neither its own nor a peer the user has pinned (/pending 390).
@@ -988,7 +997,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		// Pathless, so canSave is false and Save routes to Save As. The NAME still comes from
 		// the file the user picked (`<base>.pdf`, D11), or the tab reads "Untitled" for a
 		// document they just opened by name.
-		doc = &document{path: "", name: res.Name, data: data, sig: sign.Verify(data), imported: filepath.Base(path)}
+		doc = &document{path: "", name: res.Name, data: data, sig: sign.Verify(data), imported: filepath.Base(path), srcPath: path}
 		dup = false
 	}
 	installed, err := s.addDocCapped(doc)
@@ -1930,6 +1939,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		Name:           doc.displayName(),
 		Path:           doc.path,
 		CanSave:        doc.path != "",
+		Dir:            doc.folder(),
 		Signature:      doc.sig,
 		CanUndo:        len(doc.undo) > 0,
 		CanRedo:        len(doc.redo) > 0,
@@ -2186,6 +2196,22 @@ func (d *document) displayName() string {
 		return n
 	}
 	return d.name
+}
+
+// folder is the folder the document came from (ADR-214): its path's, or the converted-from file's.
+// Pure string work with no syscall — docResponse runs it under s.mu on every answer. A relative path
+// gives "" because `listdir` would resolve it against the server's working directory and `destDir`
+// refuses a relative folder at the write; whether the folder still exists, or is Nib's own, is asked
+// once per dialog by handleListDir, not here.
+func (d *document) folder() string {
+	p := d.path
+	if p == "" {
+		p = d.srcPath
+	}
+	if p == "" || !filepath.IsAbs(p) {
+		return ""
+	}
+	return filepath.Dir(p)
 }
 
 // sameBytes reports whether two slices are the SAME slice — same backing array and

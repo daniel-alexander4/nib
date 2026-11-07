@@ -207,7 +207,7 @@ func (s *Server) openHandedOff(ctx context.Context, path string) (focused bool, 
 	// (`<base>.pdf`, D11), or a double-clicked photo opens as "Untitled".
 	doc := newPathDoc(path, res.PDF)
 	if res.Converted {
-		doc = &document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF), imported: filepath.Base(path)}
+		doc = &document{path: "", name: res.Name, data: res.PDF, sig: sign.Verify(res.PDF), imported: filepath.Base(path), srcPath: path}
 		imported = doc.imported
 	}
 	_, focused, err = s.addDocCappedOrFocus(doc, path)

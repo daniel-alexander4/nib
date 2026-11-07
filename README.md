@@ -1271,7 +1271,8 @@ Opening a PDF from your file manager reaches the Nib you already have running an
 adds it to that session, rather than starting a second one.
 
 The same folder browser backs every destination picker (Save As, and both
-splits). On Windows it lists your **drives** once you reach the top of one:
+splits), and each one opens in the folder the document came from, or in `~/nib` when it
+came from nowhere (an upload, a web address, a scan) or that folder is gone. On Windows it lists your **drives** once you reach the top of one:
 there's no single root there the way `/` is on Linux and macOS, so without that
 a document on `D:`, a USB stick or a mapped share couldn't be reached by
 clicking. And a folder Nib can't read says so — "you don't have permission to

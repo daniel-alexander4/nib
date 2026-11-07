@@ -9203,8 +9203,8 @@ function downloadBlob(blob, name) {
 
 // --- save / export destination dialog ----------------------------------------
 // Flatten, editable save, finalize, and the ZIP/PNG exports all route their
-// output through openSaveAs: the user picks a name and folder (default ~/nib)
-// and the server writes the bytes there. The browser can't target an arbitrary
+// output through openSaveAs: the user picks a name and folder (the open document's own
+// folder, else ~/nib — startFolder) and the server writes the bytes there. The browser can't target an arbitrary
 // folder on its own, so this replaces the old ~/Downloads browser-download.
 
 // exportBase is the opened file's name without its directory or .pdf suffix,
@@ -9255,6 +9255,15 @@ const LIST_REASON = {
 
 const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
 
+// startFolder is the ONE door the three destination dialogs (Save As, both splits) open their folder
+// browser through (ADR-214, ADR-009): the open document's own folder when the server named one, else
+// ~/nib. The folder is the server's to name (`docMeta.dir`) because only it knows the separator, and
+// it is a suggestion the server vets, so a folder that is gone falls back to ~/nib without a branch here.
+function startFolder(t) {
+  const dir = (view && view.docMeta && view.docMeta.dir) || '';
+  return browseDir(dir, t, null, !!dir);
+}
+
 // browseDir drives the folder browser behind every dialog that picks a folder:
 // Save-as, the two splits, and Open. t names the four elements it writes (dir
 // input, here label, up button, list ul). onFile, when given, additionally
@@ -9265,10 +9274,14 @@ const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.
 // which is the only side that knows the separator. This used to be four dialogs
 // over two near-identical browsers, both joining with "/" — which is why a
 // Windows path displayed and behaved inconsistently.
-async function browseDir(path, t = saveAsDirEls(), onFile = null) {
-  // One literal, so the request-field guard can read `path` off it: until ADR-102 the only sender
-  // it could see was the download dialog's, and an empty `path` is the server's default either way.
-  const res = await apiFetch(`/api/listdir?path=${encodeURIComponent(path || '')}`);
+async function browseDir(path, t = saveAsDirEls(), onFile = null, start = false) {
+  // One literal, so the request-field guard can read `path` and `start` off it (`start` FIRST: the guard
+  // reads a literal only up to its first quote, which falls inside `path`'s own `|| ''`): until ADR-102 the only
+  // sender it could see was the download dialog's, and an empty `path` is the server's default either way.
+  // `start` marks `path` as a SUGGESTED first folder, which the server may answer with ~/nib instead
+  // (gone, unreadable, or Nib's own ceremony store, ADR-214).
+  const asStart = start ? 1 : 0; // outside the literal: the guard's `?` split would take a ternary's for the query's
+  const res = await apiFetch(`/api/listdir?start=${asStart}&path=${encodeURIComponent(path || '')}`);
   if (!res.ok) return toast('could not list folder');
   const info = await res.json();
   t.dir.value = info.path;
@@ -9342,7 +9355,7 @@ function openSaveAs(blob, defaultName, title, formats, onSaved) {
   els.saveAsModal.hidden = false;
   els.saveAsName.focus();
   els.saveAsName.select();
-  browseDir(''); // server resolves the empty path to the ~/nib default
+  startFolder(); // the open document's folder, else the ~/nib default (ADR-214)
 }
 
 // saveAsSelected is the format the Format line names RIGHT NOW, or null for an ordinary save. It
@@ -9541,7 +9554,7 @@ async function openBookmarkSplit() {
   els.bsPrefix.value = '';
   updateBsPreview();
   els.bookmarkSplitModal.hidden = false;
-  browseDir('', bookmarkDirEls()); // server resolves '' to ~/nib
+  startFolder(bookmarkDirEls());
 }
 
 async function bookmarkSplitGo() {
@@ -9610,7 +9623,7 @@ function openPageSplit() {
   els.psPrefix.value = '';
   updatePsPreview();
   els.pageSplitModal.hidden = false;
-  browseDir('', pageSplitDirEls());
+  startFolder(pageSplitDirEls());
 }
 async function pageSplitGo() {
   const dir = els.psDir.value.trim(); // the server Cleans it
