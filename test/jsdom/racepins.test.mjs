@@ -304,7 +304,7 @@ test('every listed site captures its document before awaiting and never reads th
 const LIVE_BY_DESIGN = {
   'async function openSessionInit() {': 'opens a dialog whose Go acts on the ACTIVE document, and words it for that one — "the document that is open NOW"',
   'async function reconcileWithServer() {': 'a session question, not a document operation: it compares the server\'s tab set with whatever is on screen when it answers',
-  'async function openURL(url) {': 'reads the view only after installOpened succeeded, which made the opened document the active one',
+  'async function openURL(url, language = NO_LANGUAGE) {': 'reads the view only after installOpened succeeded, which made the opened document the active one',
   'async function ensureAlignment() {': 'every await is followed by `if (seq !== cmpSeq) return;`, and a switch closes Compare, which bumps cmpSeq',
   'async function renderCompareVisual(mode) {': 'as ensureAlignment — the cmpSeq token is its pin',
   'async function save() {': 'captures `owner`; the two later reads are the check itself (`view.docMeta.id !== doc.id`) and one made only once that check has passed',

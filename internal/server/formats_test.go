@@ -22,7 +22,7 @@ func TestStatusCarriesTheFormatTable(t *testing.T) {
 	}
 	for i, f := range want {
 		v := st.Formats[i]
-		if v.Key != f.Key || strings.Join(v.Exts, ",") != strings.Join(f.Exts, ",") || strings.Join(v.MIME, ",") != strings.Join(f.MIME, ",") || v.Image != f.Image {
+		if v.Key != f.Key || strings.Join(v.MIME, ",") != strings.Join(f.MIME, ",") || v.Image != f.Image {
 			t.Errorf("row %d: status %+v, table %+v", i, v, f)
 		}
 		if v.Available != pdfops.FormatAvailable(f) {
@@ -35,13 +35,13 @@ func TestStatusCarriesTheFormatTable(t *testing.T) {
 	}
 }
 
-// The Open dialog's folder listing offers what every open route opens — PDFs and the table's Door
-// formats — and not a document it would refuse (a .docx arrives through Import until P01.S02).
+// The Open dialog's folder listing offers what every open route opens — PDFs and every row of the format
+// table (ADR-215: the Door subset is retired, every row opens at every door) — and not a file it would refuse.
 func TestListDirOffersWhatTheDoorsOpen(t *testing.T) {
 	ts, _ := startServer(t)
 	c, _ := authedClient(t, ts)
 	dir := t.TempDir()
-	for _, n := range []string{"a.pdf", "B.PNG", "c.jpeg", "d.tif", "e.webp", "f.docx", "g.md", "h.txt", "i.gif", "j.bmp", "k.cbz"} {
+	for _, n := range []string{"a.pdf", "B.PNG", "c.jpeg", "d.tif", "e.webp", "f.docx", "g.md", "h.txt", "i.gif", "j.bmp", "k.cbz", "l.exe", "m.zip", "n"} {
 		os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644)
 	}
 	resp, err := c.Get(ts.URL + "/api/listdir?path=" + dir)
@@ -55,7 +55,7 @@ func TestListDirOffersWhatTheDoorsOpen(t *testing.T) {
 	for _, f := range info.Files {
 		got = append(got, f.Name)
 	}
-	if strings.Join(got, ",") != "B.PNG,a.pdf,c.jpeg,d.tif,e.webp,i.gif,j.bmp,k.cbz" {
+	if strings.Join(got, ",") != "B.PNG,a.pdf,c.jpeg,d.tif,e.webp,f.docx,g.md,h.txt,i.gif,j.bmp,k.cbz" {
 		t.Errorf("listed %v", got)
 	}
 }

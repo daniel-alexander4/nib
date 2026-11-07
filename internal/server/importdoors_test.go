@@ -113,7 +113,6 @@ func TestEveryOpenRouteDecidesThroughTheImportFunction(t *testing.T) {
 	// the doors, and the server door each one calls
 	doors := map[string][]string{
 		"server.go":    {"importOrRefuse", "readInstallablePDF"}, // upload; path open
-		"office.go":    {"importOrRefuse"},                       // Import… (with options)
 		"sources.go":   {"importOrRefuse"},                       // fetch by URL
 		"handoff.go":   {"readInstallablePDF"},                   // OS hand-off
 		"diskstate.go": {"readInstallablePDF"},                   // reload (PDF only)

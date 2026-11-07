@@ -338,9 +338,10 @@ Markdown (`.md/.markdown`, `.txt`, `.csv`), Word, Excel, PowerPoint and OpenDocu
 saved web pages and e-books (`.html/.htm/.xhtml`, `.mhtml/.mht`, `.epub`) and email (`.eml`) all open, as well as a PDF. A file that is not a PDF is
 **imported** — converted to a PDF that opens as a new document, ready to mark up, fill,
 sign, or save. Nib says so once ("Imported report.docx as a PDF. Save writes a PDF; use
-Export for other formats."). **File → Import…** is the same with a choice of the document's
-language. A converted document has no file behind it, so *Save* asks for a name and your
-original is never written. Open Recent lists the *path* of an imported file; opening it
+Export for other formats."). The Open dialog lists every one of these, and its
+**Language (for converted files)** list chooses the language a converted document is declared in;
+hover over **Open…** for the formats and the program each needs. A converted document has no file behind it, so *Save* asks for a name, starts in the
+folder the file came from, and your original is never written. Open Recent lists the *path* of an imported file; opening it
 again imports it again. A file whose name and contents disagree (a "`.docx`" that is a
 picture) is refused with a sentence that says so.
 
@@ -357,7 +358,7 @@ place each platform installs it by default — a macOS `.app` bundle and
 `%ProgramFiles%` on Windows are not on `PATH`, and until v1.133.0 Nib reported
 those machines as not having it at all. When Nib can't find it, the *Open a
 Document* card says so, with a link and a **Check again** button (so installing it
-takes effect without restarting Nib), the file picker narrows to Markdown, and the
+takes effect without restarting Nib), opening a Word file says Nib couldn't find LibreOffice, and the
 CLI verb says the same thing:
 
 ```
@@ -366,9 +367,9 @@ nib office notes.md -o notes.pdf
 nib office vertrag.docx -o vertrag.pdf --lang de
 ```
 
-In the app, the **Document language** list beside *Import…* does the
-same: it starts at this computer's language, and whatever it names is declared on
-the converted document; set it to *not specified* to declare nothing new.
+In the app, the **Language (for converted files)** list in the Open dialog does the
+same, for a file and for a web address: it starts at this computer's language, and whatever it names is declared on
+the converted document; set it to *Not specified* to declare nothing new.
 
 `--lang` declares the language the document is written in, so a screen reader
 pronounces it correctly. Without it the CLI declares none for Markdown, and an
@@ -1272,7 +1273,8 @@ adds it to that session, rather than starting a second one.
 
 The same folder browser backs every destination picker (Save As, and both
 splits), and each one opens in the folder the document came from, or in `~/nib` when it
-came from nowhere (an upload, a web address, a scan) or that folder is gone. On Windows it lists your **drives** once you reach the top of one:
+came from nowhere (a file dragged in, a web address, a scan) or that folder is gone. Wherever it starts,
+a button carrying `~/nib`'s full path takes it back there in one press. On Windows it lists your **drives** once you reach the top of one:
 there's no single root there the way `/` is on Linux and macOS, so without that
 a document on `D:`, a USB stick or a mapped share couldn't be reached by
 clicking. And a folder Nib can't read says so — "you don't have permission to
@@ -1668,8 +1670,9 @@ Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
 (amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
-On Windows, run `nib register` once to have Nib offered for PDFs in Explorer's
-**Open with** menu (`nib unregister` undoes it). Everything it writes lives under
+On Windows, run `nib register` once to have Nib offered for PDFs, and every file type it
+converts, in Explorer's **Open with** menu (`nib unregister` undoes it). On Linux the `.deb`'s
+desktop entry does the same, so right-clicking a `.docx`, `.md` or `.html` offers **Open with Nib**. Everything it writes lives under
 `HKEY_CURRENT_USER`, so it needs no administrator rights and touches no other
 account. It stops short of making Nib the *default* PDF handler, and so does
 every other program: since Windows 8 the default for a file type is sealed
@@ -1807,7 +1810,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib text IN [--json]` | List the text every page prints and where: one run per line, with page, `left top right bottom` and size in points on the page as shown (origin top left), and the text. The whole document is read in one pass. Runs come in the order the page draws them, not reading order, and are one show operator's text — a producer that sets one letter at a time gives one letter a run. A page that sets no text (a scan) or has text Nib cannot read says so on stderr (`noText`, `unread` in the JSON). |
 | `nib attachments IN [--json]` | List embedded files; `--extract ID -o OUT` pulls one out (the id `--json` lists, or a name only one file carries), `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). `--propose` lists what the document's headings would give, writing nothing; `--set FILE -o OUT` (or `-w`) replaces the outline with a JSON list of `{title, page, level}`. |
-| `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
+| `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs and every format Nib converts (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `open`/`timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. `open` opens each one in Nib — "Print to Nib" from any program's print dialog. |
 | `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
 | `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing unless you add `--self-test`, which also publishes one throwaway record and fetches it back. |

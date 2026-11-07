@@ -35,8 +35,9 @@ test('the notice is a polite status region that is not the session alert and sta
   assert.notEqual(box().id, 'sessionNotice');
 });
 
-test('Import… carries its new label and the group is Open & Import', () => {
-  assert.equal(doc.getElementById('officeOpenBtn').textContent.trim(), 'Import…');
+test('Import… folded into Open… (ADR-215) and the group is still Open & Import', () => {
+  assert.equal(doc.getElementById('officeOpenBtn'), null, 'an Import… button is back beside Open…');
+  assert.equal(doc.getElementById('openMenuItem').textContent.trim(), 'Open…');
   assert.equal(doc.querySelector('.tbgroup[data-label="Open & Import"]') !== null, true, 'the Open group still has its old name');
 });
 

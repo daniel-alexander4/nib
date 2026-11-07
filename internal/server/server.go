@@ -122,7 +122,7 @@ type document struct {
 	path string
 	// name is the display name for a document with no path.
 	//
-	// Three routes (/api/upload, /api/combine, /api/office) set docResponse.Name after the
+	// Three routes (/api/upload, /api/combine and the since-retired /api/office) set docResponse.Name after the
 	// fact and it was stored nowhere, so `docName(doc.path)` returned "" for them forever
 	// after — and `GET /api/docs` reported that. The client only assigns originalName when
 	// meta.name is truthy, so after a reload the tab rendered "Untitled" and export
@@ -638,7 +638,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/optimize", s.requireUnlocked(s.handleOptimize))
 	mux.HandleFunc("POST /api/shrink-pictures", s.requireUnlocked(s.handleShrinkPictures))
 	mux.HandleFunc("POST /api/pdfa", s.requireUnlocked(s.handlePDFA))
-	mux.HandleFunc("POST /api/office", s.requireUnlocked(s.handleOffice))
 	mux.HandleFunc("POST /api/table", s.requireUnlocked(s.handleTableExport))
 	mux.HandleFunc("POST /api/extract", s.requireUnlocked(s.handleExtract))
 	mux.HandleFunc("POST /api/extract-images", s.requireUnlocked(s.handleExtractImages))
@@ -736,6 +735,10 @@ func securityHeaders(next http.Handler) http.Handler {
 
 type openRequest struct {
 	Path string `json:"path"`
+	// Lang and LangChosen are the Open dialog's Document language field (ADR-215, through withLanguage). They change
+	// only a document Nib converts; a PDF opens as it is.
+	Lang       string `json:"lang,omitempty"`
+	LangChosen bool   `json:"langChosen,omitempty"`
 }
 
 // docResponse is the metadata returned after a document is opened or saved.
@@ -782,10 +785,10 @@ type docResponse struct {
 	// is refused. Omitted at 0, which is what an absent field reads as.
 	Rev uint64 `json:"rev,omitempty"`
 	// ImportedFrom is the source file's name when THIS answer is the one that imported it (open, upload, URL,
-	// Import…). Set by those routes after docResponse, so `/api/docs`, a reload and every later answer omit it.
+	// hand-off). Set by those routes after docResponse, so `/api/docs`, a reload and every later answer omit it.
 	ImportedFrom string `json:"importedFrom,omitempty"`
 	// LabelNote is why a Markdown conversion with a language the person chose did not earn the PDF/UA label
-	// (`pdfops.LabelNote`, the CLI's sentence); only /api/office sets it, on its own answer. A note, not a
+	// (`pdfops.LabelNote`, the CLI's sentence); only /api/open and /api/open-url set it, on their own answer (ADR-215). A note, not a
 	// failure: the document opened.
 	LabelNote string `json:"labelNote,omitempty"`
 
@@ -964,7 +967,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Clean(req.Path)
-	res, ref := readInstallablePDF(r.Context(), path, s.importOptions("path"))
+	res, ref := readInstallablePDF(r.Context(), path, withLanguage(s.importOptions("path"), req.Lang, req.LangChosen))
 	if ref != nil {
 		httpError(w, ref.status, ref.msg)
 		return
@@ -1009,6 +1012,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	resp := s.docResponse(installed)
 	resp.SameFileOpen = dup
 	resp.ImportedFrom = installed.imported
+	resp.LabelNote = pdfops.LabelNote(res.LabelRefused)
 	writeJSON(w, resp)
 }
 

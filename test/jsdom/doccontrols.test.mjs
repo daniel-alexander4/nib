@@ -82,7 +82,7 @@ const EXEMPT = new Set([
   // These CREATE or receive a document, so requiring one would be circular:
   // Scan… CREATES a document from a scanner (ADR-213), so it needs none open.
   'scannerBtn',
-  'openMenuItem', 'openRecentBtn', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
+  'openMenuItem', 'openRecentBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
   // Re-runs the converter probe. It acts on no document at all — it is a question about this
   // MACHINE ("can you find LibreOffice yet?"), asked after the user has installed it, and it is
   // only visible while the answer is no. Requiring a document would mean the one control that

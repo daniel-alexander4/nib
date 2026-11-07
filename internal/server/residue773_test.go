@@ -1,8 +1,6 @@
 package server
 
 import (
-	"bytes"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,15 +53,10 @@ func TestTheOpenCapIsAskedBeforeADocumentIsConvertedOrFetched(t *testing.T) {
 	ts, path := startServer(t)
 	c, csrf := authedClient(t, ts)
 
+	// A conversion by path (the Open dialog since ADR-215; this was /api/office's upload).
 	office := func() (int, string) {
 		t.Helper()
-		var buf bytes.Buffer
-		mw := multipart.NewWriter(&buf)
-		fw, _ := mw.CreateFormFile("file", "notes.md")
-		fw.Write([]byte("# Notes\n"))
-		mw.WriteField("lang", "!!! not a language")
-		mw.Close()
-		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", mw.FormDataContentType(), &buf)
+		resp := importByPath(t, ts.URL, c, csrf, "notes.md", []byte("# Notes\n"), "!!! not a language", false)
 		defer resp.Body.Close()
 		return resp.StatusCode, readBody(t, resp)
 	}
@@ -92,7 +85,7 @@ func TestTheOpenCapIsAskedBeforeADocumentIsConvertedOrFetched(t *testing.T) {
 	}
 
 	if code, body := office(); code != http.StatusConflict || !strings.Contains(body, "too many documents open") {
-		t.Errorf("at the cap /api/office answered %d %q, want 409 — it converted the document first", code, body)
+		t.Errorf("at the cap a conversion by path answered %d %q, want 409 — it converted the document first", code, body)
 	}
 	if code, body := openURL(); code != http.StatusConflict || !strings.Contains(body, "too many documents open") {
 		t.Errorf("at the cap /api/open-url answered %d %q, want 409 — it fetched the document first", code, body)

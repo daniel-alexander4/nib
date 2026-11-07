@@ -1,5 +1,6 @@
 // The Document language field — `/pending 471`, Dan's option B: pre-filled from this computer's
-// language, changeable or clearable, and sent to /api/office as `lang` when it names one.
+// language, changeable or clearable, and sent with the Open dialog's open as `lang` when it names one. The field moved
+// into the Open dialog when Import… folded into Open… (ADR-215), and it rides on both of the dialog's routes.
 //
 // ── What this tier can see, and what it cannot ───────────────────────────────
 // It sees the choice (`docLangForLocale`, tabled directly) and the request the convert flow builds.
@@ -36,30 +37,35 @@ test('the pre-fill picks the exact tag, then the primary subtag, else nothing', 
 });
 
 let sent = null;
+const stop = (opts) => {
+  sent = JSON.parse(opts.body);
+  return new Response(JSON.stringify({ error: 'stop here' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+};
 const h = await boot({
   routes: {
-    '/api/office': (opts) => {
-      sent = opts && opts.body;
-      return new Response(JSON.stringify({ error: 'stop here' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    },
+    '/api/open': stop, '/api/open-url': stop,
+    '/api/listdir': { path: '/home/someone', parent: '/home', dirs: [], files: [{ name: 'brief.docx', path: '/home/someone/brief.docx' }] },
   },
 });
 const { document: doc, settle } = h;
 const field = doc.getElementById('docLang');
-const input = doc.getElementById('officeInput');
 
-async function convert() {
+// convert opens `value` from the Open dialog, typed, the way a person would, and returns the body it posted.
+async function convert(value = '/home/someone/notes.md') {
   sent = null;
-  Object.defineProperty(input, 'files', { value: [new h.window.File(['# Notes\n'], 'notes.md')], configurable: true });
-  input.dispatchEvent(new h.window.Event('change'));
+  doc.getElementById('openMenuItem').click();
+  await settle();
+  doc.getElementById('pathInput').value = value;
+  doc.getElementById('openGo').click();
   await settle();
   // Stimulus before response: the flow must actually have posted, or "no lang" below is vacuous.
-  assert.ok(sent instanceof h.window.FormData, 'the convert flow never posted to /api/office');
+  assert.ok(sent && typeof sent === 'object', 'the Open dialog never posted ' + value);
   return sent;
 }
 
 test('the field is pre-filled from this computer\'s language', () => {
   assert.ok(field, 'no #docLang in index.html');
+  assert.ok(field.closest('#openModal'), 'the language field is not in the Open dialog, the one place a conversion starts');
   assert.equal(h.window.navigator.language, 'en-US', 'jsdom\'s locale changed, so this row no longer says what it checks');
   assert.equal(field.value, 'en');
 });
@@ -68,20 +74,41 @@ test('the pre-fill is sent as a language but never as one the user chose', async
   // Before any change event: the value is the pre-fill. /pending 486 rests a conformance claim only on
   // a language someone picked, so this must not say "chosen".
   const prefilled = await convert();
-  assert.equal(prefilled.get('lang'), 'en', 'control: the pre-filled language is still sent');
-  assert.equal(prefilled.get('langChosen'), null, 'the pre-fill was reported as the user\'s choice');
+  assert.equal(prefilled.path, '/home/someone/notes.md', 'control: the path was not what was opened');
+  assert.equal(prefilled.lang, 'en', 'control: the pre-filled language is still sent');
+  assert.equal(prefilled.langChosen, false, 'the pre-fill was reported as the user\'s choice');
 });
 
 test('converting sends the chosen language, and nothing when it is cleared', async () => {
   field.value = 'de';
   field.dispatchEvent(new h.window.Event('change'));
   const chosen = await convert();
-  assert.equal(chosen.get('lang'), 'de');
-  assert.equal(chosen.get('langChosen'), '1', 'a language the user picked was not reported as chosen');
+  assert.equal(chosen.lang, 'de');
+  assert.equal(chosen.langChosen, true, 'a language the user picked was not reported as chosen');
+  const byURL = await convert('https://example.org/notes.md');
+  assert.equal(byURL.url, 'https://example.org/notes.md', 'control: the URL was not what was opened');
+  assert.equal(byURL.lang, 'de', 'a URL opened from the dialog dropped the language beside it');
+  assert.equal(byURL.langChosen, true, 'a URL opened from the dialog dropped the choice');
   field.value = '';
   field.dispatchEvent(new h.window.Event('change'));
   const cleared = await convert();
-  assert.equal(cleared.get('lang'), null, 'a cleared field still sent a language');
-  assert.equal(cleared.get('langChosen'), null, 'a cleared field still claimed a chosen language');
-  assert.ok(cleared.get('file'), 'control: the file is still sent');
+  assert.equal(cleared.lang, '', 'a cleared field still sent a language');
+  assert.equal(cleared.langChosen, false, 'a cleared field still claimed a chosen language');
+  assert.ok(cleared.path, 'control: the path is still sent');
+});
+
+test('a file picked from the dialog\'s list carries the language too, not only a typed path', async () => {
+  field.value = 'fr';
+  field.dispatchEvent(new h.window.Event('change'));
+  sent = null;
+  doc.getElementById('openMenuItem').click();
+  await settle();
+  const row = [...doc.querySelectorAll('#openList li.file')].find((li) => li.textContent === 'brief.docx');
+  assert.ok(row, 'setup: the listed file has no row in the Open dialog');
+  row.click();
+  await settle();
+  assert.ok(sent, 'picking the row opened nothing');
+  assert.equal(sent.path, '/home/someone/brief.docx');
+  assert.equal(sent.lang, 'fr', 'a file picked from the list dropped the language beside it');
+  assert.equal(sent.langChosen, true);
 });

@@ -52,7 +52,11 @@ func urlDocName(raw string) string {
 // CORS). A URL-sourced document has no local path, so it saves as a copy rather
 // than overwriting in place.
 func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
-	var req struct{ URL string }
+	var req struct {
+		URL        string
+		Lang       string `json:"lang"`       // the Open dialog's language field (ADR-215, withLanguage)
+		LangChosen bool   `json:"langChosen"` // the person chose it (ADR-033)
+	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -76,7 +80,7 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	// (ADR-009, D8), and leaving it out would be the defect of a rule that reaches three sites and not the
 	// fourth. There is no path here to drop.
 	src, size := pdfops.BytesSource(data)
-	res, ok := s.importOrRefuse(w, r.Context(), src, size, name, s.importOptions("url"))
+	res, ok := s.importOrRefuse(w, r.Context(), src, size, name, withLanguage(s.importOptions("url"), req.Lang, req.LangChosen))
 	if !ok {
 		return
 	}
@@ -93,5 +97,6 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.docResponse(installed)
 	resp.ImportedFrom = installed.imported
+	resp.LabelNote = pdfops.LabelNote(res.LabelRefused)
 	writeJSON(w, resp)
 }

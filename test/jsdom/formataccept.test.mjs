@@ -1,6 +1,6 @@
-// The two file pickers' `accept` come from the server's format table (status.formats; P01.S01, ADR-184), not from
-// a literal in the page. Handed a table the page has never heard of, the pickers follow it — which a page
-// carrying its own list could not do.
+// Combine's picker `accept` and Open…'s tooltip come from the server's format table (status.formats; ADR-184,
+// ADR-215), not from a literal in the page. Handed a table the page has never heard of, both follow it — which a page
+// carrying its own list could not do. (The Import… picker this file also read is gone: Import folded into Open….)
 //
 // One boot per file — see boot.mjs.
 import test from 'node:test';
@@ -10,14 +10,26 @@ import { boot, BOOT_ROUTES } from './boot.mjs';
 const formats = [
   { key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true },
   { key: 'zzz', label: 'Zzz', exts: ['zzz', 'zz'], mime: ['application/x-zzz'], available: true },
-  { key: 'qqq', label: 'Qqq', exts: ['qqq'], mime: ['application/x-qqq'], available: false },
+  { key: 'qqq', label: 'Qqq', exts: ['qqq'], mime: ['application/x-qqq'], available: false, tool: 'Qqqtool' },
+  { key: 'rrr', label: 'Rrr', exts: ['rrr'], mime: ['application/x-rrr'], available: true, tool: 'Rrrtool' },
 ];
 const h = await boot({ routes: { '/api/status': { ...BOOT_ROUTES['/api/status'], formats } } });
 const { document: doc } = h;
 await h.settle();
 
-test('the import picker offers the available documents of the table, and not an image or a missing tool', () => {
-  assert.equal(doc.getElementById('officeInput').accept, '.zzz,.zz');
+test('Open…\'s tooltip lists every format of the table, grouped by its tool, and marks a tool this computer lacks', () => {
+  assert.equal(doc.getElementById('openMenuItem').title, [
+    'Open a PDF, or a file Nib converts to PDF:',
+    '• Built in: PNG image, Zzz',
+    '• Needs Qqqtool, not found on this computer: Qqq',
+    '• Needs Rrrtool: Rrr',
+  ].join('\n'));
+});
+
+test('before the status answers, Open… says what it opens without a list', async () => {
+  const fs = await import('node:fs');
+  const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<button id="openMenuItem" title="Open a PDF, or a file Nib converts to PDF">/);
 });
 
 test('the combine picker offers PDF and the table\'s images', () => {
@@ -27,7 +39,7 @@ test('the combine picker offers PDF and the table\'s images', () => {
 test('the page source carries no list of the extensions', async () => {
   const fs = await import('node:fs');
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-  for (const id of ['officeInput', 'combineInput']) {
+  for (const id of ['combineInput']) {
     const tag = html.match(new RegExp(`<input id="${id}"[^>]*>`))[0];
     assert.ok(!/accept=/.test(tag), `${id} carries a literal accept — the table owns it`);
   }

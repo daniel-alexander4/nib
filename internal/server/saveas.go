@@ -72,7 +72,12 @@ type listDirResponse struct {
 	Roots  []string   `json:"roots,omitempty"`  // other drives to jump to, at a root; empty off Windows
 	Reason string     `json:"reason,omitempty"` // why it came back empty: missing | denied | notdir | unreadable
 	Dirs   []dirEntry `json:"dirs"`             // sub-directories, sorted, dotfiles hidden
-	Files  []dirEntry `json:"files"`            // PDF files, sorted — for the open browser
+	Files  []dirEntry `json:"files"`            // PDFs and every format Nib converts, sorted — for the open browser
+	// DefaultDir is the folder an empty path lists (~/nib), and AtDefault says the listed folder IS it: the destination
+	// dialogs offer a button to it, named in full, wherever else they are (ADR-215). The server says whether, because
+	// only it knows the separator and the cleaned form.
+	DefaultDir string `json:"defaultDir,omitempty"`
+	AtDefault  bool   `json:"atDefault,omitempty"`
 }
 
 // handleListDir lists a folder's sub-directories (and PDF files) so the save and
@@ -98,7 +103,8 @@ func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 		p = defaultOutputDir()
 	}
 	p = filepath.Clean(p)
-	resp := listDirResponse{Path: p, Dirs: []dirEntry{}, Files: []dirEntry{}}
+	def := filepath.Clean(defaultOutputDir())
+	resp := listDirResponse{Path: p, Dirs: []dirEntry{}, Files: []dirEntry{}, DefaultDir: def, AtDefault: p == def}
 	if parent := filepath.Dir(p); parent != p {
 		resp.Parent = parent
 	} else {
@@ -120,7 +126,7 @@ func (s *Server) handleListDir(w http.ResponseWriter, r *http.Request) {
 		child := dirEntry{Name: name, Path: filepath.Join(p, name)}
 		if e.IsDir() {
 			resp.Dirs = append(resp.Dirs, child)
-		} else if strings.EqualFold(filepath.Ext(name), ".pdf") || pdfops.IsDoorExt(filepath.Ext(name)) {
+		} else if strings.EqualFold(filepath.Ext(name), ".pdf") || pdfops.IsFormatExt(filepath.Ext(name)) {
 			resp.Files = append(resp.Files, child)
 		}
 	}

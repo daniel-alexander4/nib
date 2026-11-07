@@ -1053,3 +1053,5 @@ home today.
   — Linux first; the list is asked at dialog open; a scan is accepted only for a listed name; a feeder run ends well only on the out-of-paper exit.
 - [ADR-214](214-a-save-dialog-starts-in-the-documents-own-folder-and-the-server-vets-it.md) — **a save dialog starts in the document's own folder, and the server vets the suggestion**
   — `docResponse.dir` / `srcPath` for a converted document; `listdir?start=1` falls back to `~/nib` for a gone, unreadable or ceremony-store folder; one `startFolder` door.
+- [ADR-215](215-one-open-opens-every-format-by-path-and-every-format-is-offered-where-nib-is.md) — **one Open… opens every format by path, and every format is offered where Nib is offered**
+  — the `Door` flag retired (listing, `nib.desktop`, Windows `nib register` read every row); Import… and `/api/office` gone, the language field in the Open dialog through `withLanguage` on `/api/open` and `/api/open-url`; a source read marked at the read (`sourceFile`); Open…'s tooltip from the table; the destination dialogs' full-path `~/nib` button.

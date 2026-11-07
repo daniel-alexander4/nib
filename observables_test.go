@@ -195,7 +195,7 @@ var published = map[string][]string{
 	// The import function's result (ADR-185): the doors read PDF, Name and Converted; the command line reads the two notes.
 	"pdfops.ScanDevice":   {"web/app.js", "internal/server/scanner.go"}, // the window lists id and label in the Scan… dialog (ADR-213)
 	"pdfops.ImportResult": {"internal/server/server.go", "internal/server/handoff.go", "internal/cli/commands.go"},
-	"pdfops.Format":       {"internal/server/auth.go", "internal/pdfops/formats.go", "internal/pdfops/importsniff.go"}, // Door is read by IsDoorExt, which listDir and the desktop-file test use
+	"pdfops.Format":       {"internal/server/auth.go", "internal/pdfops/formats.go", "internal/pdfops/importsniff.go", "internal/cli/register.go"}, // register.go: Windows' Open with names every row's extensions (ADR-215)
 	// **Discovered only from 2026-09-01, by being EMBEDDED (/pending 347).** `WatermarkStyle` is
 	// exported and json-tagged and is only ever a parameter — `StampWatermark(pdf, text, st)` —
 	// so the "returned by an exported function" filter had never admitted it, and its four fields

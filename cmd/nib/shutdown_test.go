@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,8 +22,8 @@ import (
 // A running Nib that is asked to leave — by Quit, by SIGTERM — ends its converter before it exits
 // (ADR-185, D31). Neither cancels the conversion's context, so before `Shutdown` a LibreOffice that
 // was converting survived, with the user's source in its temp directory. The converter here is a
-// script named `soffice` first on PATH that records its pid and sleeps; the document is posted to
-// the real `/api/office`.
+// script named `soffice` first on PATH that records its pid and sleeps; the document is opened by path
+// through the real `/api/open`, the window's only conversion door since ADR-215 retired `/api/office`.
 type liveNib struct {
 	cmd              *exec.Cmd
 	base, csrf       string
@@ -97,7 +96,7 @@ func startNibWithFakeConverter(t *testing.T) *liveNib {
 		t.Fatalf("launch trade: %v %+v", err, lr)
 	}
 	n.csrf = lr.CSRF
-	// A fresh home has no vault, and `/api/office` needs one open: enrol a key as the harnesses do.
+	// A fresh home has no vault, and `/api/open` needs one open: enrol a key as the harnesses do.
 	enrol := fmt.Sprintf(`{"mode":"create","keyPath":%q}`, filepath.Join(dir, "home", ".ssh", "id_ed25519"))
 	er, err := n.post(t, "/api/ssh/enroll", strings.NewReader(enrol), "application/json")
 	if err != nil {
@@ -121,18 +120,18 @@ func (n *liveNib) post(t *testing.T, path string, body io.Reader, ctype string) 
 	return http.DefaultClient.Do(req)
 }
 
-// startConversion posts a .docx and returns once the fake converter is running; the response is
+// startConversion opens a .docx by path and returns once the fake converter is running; the response is
 // drained in the background, because a killed converter answers it with a failure.
 func (n *liveNib) startConversion(t *testing.T) (converterPID int) {
 	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	fw, _ := mw.CreateFormFile("file", "report.docx")
-	fw.Write(testpdf.MinimalDocx("shutdown"))
-	mw.Close()
+	src := filepath.Join(t.TempDir(), "report.docx")
+	if err := os.WriteFile(src, testpdf.MinimalDocx("shutdown"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"path": src})
 	answer := make(chan string, 1)
 	go func() {
-		resp, err := n.post(t, "/api/office", &buf, mw.FormDataContentType())
+		resp, err := n.post(t, "/api/open", bytes.NewReader(body), "application/json")
 		if err != nil {
 			answer <- err.Error()
 			return
@@ -150,9 +149,9 @@ func (n *liveNib) startConversion(t *testing.T) (converterPID int) {
 	}
 	select {
 	case a := <-answer:
-		t.Fatalf("the converter never started; /api/office answered %s\n%s", a, n.log.String())
+		t.Fatalf("the converter never started; /api/open answered %s\n%s", a, n.log.String())
 	default:
-		t.Fatalf("the converter never started and /api/office never answered:\n%s", n.log.String())
+		t.Fatalf("the converter never started and /api/open never answered:\n%s", n.log.String())
 	}
 	return 0
 }

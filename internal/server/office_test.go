@@ -3,24 +3,28 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"nib/internal/pdfops"
 )
 
-// officeForm builds the multipart body the office endpoint expects: the document
-// as the "file" part, named so the handler can read its extension.
-func officeForm(t *testing.T, name string, data []byte) (*bytes.Buffer, string) {
+// importByPath is how the window converts a file since Import… folded into Open… (ADR-215): the file is
+// written where a person keeps it and opened BY PATH, carrying the Open dialog's language field. These
+// tests were /api/office's; that upload route is retired and every property it was tested for is asked
+// of /api/open here.
+func importByPath(t *testing.T, base string, c *http.Client, csrf, name string, data []byte, lang string, chosen bool) *http.Response {
 	t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	fw, _ := mw.CreateFormFile("file", name)
-	fw.Write(data)
-	mw.Close()
-	return &buf, mw.FormDataContentType()
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(openRequest{Path: p, Lang: lang, LangChosen: chosen})
+	return write(t, c, csrf, http.MethodPost, base+"/api/open", "application/json", bytes.NewReader(body))
 }
 
 func tinyDOCX(t *testing.T) []byte {
@@ -45,7 +49,7 @@ func tinyDOCX(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// TestOfficeHandler: a posted DOCX is converted and installed as the working
+// TestOfficeHandler: a DOCX opened by path is converted and installed as the working
 // document; the response names it .pdf and /api/pdf then serves a real PDF. Skips
 // when LibreOffice isn't installed.
 func TestOfficeHandler(t *testing.T) {
@@ -55,12 +59,11 @@ func TestOfficeHandler(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
-	body, ct := officeForm(t, "report.docx", tinyDOCX(t))
-	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", ct, body)
+	resp := importByPath(t, ts.URL, c, csrf, "report.docx", tinyDOCX(t), "", false)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		out, _ := io.ReadAll(resp.Body)
-		t.Fatalf("office status = %d: %s", resp.StatusCode, out)
+		t.Fatalf("open of a .docx status = %d: %s", resp.StatusCode, out)
 	}
 	out, _ := io.ReadAll(resp.Body)
 	if !bytes.Contains(out, []byte(`"name":"report.pdf"`)) {
@@ -85,22 +88,20 @@ func TestOfficeHandlerRejectsUnsupported(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
-	body, ct := officeForm(t, "malware.exe", []byte("MZ..."))
-	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", ct, body)
+	resp := importByPath(t, ts.URL, c, csrf, "malware.exe", []byte("MZ..."), "", false)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
-		t.Fatalf("office on a .exe status = %d, want 415", resp.StatusCode)
+		t.Fatalf("open of a .exe status = %d, want 415", resp.StatusCode)
 	}
 }
 
-// TestOfficeHandlerMarkdown: a posted Markdown file converts natively (no
+// TestOfficeHandlerMarkdown: a Markdown file opened by path converts natively (no
 // LibreOffice, so no skip) and is installed as the working document.
 func TestOfficeHandlerMarkdown(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)
 
-	body, ct := officeForm(t, "notes.md", []byte("# Notes\n\n- one\n- two\n"))
-	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/office", ct, body)
+	resp := importByPath(t, ts.URL, c, csrf, "notes.md", []byte("# Notes\n\n- one\n- two\n"), "", false)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		out, _ := io.ReadAll(resp.Body)

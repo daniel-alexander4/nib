@@ -2,12 +2,14 @@ package cli
 
 import (
 	"strings"
+
+	"nib/internal/pdfops"
 )
 
 // Windows file association. Nib ships as one portable .exe with no installer, so
 // nothing ever told Windows the program exists — a PDF in Explorer had no way to
 // reach it except dragging the file onto the binary. `nib register` writes the
-// user-scoped registry entries that put Nib in the "Open with" list; `nib
+// user-scoped registry entries that put Nib in the "Open with" list for PDFs and every format it converts; `nib
 // unregister` takes them out again.
 //
 // It cannot make Nib the DEFAULT handler, and no program can: since Windows 8
@@ -43,8 +45,31 @@ type regEntry struct {
 	Value string
 }
 
-// associationEntries returns the registry values that register exe as a PDF
-// handler. It is kept separate from the code that writes them so the layout can
+// progID is one file type Nib registers: a ProgId, the name Explorer shows for the type when Nib is its
+// default, and the extensions it covers (with their dot).
+type progID struct {
+	ID    string
+	Label string
+	Exts  []string
+}
+
+// progIDs is PDF plus one ProgId per row of the format table (ADR-215), so every type Nib opens is in
+// Explorer's "Open with" list. One per row, never the PDF one shared: a ProgId names the type, and a
+// .docx a user then sets to open with Nib would be shown as "PDF Document".
+func progIDs() []progID {
+	out := []progID{{ID: `Nib.Document`, Label: "PDF Document", Exts: []string{".pdf"}}}
+	for _, f := range pdfops.Formats() {
+		p := progID{ID: `Nib.` + f.Key, Label: f.Label}
+		for _, e := range f.Exts {
+			p.Exts = append(p.Exts, "."+e)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// associationEntries returns the registry values that register exe for PDFs and every format Nib
+// converts. It is kept separate from the code that writes them so the layout can
 // be table-tested from any platform — the same reason assetURL takes goos as a
 // parameter rather than reading runtime.GOOS.
 //
@@ -56,35 +81,52 @@ func associationEntries(exe string) []regEntry {
 	// contains spaces arrives as one argument.
 	command := `"` + exe + `" "%1"`
 	app := `Applications\` + winBase(exe)
-	return []regEntry{
-		{`Nib.Document`, "", "PDF Document"},
-		{`Nib.Document\shell\open\command`, "", command},
-		{app + `\shell\open\command`, "", command},
-		// Presence of the .pdf name here is what puts the app in the Open-with
-		// list for PDFs; the value itself is unused.
-		{app + `\SupportedTypes`, ".pdf", ""},
-		{`.pdf\OpenWithProgids`, "Nib.Document", ""},
+	out := []regEntry{{app + `\shell\open\command`, "", command}}
+	for _, p := range progIDs() {
+		out = append(out, regEntry{p.ID, "", p.Label}, regEntry{p.ID + `\shell\open\command`, "", command})
+		for _, e := range p.Exts {
+			// Presence of the extension here is what puts the app in the Open-with
+			// list for that type; the value itself is unused.
+			out = append(out, regEntry{app + `\SupportedTypes`, e, ""})
+		}
 	}
+	for _, v := range sharedValues() {
+		out = append(out, regEntry{v.Path, v.Name, ""})
+	}
+	return out
+}
+
+// sharedValues are Nib's values inside keys it does not own: `<ext>\OpenWithProgids` belongs to the
+// extension and carries every other application's registration, so unregister deletes these VALUES and
+// never the keys.
+func sharedValues() []regEntry {
+	var out []regEntry
+	for _, p := range progIDs() {
+		for _, e := range p.Exts {
+			out = append(out, regEntry{e + `\OpenWithProgids`, p.ID, ""})
+		}
+	}
+	return out
 }
 
 // ownedKeys returns the keys `nib unregister` may delete outright, deepest
 // first so each is empty by the time it is removed.
 //
-// .pdf\OpenWithProgids is deliberately NOT in this list: that key is shared with
-// every other PDF application on the machine, so unregistering removes only our
-// value from it. Deleting the key would silently deregister the user's other
+// <ext>\OpenWithProgids is deliberately NOT in this list: that key is shared with
+// every other application for the type, so unregistering removes only our
+// value from it (sharedValues). Deleting the key would silently deregister the user's other
 // readers.
 func ownedKeys(exe string) []string {
 	app := `Applications\` + winBase(exe)
-	return []string{
-		`Nib.Document\shell\open\command`,
-		`Nib.Document\shell\open`,
-		`Nib.Document\shell`,
-		`Nib.Document`,
-		app + `\shell\open\command`,
-		app + `\shell\open`,
-		app + `\shell`,
-		app + `\SupportedTypes`,
-		app,
+	var out []string
+	for _, p := range progIDs() {
+		out = append(out, p.ID+`\shell\open\command`, p.ID+`\shell\open`, p.ID+`\shell`, p.ID)
 	}
+	return append(out,
+		app+`\shell\open\command`,
+		app+`\shell\open`,
+		app+`\shell`,
+		app+`\SupportedTypes`,
+		app,
+	)
 }

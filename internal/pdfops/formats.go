@@ -25,10 +25,6 @@ type Format struct {
 	// Family is what the format's BYTES look like (D32): the table classifies by content, and an extension
 	// that disagrees with the sniffed family is a named refusal, except where bytes cannot say (text).
 	Family Family
-	// Door marks a format every route (path, upload, fetch, OS hand-off) opens as it stands today, with
-	// no second step. The folder listing and the .desktop file offer exactly these (and PDF); the rest
-	// arrive through Open & convert until the import door (P01.S02) makes them Door too.
-	Door bool
 }
 
 // Family is the kind of bytes a format is made of, as the sniffer (sniffFamily) can tell.
@@ -55,14 +51,14 @@ const (
 )
 
 var formats = []Format{
-	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Door: true, Family: FamilyImage},
-	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Door: true, Family: FamilyImage},
-	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Door: true, Family: FamilyImage},
-	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Door: true, Family: FamilyImage},
+	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Family: FamilyImage},
+	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Family: FamilyImage},
+	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Family: FamilyImage},
+	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Family: FamilyImage},
 
-	{Key: "gif", Label: "GIF image", Exts: []string{"gif"}, MIME: []string{"image/gif"}, Image: true, Door: true, Family: FamilyImage},
-	{Key: "bmp", Label: "BMP image", Exts: []string{"bmp"}, MIME: []string{"image/bmp"}, Image: true, Door: true, Family: FamilyImage},
-	{Key: "cbz", Label: "Comic book archive (CBZ)", Exts: []string{"cbz"}, MIME: []string{"application/vnd.comicbook+zip", "application/x-cbz"}, Door: true, Family: FamilyZip},
+	{Key: "gif", Label: "GIF image", Exts: []string{"gif"}, MIME: []string{"image/gif"}, Image: true, Family: FamilyImage},
+	{Key: "bmp", Label: "BMP image", Exts: []string{"bmp"}, MIME: []string{"image/bmp"}, Image: true, Family: FamilyImage},
+	{Key: "cbz", Label: "Comic book archive (CBZ)", Exts: []string{"cbz"}, MIME: []string{"application/vnd.comicbook+zip", "application/x-cbz"}, Family: FamilyZip},
 
 	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}, Family: FamilyText},
 
@@ -142,8 +138,10 @@ func FormatMIMEs(keep func(Format) bool) []string {
 	return out
 }
 
-// IsDoorExt reports whether an extension names a format every open route opens as it stands.
-func IsDoorExt(ext string) bool {
-	f, ok := FormatForExt(ext)
-	return ok && f.Door
+// IsFormatExt reports whether an extension names a row of the table. Every row opens at every route (path,
+// upload, URL, OS hand-off) through `Import` (ADR-185), so the folder listing and the .desktop file offer every
+// row; the `Door` flag that once marked a subset was retired by ADR-215 once it marked them all.
+func IsFormatExt(ext string) bool {
+	_, ok := FormatForExt(ext)
+	return ok
 }

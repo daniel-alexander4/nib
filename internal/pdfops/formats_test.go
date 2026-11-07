@@ -189,9 +189,6 @@ func TestTheTableViewsAgree(t *testing.T) {
 			}
 			seen[e] = f.Key
 		}
-		if f.Image && !f.Door {
-			t.Errorf("%s: an image the sniffer reads is opened by every route", f.Key)
-		}
 	}
 	for _, e := range []string{"docx", ".DOCX", "xlsx", "odp"} {
 		if !SupportedOfficeExt(e) || !SupportedDocExt(e) {
@@ -213,8 +210,15 @@ func TestTheTableViewsAgree(t *testing.T) {
 			t.Errorf("%q is not a document Nib converts", e)
 		}
 	}
-	if !IsDoorExt("TIFF") || IsDoorExt("docx") || IsDoorExt("md") {
-		t.Errorf("the door set is the images and nothing else today")
+	for _, e := range []string{"TIFF", "docx", ".md", "html", "eml"} {
+		if !IsFormatExt(e) {
+			t.Errorf("%q is a row of the table, so the folder listing and the desktop file offer it (ADR-215)", e)
+		}
+	}
+	for _, e := range []string{"pdf", "exe", "", "zip"} {
+		if IsFormatExt(e) {
+			t.Errorf("%q is not a format Nib converts", e)
+		}
 	}
 	// the table hands out copies
 	Formats()[0].Exts[0] = "zzz"
@@ -223,9 +227,9 @@ func TestTheTableViewsAgree(t *testing.T) {
 	}
 }
 
-// build/nib.desktop's MimeType is the table's: PDF and every Door format. NIB_REGEN_DESKTOP=1 rewrites it.
+// build/nib.desktop's MimeType is the table's: PDF and every row (ADR-215). NIB_REGEN_DESKTOP=1 rewrites it.
 func TestTheDesktopFileMimeTypeIsTheTable(t *testing.T) {
-	want := "MimeType=application/pdf;" + strings.Join(FormatMIMEs(func(f Format) bool { return f.Door }), ";") + ";"
+	want := "MimeType=application/pdf;" + strings.Join(FormatMIMEs(func(Format) bool { return true }), ";") + ";"
 	path := filepath.Join("..", "..", "build", "nib.desktop")
 	data, err := os.ReadFile(path)
 	if err != nil {

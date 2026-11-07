@@ -858,7 +858,10 @@ body > div[id$="Modal"] {
 .keycands { display: flex; flex-wrap: wrap; gap: 6px; }
 .keycands button { font-size: 12px; }
 .keycands:empty { display: none; }
-.dirbrowse { display: flex; align-items: center; gap: 8px; }
+.dirbrowse { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The ~/nib button carries its whole path as its text (ADR-215) and has no tooltip, so a long path wraps rather
+   than being cut off. */
+.dirhome { white-space: normal; overflow-wrap: anywhere; text-align: left; max-width: 100%; }
 .dirhere {
   font-size: 11px; color: var(--subtext0); flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;

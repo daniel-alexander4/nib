@@ -126,7 +126,9 @@ fi
 # 113 since v2.4.0 (updateceremonies.test.mjs): the download popup says how many ceremonies an update that crosses the digest
 # flag day strands (ADR-175).
 # 114 since v2.7.2 (skippedfields.test.mjs): a fill says which fields it could not reach (/pending 919 F14).
-Nib_expect_files=127
+# 128 since v2.51.0 (homebutton.test.mjs): the destination dialogs' button to ~/nib, named by its whole path (ADR-215) —
+# its own boot, because its listdir stub answers by the path asked.
+Nib_expect_files=128
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

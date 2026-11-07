@@ -65,8 +65,8 @@ func cmdRegister(args []string) int {
 		}
 	}
 	notifyShell()
-	fmt.Println("Nib is now offered for PDFs in Explorer's \"Open with\" menu.")
-	fmt.Println("Windows reserves the default handler for you to choose: right-click a PDF →")
+	fmt.Println("Nib is now offered for PDFs, and every file type it converts, in Explorer's \"Open with\" menu.")
+	fmt.Println("Windows reserves the default handler for you to choose: right-click a file →")
 	fmt.Println("Open with → Choose another app → Nib, and tick \"Always use this app\".")
 	fmt.Println("Registered for " + exe)
 	return 0
@@ -84,11 +84,15 @@ func cmdUnregister(args []string) int {
 	}
 	failed := false
 
-	// Remove only our own value from the shared OpenWithProgids key — the key
-	// itself belongs to .pdf and carries every other PDF app's registration.
-	if k, err := registry.OpenKey(registry.CURRENT_USER, classesRoot+`\.pdf\OpenWithProgids`, registry.SET_VALUE); err == nil {
-		if err := k.DeleteValue("Nib.Document"); err != nil && !errors.Is(err, registry.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "nib: could not remove the .pdf association: %v\n", err)
+	// Remove only our own values from the shared OpenWithProgids keys — each key
+	// belongs to its extension and carries every other app's registration.
+	for _, v := range sharedValues() {
+		k, err := registry.OpenKey(registry.CURRENT_USER, classesRoot+`\`+v.Path, registry.SET_VALUE)
+		if err != nil {
+			continue
+		}
+		if err := k.DeleteValue(v.Name); err != nil && !errors.Is(err, registry.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "nib: could not remove the %s association: %v\n", v.Path, err)
 			failed = true
 		}
 		k.Close()
@@ -106,6 +110,6 @@ func cmdUnregister(args []string) int {
 	if failed {
 		return 1
 	}
-	fmt.Println("Nib is no longer offered for PDFs in Explorer.")
+	fmt.Println("Nib is no longer offered in Explorer.")
 	return 0
 }

@@ -90,7 +90,7 @@ func TestListDirReturnsPDFFiles(t *testing.T) {
 	c, _ := authedClient(t, ts)
 
 	dir := t.TempDir()
-	for _, name := range []string{"a.pdf", "B.PDF", "notes.txt", ".hidden.pdf"} {
+	for _, name := range []string{"a.pdf", "B.PDF", "setup.exe", ".hidden.pdf"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestListDirReturnsPDFFiles(t *testing.T) {
 	}
 
 	if len(info.Files) != 2 || info.Files[0].Name != "B.PDF" || info.Files[1].Name != "a.pdf" {
-		t.Errorf("files = %v, want [B.PDF a.pdf] (case-insensitive .pdf, dotfiles hidden)", info.Files)
+		t.Errorf("files = %v, want [B.PDF a.pdf] (case-insensitive .pdf, dotfiles hidden, a file Nib does not open left out)", info.Files)
 	}
 	if len(info.Files) == 2 && info.Files[1].Path != filepath.Join(dir, "a.pdf") {
 		t.Errorf("file path = %q, want %q", info.Files[1].Path, filepath.Join(dir, "a.pdf"))

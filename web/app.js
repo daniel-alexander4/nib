@@ -69,7 +69,7 @@ const PDFJS_OPTS = { cMapUrl: './vendor/pdfjs/cmaps/', cMapPacked: true };
 const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
-  officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
+  docLang: $('docLang'),
   officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'), psMissing: $('psMissing'), psRecheck: $('psRecheck'), scannerBtn: $('scannerBtn'), heifMissing: $('heifMissing'), heifRecheck: $('heifRecheck'), browserMissing: $('browserMissing'), browserRecheck: $('browserRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
@@ -245,7 +245,7 @@ const els = {
   profileOfferCancel: $('profileOfferCancel'), profileOfferYes: $('profileOfferYes'),
   saveAsModal: $('saveAsModal'), saveAsTitle: $('saveAsTitle'), saveAsName: $('saveAsName'),
   saveAsFormatRow: $('saveAsFormatRow'), saveAsNote: $('saveAsNote'), saveAsFormat: $('saveAsFormat'), saveAsStatus: $('saveAsStatus'),
-  saveAsDir: $('saveAsDir'), saveAsHere: $('saveAsHere'), saveAsUp: $('saveAsUp'),
+  saveAsDir: $('saveAsDir'), saveAsHere: $('saveAsHere'), saveAsUp: $('saveAsUp'), saveAsHome: $('saveAsHome'), bsHome: $('bsHome'), psHome: $('psHome'),
   saveAsList: $('saveAsList'), saveAsCancel: $('saveAsCancel'), saveAsGo: $('saveAsGo'),
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
   openUp: $('openUp'), openList: $('openList'), openCancel: $('openCancel'),
@@ -601,10 +601,10 @@ function applyStatus(st) {
   svgExportAvailable = !!st.svgExport;
   browserAvailable = !!st.browser;
   loAvailable = !!st.libreoffice;
-  // Both pickers' `accept` are built from the server's format table (pdfops.Formats) — no list of
-  // extensions lives in the page. The import picker drops a format whose tool this machine lacks.
+  // Combine's picker `accept` and Open…'s tooltip are built from the server's format table (pdfops.Formats) — no
+  // list of extensions or formats lives in the page (ADR-184, ADR-215).
   const fmts = Array.isArray(st.formats) ? st.formats : [];
-  els.officeInput.accept = fmts.filter((f) => f.available && !f.image).flatMap((f) => f.exts.map((e) => '.' + e)).join(',');
+  if (fmts.length) els.openMenuItem.title = openTitle(fmts);
   els.combineInput.accept = ['application/pdf', ...fmts.filter((f) => f.image).flatMap((f) => f.mime)].join(',');
   // ...and SAY so, which the narrowed picker never did: a user with a .docx met the missing
   // converter as their file not appearing in the dialog, with nothing naming the reason. Both
@@ -4582,19 +4582,58 @@ async function openOrActivate(path) {
   return openPath(path);
 }
 
-async function openPath(path) {
+// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — grouped
+// by the program it needs, a group whose program this computer lacks marked so (ADR-215). One line per group.
+function openTitle(fmts) {
+  const groups = new Map();
+  for (const f of fmts) {
+    const tool = f.tool || '';
+    if (!groups.has(tool)) groups.set(tool, { labels: [], available: !!f.available });
+    groups.get(tool).labels.push(f.label);
+  }
+  const lines = ['Open a PDF, or a file Nib converts to PDF:'];
+  for (const [tool, g] of groups) {
+    const head = !tool ? 'Built in' : g.available ? `Needs ${tool}` : `Needs ${tool}, not found on this computer`;
+    lines.push(`• ${head}: ${g.labels.join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
+// NO_LANGUAGE is what an open with no dialog sends (Recent, the `?open=` restore): nothing, so the server keeps
+// whatever the conversion carried.
+const NO_LANGUAGE = Object.freeze({ lang: '', langChosen: false });
+
+// docLanguage is the Open dialog's language field as an open carries it (/pending 471, ADR-215). Empty is "not
+// specified". `langChosen` says the user CHOSE it rather than kept the pre-fill — the one case the server may rest a
+// PDF/UA conformance claim on (/pending 486, ADR-033). It changes only a file Nib converts; a PDF opens as it is.
+function docLanguage() {
+  const lang = (els.docLang && els.docLang.value) || '';
+  return { lang, langChosen: !!lang && els.docLang.dataset.chosen === '1' };
+}
+
+// A language was chosen and the PDF/UA label was not earned: the document opened, and the person is told why
+// once (the command line's note, /pending 940). Both of the dialog's routes answer it.
+function sayLabelNote(meta) {
+  if (meta && meta.labelNote) toast(meta.labelNote, 12000);
+}
+
+async function openPath(path, language = NO_LANGUAGE) {
   if (!path) return;
+  const { lang, langChosen } = language;
+  // A conversion takes seconds (LibreOffice, a browser): say so. The NAME only words the wait; the server decides
+  // what the file is from its contents.
+  if (!/\.pdf$/i.test(path)) toast('Converting to PDF…');
   const res = await apiFetch('/api/open', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, lang, langChosen }),
   });
   // errText surfaces the server's own message, which is what carries the cap refusal
   // ("too many documents open (limit 8) — close one first"). A generic fallback here
   // would tell a user at the cap that opening failed and not why.
   if (!res.ok) return toast(await errText(res, 'could not open file'));
   const meta = await res.json();
-  await installOpened(meta);
+  if (await installOpened(meta)) sayLabelNote(meta);
   // Two tabs on one file is legitimate and deliberate — the server argues that exemption
   // at its own door — but it was SILENT: the user got two identically named tabs and
   // nothing said why (/pending 339). They then meet the consequence later, as a refusal
@@ -4613,14 +4652,6 @@ async function uploadFile(file) {
   await installOpened(await res.json());
 }
 
-// Office → PDF: pick a Word/Excel/PowerPoint/OpenDocument file, convert it on the
-// server via LibreOffice, and open the resulting PDF as the active document.
-//
-// **The button is always offered**, because Markdown converts in pure Go and needs no
-// converter at all. This comment used to say it was "hidden otherwise" and nothing ever
-// implemented that — `applyStatus` narrows the picker and now also reveals `#officeMissing`,
-// which is what tells a user why their .docx is not selectable.
-els.officeOpenBtn.onclick = () => els.officeInput.click();
 // Re-ask the server whether it can find LibreOffice now. This is honest because the server
 // re-probes an empty answer rather than caching it for the process (see pdfops/toolpath.go):
 // before that, installing LibreOffice while Nib ran changed nothing until the process ended —
@@ -4629,44 +4660,20 @@ if (els.officeRecheck) els.officeRecheck.onclick = () => refreshStatus();
 if (els.psRecheck) els.psRecheck.onclick = () => refreshStatus();
 if (els.heifRecheck) els.heifRecheck.onclick = () => refreshStatus();
 if (els.browserRecheck) els.browserRecheck.onclick = () => refreshStatus();
-els.officeInput.onchange = async () => {
-  const file = els.officeInput.files[0];
-  els.officeInput.value = '';
-  if (!file) return;
-  const form = new FormData();
-  form.append('file', file);
-  // The Document language field (/pending 471). Empty is "not specified" and sends nothing, so the
-  // server keeps whatever the conversion carried.
-  if (els.docLang && els.docLang.value) {
-    form.append('lang', els.docLang.value);
-    // The user CHOSE this language, rather than keeping the pre-fill — the one case the server may rest
-    // a PDF/UA conformance claim on (/pending 486, ADR-033).
-    if (els.docLang.dataset.chosen === '1') form.append('langChosen', '1');
-  }
-  toast('Converting to PDF…');
-  try {
-    const res = await apiFetch('/api/office', { method: 'POST', body: form });
-    if (!res.ok) return toast(await errText(res, 'could not convert file'));
-    const meta = await res.json();
-    // A language was chosen and the PDF/UA label was not earned: the document opened, and the person is told why
-    // once (the command line's note, /pending 940).
-    if (await installOpened(meta) && meta.labelNote) toast(meta.labelNote, 12000);
-  } catch {
-    toast('could not convert file');
-  }
-};
-// Pre-filled once, from this computer's language (/pending 471, option B). The user's own choice
-// then stands for the rest of the session.
+// The Document language field lives in the Open dialog (ADR-215): Import… folded into Open…, and the field qualifies
+// the one open it sits beside. Pre-filled once, from this computer's language (/pending 471, option B). The user's own
+// choice then stands for the rest of the session.
 if (els.docLang) {
   els.docLang.value = docLangForLocale(navigator.language, [...els.docLang.options].map((o) => o.value));
   // A real change event is the user choosing; the pre-fill above fires none, so it stays unchosen.
   els.docLang.addEventListener('change', () => { els.docLang.dataset.chosen = '1'; });
 }
 
-async function openURL(url) {
+async function openURL(url, language = NO_LANGUAGE) {
+  const { lang, langChosen } = language;
   const res = await apiFetch('/api/open-url', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, lang, langChosen }),
   });
   if (!res.ok) return toast(await errText(res, 'could not fetch URL'));
   // Named before the install and applied after it, to whichever view actually took the
@@ -4677,9 +4684,11 @@ async function openURL(url) {
   // to prevent rather than a defensive flourish: on a failed load `view` is still
   // whatever the user was looking at, so an ungated assignment renames THAT document
   // after a fetch that never produced one.
-  if (await installOpened(await res.json())) {
+  const meta = await res.json();
+  if (await installOpened(meta)) {
     view.originalName = urlName;
     syncTabs();
+    sayLabelNote(meta);
   }
 }
 
@@ -5491,10 +5500,10 @@ function renderCompare(a, b, name, fromCompared = false) {
 }
 
 // openSmart routes the Open box to a URL fetch or a local path open.
-function openSmart(value) {
+function openSmart(value, language = NO_LANGUAGE) {
   if (!value) return;
-  if (/^https?:\/\//i.test(value)) openURL(value);
-  else openPath(value);
+  if (/^https?:\/\//i.test(value)) openURL(value, language);
+  else openPath(value, language);
 }
 
 // --- save --------------------------------------------------------------------
@@ -9253,7 +9262,7 @@ const LIST_REASON = {
   unreadable: 'That folder can’t be read.',
 };
 
-const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
+const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList, home: els.saveAsHome });
 
 // startFolder is the ONE door the three destination dialogs (Save As, both splits) open their folder
 // browser through (ADR-214, ADR-009): the open document's own folder when the server named one, else
@@ -9288,6 +9297,14 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null, start = false)
   t.here.textContent = info.path;
   t.up.disabled = !info.parent;
   t.up.dataset.parent = info.parent || '';
+  // The default folder, one press away from wherever the dialog is (ADR-215): its whole path is the button's text, so
+  // nothing hides where it goes, and it is hidden where the dialog already is. Whether it is there is the server's
+  // answer (`atDefault`), not a comparison of paths here. Only a dialog with a `home` element has one.
+  if (t.home) {
+    t.home.textContent = info.defaultDir || '';
+    t.home.hidden = !info.defaultDir || !!info.atDefault;
+    t.home.onclick = () => browseDir(info.defaultDir, t, onFile);
+  }
   t.list.innerHTML = '';
   const row = (label, cls, onclick) => {
     const li = document.createElement('li');
@@ -9533,7 +9550,7 @@ els.saveAsGo.onclick = async () => {
 // Save one PDF per top-level bookmark into a chosen folder (PDFExplode-style: a
 // scored orchestration in, one file per part out). Server-side via
 // /api/split-bookmarks; the open document is left untouched.
-const bookmarkDirEls = () => ({ dir: els.bsDir, here: els.bsHere, up: els.bsUp, list: els.bsList });
+const bookmarkDirEls = () => ({ dir: els.bsDir, here: els.bsHere, up: els.bsUp, list: els.bsList, home: els.bsHome });
 let bsOutline = []; // the current doc's top-level outline, for the preview
 
 function updateBsPreview() {
@@ -9588,7 +9605,7 @@ els.bsDir.onchange = () => browseDir(els.bsDir.value.trim(), bookmarkDirEls());
 // imposed-page geometry split). Server-side via /api/split-pages; the open
 // document is left untouched. The preview mirrors the server's span logic
 // best-effort — the toast reports the real count written.
-const pageSplitDirEls = () => ({ dir: els.psDir, here: els.psHere, up: els.psUp, list: els.psList });
+const pageSplitDirEls = () => ({ dir: els.psDir, here: els.psHere, up: els.psUp, list: els.psList, home: els.psHome });
 const psMode = () => document.querySelector('input[name="psMode"]:checked').value;
 const spanLabel = (from, thru) => (from === thru ? String(from) : `${from}-${thru}`);
 
@@ -13119,7 +13136,7 @@ els.removeOriginalsBtn.onclick = async () => {
 // runs on the same browseDir as the three destination pickers; the only thing
 // that makes it different is that its rows can be files.
 const openDirEls = () => ({ dir: els.openDir, here: els.openHere, up: els.openUp, list: els.openList });
-const openFileRow = (path) => { els.openModal.hidden = true; openPath(path); };
+const openFileRow = (path) => { els.openModal.hidden = true; openPath(path, docLanguage()); };
 // The dir input keeps whatever folder the last browse left in it, so it doubles
 // as the "where was I?" memory across opens; '~' seeds the very first one at home.
 const openBrowse = (path) => browseDir(path || '~', openDirEls(), openFileRow);
@@ -13134,7 +13151,7 @@ function openTyped() {
   const v = els.pathInput.value.trim();
   if (!v) return;
   els.openModal.hidden = true;
-  openSmart(v);
+  openSmart(v, docLanguage());
 }
 els.openMenuItem.onclick = openOpenDialog;
 els.openGo.onclick = openTyped;

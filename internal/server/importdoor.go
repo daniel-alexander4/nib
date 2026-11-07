@@ -53,6 +53,16 @@ func (s *Server) importOptions(door string) pdfops.ImportOptions {
 	}
 }
 
+// withLanguage gives an import the Document language field a request carried (/pending 471, ADR-215): lang replaces
+// the converter's /Lang when set, and chosen says the person picked it rather than kept the pre-fill, which is the only
+// ground a PDF/UA label rests on (ADR-033). The ONE place a request's language reaches `Import`; the window's Open dialog
+// sends it on both of its routes (`/api/open`, `/api/open-url`), and a door with no dialog (hand-off, Recent) sends none.
+func withLanguage(o pdfops.ImportOptions, lang string, chosen bool) pdfops.ImportOptions {
+	o.Lang = lang
+	o.LangChosen = chosen
+	return o
+}
+
 // importRefusal is the status and sentence for an Import error, from ONE function. The sentence is the
 // error's own (one sentence per cause); a missing tool is the exception, worded the way every surface
 // words it (ADR-009 classifies, `MissingToolFor`) with the vendor link left to the page, which carries its
@@ -142,29 +152,36 @@ func openRegular(path string) (*os.File, os.FileInfo, *pathRefusal) {
 // importOpened runs Import over a file openRegular returned: its handle is held for the import, so a queued import
 // holds a descriptor, not its bytes. The call to Import stays in this file (ADR-185's census).
 func importOpened(ctx context.Context, f *os.File, info os.FileInfo, name string, o pdfops.ImportOptions) (*pdfops.ImportResult, error) {
-	return pdfops.Import(ctx, f, info.Size(), name, o)
+	return pdfops.Import(ctx, sourceFile{f}, info.Size(), name, o)
 }
 
-// isImportRefusal reports whether err is Import REFUSING or FAILING a conversion — a verdict about the file
-// — as opposed to a read error, which is the disk's.
+// sourceReadError is a failed read of the file being opened: the disk's fault, not a verdict about the file.
+type sourceReadError struct{ err error }
+
+func (e sourceReadError) Error() string { return e.err.Error() }
+func (e sourceReadError) Unwrap() error { return e.err }
+
+// sourceFile marks every failed read of the source as a sourceReadError, AT the read (ADR-215). io.EOF passes as
+// it is, because readers compare it by identity and it is the end of a file, not a failure.
+type sourceFile struct{ f *os.File }
+
+func (s sourceFile) ReadAt(p []byte, off int64) (int, error) {
+	n, err := s.f.ReadAt(p, off)
+	if err != nil && err != io.EOF {
+		err = sourceReadError{err}
+	}
+	return n, err
+}
+
+// isImportRefusal reports whether err is Import REFUSING or FAILING a conversion — a verdict about the file — as
+// opposed to a failed read of it, which is the disk's. It used to be a list of Import's errors kept beside
+// importRefusal's own, and the copy drifted (ADR-215): the text and CSV caps, a CSV that does not read and a
+// language Nib cannot declare were answered by path as "could not read file" (500), and by upload as what they
+// are. Now the read is marked where it happens and everything else Import says is about the file, so there is
+// no second list to keep.
 func isImportRefusal(err error) bool {
-	var room roomError
-	var conv *pdfops.ConversionError
-	if errors.As(err, &room) || errors.As(err, &conv) {
-		return true
-	}
-	for _, target := range []error{
-		pdfops.ErrImportTooLarge, pdfops.ErrConvertedTooLarge, pdfops.ErrConverterOverMemory, pdfops.ErrOptionsNeedMarkdown, gate.ErrQueueFull, pdfops.ErrShuttingDown, context.DeadlineExceeded, context.Canceled,
-		pdfops.ErrNotADocument, pdfops.ErrCorruptDocument, pdfops.ErrNotText, pdfops.ErrNotAPDF, pdfops.ErrExtensionDisagrees, pdfops.ErrArchiveRefused, pdfops.ErrPackageNamesOutside,
-		pdfops.ErrImagePixels, pdfops.ErrTooManyPages, pdfops.ErrNoPages, pdfops.ErrTIFFCompression,
-		pdfops.ErrGhostscriptTooOld, pdfops.ErrGhostscriptNotConfined, pdfops.ErrPostScriptUnreadable, pdfops.ErrHEIFCannotRead, pdfops.ErrHEIFUnreadable, pdfops.ErrBrowserCannotRender, pdfops.ErrHTMLUnreadable, browserrender.ErrNotServed, pdfops.ErrPackageTooBig, pdfops.ErrPackageUnreadable, pdfops.ErrMsgNotSupported,
-	} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	_, missing := pdfops.MissingToolFor(err)
-	return missing
+	var read sourceReadError
+	return err != nil && !errors.As(err, &read)
 }
 
 // combineOptions are Import's options for a file being combined: no Admit, because Combine installs ONE

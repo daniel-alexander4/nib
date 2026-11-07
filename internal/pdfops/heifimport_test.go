@@ -396,7 +396,7 @@ func TestEveryDecoderOnThisMachineReadsHEIC(t *testing.T) {
 
 func TestTheHEICRowIsInTheTableAndGatedOnItsTool(t *testing.T) {
 	f, ok := FormatForExt("HEIF")
-	if !ok || f.Key != "heic" || f.Tool != ToolHEIF || f.Door {
+	if !ok || f.Key != "heic" || f.Tool != ToolHEIF {
 		t.Fatalf("row %+v", f)
 	}
 	if got := missingToolFor(f); !errors.Is(got, ErrHEIFMissing) {

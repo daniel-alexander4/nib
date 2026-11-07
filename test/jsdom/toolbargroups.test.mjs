@@ -165,7 +165,7 @@ test('the ⋯ More menu is built inside its own pane, not beside it', () => {
 // one-line diff and costs a row at every width. jsdom has no layout, so the ROW COUNT is
 // `responsive.test.mjs`'s to assert; what is checkable here is where each control lives.
 const LIFECYCLE = [
-  'openMenuItem', 'openRecentBtn', 'officeOpenBtn',             // open
+  'openMenuItem', 'openRecentBtn',                              // open
   'saveAsBtn', 'saveFlatBtn', 'saveFillableBtn', 'reduceBtn', 'pdfaBtn',   // save a copy
   'exportPagesBtn', 'exportTableBtn', 'exportFormBtn', 'printBtn',               // export & print
 ];

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"nib/internal/pdfops"
 )
 
 // The registry layout is table-tested from any platform on purpose: the write
@@ -72,8 +74,8 @@ func TestUnregisterNeverDeletesTheSharedKey(t *testing.T) {
 		if strings.Contains(k, "OpenWithProgids") {
 			t.Errorf("ownedKeys includes the shared key %q — deleting it would deregister other PDF apps", k)
 		}
-		if k == ".pdf" || strings.HasPrefix(k, `.pdf\`) {
-			t.Errorf("ownedKeys includes %q, which is not ours to delete", k)
+		if strings.HasPrefix(k, ".") {
+			t.Errorf("ownedKeys includes %q, an extension's key, which is not ours to delete", k)
 		}
 	}
 }
@@ -89,6 +91,49 @@ func TestOwnedKeysAreDeepestFirst(t *testing.T) {
 			}
 			if strings.HasPrefix(later, k+`\`) {
 				t.Errorf("%q is deleted before its child %q, which will fail", k, later)
+			}
+		}
+	}
+}
+
+// Every format Nib converts is offered in "Open with", not only PDF (ADR-215), each under a ProgId of its
+// own named with the table's label: a shared "PDF Document" ProgId would label a .docx a PDF once the user
+// made Nib its default.
+func TestEveryFormatIsRegisteredUnderItsOwnType(t *testing.T) {
+	const exe = `C:\tools\nib.exe`
+	byPath := map[string]regEntry{}
+	for _, e := range associationEntries(exe) {
+		byPath[e.Path+"|"+e.Name] = e
+	}
+	owned := map[string]bool{}
+	for _, k := range ownedKeys(exe) {
+		owned[k] = true
+	}
+	shared := map[string]bool{}
+	for _, v := range sharedValues() {
+		shared[v.Path+"|"+v.Name] = true
+	}
+	for _, f := range pdfops.Formats() {
+		id := `Nib.` + f.Key
+		if got := byPath[id+"|"].Value; got != f.Label {
+			t.Errorf("%s names its type %q, want the table's label %q", id, got, f.Label)
+		}
+		if !strings.HasSuffix(byPath[id+`\shell\open\command|`].Value, `"%1"`) {
+			t.Errorf("%s has no open command", id)
+		}
+		if !owned[id] {
+			t.Errorf("unregister would leave %s behind", id)
+		}
+		for _, e := range f.Exts {
+			key := "." + e + `\OpenWithProgids|` + id
+			if _, ok := byPath[key]; !ok {
+				t.Errorf("no %s entry: Nib would not appear in Open with for .%s", key, e)
+			}
+			if !shared[key] {
+				t.Errorf("unregister would not remove %s", key)
+			}
+			if _, ok := byPath[`Applications\nib.exe\SupportedTypes|.`+e]; !ok {
+				t.Errorf("no SupportedTypes entry for .%s", e)
 			}
 		}
 	}

@@ -491,7 +491,7 @@ test('every call to a document-scoped route names its document — reads include
 // Pinned against the mux for the same reason MUTATING is: a route list reconciled
 // against nothing polices nothing.
 const INSTALL_ROUTES = [
-  '/api/open', '/api/open-url', '/api/upload', '/api/combine', '/api/office',
+  '/api/open', '/api/open-url', '/api/upload', '/api/combine',
 ];
 
 // scanUntargetedReloads finds every setDocumentFromServer call that passes no explicit

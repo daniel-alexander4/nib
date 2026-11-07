@@ -163,3 +163,33 @@ func TestAStartFolderIsVettedAndFallsBackQuietly(t *testing.T) {
 		t.Errorf("typing the ceremony folder answered %q, want %q", got.Path, store)
 	}
 }
+
+// TestListDirNamesTheDefaultFolder — the destination dialogs offer ~/nib, by its whole path, wherever else they are
+// (ADR-215): every listing names the default folder, and says whether it IS that folder, cleaned on the server.
+func TestListDirNamesTheDefaultFolder(t *testing.T) {
+	ts, _ := startServer(t)
+	c, _ := authedClient(t, ts)
+	home, _ := os.UserHomeDir()
+	def := filepath.Join(home, "nib")
+	if err := os.MkdirAll(def, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	away := t.TempDir()
+	for _, tc := range []struct {
+		name, path string
+		at         bool
+	}{
+		{"an empty path lists the default", "", true},
+		{"the default asked by name", def, true},
+		{"the default with a trailing slash", def + "/", true},
+		{"somewhere else", away, false},
+	} {
+		got := getListDir(t, ts.URL, c, tc.path, "0")
+		if got.DefaultDir != def {
+			t.Errorf("%s: defaultDir %q, want %q", tc.name, got.DefaultDir, def)
+		}
+		if got.AtDefault != tc.at {
+			t.Errorf("%s (%q): atDefault %v, want %v", tc.name, got.Path, got.AtDefault, tc.at)
+		}
+	}
+}

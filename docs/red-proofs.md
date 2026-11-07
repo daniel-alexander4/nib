@@ -5203,6 +5203,11 @@ while building the slice.
 | `an-authoring-door-that-was-never-asked` — a seventh function that turns something into a PDF, added beside the six that exist, with nobody asked what language its output is in | `go test . -run TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom`, tier 1 | "authoring door with no language classification" |
 | `a-language-classification-the-code-contradicts` — a door classified `declares` that reaches `pdfops.SetLang` nowhere | the same check, tier 1 | "a language classification the code contradicts" |
 
+**Re-recorded at v2.51.0 (ADR-215).** The patch added its door to `internal/server/office.go`, which is retired, and
+it called `ConvertDocToPDF`, which the scan stopped listing as a primitive when that became a test-only forward: replayed
+on the new tree it stayed green. It now adds the door in `internal/pdfops/office.go` calling `ConvertDocToPDFWith`, and
+`./build/redproof.sh` goes red on it.
+
 **The first row is the slice's own acceptance clause**, which reads *"a new authoring door with none
 turns the guard red, proved by adding one"*. This is that proof, recorded so it stays one rather
 than being a sentence about a run somebody did once.

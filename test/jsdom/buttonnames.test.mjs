@@ -35,6 +35,11 @@ const NAMED_AT_RUNTIME = [
   { id: 'signAction', by: 'els.signAction.textContent' },
   { id: 'themeToggle', by: 'describeButton(els.themeToggle' },
   { id: 'updateGet', by: 'describeButton(els.updateGet' },
+  // The ~/nib button of each destination dialog is named by the folder's whole path, written when the dialog lists
+  // (ADR-215); it is hidden, and empty, until then.
+  { id: 'saveAsHome', by: 't.home.textContent = info.defaultDir' },
+  { id: 'bsHome', by: 't.home.textContent = info.defaultDir' },
+  { id: 'psHome', by: 't.home.textContent = info.defaultDir' },
 ];
 
 function buttons() {

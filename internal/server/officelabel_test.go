@@ -1,16 +1,14 @@
 package server
 
 import (
-	"bytes"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"testing"
 
 	"nib/internal/testpdf"
 )
 
-// TestConvertingLabelsOnlyALanguageTheUserChose — `/pending 486`'s GUI door. The Document language field is
+// TestConvertingLabelsOnlyALanguageTheUserChose — `/pending 486`'s GUI door, the Open dialog by path (ADR-215). The Document language field is
 // pre-filled with this computer's language; a conformance claim rests only on one the user picked.
 func TestConvertingLabelsOnlyALanguageTheUserChose(t *testing.T) {
 	md := []byte("# Notes\n\nA paragraph.\n")
@@ -24,20 +22,11 @@ func TestConvertingLabelsOnlyALanguageTheUserChose(t *testing.T) {
 	} {
 		ts, _ := startServer(t)
 		cl, csrf := authedClient(t, ts)
-		var buf bytes.Buffer
-		mw := multipart.NewWriter(&buf)
-		fw, _ := mw.CreateFormFile("file", "notes.md")
-		fw.Write(md)
-		mw.WriteField("lang", "en")
-		if c.chosen {
-			mw.WriteField("langChosen", "1")
-		}
-		mw.Close()
-		resp := write(t, cl, csrf, http.MethodPost, ts.URL+"/api/office", mw.FormDataContentType(), &buf)
+		resp := importByPath(t, ts.URL, cl, csrf, "notes.md", md, "en", c.chosen)
 		out, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s: office status %d: %s", c.name, resp.StatusCode, out)
+			t.Fatalf("%s: open status %d: %s", c.name, resp.StatusCode, out)
 		}
 		pr, err := cl.Get(ts.URL + "/api/pdf")
 		if err != nil {

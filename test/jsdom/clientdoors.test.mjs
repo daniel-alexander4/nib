@@ -214,15 +214,14 @@ test('Save as fillable form bakes the document the user sees, minus only the fie
 // ── The missing converter says so (ADR-040) ─────────────────────────────────────────────────
 //
 // boot.mjs answers /api/status with `libreoffice: false`, so this file is already booted into
-// the state under test. Before ADR-040 the ONLY consequence of that flag was `officeInput.accept`
+// the state under test. Before ADR-040 the ONLY consequence of that flag was the Import picker's `accept`
 // narrowing to Markdown — a user with a .docx met the missing converter as their file not
-// appearing in the file dialog, and nothing named the reason.
+// appearing in the file dialog, and nothing named the reason. (That picker is gone since ADR-215: Open… lists
+// every format and the refusal names the tool.)
 test('with no LibreOffice, the File card says so and offers a way back', async () => {
   // Stimulus: the status this assertion depends on was actually asked for and applied.
   assert.ok(h.calls.some((c) => c.url.endsWith('/api/status')),
     'setup: /api/status was never fetched, so loAvailable is its declared default rather than the server\'s answer');
-  assert.equal(doc.getElementById('officeInput').accept, '.md,.markdown',
-    'setup: the picker was not narrowed, so this boot is not in the LibreOffice-absent state');
 
   const shown = (sel) => { const el = doc.querySelector(sel); return !!el && !el.hidden; };
   assert.ok(shown('#officeMissing'),
@@ -243,9 +242,9 @@ test('with no LibreOffice, the File card says so and offers a way back', async (
     'the explanation carries no https link, so it names a remedy the user cannot reach');
   assert.equal(link.getAttribute('rel'), 'noopener', 'the outbound link has no rel="noopener"');
 
-  // The button is always offered, because Markdown needs no converter. app.js claimed for
-  // years that it was "hidden otherwise" and nothing ever implemented that.
-  assert.ok(shown('#officeOpenBtn'),
+  // Open… is always offered, because Markdown needs no converter. app.js claimed for
+  // years that the convert button was "hidden otherwise" and nothing ever implemented that.
+  assert.ok(shown('#openMenuItem'),
     'the convert button was hidden — Markdown converts in pure Go, so hiding it removes a '
     + 'feature that works in order to report one that does not');
 });
