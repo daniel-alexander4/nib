@@ -8,22 +8,26 @@ import assert from 'node:assert/strict';
 import { boot, BOOT_ROUTES } from './boot.mjs';
 
 const formats = [
-  { key: 'zzz', label: 'Zzz', exts: ['zzz', 'zz'], mime: ['application/x-zzz'], available: true },
-  { key: 'qqq', label: 'Qqq', exts: ['qqq'], mime: ['application/x-qqq'], available: false, tool: 'Qqqtool' },
-  { key: 'rrr', label: 'Rrr', exts: ['rrr'], mime: ['application/x-rrr'], available: true, tool: 'Rrrtool' },
-  { key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true }, // last: the tooltip sorts
+  { key: 'qqq', label: 'Qqq', exts: ['qqq'], mime: ['application/x-qqq'], available: false, tool: 'Qqqtool', kind: 'Office documents' },
+  { key: 'rrr', label: 'Rrr', exts: ['rrr'], mime: ['application/x-rrr'], available: true, tool: 'Rrrtool', kind: 'Office documents' },
+  { key: 'zzz', label: 'Zzz', exts: ['zzz', 'zz'], mime: ['application/x-zzz'], available: true, kind: 'Images' },
+  { key: 'png', label: 'PNG image', exts: ['png'], mime: ['image/png'], available: true, image: true, kind: 'Images' }, // Office rows come first and Zzz before PNG: the tooltip sorts both
 ];
 const h = await boot({ routes: { '/api/status': { ...BOOT_ROUTES['/api/status'], formats } } });
 const { document: doc } = h;
 await h.settle();
 
-test('Open…\'s tooltip lists every format of the table alphabetically, what it takes in parentheses, a missing tool marked', () => {
+test('Open…\'s tooltip lists every format under its group, both alphabetical, and says whether its program is installed', () => {
   assert.equal(doc.getElementById('openMenuItem').title, [
     'Open a PDF, or a file Nib converts to PDF:',
+    '',
+    'Images',
     '• PNG image (built in)',
-    '• Qqq (needs Qqqtool, not found on this computer)',
-    '• Rrr (needs Rrrtool)',
     '• Zzz (built in)',
+    '',
+    'Office documents',
+    '• Qqq (needs Qqqtool, not found on this computer)',
+    '• Rrr (Rrrtool is installed)',
   ].join('\n'));
 });
 

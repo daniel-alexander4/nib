@@ -4582,13 +4582,25 @@ async function openOrActivate(path) {
   return openPath(path);
 }
 
-// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — one line
-// each, alphabetical, with what it takes in parentheses beside it, and "not found" where this computer lacks the
-// program (ADR-215; Dan, 2026-11-07).
+// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — under the
+// group a person knows it by (`kind`), groups and formats each alphabetical, and beside each format in parentheses
+// whether Nib converts it itself, or that the program it needs is installed or was not found (ADR-217; Dan,
+// 2026-11-07).
 function openTitle(fmts) {
-  const why = (f) => (!f.tool ? 'built in' : f.available ? `needs ${f.tool}` : `needs ${f.tool}, not found on this computer`);
-  const rows = [...fmts].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
-  return ['Open a PDF, or a file Nib converts to PDF:', ...rows.map((f) => `• ${f.label} (${why(f)})`)].join('\n');
+  const abc = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+  const why = (f) => (!f.tool ? 'built in' : f.available ? `${f.tool} is installed` : `needs ${f.tool}, not found on this computer`);
+  const groups = new Map();
+  for (const f of fmts) {
+    const kind = f.kind || 'Other';
+    if (!groups.has(kind)) groups.set(kind, []);
+    groups.get(kind).push(f);
+  }
+  const lines = ['Open a PDF, or a file Nib converts to PDF:'];
+  for (const kind of [...groups.keys()].sort(abc)) {
+    lines.push('', kind);
+    for (const f of groups.get(kind).sort((a, b) => abc(a.label, b.label))) lines.push(`• ${f.label} (${why(f)})`);
+  }
+  return lines.join('\n');
 }
 
 // NO_LANGUAGE is what an open with no dialog sends (Recent, the `?open=` restore): nothing, so the server keeps

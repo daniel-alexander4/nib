@@ -25,7 +25,20 @@ type Format struct {
 	// Family is what the format's BYTES look like (D32): the table classifies by content, and an extension
 	// that disagrees with the sniffed family is a named refusal, except where bytes cannot say (text).
 	Family Family
+	// Kind is the group a person knows the format by — one of the Kind* names below. Open…'s tooltip lists the
+	// formats under these headings (ADR-217). It is a label for people and decides nothing.
+	Kind string
 }
+
+// The groups Open…'s tooltip lists the formats under (ADR-217).
+const (
+	KindBooks      = "Books"
+	KindImages     = "Images"
+	KindOffice     = "Office documents"
+	KindPostScript = "PostScript"
+	KindText       = "Text"
+	KindWeb        = "Web pages and email"
+)
 
 // Family is the kind of bytes a format is made of, as the sniffer (sniffFamily) can tell.
 type Family int
@@ -51,37 +64,37 @@ const (
 )
 
 var formats = []Format{
-	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Family: FamilyImage},
-	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Family: FamilyImage},
-	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Family: FamilyImage},
-	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Family: FamilyImage},
+	{Key: "png", Label: "PNG image", Exts: []string{"png"}, MIME: []string{"image/png"}, Image: true, Family: FamilyImage, Kind: KindImages},
+	{Key: "jpeg", Label: "JPEG image", Exts: []string{"jpg", "jpeg"}, MIME: []string{"image/jpeg"}, Image: true, Family: FamilyImage, Kind: KindImages},
+	{Key: "tiff", Label: "TIFF image", Exts: []string{"tif", "tiff"}, MIME: []string{"image/tiff"}, Image: true, Family: FamilyImage, Kind: KindImages},
+	{Key: "webp", Label: "WebP image", Exts: []string{"webp"}, MIME: []string{"image/webp"}, Image: true, Family: FamilyImage, Kind: KindImages},
 
-	{Key: "gif", Label: "GIF image", Exts: []string{"gif"}, MIME: []string{"image/gif"}, Image: true, Family: FamilyImage},
-	{Key: "bmp", Label: "BMP image", Exts: []string{"bmp"}, MIME: []string{"image/bmp"}, Image: true, Family: FamilyImage},
-	{Key: "cbz", Label: "Comic book archive (CBZ)", Exts: []string{"cbz"}, MIME: []string{"application/vnd.comicbook+zip", "application/x-cbz"}, Family: FamilyZip},
+	{Key: "gif", Label: "GIF image", Exts: []string{"gif"}, MIME: []string{"image/gif"}, Image: true, Family: FamilyImage, Kind: KindImages},
+	{Key: "bmp", Label: "BMP image", Exts: []string{"bmp"}, MIME: []string{"image/bmp"}, Image: true, Family: FamilyImage, Kind: KindImages},
+	{Key: "cbz", Label: "Comic book archive (CBZ)", Exts: []string{"cbz"}, MIME: []string{"application/vnd.comicbook+zip", "application/x-cbz"}, Family: FamilyZip, Kind: KindBooks},
 
-	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}, Family: FamilyText},
+	{Key: "markdown", Label: "Markdown", Exts: []string{"md", "markdown"}, MIME: []string{"text/markdown"}, Family: FamilyText, Kind: KindText},
 
-	{Key: "doc", Label: "Word (.doc)", Exts: []string{"doc"}, MIME: []string{"application/msword"}, Tool: ToolLibreOffice, Family: FamilyOLE},
-	{Key: "docx", Label: "Word", Exts: []string{"docx"}, MIME: []string{mimeOOXML + "wordprocessingml.document"}, Tool: ToolLibreOffice, Family: FamilyZip},
-	{Key: "odt", Label: "OpenDocument text", Exts: []string{"odt"}, MIME: []string{mimeODF + "text"}, Tool: ToolLibreOffice, Family: FamilyZip},
-	{Key: "rtf", Label: "Rich Text", Exts: []string{"rtf"}, MIME: []string{"application/rtf"}, Tool: ToolLibreOffice, Family: FamilyRTF},
-	{Key: "txt", Label: "Plain text", Exts: []string{"txt"}, MIME: []string{"text/plain"}, Family: FamilyText},
-	{Key: "xls", Label: "Excel (.xls)", Exts: []string{"xls"}, MIME: []string{"application/vnd.ms-excel"}, Tool: ToolLibreOffice, Family: FamilyOLE},
-	{Key: "xlsx", Label: "Excel", Exts: []string{"xlsx"}, MIME: []string{mimeOOXML + "spreadsheetml.sheet"}, Tool: ToolLibreOffice, Family: FamilyZip},
-	{Key: "ods", Label: "OpenDocument spreadsheet", Exts: []string{"ods"}, MIME: []string{mimeODF + "spreadsheet"}, Tool: ToolLibreOffice, Family: FamilyZip},
-	{Key: "csv", Label: "CSV", Exts: []string{"csv"}, MIME: []string{"text/csv"}, Family: FamilyText},
-	{Key: "ppt", Label: "PowerPoint (.ppt)", Exts: []string{"ppt"}, MIME: []string{"application/vnd.ms-powerpoint"}, Tool: ToolLibreOffice, Family: FamilyOLE},
-	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
-	{Key: "ps", Label: "PostScript", Exts: []string{"ps"}, MIME: []string{"application/postscript"}, Tool: ToolGhostscript, Family: FamilyPostScript},
-	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript},
-	{Key: "heic", Label: "HEIC / HEIF image", Exts: []string{"heic", "heif"}, MIME: []string{"image/heic", "image/heif"}, Tool: ToolHEIF, Family: FamilyHEIF},
-	{Key: "html", Label: "Web page (HTML)", Exts: []string{"html", "htm", "xhtml"}, MIME: []string{"text/html", "application/xhtml+xml"}, Tool: ToolBrowser, Family: FamilyHTML},
-	{Key: "svg", Label: "SVG picture", Exts: []string{"svg"}, MIME: []string{"image/svg+xml"}, Tool: ToolBrowser, Family: FamilySVG},
-	{Key: "mhtml", Label: "Saved web page (MHTML)", Exts: []string{"mhtml", "mht"}, MIME: []string{"multipart/related"}, Tool: ToolBrowser, Family: FamilyMHTML},
-	{Key: "eml", Label: "Email (.eml)", Exts: []string{"eml"}, MIME: []string{"message/rfc822"}, Tool: ToolBrowser, Family: FamilyEmail},
-	{Key: "epub", Label: "E-book (EPUB)", Exts: []string{"epub"}, MIME: []string{"application/epub+zip"}, Tool: ToolBrowser, Family: FamilyZip},
-	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip},
+	{Key: "doc", Label: "Word (.doc)", Exts: []string{"doc"}, MIME: []string{"application/msword"}, Tool: ToolLibreOffice, Family: FamilyOLE, Kind: KindOffice},
+	{Key: "docx", Label: "Word", Exts: []string{"docx"}, MIME: []string{mimeOOXML + "wordprocessingml.document"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
+	{Key: "odt", Label: "OpenDocument text", Exts: []string{"odt"}, MIME: []string{mimeODF + "text"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
+	{Key: "rtf", Label: "Rich Text", Exts: []string{"rtf"}, MIME: []string{"application/rtf"}, Tool: ToolLibreOffice, Family: FamilyRTF, Kind: KindOffice},
+	{Key: "txt", Label: "Plain text", Exts: []string{"txt"}, MIME: []string{"text/plain"}, Family: FamilyText, Kind: KindText},
+	{Key: "xls", Label: "Excel (.xls)", Exts: []string{"xls"}, MIME: []string{"application/vnd.ms-excel"}, Tool: ToolLibreOffice, Family: FamilyOLE, Kind: KindOffice},
+	{Key: "xlsx", Label: "Excel", Exts: []string{"xlsx"}, MIME: []string{mimeOOXML + "spreadsheetml.sheet"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
+	{Key: "ods", Label: "OpenDocument spreadsheet", Exts: []string{"ods"}, MIME: []string{mimeODF + "spreadsheet"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
+	{Key: "csv", Label: "CSV", Exts: []string{"csv"}, MIME: []string{"text/csv"}, Family: FamilyText, Kind: KindText},
+	{Key: "ppt", Label: "PowerPoint (.ppt)", Exts: []string{"ppt"}, MIME: []string{"application/vnd.ms-powerpoint"}, Tool: ToolLibreOffice, Family: FamilyOLE, Kind: KindOffice},
+	{Key: "pptx", Label: "PowerPoint", Exts: []string{"pptx"}, MIME: []string{mimeOOXML + "presentationml.presentation"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
+	{Key: "ps", Label: "PostScript", Exts: []string{"ps"}, MIME: []string{"application/postscript"}, Tool: ToolGhostscript, Family: FamilyPostScript, Kind: KindPostScript},
+	{Key: "eps", Label: "Encapsulated PostScript", Exts: []string{"eps"}, MIME: []string{"application/eps", "image/x-eps"}, Tool: ToolGhostscript, Family: FamilyPostScript, Kind: KindPostScript},
+	{Key: "heic", Label: "HEIC / HEIF image", Exts: []string{"heic", "heif"}, MIME: []string{"image/heic", "image/heif"}, Tool: ToolHEIF, Family: FamilyHEIF, Kind: KindImages},
+	{Key: "html", Label: "Web page (HTML)", Exts: []string{"html", "htm", "xhtml"}, MIME: []string{"text/html", "application/xhtml+xml"}, Tool: ToolBrowser, Family: FamilyHTML, Kind: KindWeb},
+	{Key: "svg", Label: "SVG picture", Exts: []string{"svg"}, MIME: []string{"image/svg+xml"}, Tool: ToolBrowser, Family: FamilySVG, Kind: KindImages},
+	{Key: "mhtml", Label: "Saved web page (MHTML)", Exts: []string{"mhtml", "mht"}, MIME: []string{"multipart/related"}, Tool: ToolBrowser, Family: FamilyMHTML, Kind: KindWeb},
+	{Key: "eml", Label: "Email (.eml)", Exts: []string{"eml"}, MIME: []string{"message/rfc822"}, Tool: ToolBrowser, Family: FamilyEmail, Kind: KindWeb},
+	{Key: "epub", Label: "E-book (EPUB)", Exts: []string{"epub"}, MIME: []string{"application/epub+zip"}, Tool: ToolBrowser, Family: FamilyZip, Kind: KindBooks},
+	{Key: "odp", Label: "OpenDocument presentation", Exts: []string{"odp"}, MIME: []string{mimeODF + "presentation"}, Tool: ToolLibreOffice, Family: FamilyZip, Kind: KindOffice},
 }
 
 // Formats returns a copy of the table, so no caller can edit the one list.

@@ -177,6 +177,11 @@ func TestTheFormatCensusFindsAPlantedList(t *testing.T) {
 func TestTheTableViewsAgree(t *testing.T) {
 	seen := map[string]string{}
 	for _, f := range Formats() {
+		switch f.Kind {
+		case KindBooks, KindImages, KindOffice, KindPostScript, KindText, KindWeb:
+		default:
+			t.Errorf("%s: kind %q is not one of the tooltip's groups (ADR-217)", f.Key, f.Kind)
+		}
 		if f.Key == "" || len(f.Exts) == 0 || len(f.MIME) == 0 {
 			t.Errorf("row %+v lacks a key, an extension or a MIME type", f)
 		}

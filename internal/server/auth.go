@@ -297,6 +297,8 @@ type formatView struct {
 	// Tool names the program the format needs, short (pdfops.MissingTool.Short), "" for one Nib converts itself. The
 	// Open button's tooltip sets it in parentheses beside the format, and says when it is not found (ADR-215).
 	Tool string `json:"tool,omitempty"`
+	// Kind is the group the tooltip lists the format under ("Images", "Office documents", …; ADR-217).
+	Kind string `json:"kind"`
 }
 
 // formatViews renders the table for the status answer; availability is asked once per tool, not per row.
@@ -309,7 +311,7 @@ func formatViews() []formatView {
 			ok = pdfops.StatusFormatAvailable(f)
 			avail[f.Tool] = ok
 		}
-		v := formatView{Key: f.Key, Label: f.Label, MIME: f.MIME, Available: ok, Image: f.Image, Tool: f.Tool.Short()}
+		v := formatView{Key: f.Key, Label: f.Label, MIME: f.MIME, Available: ok, Image: f.Image, Tool: f.Tool.Short(), Kind: f.Kind}
 		out = append(out, v)
 	}
 	return out

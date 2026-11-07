@@ -1057,3 +1057,5 @@ home today.
   — the `Door` flag retired (listing, `nib.desktop`, Windows `nib register` read every row); Import… and `/api/office` gone, the language field in the Open dialog through `withLanguage` on `/api/open` and `/api/open-url`; a source read marked at the read (`sourceFile`); Open…'s tooltip from the table; the destination dialogs' full-path `~/nib` button.
 - [ADR-216](216-opens-tooltip-is-one-line-per-format-alphabetical.md) — **Open…'s tooltip is one line per format, alphabetical, with what it takes in parentheses**
   — supersedes ADR-215 §5's grouping; the tool named short (`MissingTool.Short`) so parentheses do not nest.
+- [ADR-217](217-opens-tooltip-groups-the-formats-and-says-what-is-installed.md) — **Open…'s tooltip groups the formats by kind and says whether each program is installed**
+  — `Format.Kind` (six groups) on every row and in the status; groups and formats alphabetical; `(<tool> is installed)` / `(needs <tool>, not found on this computer)` / `(built in)`.

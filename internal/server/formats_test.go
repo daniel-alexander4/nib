@@ -27,6 +27,9 @@ func TestStatusCarriesTheFormatTable(t *testing.T) {
 		}
 		// The tool is named short: Open…'s tooltip sets it in parentheses beside the format, so a name carrying its own
 		// parenthetical would nest them (ADR-216).
+		if v.Kind != f.Kind || v.Kind == "" {
+			t.Errorf("%s: kind = %q, want the table's %q, and never none (ADR-217)", f.Key, v.Kind, f.Kind)
+		}
 		if v.Tool != f.Tool.Short() || strings.Contains(v.Tool, "(") {
 			t.Errorf("%s: tool = %q, want the short name %q", f.Key, v.Tool, f.Tool.Short())
 		}
