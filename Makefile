@@ -10,8 +10,9 @@
 notices:
 	./build/gen-notices.sh
 
-# Cross-compile every platform + build the .deb packages into dist/. Depends on
-# notices so the file packaged into the .deb / uploaded with releases is fresh.
+# Cross-compile every platform + build the Linux packages (.deb/.rpm/.AppImage)
+# into dist/. Depends on
+# notices so the file packaged into the .deb/.rpm / uploaded with releases is fresh.
 dist: notices
 	./build.sh
 

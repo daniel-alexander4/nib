@@ -1608,6 +1608,54 @@ use no internet at all. What pulls in the DHT is pasting an **invitation**, and 
 
 ## Get started
 
+### One-liner install / uninstall (Linux + macOS)
+```sh
+curl -fsSL https://raw.githubusercontent.com/daniel-alexander4/nib/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/daniel-alexander4/nib/main/scripts/uninstall.sh | bash
+```
+The installer picks the right artifact for your machine — `.deb` on
+Debian/Ubuntu, `.rpm` on Fedora/RHEL/openSUSE, raw binary elsewhere — verifies
+it against the release `SHA256SUMS`, and adds **Nib** to your applications menu
+(under Office). Variants:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/daniel-alexander4/nib/main/scripts/install.sh | bash -s -- --appimage
+curl -fsSL https://raw.githubusercontent.com/daniel-alexander4/nib/main/scripts/install.sh | bash -s -- --binary
+curl -fsSL https://raw.githubusercontent.com/daniel-alexander4/nib/main/scripts/install.sh | bash -s -- --version 2.50.4
+```
+
+### Install on Arch Linux (AUR)
+Three packages are maintained for the [Arch User Repository](https://aur.archlinux.org)
+— source, prebuilt binary, and git snapshot — all under the same upstream releases:
+
+```sh
+yay -S nib        # build from source (stable release tarball)
+yay -S nib-bin    # prebuilt binary from the GitHub release (no Go toolchain)
+yay -S nib-git    # latest development snapshot from git HEAD
+```
+(`yay` stands in for any AUR helper — `paru -S`, or `git clone` +
+`makepkg -si` by hand. The `PKGBUILD`s live in [`aur/`](aur/) in this repo.)
+Only one of the three can be installed at a time — they conflict with each other
+and all provide `nib`.
+
+### Install on Fedora / RHEL / openSUSE
+Each release ships a `.rpm` alongside the `.deb` (see `dist/` after `./build.sh`):
+```sh
+sudo rpm -Uvh nib_<version>-1.<arch>.rpm
+```
+or just use the one-liner above, which selects the `.rpm` automatically when `rpm`
+is present.
+
+### Portable AppImage (any Linux)
+Each release also ships a `.AppImage` per architecture — no root, no package
+manager, runs anywhere:
+```sh
+chmod +x nib-<version>-linux-amd64.AppImage
+./nib-<version>-linux-amd64.AppImage [file.pdf]
+```
+or `bash -s -- --appimage` with the one-liner to install it to your local bin
+with a menu entry.
+
 ### Run from source
 ```sh
 go build -ldflags "-X main.version=$(cat VERSION)" -o nib ./cmd/nib
@@ -1664,7 +1712,9 @@ higher version.
 ./build.sh
 ```
 Cross-compiles a static, cgo-free binary for **Linux, macOS, and Windows**
-(amd64 + arm64) into `dist/`, plus Linux `.deb` packages. On macOS and Windows
+(amd64 + arm64) into `dist/`, plus Linux `.deb`, `.rpm`, and `.AppImage`
+packages (needs `nfpm` for deb/rpm and `appimagetool` for AppImage; each is
+skipped with a message when its tool is missing). On macOS and Windows
 you run the binary directly — it's fully self-contained.
 
 On Windows, run `nib register` once to have Nib offered for PDFs in Explorer's
