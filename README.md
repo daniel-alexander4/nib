@@ -340,7 +340,9 @@ saved web pages and e-books (`.html/.htm/.xhtml`, `.mhtml/.mht`, `.epub`) and em
 sign, or save. Nib says so once ("Imported report.docx as a PDF. Save writes a PDF; use
 Export for other formats."). The Open dialog lists every one of these, and its
 **Language (for converted files)** list chooses the language a converted document is declared in;
-hover over **Open…** for the formats and the program each needs. A converted document has no file behind it, so *Save* asks for a name, starts in the
+hover over **Open…** for the formats and the program each needs (green when Nib found it, red with a link to
+**Settings → Helper Programs** when it did not). That page says what each helper program is, what Nib uses it for,
+whether it is installed, and where to get it. A converted document has no file behind it, so *Save* asks for a name, starts in the
 folder the file came from, and your original is never written. Open Recent lists the *path* of an imported file; opening it
 again imports it again. A file whose name and contents disagree (a "`.docx`" that is a
 picture) is refused with a sentence that says so.

@@ -128,7 +128,9 @@ fi
 # 114 since v2.7.2 (skippedfields.test.mjs): a fill says which fields it could not reach (/pending 919 F14).
 # 128 since v2.51.0 (homebutton.test.mjs): the destination dialogs' button to ~/nib, named by its whole path (ADR-215) —
 # its own boot, because its listdir stub answers by the path asked.
-Nib_expect_files=128
+# 129 since v2.52.0 (helpers.test.mjs): Settings → Helper Programs and Open…'s panel (ADR-218) — its own boot,
+# because its status answers every helper flag differently from its neighbour's.
+Nib_expect_files=129
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

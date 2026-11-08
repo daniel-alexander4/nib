@@ -604,7 +604,8 @@ function applyStatus(st) {
   // Combine's picker `accept` and Open…'s tooltip are built from the server's format table (pdfops.Formats) — no
   // list of extensions or formats lives in the page (ADR-184, ADR-215).
   const fmts = Array.isArray(st.formats) ? st.formats : [];
-  if (fmts.length) els.openMenuItem.title = openTitle(fmts);
+  if (fmts.length) paintOpenFormats(fmts);
+  paintHelpers(st);
   els.combineInput.accept = ['application/pdf', ...fmts.filter((f) => f.image).flatMap((f) => f.mime)].join(',');
   // ...and SAY so, which the narrowed picker never did: a user with a .docx met the missing
   // converter as their file not appearing in the dialog, with nothing naming the reason. Both
@@ -4582,25 +4583,113 @@ async function openOrActivate(path) {
   return openPath(path);
 }
 
-// openTitle is Open…'s tooltip: every format the server's table lists — never a list kept here (ADR-184) — under the
-// group a person knows it by (`kind`), groups and formats each alphabetical, and beside each format in parentheses
-// whether Nib converts it itself, or that the program it needs is installed or was not found (ADR-217; Dan,
-// 2026-11-07).
-function openTitle(fmts) {
+// paintOpenFormats fills Open…'s panel (#openFormats, ADR-218): every format the server's table lists — never a list
+// kept here (ADR-184) — under the group a person knows it by (`kind`), groups and formats each alphabetical (ADR-217),
+// and beside each format in parentheses whether Nib converts it itself, or that the program it needs is installed
+// (green) or was not found (red). A red one is a link to that program on Settings → Helper Programs. Built from text
+// nodes only: nothing in a status answer is parsed as markup.
+function paintOpenFormats(fmts) {
+  const box = $('openFormats');
+  if (!box) return;
   const abc = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
-  const why = (f) => (!f.tool ? 'built in' : f.available ? `${f.tool} is installed` : `needs ${f.tool}, not found on this computer`);
   const groups = new Map();
   for (const f of fmts) {
     const kind = f.kind || 'Other';
     if (!groups.has(kind)) groups.set(kind, []);
     groups.get(kind).push(f);
   }
-  const lines = ['Open a PDF, or a file Nib converts to PDF:'];
+  box.textContent = '';
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  box.append(el('p', 'hptitle', 'Open a PDF, or a file Nib converts to PDF:'));
   for (const kind of [...groups.keys()].sort(abc)) {
-    lines.push('', kind);
-    for (const f of groups.get(kind).sort((a, b) => abc(a.label, b.label))) lines.push(`• ${f.label} (${why(f)})`);
+    box.append(el('p', 'hpgroup', kind));
+    const ul = el('ul', 'hplist');
+    for (const f of groups.get(kind).sort((a, b) => abc(a.label, b.label))) {
+      const li = el('li', null, f.label + ' ');
+      if (!f.tool) li.append(el('span', 'hpwhy builtin', '(built in)'));
+      else if (f.available) li.append(el('span', 'hpwhy found', `(${f.tool} is installed)`));
+      else {
+        const a = el('a', 'hpwhy missing', `(needs ${f.tool}, not found on this computer)`);
+        a.href = '#helper-' + (f.toolKey || '');
+        a.onclick = (e) => { e.preventDefault(); hideOpenFormats(true); goHelper(f.toolKey); };
+        li.append(a);
+      }
+      ul.append(li);
+    }
+    box.append(ul);
   }
-  return lines.join('\n');
+}
+
+// The panel shows while the mouse is on Open… or on the panel, or while focus is in either, and goes a moment after
+// it leaves both — long enough to move across the gap onto the panel and scroll it (ADR-218). Escape puts it away, and
+// so does a press anywhere else.
+//
+// **Focus shows it only when the keyboard moved focus there.** A dialog gives focus back to the button that opened
+// it, and Open… opens one: shown on that focus, the panel stood over the document until focus left the button, and
+// tier 3 measured it taking the clicks meant for the page (reflow, the drawing tools, the zoom anchor).
+let openFormatsHide = 0;
+let focusByKey = false;
+document.addEventListener('keydown', () => { focusByKey = true; }, true);
+document.addEventListener('pointerdown', (e) => {
+  focusByKey = false;
+  const box = $('openFormats');
+  if (box && !box.hidden && !box.contains(e.target) && e.target !== els.openMenuItem) hideOpenFormats(true);
+}, true);
+function showOpenFormats() {
+  const box = $('openFormats');
+  if (!box) return;
+  clearTimeout(openFormatsHide);
+  const r = els.openMenuItem.getBoundingClientRect();
+  box.hidden = false;
+  const room = window.innerWidth - r.right - 16;
+  box.style.left = (room >= 280 ? r.right + 8 : Math.max(8, r.left)) + 'px';
+  box.style.top = Math.max(8, Math.min(r.top, window.innerHeight - box.offsetHeight - 8)) + 'px';
+}
+function hideOpenFormats(now = false) {
+  const box = $('openFormats');
+  if (!box) return;
+  clearTimeout(openFormatsHide);
+  if (now) { box.hidden = true; return; }
+  openFormatsHide = setTimeout(() => {
+    if (!box.matches(':hover') && !els.openMenuItem.matches(':hover') && !box.contains(document.activeElement) && document.activeElement !== els.openMenuItem) box.hidden = true;
+  }, 300);
+}
+if ($('openFormats')) {
+  for (const n of [els.openMenuItem, $('openFormats')]) {
+    n.addEventListener('mouseenter', showOpenFormats);
+    n.addEventListener('mouseleave', () => hideOpenFormats());
+    n.addEventListener('focusin', () => { if (focusByKey) showOpenFormats(); });
+    n.addEventListener('focusout', () => hideOpenFormats());
+  }
+  els.openMenuItem.addEventListener('click', () => hideOpenFormats(true));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('openFormats').hidden) hideOpenFormats(true); });
+}
+
+// HELPERS is which status flag says each helper program was found, keyed as the Helper Programs page's sections are
+// (`helper-<key>`, ADR-218). The status names a format's tool by the same key (`toolKey`).
+const HELPERS = { libreoffice: 'libreoffice', ghostscript: 'ghostscript', heif: 'heif', browser: 'browser', pdftocairo: 'svgExport', scanner: 'scanner' };
+
+// paintHelpers writes each helper's indicator on Settings → Helper Programs from the status answer.
+function paintHelpers(st) {
+  for (const [key, flag] of Object.entries(HELPERS)) {
+    const mark = document.querySelector(`.helperstate[data-helper="${key}"]`);
+    if (!mark) continue;
+    const found = !!st[flag];
+    mark.textContent = found ? 'Installed' : 'Not found on this computer';
+    mark.classList.toggle('found', found);
+    mark.classList.toggle('missing', !found);
+  }
+}
+if ($('helpersRecheck')) $('helpersRecheck').onclick = () => refreshStatus();
+
+// goHelper opens Settings → Helper Programs at one program's section (ADR-218): the page through `goCard`, then the
+// section brought into view and its heading focused, as `goFeature` does for a card.
+function goHelper(key) {
+  goCard('settings', 'Helper Programs');
+  const sec = $('helper-' + key);
+  if (!sec) return;
+  sec.scrollIntoView?.({ block: 'start' });
+  $(`helper-${key}-name`)?.focus();
 }
 
 // NO_LANGUAGE is what an open with no dialog sends (Recent, the `?open=` restore): nothing, so the server keeps

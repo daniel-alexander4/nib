@@ -274,9 +274,9 @@
            so a dropdown inside a collapsed card would be a second disclosure for the same
            items — the pattern the accordion replaced. -->
       <div class="tbgroup" data-label="Open &amp; Import" data-fold="1">
-      <!-- The title is replaced from the format table when /api/status answers (`openTitle`, ADR-215); this one is
-           what shows before it does. -->
-      <button id="openMenuItem" title="Open a PDF, or a file Nib converts to PDF">Open…</button>
+      <!-- Its description is Nib's own panel, #openFormats (ADR-218), not a `title`: a browser's tooltip cannot be
+           coloured, cannot be scrolled and vanishes when the mouse leaves the button. -->
+      <button id="openMenuItem" aria-describedby="openFormats">Open…</button>
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
       <!-- Shown only where Nib found scanimage (`applyStatus`, /pending 903, ADR-213); hidden here so a machine
            without it never sees a button that cannot work, even before /api/status answers. -->
@@ -587,6 +587,9 @@
             </div>
       <div class="tbgroup" data-label="Toggle Features" data-fold="7" data-entry>
 <button class="pageentry" data-apppage="settingsFeaturesPage">Toggle Features…</button>
+            </div>
+      <div class="tbgroup" data-label="Helper Programs" data-fold="6" data-entry>
+<button class="pageentry" data-apppage="settingsHelpersPage">Helper Programs…</button>
             </div>
       <div class="tbgroup" data-label="Identity &amp; Keys" data-fold="1" data-entry>
 <button class="pageentry" data-apppage="settingsIdentityPage">Identity &amp; Keys…</button>
@@ -901,6 +904,59 @@
 
            A setting here is saved as it is changed, so a page has no Save and no Cancel. The ways
            out are the tabs. -->
+      <!-- Helper Programs (ADR-218; Dan, 2026-11-07): the outside programs Nib can use, each with what it is, what
+           Nib uses it for, whether Nib found it on this computer and a link to its site. None is bundled and none is
+           needed to open or sign a PDF. The links are written here, never taken from a response (ADR-039), and
+           `TestTheHelperPageLinksAreTheVendors` holds each to `pdfops.MissingTool.Vendor`. The indicator is written by
+           `paintHelpers` from /api/status; Check again asks again. A red line in Open…'s panel opens this page at its
+           program (`goHelper`). -->
+      <section id="settingsHelpersPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Helper Programs" role="region" aria-labelledby="settingsHelpersPageTitle" hidden>
+        <div class="pagebody">
+          <p class="pagekicker">Settings</p>
+          <h2 id="settingsHelpersPageTitle" tabindex="-1">Helper Programs</h2>
+          <p class="pagelead">Programs Nib can use when you have them. None comes with Nib, and none is needed to open, fill or sign a PDF. Each one lets Nib open or save more kinds of file.</p>
+          <div class="setrow helper" id="helper-libreoffice">
+            <h3 class="pagesection" id="helper-libreoffice-name" tabindex="-1">LibreOffice <span class="helperstate" data-helper="libreoffice"></span></h3>
+            <p class="sethelp">A free office suite: a word processor, a spreadsheet and a presentation program.</p>
+            <p class="sethelp">Nib runs it in the background, with no window, to turn Word, Excel, PowerPoint, OpenDocument and Rich Text files into PDFs when you open them.</p>
+            <p class="sethelp"><a href="https://www.libreoffice.org/" target="_blank" rel="noopener">www.libreoffice.org</a></p>
+          </div>
+          <div class="setrow helper" id="helper-ghostscript">
+            <h3 class="pagesection" id="helper-ghostscript-name" tabindex="-1">Ghostscript <span class="helperstate" data-helper="ghostscript"></span></h3>
+            <p class="sethelp">A long-standing interpreter for PostScript and PDF.</p>
+            <p class="sethelp">Nib uses it to open PostScript and EPS files, and to make an archival PDF/A copy of a document (File → Save a Copy → Archival PDF).</p>
+            <p class="sethelp"><a href="https://www.ghostscript.com/" target="_blank" rel="noopener">www.ghostscript.com</a></p>
+          </div>
+          <div class="setrow helper" id="helper-heif">
+            <h3 class="pagesection" id="helper-heif-name" tabindex="-1">A HEIF decoder <span class="helperstate" data-helper="heif"></span></h3>
+            <p class="sethelp">A program that reads HEIC and HEIF pictures, the format iPhones and many phones save photos in: libheif’s <code>heif-dec</code>, or ImageMagick built with HEIC support.</p>
+            <p class="sethelp">Nib uses it to open those photos as pages of a PDF.</p>
+            <p class="sethelp"><a href="https://github.com/strukturag/libheif" target="_blank" rel="noopener">github.com/strukturag/libheif</a></p>
+          </div>
+          <div class="setrow helper" id="helper-browser">
+            <h3 class="pagesection" id="helper-browser-name" tabindex="-1">A Chromium-family browser <span class="helperstate" data-helper="browser"></span></h3>
+            <p class="sethelp">Chrome, Chromium, Edge or Brave. Nib’s own window opens in whichever browser you use; this is a separate need.</p>
+            <p class="sethelp">Nib uses one to print web pages, saved pages (MHTML), emails (.eml), e-books (EPUB) and SVG pictures into PDFs, with the page shut off from the network. A snap-packaged Chromium may not work.</p>
+            <p class="sethelp"><a href="https://www.chromium.org/getting-involved/download-chromium/" target="_blank" rel="noopener">www.chromium.org/getting-involved/download-chromium</a></p>
+          </div>
+          <div class="setrow helper" id="helper-pdftocairo">
+            <h3 class="pagesection" id="helper-pdftocairo-name" tabindex="-1">pdftocairo (Poppler) <span class="helperstate" data-helper="pdftocairo"></span></h3>
+            <p class="sethelp">A command-line tool from Poppler, the PDF library many Linux viewers are built on.</p>
+            <p class="sethelp">Nib uses it to save a page as an SVG picture (File → Export &amp; Print → Pages as images).</p>
+            <p class="sethelp"><a href="https://poppler.freedesktop.org/" target="_blank" rel="noopener">poppler.freedesktop.org</a></p>
+          </div>
+          <div class="setrow helper" id="helper-scanner">
+            <h3 class="pagesection" id="helper-scanner-name" tabindex="-1">scanimage (SANE) <span class="helperstate" data-helper="scanner"></span></h3>
+            <p class="sethelp">The command-line scanner tool from SANE, the standard way Linux talks to scanners.</p>
+            <p class="sethelp">Nib uses it for Scan…, which reads pages from your scanner straight into a new document. On Windows and macOS Nib does not scan yet.</p>
+            <p class="sethelp"><a href="https://sane-project.gitlab.io/website/" target="_blank" rel="noopener">sane-project.gitlab.io/website</a></p>
+          </div>
+          <div class="setrow">
+            <button id="helpersRecheck" type="button">Check again</button>
+            <p class="sethelp">After you install one, check again: Nib looks for it without restarting.</p>
+          </div>
+        </div>
+      </section>
       <section id="settingsIdentityPage" class="sheet apppage" data-group="Settings" data-menu="settings" data-title="Identity &amp; Keys" role="region" aria-labelledby="settingsIdentityPageTitle" hidden>
         <div class="pagebody">
           <p class="pagekicker">Settings</p>
@@ -2826,6 +2882,10 @@
     </div>
   </div>
 
+  <!-- What Open… opens (ADR-218): built by `paintOpenFormats` from /api/status `formats`, shown while the mouse is on
+       Open… or on this panel, or while Open… has focus, and scrolled when it is taller than the window. Before the
+       status answers it holds the one line below. -->
+  <div id="openFormats" class="hoverpanel" role="tooltip" hidden><p class="hptitle">Open a PDF, or a file Nib converts to PDF</p></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

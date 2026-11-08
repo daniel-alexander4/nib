@@ -94,6 +94,24 @@ func (t MissingTool) Short() string {
 	return short
 }
 
+// Key is the tool's stable token on the wire ("libreoffice", "ghostscript", "heif", "browser", "pdftocairo"): the window
+// keys a format's line in Open…'s panel to the tool's section of the Helper Programs page by it (ADR-218).
+func (t MissingTool) Key() string {
+	switch t {
+	case ToolLibreOffice:
+		return "libreoffice"
+	case ToolGhostscript:
+		return "ghostscript"
+	case ToolHEIF:
+		return "heif"
+	case ToolBrowser:
+		return "browser"
+	case ToolPdftocairo:
+		return "pdftocairo"
+	}
+	return ""
+}
+
 // Vendor is the vendor's landing page — never a direct installer URL and never a mirror, so
 // that what nib points at is the page a user would have found themselves. README already
 // carries both links in prose; this is the same fact, reachable from code.

@@ -23,13 +23,14 @@ const h = await launch();
 const { page } = h;
 after(() => shutdown(h));
 
-// The six entries, in the order the menu shows them: Updates, Advanced features and Main menu are the cards of
-// Toggle Features (ADR-109), and Colours is a row of Appearance (ADR-118). Each opens a page — About too, since
+// The seven entries, in the order the menu shows them: Updates, Advanced features and Main menu are the cards of
+// Toggle Features (ADR-109), Colours is a row of Appearance (ADR-118), and Helper Programs follows Toggle Features
+// (ADR-218). Each opens a page — About too, since
 // ADR-108; it opened a dialog until then.
 const PAGES = [
   ['Appearance', 'settingsAppearancePage'],
   ['Read Aloud', 'settingsReadAloudPage'], ['Toggle Features', 'settingsFeaturesPage'],
-  ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['About', 'settingsAboutPage'],
+  ['Helper Programs', 'settingsHelpersPage'], ['Identity & Keys', 'settingsIdentityPage'], ['Vault', 'settingsVaultPage'], ['About', 'settingsAboutPage'],
 ];
 const ENTRIES = PAGES.map((p) => p[0]);
 const ENTRY = '#commands .tbtab[data-tab="settings"] .sbhead.groupcard';
@@ -54,11 +55,11 @@ const state = () => page.evaluate(() => {
   };
 });
 
-test('entering Settings shows six entries, in order, and opens nothing', async () => {
+test('entering Settings shows seven entries, in order, and opens nothing', async () => {
   await h.mode('settings');
   const entries = await page.$$eval(ENTRY, (es) => es.filter((e) => e.getClientRects().length).map((e) => ({
     text: e.textContent.trim(), tag: e.tagName, expanded: e.getAttribute('aria-expanded') })));
-  assert.deepEqual(entries.map((e) => e.text), ENTRIES, 'the Settings menu is not the six entries in their order');
+  assert.deepEqual(entries.map((e) => e.text), ENTRIES, 'the Settings menu is not the seven entries in their order');
   for (const e of entries) {
     assert.equal(e.tag, 'BUTTON', `${e.text} is not a button`);
     assert.equal(e.expanded, null, `${e.text} carries aria-expanded="${e.expanded}" — it announces a card that expands, and it opens a page`);
@@ -509,7 +510,7 @@ test('a shut card shows its name and nothing in it; its header opens it, by mous
   await h.closeAppPage(id);
 });
 
-test('with the sidebar shut the six entries are in ⋯ More, and each opens its page', async () => {
+test('with the sidebar shut the seven entries are in ⋯ More, and each opens its page', async () => {
   await h.mode('settings');
   await page.click('#toggleSidebarBtn');
   await page.waitForFunction(() => document.getElementById('sidebar').classList.contains('collapsed'));
@@ -522,7 +523,7 @@ test('with the sidebar shut the six entries are in ⋯ More, and each opens its 
         captions: [...d.querySelectorAll('.menucap')].filter(vis).length,
         other: [...d.querySelectorAll('input, select, p, label')].filter(vis).length };
     }, MORE);
-    assert.deepEqual(listed.buttons, ENTRIES.map((n) => n + '…'), '⋯ More does not hold the six entries in their order');
+    assert.deepEqual(listed.buttons, ENTRIES.map((n) => n + '…'), '⋯ More does not hold the seven entries in their order');
     assert.equal(listed.captions, 0, 'each entry is listed twice — a caption and a button of the same name');
     assert.equal(listed.other, 0, 'a setting is still drawn inside the menu');
     await page.keyboard.press('Escape');
@@ -589,7 +590,7 @@ test('at 414 and 375 pixels wide no page runs past the window, with the strip ab
         if (id === 'settingsAboutPage') await aboutDocsAway();
       }
       // Six entries, one tab — the last page's; the strip does not push the window sideways.
-      assert.equal((await state()).pageTabs.length, 1, `at ${width}px six entries left more than the one page tab`);
+      assert.equal((await state()).pageTabs.length, 1, `at ${width}px seven entries left more than the one page tab`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `at ${width}px the page tab pushes the window sideways`);
       await h.closeAppPages();
     }

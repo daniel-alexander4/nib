@@ -17,24 +17,31 @@ const h = await boot({ routes: { '/api/status': { ...BOOT_ROUTES['/api/status'],
 const { document: doc } = h;
 await h.settle();
 
-test('Open…\'s tooltip lists every format under its group, both alphabetical, and says whether its program is installed', () => {
-  assert.equal(doc.getElementById('openMenuItem').title, [
-    'Open a PDF, or a file Nib converts to PDF:',
-    '',
-    'Images',
-    '• PNG image (built in)',
-    '• Zzz (built in)',
-    '',
-    'Office documents',
-    '• Qqq (needs Qqqtool, not found on this computer)',
-    '• Rrr (Rrrtool is installed)',
-  ].join('\n'));
+// The panel's lines, as text: a group heading, then `• label (why)`, the why's colour class beside it.
+const panelLines = () => [...doc.querySelectorAll('#openFormats > p, #openFormats li')].map((n) => {
+  if (n.tagName === 'P') return n.textContent;
+  const why = n.querySelector('.hpwhy');
+  return `• ${n.textContent} [${why ? why.className.replace('hpwhy ', '') : 'none'}]`;
 });
 
-test('before the status answers, Open… says what it opens without a list', async () => {
+test('Open…\'s panel lists every format under its group, both alphabetical, each saying whether its program is installed', () => {
+  assert.deepEqual(panelLines(), [
+    'Open a PDF, or a file Nib converts to PDF:',
+    'Images',
+    '• PNG image (built in) [builtin]',
+    '• Zzz (built in) [builtin]',
+    'Office documents',
+    '• Qqq (needs Qqqtool, not found on this computer) [missing]',
+    '• Rrr (Rrrtool is installed) [found]',
+  ]);
+});
+
+test('Open… is described by the panel, not by a browser tooltip', async () => {
   const fs = await import('node:fs');
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /<button id="openMenuItem" title="Open a PDF, or a file Nib converts to PDF">/);
+  assert.match(html, /<button id="openMenuItem" aria-describedby="openFormats">/, 'Open… lost its description, or carries a title again');
+  assert.match(html, /<div id="openFormats" class="hoverpanel" role="tooltip" hidden><p class="hptitle">Open a PDF, or a file Nib converts to PDF<\/p><\/div>/,
+    'before the status answers, the panel does not say what Open… opens');
 });
 
 test('the combine picker offers PDF and the table\'s images', () => {

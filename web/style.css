@@ -12,6 +12,10 @@
   --subtext1: #bac2de;
   --blue: #89b4fa;
   --green: #a6e3a1;
+  /* Text that says a helper program was found or not (ADR-218). In this theme the palette's own green and red are
+     light and pass on the panel's ground (11.8:1 and 7.6:1 on --mantle, measured). */
+  --found-text: var(--green);
+  --missing-text: var(--red);
   --red: #f38ba8;
   --yellow: #f9e2af;
   --peach: #fab387;
@@ -74,6 +78,10 @@
   --blue: #1e66f5;
   --green: #40a02b;
   --red: #d20f39;
+  /* The light palette's green and red are too light for small text on --mantle (2.75:1 and 4.46:1, both below AA), so the helper
+     words take deeper shades of the same hues: 5.3:1 and 5.9:1, measured (ADR-218). */
+  --found-text: #276c1a;
+  --missing-text: #b00c30;
   --yellow: #df8e1d;
   --peach: #fe640b;
   --mauve: #8839ef;
@@ -862,6 +870,23 @@ body > div[id$="Modal"] {
 /* The ~/nib button carries its whole path as its text (ADR-215) and has no tooltip, so a long path wraps rather
    than being cut off. */
 .dirhome { white-space: normal; overflow-wrap: anywhere; text-align: left; max-width: 100%; }
+/* Open…'s panel (ADR-218): Nib's own, so it can be coloured, scrolled and moved onto. Fixed to the window, placed
+   beside the button by showOpenFormats, never taller than the window. */
+.hoverpanel {
+  position: fixed; z-index: 60; max-width: min(420px, calc(100vw - 16px)); max-height: min(70vh, calc(100vh - 16px));
+  overflow-y: auto; padding: 10px 12px; border: 1px solid var(--surface0); border-radius: 8px;
+  background: var(--mantle); color: var(--text); box-shadow: 0 4px 16px rgba(0,0,0,0.35); font-size: 13px;
+}
+.hoverpanel .hptitle { margin: 0 0 6px; font-weight: 600; }
+.hoverpanel .hpgroup { margin: 8px 0 2px; font-weight: 600; }
+.hoverpanel .hplist { margin: 0; padding-left: 18px; }
+.hoverpanel .hplist li { margin: 1px 0; }
+/* Installed is green and not found is red, in the theme's own tokens, so each theme keeps its contrast; the words
+   say the same thing, so nothing rests on colour alone. */
+.hpwhy.found, .helperstate.found { color: var(--found-text); }
+.hpwhy.missing, .helperstate.missing { color: var(--missing-text); }
+a.hpwhy.missing { text-decoration: underline; cursor: pointer; }
+.helperstate { font-size: 12px; font-weight: 600; margin-left: 8px; }
 .dirhere {
   font-size: 11px; color: var(--subtext0); flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;

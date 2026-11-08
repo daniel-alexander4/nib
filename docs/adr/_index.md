@@ -1059,3 +1059,5 @@ home today.
   — supersedes ADR-215 §5's grouping; the tool named short (`MissingTool.Short`) so parentheses do not nest.
 - [ADR-217](217-opens-tooltip-groups-the-formats-and-says-what-is-installed.md) — **Open…'s tooltip groups the formats by kind and says whether each program is installed**
   — `Format.Kind` (six groups) on every row and in the status; groups and formats alphabetical; `(<tool> is installed)` / `(needs <tool>, not found on this computer)` / `(built in)`.
+- [ADR-218](218-helper-programs-is-a-settings-page-and-opens-panel-is-nibs-own.md) — **Helper Programs is a Settings page, and Open…'s panel is Nib's own**
+  — seven Settings entries; six programs with what, how, indicator and link (held to `MissingTool.Vendor`); `#openFormats` replaces the `title` (hover, focus, scroll, Escape); green/red per-theme tokens; a not-found line opens its program's section (`toolKey`).

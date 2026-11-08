@@ -27,6 +27,9 @@ func TestStatusCarriesTheFormatTable(t *testing.T) {
 		}
 		// The tool is named short: Open…'s tooltip sets it in parentheses beside the format, so a name carrying its own
 		// parenthetical would nest them (ADR-216).
+		if v.ToolKey != f.Tool.Key() || (f.Tool != pdfops.ToolNone && v.ToolKey == "") {
+			t.Errorf("%s: toolKey = %q, want %q (ADR-218)", f.Key, v.ToolKey, f.Tool.Key())
+		}
 		if v.Kind != f.Kind || v.Kind == "" {
 			t.Errorf("%s: kind = %q, want the table's %q, and never none (ADR-217)", f.Key, v.Kind, f.Kind)
 		}
