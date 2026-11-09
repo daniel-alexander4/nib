@@ -686,6 +686,9 @@ body > div[id$="Modal"] {
 .scan-sev.low { color: var(--subtext0); }
 .scan-detail { font-size: 12px; color: var(--text); }
 .scan-where { font-size: 11px; color: var(--subtext0); }
+/* Inspect this file (/pending 406): section heads and the XMP packet, which wraps and scrolls in its own box. */
+.inspect-head { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--subtext0); }
+.inspect-xmp { max-height: 14em; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 11px; background: var(--mantle); padding: 6px; border-radius: 4px; }
 /* Accessibility report (P07.S06): law 4's verdicts apart in WORDS and in weight, never colour alone.
    A clause nib could not check is yellow and italic with a "?" — never green, never unmarked. */
 .ua-summary { font-size: 13px; font-weight: 600; margin: 0 0 8px; }

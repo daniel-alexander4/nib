@@ -605,6 +605,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Hidden-content scan and sanitize.
 	mux.HandleFunc("GET /api/scan", s.requireUnlocked(s.handleScan))
+	mux.HandleFunc("GET /api/inspect", s.requireUnlocked(s.handleInspect))
 	mux.HandleFunc("GET /api/uacheck", s.requireUnlocked(s.handleUACheck))
 	// The autotagger: propose (read-only) and commit a reviewed structure (PLAN-accessibility.md P08.S06b).
 	mux.HandleFunc("GET /api/tags/propose", s.requireUnlocked(s.handleTagsPropose))

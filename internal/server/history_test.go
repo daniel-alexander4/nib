@@ -375,6 +375,7 @@ func TestDocumentReadRoutesRaceMutation(t *testing.T) {
 		// that exact shape for the last offender. pdf.js fetches this on every re-render.
 		{"pdf", http.MethodGet, "/api/pdf"},
 		{"scan", http.MethodGet, "/api/scan"},
+		{"inspect", http.MethodGet, "/api/inspect"}, // /pending 406: reads the bytes through docBytes, as scan does
 		{"outline", http.MethodGet, "/api/outline"},
 		{"attachments", http.MethodGet, "/api/attachments"},
 		{"form-data", http.MethodGet, "/api/form-data"},

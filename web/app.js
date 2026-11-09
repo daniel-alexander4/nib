@@ -130,6 +130,7 @@ const els = {
   rtCard: $('rtCard'), rtFind: $('rtFind'), rtStatus: $('rtStatus'), rtCancel: $('rtCancel'),
   editTextBtn: $('editTextBtn'), removeOriginalsBtn: $('removeOriginalsBtn'), ocrBtn: $('ocrBtn'), ocrLang: $('ocrLang'), ocrQuality: $('ocrQuality'),
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
+  inspectBtn: $('inspectBtn'), inspectModal: $('inspectModal'), inspectBody: $('inspectBody'), inspectClose: $('inspectClose'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFieldsBtn: $('scanFieldsBtn'),
   scanWebCaptureBtn: $('scanWebCaptureBtn'),
@@ -3433,7 +3434,7 @@ const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
   'nupModal', 'outlineModal', 'contentsModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'pageStampModal', 'reflowModal',
-  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
+  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'inspectModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
 
@@ -6290,6 +6291,98 @@ async function openScan() {
 }
 els.scanBtn.onclick = openScan;
 els.scanClose.onclick = () => { els.scanModal.hidden = true; };
+
+// --- inspect this file (/pending 406) ---------------------------------------
+// What the open document says about itself: its document information, XMP packet and fonts, beside the
+// hidden-content scan. Every string here is one the DOCUMENT chose, so each is set as text (never markup);
+// the server has already taken out the direction and control characters and says how many (`removed`), and
+// a cut value says it was cut. Whether the document says it is tagged is read from the document's own answer
+// (`docMeta.tagged`, ADR-147) — a claim the file makes, worded as one, never "meets PDF/UA" (ADR-031/032).
+function inspectSection(title) {
+  const h = document.createElement('h4');
+  h.className = 'inspect-head';
+  h.textContent = title;
+  els.inspectBody.appendChild(h);
+}
+function inspectLine(label, value, note) {
+  const row = document.createElement('div');
+  row.className = 'sigrow';
+  const k = document.createElement('div');
+  k.className = 'scan-sev';
+  k.textContent = label;
+  const v = document.createElement('div');
+  v.className = 'scan-detail';
+  v.textContent = value;
+  row.append(k, v);
+  if (note) {
+    const n = document.createElement('div');
+    n.className = 'scan-where';
+    n.textContent = note;
+    row.appendChild(n);
+  }
+  els.inspectBody.appendChild(row);
+}
+function takenNote(removed, cut) {
+  const parts = [];
+  if (removed) parts.push(`${removed} hidden character(s) taken out`);
+  if (cut) parts.push('shown in part');
+  return parts.join(' · ');
+}
+function renderInspection(got, tagged) {
+  els.inspectBody.innerHTML = '';
+  inspectSection('Document properties');
+  if (!got.info.length) inspectLine('—', 'The file has no document properties.');
+  for (const e of got.info) {
+    inspectLine(e.key, e.notText ? '(not text, so not shown)' : e.value, takenNote(e.removed, e.cut));
+  }
+  if (got.infoCut) inspectLine('…', 'More properties than Nib lists; the rest are not shown.');
+  inspectSection('XMP metadata');
+  const x = got.xmp;
+  if (!x.present) inspectLine('—', 'The file has no XMP packet of its own.');
+  else if (x.tooLarge) inspectLine('Packet', 'Too large for Nib to read here.');
+  else if (x.unreadable) inspectLine('Packet', 'Present, but Nib could not read it.');
+  else {
+    const pre = document.createElement('pre');
+    pre.className = 'inspect-xmp';
+    pre.textContent = x.text;
+    els.inspectBody.appendChild(pre);
+    const note = takenNote(x.removed, x.cut);
+    if (note) inspectLine('Packet', note);
+  }
+  if (x.elsewhere) inspectLine('Elsewhere', `XMP on ${x.elsewhere} page(s), image(s), form(s) or font(s) as well`);
+  inspectSection('Fonts');
+  if (!got.fonts.length) inspectLine('—', 'The file names no fonts.');
+  for (const f of got.fonts) {
+    inspectLine(f.subtype || 'Font', f.name, f.unknown ? 'could not tell whether it is embedded' : (f.embedded ? 'embedded' : 'not embedded'));
+  }
+  if (got.fontsCut) inspectLine('…', 'More fonts than Nib lists; the rest are not shown.');
+  inspectSection('Tagging');
+  inspectLine('Tags', tagged
+    ? 'The file says it is tagged for screen readers. Whether the tags are right is what Check accessibility answers.'
+    : 'The file does not say it is tagged.');
+  inspectSection('Hidden content');
+  const findings = (got.scan && got.scan.findings) || [];
+  if (!findings.length) inspectLine('—', 'The scan found no active or hidden content.');
+  for (const f of findings) inspectLine(SEV_LABEL[f.severity] || f.severity, f.detail, f.page ? 'Page ' + f.page : 'Whole document');
+}
+async function openInspect() {
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
+  els.inspectBody.innerHTML = '<p class="scan-where">Reading…</p>';
+  els.inspectModal.hidden = false;
+  try {
+    const res = await apiFetch('/api/inspect', { docId: owner.docMeta && owner.docMeta.id });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (owner === view) { els.inspectModal.hidden = true; toast(body.error || 'Nib could not read this file'); }
+      return;
+    }
+    const got = await res.json();
+    if (owner === view) renderInspection(got, !!(owner.docMeta && owner.docMeta.tagged));
+  } catch { if (owner === view) { els.inspectModal.hidden = true; toast('Nib could not read this file'); } }
+}
+els.inspectBtn.onclick = openInspect;
+els.inspectClose.onclick = () => { els.inspectModal.hidden = true; };
 
 // --- accessibility report (PDF/UA-1) ----------------------------------------
 // `PLAN-accessibility.md` P07.S06. Law 4's verdicts are kept visibly apart, in words and not in
@@ -14913,7 +15006,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'hlPin', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
-  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn', 'clearFormBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'inspectBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn', 'clearFormBtn',
   'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because
   // "a document is open" is necessary for them and not sufficient.

@@ -694,6 +694,14 @@ page becomes a gap. That render pass shows brief progress; uncheck **Auto-align*
 any time to page the two sides manually. Like everything else it runs **entirely on
 your machine** — the second PDF never leaves your computer.
 
+### Inspect what a file says about itself
+**Secure → Inspect this file…** shows, without changing anything, what the open PDF says about
+itself: every document property (producer and dates as well as author and title), its XMP
+metadata as text, every font it names and whether each is embedded, whether it says it is
+tagged, and the hidden-content scan below. Text the file supplied is shown as text, with
+invisible direction and control characters taken out and counted, and a long value says it
+was cut. It does not yet show the file's edit history, font licences or what each page uses.
+
 ### Scan for hidden content
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,

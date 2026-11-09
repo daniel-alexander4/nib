@@ -132,7 +132,9 @@ fi
 # because its status answers every helper flag differently from its neighbour's.
 # 130 since v2.53.0 (clearform.test.mjs): Clear form puts each field back to the form's own default (/pending 849 (b)) —
 # its own boot, because it installs its own field objects and a storage spy.
-Nib_expect_files=130
+# 131 since v2.54.0 (inspect.test.mjs): Inspect this file… shows what the document says about itself (/pending 406) —
+# its own boot, because it answers /api/inspect itself.
+Nib_expect_files=131
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

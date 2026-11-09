@@ -359,6 +359,8 @@ var published = map[string][]string{
 	// `internal/server/scan.go` removed /pending 558, same carrier case: `scan.go:33` embeds it as
 	// `Residual pdfops.ScanReport` and reads none of its fields.
 	"pdfops.ScanReport": {"web/app.js"},
+	// `/pending 406`: `GET /api/inspect` answers it whole and the Inspect dialog renders every field (`renderInspection`).
+	"pdfops.Inspection": {"web/app.js"},
 	// `/pending 908`: the route puts the whole report in `X-Nib-Shrink`, the window builds its sentence from it, and `nib shrink` prints its counts.
 	"pdfops.ShrinkReport": {"internal/cli/commands.go", "web/app.js"},
 	// `/pending 929`: `nib contents` prints the counts and the source; the route does not publish the report.
