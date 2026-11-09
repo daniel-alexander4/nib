@@ -213,7 +213,7 @@ const els = {
   bgModal: $('bgModal'), bgCanvas: $('bgCanvas'), bgRemove: $('bgRemove'),
   bgThresh: $('bgThresh'), bgThreshRow: $('bgThreshRow'),
   bgCancel: $('bgCancel'), bgSave: $('bgSave'),
-  autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'),
+  autofillBtn: $('autofillBtn'), editProfileBtn: $('editProfileBtn'), clearFormBtn: $('clearFormBtn'),
   saveFlatBtn: $('saveFlatBtn'), saveAsBtn: $('saveAsBtn'), saveFillableBtn: $('saveFillableBtn'), finalizeBtn: $('finalizeBtn'),
   fieldNameModal: $('fieldNameModal'), fieldNameList: $('fieldNameList'), fieldNameGo: $('fieldNameGo'), fieldNameCancel: $('fieldNameCancel'),
   reduceBtn: $('reduceBtn'), reduceModal: $('reduceModal'), reduceQuality: $('reduceQuality'), reduceQ: $('reduceQ'),
@@ -11297,6 +11297,49 @@ els.autofillBtn.onclick = async () => {
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
 };
 
+// Clear form (/pending 849 (b)): every field goes back to the value the form itself gives it
+// (its /DV, which pdf.js hands over as `defaultValue`), or empty where it gives none — the same
+// reset a reader's "Reset form" does, not a blanking of fields the form pre-fills. Storage is
+// the write of record and the on-screen element is set beside it, for the reason autofill
+// gives above. A check box is ticked again only where its default names its own on-state, and
+// a radio button only where the default names its button: one widget per value, so a group
+// cannot come back with two on. Push buttons and signature fields carry no value to reset.
+// It asks first, because it throws away what the person typed.
+const CLEARABLE = new Set(['text', 'checkbox', 'radiobutton', 'combobox', 'listbox']);
+function clearedValue(o) {
+  const dv = o.defaultValue;
+  if (o.type === 'checkbox') return dv != null && dv !== 'Off' && dv === o.exportValues;
+  if (o.type === 'radiobutton') return dv != null && dv !== 'Off' && dv === o.buttonValue;
+  if (o.type === 'listbox' && Array.isArray(dv)) return dv.slice();
+  return dv == null ? '' : String(dv);
+}
+els.clearFormBtn.onclick = async () => {
+  const owner = view;
+  if (!owner?.pdfDocument || owner.signLocked) return;
+  const objs = await owner.pdfDocument.getFieldObjects();
+  if (owner !== view) return;
+  const widgets = objs ? Object.values(objs).flat().filter((o) => CLEARABLE.has(o.type)) : [];
+  if (!widgets.length) return toast('This PDF has no form fields to clear');
+  const names = new Set(Object.entries(objs).filter(([, arr]) => arr.some((o) => CLEARABLE.has(o.type))).map(([n]) => n));
+  if (!confirm(`Clear ${names.size} field(s) on this form? What was typed in them is lost; fields the form fills in itself go back to that value.`)) return;
+  if (owner !== view) return;
+  // The on-screen widgets, found once by their pdf.js id rather than by a selector per field.
+  const onScreen = new Map([...owner.container.querySelectorAll('[data-element-id]')].map((e) => [e.dataset.elementId, e]));
+  for (const o of widgets) {
+    const value = clearedValue(o);
+    owner.pdfDocument.annotationStorage.setValue(o.id, { value });
+    const el = onScreen.get(o.id);
+    if (!el) continue;
+    if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) el.checked = value === true;
+    else if (el.tagName === 'SELECT') {
+      const want = new Set(Array.isArray(value) ? value : [value]);
+      for (const opt of el.options) opt.selected = want.has(opt.value);
+    } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = value;
+  }
+  owner.viewer.refresh?.();
+  toast(`Cleared ${names.size} field(s) — review and Save`);
+};
+
 // Autofill profile editor (one "name = value" per line). Every opening starts with no fill waiting on it; the
 // Autofill press that opened it says so afterwards.
 async function openProfileEditor() {
@@ -12607,7 +12650,7 @@ const EDITING_TOOLS = [
   // returned nothing, so these two lists are the only gates they have.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
-  'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn',
+  'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn', 'clearFormBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
   // OCR rewrites the document — it stamps a text layer — and was the one rewriting tool this list did not
   // name, so a sign-locked recipient could run it (/pending 830). ADR-106's door (`ensureText`) already
@@ -14870,7 +14913,7 @@ const DOC_REQUIRED = [
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'hlPin', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
-  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn', 'clearFormBtn',
   'reloadBtn',
   // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because
   // "a document is open" is necessary for them and not sufficient.

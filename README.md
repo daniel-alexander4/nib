@@ -163,6 +163,9 @@ from an `.xfdf` file and saves the result. On the command line it's
 Hierarchical (dotted) field names are preserved as nested fields; like every Nib
 operation it runs entirely on your machine.
 
+**Mark Up → Fill Forms from Data → Clear form** puts every field back the way the form itself
+sets it (a field the form pre-fills keeps that value, the rest go empty), after asking.
+
 ### Check a document for accessibility (PDF/UA)
 **Accessibility → Check accessibility (PDF/UA)…** reports the open document against the PDF/UA-1
 rules Nib can verify itself — the accessibility standard screen readers rely on. Every clause is

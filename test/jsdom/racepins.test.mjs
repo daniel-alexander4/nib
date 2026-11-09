@@ -257,6 +257,7 @@ const SITES = [
   'async function openBookmarkSplit() {',
   'els.saveFillableBtn.onclick = async () => {',
   'els.autofillBtn.onclick = async () => {',
+  'els.clearFormBtn.onclick = async () => {',
   'els.rtFind.onclick = async () => {',
   'els.applyBoxSplitBtn.onclick = async () => {',
   // /pending 625: the two folder splits, whose server-side overwrite guard is the addressed path.

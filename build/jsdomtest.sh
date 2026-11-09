@@ -130,7 +130,9 @@ fi
 # its own boot, because its listdir stub answers by the path asked.
 # 129 since v2.52.0 (helpers.test.mjs): Settings → Helper Programs and Open…'s panel (ADR-218) — its own boot,
 # because its status answers every helper flag differently from its neighbour's.
-Nib_expect_files=129
+# 130 since v2.53.0 (clearform.test.mjs): Clear form puts each field back to the form's own default (/pending 849 (b)) —
+# its own boot, because it installs its own field objects and a storage spy.
+Nib_expect_files=130
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"
