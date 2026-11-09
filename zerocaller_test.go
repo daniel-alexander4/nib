@@ -91,6 +91,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
+		"ReadPageObjects":        "gated — PLAN-image-edit.md P01.S02. The objects reader; its route `POST /api/page/objects` and the CLI verb are S02's, and `build/objectdelete.sh` reads it today.",
+		"ObjectAt":               "gated — PLAN-image-edit.md P01.S02. The address check the delete door makes on its re-read (D2); only pageobjects_test.go reads it today.",
 		"PageLinks":              "gated — PLAN-import-export.md P02.S03c. The document model reads links through pageLinksIn; this is the by-bytes door beside MapPage.",
 		"ExportPages":            "gated — PLAN-import-export.md P02.S03c. The document model's page read; only exportpage_test.go reads it today.",
 		"PlaceholderCounts":      "gated — PLAN-import-export.md P02.S03c. What an export says it could not carry; the model's notice reads it.",

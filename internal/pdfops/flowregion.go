@@ -76,10 +76,20 @@ func (w *runWalker) markPath(p markBox, gs runGState, stroked bool) {
 }
 
 // markImage records an image: it fills the unit square under the CTM (ISO 32000-1 §8.3.4). span is the image's own
-// operator — `Do` with its operand, or the whole of `BI … EI` — and inForm says it is drawn by a form's stream.
-func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm bool, objNr int, cause string) {
+// operator — `Do` with its operand, or the whole of `BI … EI` — in src, the stream being walked, and inForm says it
+// is drawn by a form's stream.
+//
+// Past `maxPageImages` an image is counted and not kept (`runWalker.imageCount`), and the read refuses
+// (`ErrTooManyImages`): a list that stopped there would describe a page nib did not finish.
+func (w *runWalker) markImage(kind markKind, gs runGState, src []byte, span opSpan, inForm bool, objNr int, cause string) {
 	if !w.keepMarks && !w.keepDrawings {
 		return
+	}
+	if w.keepShapes || w.keepDrawings {
+		w.imageCount++
+		if w.imageCount > maxPageImages {
+			return
+		}
 	}
 	var b markBox
 	b.add(gs.ctm, 0, 0, 1, 0, 0, 1, 1, 1)
@@ -87,10 +97,13 @@ func (w *runWalker) markImage(kind markKind, gs runGState, span opSpan, inForm b
 		w.marks = append(w.marks, pageMark{kind: kind, box: b.box})
 	}
 	if w.keepShapes || w.keepDrawings {
+		mcid := w.currentMCID()
 		im := drawnImage{box: b.box, span: span, inForm: inForm, artifact: w.inArtifact(),
-			marked: w.currentMCID() >= 0, upright: uprightBox(gs.ctm), plain: plainBox(gs.ctm), objNr: objNr, cause: cause}
+			marked: mcid >= 0, upright: uprightBox(gs.ctm), plain: plainBox(gs.ctm), objNr: objNr, cause: cause,
+			mcid: mcid, stm: w.stm, place: gs.place, qDepth: gs.qDepth}
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
+			im.digest = objectDigest(src, span, gs.place, gs.qDepth)
 		}
 		w.draws++
 		im.seq, im.layerOff, im.translucent, im.clipped = w.draws, w.layerOff(), gs.extGState, !boxWithin(b.box, gs.clip)
@@ -146,7 +159,8 @@ func (w *runWalker) keepPath(d *drawnPath, p markBox, gs runGState, stroked bool
 }
 
 // drawnImage is one image a page draws, with what a proposer must know before it offers a Figure for it
-// (ADR-122) — kept with the painted paths' pieces, by the page map's reader alone (`readPageShapes`).
+// (ADR-122) — kept with the painted paths' pieces by the page map's reader (`readPageShapes`), and with the whole
+// paths by the region reader (`readPageDrawings`), which is also the page objects' reader (`ReadPageObjects`).
 type drawnImage struct {
 	// box is the image as drawn: the unit square under the CTM, in user space.
 	box [4]float64
@@ -173,6 +187,16 @@ type drawnImage struct {
 	// stops it covering what is below.
 	seq                            int
 	layerOff, translucent, clipped bool
+	// mcid is the MCID in force where it is drawn, or -1 (marked is mcid >= 0); stm the stream it sits in — 0 for the
+	// page's own, else the form XObject's object number (`runWalker.stm`) — so a Figure's content can be found.
+	mcid, stm int
+	// place is the `cm` that set the CTM last at the image's `q` level — its operands through the operator, in the
+	// same stream as span — or {-1, -1} when none did since that level's `q`; qDepth is how many `q` are open
+	// around it, counted from the page's stream into the forms that draw it (`runGState.qDepth`).
+	place  opSpan
+	qDepth int
+	// digest names the operator for an address (`objectDigest`, D2): set only by the region reader.
+	digest [32]byte
 }
 
 // imageCause reads the allowlist (P02.S03b, D18) from an image dictionary, so a picture is named before any

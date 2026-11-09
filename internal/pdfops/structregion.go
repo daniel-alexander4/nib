@@ -347,14 +347,16 @@ func ReadUntagged(pdf []byte, page int) (UntaggedContent, error) {
 		if perr != nil {
 			return UntaggedContent{}, perr
 		}
-		out.Pieces = append(out.Pieces, untaggedPieces(nr, newDisplaySpace(pg), groupUnowned(pr.runs), pr.images, pr.paths)...)
+		sp := newDisplaySpace(pg)
+		// The image rows are the page objects' (`ReadPageObjects` is the one listing of a page's images, PLAN-image-edit D1).
+		out.Pieces = append(out.Pieces, untaggedPieces(nr, sp, groupUnowned(pr.runs), pageObjectsOf(nr, sp, pr).Objects, pr.paths)...)
 	}
 	return out, nil
 }
 
 // untaggedPieces is one page's unowned pieces, listed: its text as the grouping door grouped it, the images it
 // draws and its painted paths.
-func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []drawnImage, painted []drawnPath) []UntaggedPiece {
+func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []PageObject, painted []drawnPath) []UntaggedPiece {
 	var out []UntaggedPiece
 	add := func(kind, text string, box [4]float64, decoration, form bool) {
 		if r, ok := pieceRect(sp, box); ok {
@@ -364,9 +366,9 @@ func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []drawnI
 	for _, t := range text {
 		add("text", t.paragraph.text(), paragraphBox(t.paragraph), t.decoration, t.inForm)
 	}
-	for _, im := range images {
-		if !im.marked {
-			add("image", "", im.box, im.artifact, im.inForm)
+	for _, o := range images {
+		if !o.Tagged && o.OnPage {
+			out = append(out, UntaggedPiece{Page: nr, Kind: "image", Rect: o.Box, Decoration: o.Decoration, InForm: o.InForm})
 		}
 	}
 

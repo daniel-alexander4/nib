@@ -83,7 +83,8 @@ var inspectionSites = map[string]func(pdf []byte) any{
 	"uncoveredDrawings": func(pdf []byte) any { n, err := uncoveredDrawings(pdf); return []any{n, failed(err)} },
 	"ProposeTags":       func(pdf []byte) any { p, err := ProposeTags(pdf); return []any{p, failed(err)} },
 	// What every page draws that no element owns (ADR-125): page 0 is the whole document.
-	"ReadUntagged": func(pdf []byte) any { u, err := ReadUntagged(pdf, 0); return []any{u, failed(err)} },
+	"ReadUntagged":    func(pdf []byte) any { u, err := ReadUntagged(pdf, 0); return []any{u, failed(err)} },
+	"ReadPageObjects": func(pdf []byte) any { o, err := ReadPageObjects(pdf, 1); return []any{o, failed(err)} },
 	// Reviewed as proposed: every element kept in the role it was offered.
 	"CommitTags": func(pdf []byte) any {
 		p, err := ProposeTags(pdf)

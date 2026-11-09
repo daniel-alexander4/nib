@@ -424,6 +424,7 @@ var published = map[string][]string{
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
 // unread observable gets parked and forgotten, which is the failure this file exists for.
 var excluded = map[string]string{
+	"pdfops.PageObjects":     "gated on PLAN-image-edit.md P01.S02, whose route publishes it to web/app.js (the window's Edit Objects, P01.S04); today only build/objectdelete.sh (TestObjectDeleteCorpus) and pageobjects_test.go read it.",
 	"pdfops.PageImageResult": "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
 }
 

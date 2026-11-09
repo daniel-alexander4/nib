@@ -291,6 +291,10 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"structregion.go": {
 			"readPageDrawings": "a region brackets the runs, images and paths of a page that no element owns, each at its own operator, and the reader of untagged content hands the runs to the grouping door (groupUnowned); neither groups anything itself (ADR-125)",
 		},
+		"pageobjects.go": {
+			"readPageDrawings": "the objects reader lists the pictures the region reader's walk kept, each at its own operator, for an edit to address (PLAN-image-edit D1); it reads no runs and groups nothing",
+			"pageRuns":         "pageObjectsOf takes the walk's images and its count of unread forms from the one walk; it reads no runs and groups nothing",
+		},
 		"structview.go": {
 			"readPageRuns": "the structure view matches an existing tree's MCIDs to the text drawn under them, the truth reader's way, and groups nothing (P09.S01)",
 		},

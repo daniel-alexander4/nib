@@ -252,6 +252,9 @@ type pageRuns struct {
 	// only by the region reader (`readPageDrawings`, ADR-125).
 	paths     []drawnPath
 	artifacts []artifactSeq
+	// formsUnread counts the form XObjects the walk met and did not read without refusing the page: one that draws
+	// itself, and one whose content does not decode (`drawForm`). What they draw is in no list here.
+	formsUnread int
 	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
 	// those inside the forms it draws included — so a writer can find an element's content whether or
 	// not it is text (P09.S03).
@@ -339,8 +342,11 @@ func readPageRunsAs(ctx *model.Context, pg pdfread.Page, keep, shapes, drawings 
 		if err := w.budget.err(); err != nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
 		}
+		if w.imageCount > maxPageImages {
+			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read: %w", pageNr, tooManyImages(w.imageCount))
+		}
 		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes, images: w.images,
-			paths: w.paths, artifacts: w.arts}, nil
+			paths: w.paths, artifacts: w.arts, formsUnread: w.formsUnread}, nil
 	})
 }
 
@@ -398,12 +404,17 @@ type runGState struct {
 	extGState bool
 	// clip is the box the clipping path is known to lie within, in user space: every `W` path's box intersected.
 	clip [4]float64
+	// qDepth is how many `q` are open — a form's walk starts at its caller's count — and place the last `cm` at this
+	// level since its `q` (its operands through the operator), {-1, -1} for none: what an image's address names
+	// (`drawnImage.place`, PLAN-image-edit D1/D2). An unmatched `Q` changes neither.
+	qDepth int
+	place  opSpan
 }
 
 func newRunGState() runGState {
 	inf := math.Inf(1)
 	return runGState{ctm: runIdentity, th: 1, lw: 1, fill: "0 g", stroke: "0 G", fillSpace: "DeviceGray", strokeSpace: "DeviceGray",
-		clip: [4]float64{-inf, -inf, inf, inf}}
+		clip: [4]float64{-inf, -inf, inf, inf}, place: opSpan{-1, -1}}
 }
 
 // runFont is what the walk needs from a font dictionary.
@@ -609,8 +620,12 @@ type runWalker struct {
 	// one mark and forty shapes. The page map's reader, and only it (ADR-088).
 	keepShapes bool
 	shapes     []pageShape
-	// images are the images drawn, kept with the shapes (`drawnImage`, ADR-122) and with the drawings.
-	images []drawnImage
+	// images are the images drawn, kept with the shapes (`drawnImage`, ADR-122) and with the drawings; imageCount
+	// counts every one met, kept or not, so a page past `maxPageImages` refuses with its count.
+	images     []drawnImage
+	imageCount int
+	// formsUnread is `pageRuns.formsUnread`.
+	formsUnread int
 	// keepDrawings asks the walk to record every painted path WHOLE (`drawnPath`), every image, and every
 	// `/Artifact` sequence with how many pieces it holds (`artifactSeq`) — what a region of the page can be
 	// tagged from (ADR-125). The region reader's alone (`readPageDrawings`).
@@ -1097,7 +1112,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		tok := toks[i]
 		switch tok.Kind {
 		case contentstream.InlineImage:
-			w.markImage(markInlineImage, gs, opSpan{tok.Start, tok.End}, depth > 0, 0, "")
+			w.markImage(markInlineImage, gs, src, opSpan{tok.Start, tok.End}, depth > 0, 0, "")
 			continue
 		case contentstream.Whitespace:
 			continue
@@ -1120,6 +1135,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		switch string(tok.Bytes(src)) {
 		case "q":
 			stack = append(stack, gs)
+			gs.qDepth, gs.place = gs.qDepth+1, opSpan{-1, -1}
 		case "Q":
 			if n := len(stack); n > 0 {
 				gs, stack = stack[n-1], stack[:n-1]
@@ -1127,6 +1143,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "cm":
 			if v, ok := numbers(6); ok {
 				gs.ctm = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}.mul(gs.ctm)
+				gs.place = opSpan{last(6)[0].start, tok.End}
 			}
 		case "w":
 			if v, ok := numbers(1); ok {
@@ -1418,7 +1435,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 							w.countPiece(true)
 						}
 					} else if nr, cause, ok := w.imageObject(res, name); ok {
-						w.markImage(markImage, gs, opSpan{os[0].start, tok.End}, depth > 0, nr, cause)
+						w.markImage(markImage, gs, src, opSpan{os[0].start, tok.End}, depth > 0, nr, cause)
 					}
 					if off {
 						w.mcStack = w.mcStack[:len(w.mcStack)-1]
@@ -1589,6 +1606,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	if ir, isRef := obj.(types.IndirectRef); isRef {
 		key = ir.ObjectNumber.Value()
 		if visiting[key] {
+			w.formsUnread++
 			w.markForm(sd, gs)
 			return true
 		}
@@ -1599,6 +1617,9 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	}
 	body := w.budget.formContent(sd, obj)
 	if body == nil || !w.budget.enterForm(len(body)) {
+		if w.budget.over == "" {
+			w.formsUnread++ // undecodable: the page is still read, without what this form draws
+		}
 		w.markForm(sd, gs)
 		return true
 	}
@@ -1630,6 +1651,9 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	}
 	defer func() { w.stm = outer }()
 	gs.ctm = m.mul(gs.ctm)
+	// The form is another stream: a `cm` the caller drew is not one of its operators, so a picture the form draws
+	// before a `cm` of its own has no placement in the form's bytes (code-review 2026-11-09, P01.S01 #1).
+	gs.place = opSpan{-1, -1}
 	w.walk(body, formRes, gs, depth+1, visiting)
 	return true
 }
