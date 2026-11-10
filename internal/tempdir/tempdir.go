@@ -45,6 +45,12 @@ const (
 // is an interlock on that window only; it is never how a directory is judged dead.
 const creationGrace = time.Minute
 
+// liveGrace is how long an unlocked `.live` file is left alone: `New` creates it and then locks it, and a sweep in
+// between took the lock and removed the directory a starting Nib was making (code-review v2.56.0 W3). The gap is
+// two system calls, so the grace is short — a Nib that crashed with a directory younger than this is swept by the
+// next start after it. A variable only so the tests that judge the lock can take it away.
+var liveGrace = 10 * time.Second
+
 // ErrNoSpace is a temporary write that the disk refused. A named refusal (the import says "the disk
 // is full"), not a generic failure.
 var ErrNoSpace = errors.New("there is not enough free disk space to hold the temporary files")
@@ -315,6 +321,11 @@ func sweepOne(p string, reap Reaper) bool {
 		return false
 	}
 	defer lf.Close()
+	// A .live younger than liveGrace may be one a starting Nib has not locked yet: it is left, and not even locked
+	// for a look, or the creator's own lock would fail.
+	if lfi, err := lf.Stat(); err != nil || time.Since(lfi.ModTime()) < liveGrace {
+		return false
+	}
 	got, err := filelock.Try(lf)
 	if err != nil || !got {
 		return false // held by a live process — possibly this one

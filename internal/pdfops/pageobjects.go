@@ -68,8 +68,11 @@ type PageObject struct {
 	Ordinal int `json:"ordinal"`
 	// Kind is "image" (an image XObject's `Do`) or "inline" (`BI … EI`).
 	Kind string `json:"kind"`
-	// Digest is lowercase hex SHA-256 over the operator's bytes, the `cm` that places it and the `q` depth
-	// (`objectDigest`): two identical `Do`s at different depths or under different matrices differ.
+	// Digest is the address's digest, lowercase hex (`addressDigest`): SHA-256 over the operator's digest
+	// (`objectDigest`: its bytes, the `cm` that places it, the `q` depth) and how many pictures on the page share that
+	// operator digest. The count is what makes an address go stale when its twin is removed: two identical `Do`s share
+	// a digest and differ by ordinal, and once one goes the other takes its ordinal — with a count of one, so a replay
+	// of the removed one's address names nothing (code-review v2.56.0 C1).
 	Digest string `json:"digest"`
 	// Box is where it is, as fractions of the displayed page (the page map's space, ADR-088); zero when OnPage is false.
 	Box    MapRect `json:"box"`
@@ -93,9 +96,12 @@ type PageObject struct {
 	Alt string `json:"alt"`
 
 	// span is the operator in its stream; never on the wire — an edit takes it from its own re-read (D2). objNr is
-	// the image XObject's object number, 0 for an inline image.
-	span  opSpan
-	objNr int
+	// the image XObject's object number, 0 for an inline image. operator is `objectDigest` in hex, without the count:
+	// what the after-check compares across a write, since removing a twin moves the survivor's Digest and not its
+	// operator.
+	span     opSpan
+	objNr    int
+	operator string
 }
 
 // PageObjects is one page's pictures.
@@ -136,9 +142,14 @@ func ReadPageObjects(pdf []byte, page int) (PageObjects, error) {
 // then `tagged`.
 func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectTagging) PageObjects {
 	out := PageObjects{Page: nr, Objects: make([]PageObject, 0, len(pr.images)), FormsNotRead: pr.formsUnread}
+	twins := map[[32]byte]int{}
+	for _, im := range pr.images {
+		twins[im.digest]++
+	}
 	for i, im := range pr.images {
-		o := PageObject{Page: nr, Ordinal: i, Kind: "image", Digest: hex.EncodeToString(im.digest[:]), QDepth: im.qDepth,
-			InForm: im.inForm, Tagged: im.marked, Decoration: im.artifact, MCID: im.mcid, Stream: im.stm, span: im.span, objNr: im.objNr}
+		o := PageObject{Page: nr, Ordinal: i, Kind: "image", Digest: addressDigest(im.digest, twins[im.digest]), QDepth: im.qDepth,
+			InForm: im.inForm, Tagged: im.marked, Decoration: im.artifact, MCID: im.mcid, Stream: im.stm, span: im.span, objNr: im.objNr,
+			operator: hex.EncodeToString(im.digest[:])}
 		if im.objNr == 0 {
 			o.Kind = "inline"
 		}
@@ -198,6 +209,18 @@ func objectDigest(src []byte, span, place opSpan, qDepth int) [32]byte {
 	var out [32]byte
 	h.Sum(out[:0])
 	return out
+}
+
+// addressDigest is an address's digest: the operator's digest and the number of pictures on its page that share it,
+// length-prefixed under its own label so it can never equal an operator digest.
+func addressDigest(operator [32]byte, twins int) string {
+	h := sha256.New()
+	h.Write([]byte("nib-object-address-v1\x00"))
+	h.Write(operator[:])
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(twins))
+	h.Write(n[:])
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ObjectAt is the object objs lists at ordinal, only when its digest is digest too: an address is both or nothing

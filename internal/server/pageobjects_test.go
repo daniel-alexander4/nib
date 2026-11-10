@@ -90,7 +90,7 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 		{"a stale digest", removeBody(1, 0, strings.Repeat("0", 64)), http.StatusConflict, pdfops.CauseObjectChanged},
 		{"the right digest at the wrong ordinal", removeBody(1, 1, objs.Objects[0].Digest), http.StatusConflict, pdfops.CauseObjectChanged},
 		{"no edit", map[string]any{"edits": []any{}}, http.StatusBadRequest, pdfops.CauseBadRequest},
-		{"an unknown field", map[string]any{"edits": []any{}, "baseRev": 3}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"an unknown field", withField(removeBody(1, 0, objs.Objects[0].Digest), "baseRev", 3), http.StatusBadRequest, pdfops.CauseBadRequest},
 	} {
 		code, body := postTags(t, c, csrf, base+"/api/page/objects", tc.body)
 		if code != tc.code || objectRefusalCause(t, body) != tc.cause {
@@ -151,4 +151,14 @@ func refusedAtTheRoute(t *testing.T, pdf []byte, cause string) {
 	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
 		t.Fatal("the refused document changed")
 	}
+}
+
+// withField is body with one more top-level field: a valid edit beside a field the route does not read, so only the
+// unknown-field refusal can answer it.
+func withField(body map[string]any, k string, v any) map[string]any {
+	out := map[string]any{k: v}
+	for key, val := range body {
+		out[key] = val
+	}
+	return out
 }

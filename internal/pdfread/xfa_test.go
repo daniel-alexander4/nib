@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -289,4 +290,64 @@ func TestAFormThatSaysRenderMeDynamicallyInItsPacketIsDynamic(t *testing.T) {
 			t.Errorf("%s: Write = %v", c.name, werr)
 		}
 	}
+}
+
+// TestAnXFAPacketThatInflatesPastTheBoundIsNotDecodedPastIt — code-review v2.56.0 W5: the dynamic-render scan ran
+// on every validated read and decoded a packet whole before comparing it with its bound, so a few hundred kilobytes
+// of flate became 256 MiB in memory. Decoded within the bound, the read allocates a fraction of that.
+func TestAnXFAPacketThatInflatesPastTheBoundIsNotDecodedPastIt(t *testing.T) {
+	var z bytes.Buffer
+	zw := zlib.NewWriter(&z)
+	zero := make([]byte, 1<<20)
+	for i := 0; i < 256; i++ {
+		_, _ = zw.Write(zero)
+	}
+	_ = zw.Close()
+	pdf := xfaDocument("", xfaOnlyForm)
+	small := `<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template/></xdp:xdp>`
+	old := fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(small), small)
+	bomb := fmt.Sprintf("<< /Length %d /Filter /FlateDecode >>\nstream\n%s\nendstream", z.Len(), z.Bytes())
+	pdf = rebuildWithObject(t, pdf, old, bomb)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if _, err := pdfread.ReadXFA(pdf); err != nil {
+		t.Logf("read: %v", err) // a refusal is fine; decoding the whole bomb first is not
+	}
+	runtime.ReadMemStats(&after)
+	// The stimulus: the bomb really inflates to 256 MiB, so a whole decode would cross the ceiling below.
+	if z.Len() > 2<<20 {
+		t.Fatalf("fixture: the packet is %d bytes compressed, not a bomb", z.Len())
+	}
+	if got := after.TotalAlloc - before.TotalAlloc; got > 128<<20 {
+		t.Fatalf("reading the XFA allocated %d MiB: the packet was decoded past its %d MiB bound", got>>20, 16)
+	}
+}
+
+// rebuildWithObject replaces one object's body in a document xfaDocument wrote and rewrites the xref offsets.
+func rebuildWithObject(t *testing.T, pdf []byte, old, repl string) []byte {
+	t.Helper()
+	s := string(pdf)
+	if !strings.Contains(s, old) {
+		t.Fatal("fixture: object not found")
+	}
+	s = strings.Replace(s, old, repl, 1)
+	body := s[:strings.Index(s, "xref\n")]
+	var offs []int
+	for i := 1; ; i++ {
+		at := strings.Index(body, fmt.Sprintf("\n%d 0 obj\n", i))
+		if at < 0 {
+			break
+		}
+		offs = append(offs, at+1)
+	}
+	var b bytes.Buffer
+	b.WriteString(body)
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offs)+1)
+	for _, o := range offs {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offs)+1, xref)
+	return b.Bytes()
 }

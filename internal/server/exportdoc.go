@@ -166,7 +166,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		var empty bool
 		body, report, empty, err = slidesOf(r.Context(), data, title)
 		switch {
-		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil:
+		case (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && r.Context().Err() != nil:
 			return // the caller went away; nothing is listening for an answer
 		case errors.Is(err, pptxexport.ErrTooManySlides):
 			writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"error": "This document has more pages than a presentation Nib writes", "cause": "too-many-pages"})
@@ -185,7 +185,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		model, err := read.Read(r.Context(), data, read.Options{Title: title})
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil {
+		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && r.Context().Err() != nil {
 			return
 		}
 		if err != nil {
@@ -194,7 +194,7 @@ func (s *Server) handleExportDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		report = model.Report
 		body, err = format.write(r.Context(), model)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && r.Context().Err() != nil {
+		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && r.Context().Err() != nil {
 			return
 		}
 		if err != nil {

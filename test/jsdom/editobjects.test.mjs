@@ -25,10 +25,13 @@ let listing = {
 const gets = [];
 const posts = [];
 let postReply = null;
+// The revision the server holds: a successful removal moves it, so `/api/docs` agrees with what the window loaded
+// unless a test says otherwise (reloadIfMoved reads it on a 409).
+let serverRev = 1;
 
 const { document: doc, settle } = await boot({
   routes: {
-    '/api/docs': () => ({ docs: [OPEN], activeId: OPEN.id }),
+    '/api/docs': () => ({ docs: [{ ...OPEN, rev: serverRev }], activeId: OPEN.id }),
     '/api/open': OPEN,
     '/api/scan': { hidden: [] },
     '/api/page/objects': (opts) => {
@@ -37,7 +40,9 @@ const { document: doc, settle } = await boot({
         return listing;
       }
       posts.push(JSON.parse(opts.body));
-      return postReply ? postReply() : {
+      if (postReply) return postReply();
+      serverRev = 2;
+      return {
         ...OPEN, rev: 2, canUndo: true,
         removed: [{ page: 1, ordinal: 1, kind: 'image', elementRemoved: true, alt: 'A cat', linksOver: 0, sharedWith: [], staysInFile: false }],
       };
@@ -138,7 +143,7 @@ test('Delete on the focused picture removes exactly it, by address, and says wha
 });
 
 test('when the history was let go, the words do not promise Undo', async () => {
-  postReply = () => ({ ...OPEN, rev: 3, canUndo: false, historyEvicted: true,
+  postReply = () => (serverRev = 3, { ...OPEN, rev: 3, canUndo: false, historyEvicted: true,
     removed: [{ page: 1, ordinal: 0, kind: 'image', elementRemoved: false, alt: '', linksOver: 2, sharedWith: [2], staysInFile: true }] });
   setNextDocument({ numPages: 1 });
   const o = outlines();
@@ -161,9 +166,29 @@ test('the same revision is not read twice; a stale address reads the page again 
   postReply = () => new Response(JSON.stringify({ cause: 'object-changed', error: 'x' }), { status: 409, headers: { 'Content-Type': 'application/json' } });
   const o = outlines();
   o[0].focus();
+  const asked = gets.length;
   key(o[0], 'Delete');
   await settleMore();
   assert.equal(notice(), 'The page changed since you selected this. Select the picture again.', `a stale address says "${notice()}"`);
+  // The stimulus: the server answered 409 and its revision did not move, so only a forgotten listing reads again.
+  assert.equal(gets.length, asked + 1, 'a stale address did not read the page again');
+  assert.equal(outlines().length, 1, 'the outlines were not laid from the page read again');
+});
+
+test('a second Delete while a removal is in flight is not sent', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  postReply = () => held.then(() => new Response(JSON.stringify({ cause: 'object-changed', error: 'x' }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+  const o = outlines();
+  const sent = posts.length;
+  o[0].focus();
+  key(o[0], 'Delete');
+  key(o[0], 'Delete');
+  await settle();
+  release();
+  await settleMore();
+  assert.equal(posts.length, sent + 1, `two presses sent ${posts.length - sent} removals`);
+  postReply = null;
 });
 
 test('a selection does not outlive its document: opening another one drops it and Remove from page', async () => {

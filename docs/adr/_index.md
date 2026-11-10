@@ -1063,3 +1063,5 @@ home today.
   — seven Settings entries; six programs with what, how, indicator and link (held to `MissingTool.Vendor`); `#openFormats` replaces the `title` (hover, focus, scroll, Escape); green/red per-theme tokens; a not-found line opens its program's section (`toolKey`).
 - [ADR-219](219-a-picture-is-removed-through-one-door-that-refuses-a-signed-or-ceremony-document.md) — **A picture is removed from a page through one door, which refuses a signed or ceremony document**
   — `pdfops.EditPageObjects` behind `internal/objedit`; address (page, ordinal, digest) re-checked in the rewrite; operator only, resources pruned, `/Thumb` dropped; a tagged picture goes with its element or refuses by cause; the page read back.
+- [ADR-220](220-an-address-digest-counts-the-pictures-that-share-its-operator.md) — **An address's digest counts the pictures on its page that share its operator**
+  — extends ADR-219 §2: a replayed address cannot name the twin of the removed picture; the after-check compares operator digests; the window sends one removal at a time and reads again on `object-changed`.

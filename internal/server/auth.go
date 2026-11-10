@@ -515,11 +515,12 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := vault.Migrate(s.configDir, req.Password, pubLine, keyPath); err != nil {
-		if errors.Is(err, vault.ErrWrongPassword) {
+		switch {
+		case errors.Is(err, vault.ErrWrongPassword):
 			httpError(w, http.StatusUnauthorized, "wrong password")
-			return
+		default:
+			vaultWriteFailed(w, err, http.StatusInternalServerError, "migration failed")
 		}
-		httpError(w, http.StatusInternalServerError, "migration failed")
 		return
 	}
 	s.ensureUnlocked()
@@ -612,7 +613,8 @@ func (s *Server) handleRepoint(w http.ResponseWriter, r *http.Request) {
 			}
 			httpError(w, http.StatusUnauthorized, "that key does not open this vault — it is sealed to a different key")
 		default:
-			httpError(w, http.StatusBadRequest, "could not unlock with that key")
+			// A vault another running Nib is writing is busy, not a key that does not open it (ADR-154).
+			vaultWriteFailed(w, err, http.StatusBadRequest, "could not unlock with that key")
 		}
 		return
 	}
@@ -683,7 +685,7 @@ func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setupMu.Unlock()
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not write vault")
+		vaultWriteFailed(w, err, http.StatusInternalServerError, "could not write vault")
 		return
 	}
 	s.ensureUnlocked()

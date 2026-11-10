@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/ceremony"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
@@ -90,6 +93,37 @@ func TestNibObjectsRefusesASignedDocumentInTheRoutesWords(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(in); !bytes.Equal(b, signed) {
 		t.Fatal("the signed file was rewritten")
+	}
+}
+
+// A convened document is refused on the command line in the route's words, and the file is left as it was: the CLI
+// reaches the same door as the window (objedit.Remove), and this is that door's ceremony half seen from here.
+func TestNibObjectsRefusesAConvenedDocumentInTheRoutesWords(t *testing.T) {
+	pdf := testpdf.TwoPictures()
+	hash, err := ceremony.DocumentHash(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := sha256.Sum256([]byte("convener"))
+	convened, err := ceremony.Embed(pdf, ceremony.Record{ID: "picture-ceremony", DocHash: hash, Intent: "sign the lease",
+		Expires: time.Now().Add(time.Hour), Roster: []ceremony.Party{{Fingerprint: hex.EncodeToString(fp[:]), Label: "Convener", Signs: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(t.TempDir(), "convened.pdf")
+	if err := os.WriteFile(in, convened, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := listObjectsJSON(t, in).Objects[0].Digest
+	var code int
+	msg := captureStderr(t, func() {
+		code = cmdObjects([]string{"remove", in, "--page", "1", "--picture", "1", "--digest", d, "-w"})
+	})
+	if code != 1 || !strings.Contains(msg, pdfops.ObjectCauseWords(pdfops.CauseCeremony)) {
+		t.Fatalf("exited %d saying %q", code, msg)
+	}
+	if b, _ := os.ReadFile(in); !bytes.Equal(b, convened) {
+		t.Fatal("the convened file was rewritten")
 	}
 }
 

@@ -448,7 +448,11 @@ func handedOff(cfgDir, path string) bool {
 func startTemp() {
 	if err := tempdir.Claim(); err != nil {
 		log.Printf("temporary files: %v", err)
-		return
+		// A root that is not ours alone is not swept; anything else is, because a full disk is exactly what the
+		// leftovers the sweep removes can cause (code-review v2.56.0 W4).
+		if errors.Is(err, tempdir.ErrUnsafeRoot) {
+			return
+		}
 	}
 	n, err := tempdir.Sweep(tempdir.NewReaper(pdfops.ConverterExecutables()))
 	if err != nil {

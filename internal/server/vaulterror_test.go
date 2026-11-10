@@ -107,20 +107,31 @@ func TestNoHandlerWordsAFailedVaultWriteWithoutTheVaultsSentence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutators := map[string]bool{}
+	// mutators are the methods that begin a write; pkgFuncs the package functions that take the vault file's
+	// lock themselves (`lockVaultFile`: Replace, Migrate, OpenSSHAt), whose ErrBusy is the same refusal
+	// (code-review v2.56.0 W8: the three routes calling them answered it in words of their own).
+	mutators, pkgFuncs := map[string]bool{}, map[string]bool{}
 	for _, d := range vf.Decls {
 		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Body == nil || fd.Recv == nil || !fd.Name.IsExported() {
+		if !ok || fd.Body == nil || !fd.Name.IsExported() {
 			continue
 		}
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			if c, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := c.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "beginWrite" || sel.Sel.Name == "addPinned") {
-					mutators[fd.Name.Name] = true
-				}
+			c, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := c.Fun.(*ast.SelectorExpr); ok && fd.Recv != nil && (sel.Sel.Name == "beginWrite" || sel.Sel.Name == "addPinned") {
+				mutators[fd.Name.Name] = true
+			}
+			if id, ok := c.Fun.(*ast.Ident); ok && fd.Recv == nil && id.Name == "lockVaultFile" {
+				pkgFuncs[fd.Name.Name] = true
 			}
 			return true
 		})
+	}
+	if len(pkgFuncs) < 3 {
+		t.Fatalf("read %d package functions that lock the vault file; there are at least three", len(pkgFuncs))
 	}
 	if len(mutators) < 19 {
 		t.Fatalf("read %d vault mutators; there are at least nineteen — the scan has stopped matching", len(mutators))
@@ -130,8 +141,12 @@ func TestNoHandlerWordsAFailedVaultWriteWithoutTheVaultsSentence(t *testing.T) {
 		found := false
 		ast.Inspect(n, func(n ast.Node) bool {
 			if c, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := c.Fun.(*ast.SelectorExpr); ok && mutators[sel.Sel.Name] {
-					found = true
+				if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "vault" && pkgFuncs[sel.Sel.Name] {
+						found = true
+					} else if mutators[sel.Sel.Name] {
+						found = true
+					}
 				}
 			}
 			return !found
@@ -185,12 +200,27 @@ func TestNoHandlerWordsAFailedVaultWriteWithoutTheVaultsSentence(t *testing.T) {
 					"refused says so", name, line)
 			}
 		}
+		// judge reads a failed write's branch: where it opens with one tagless switch, the named cases are the
+		// vault's validation answers and only the default is the failed write, as a switch on the call is.
+		judge := func(body *ast.BlockStmt) {
+			if len(body.List) >= 1 {
+				if sw, ok := body.List[0].(*ast.SwitchStmt); ok && sw.Tag == nil && sw.Init == nil {
+					for _, cc := range sw.Body.List {
+						if c := cc.(*ast.CaseClause); c.List == nil {
+							report(c)
+						}
+					}
+					return
+				}
+			}
+			report(body)
+		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch st := n.(type) {
 			case *ast.IfStmt:
 				// if err := v.M(…); err != nil { … }
 				if st.Init != nil && callsMutator(st.Init) {
-					report(st.Body)
+					judge(st.Body)
 				}
 			case *ast.SwitchStmt:
 				// switch err := v.M(…); { … default: … } — the named cases are the vault's
@@ -203,14 +233,20 @@ func TestNoHandlerWordsAFailedVaultWriteWithoutTheVaultsSentence(t *testing.T) {
 					}
 				}
 			case *ast.BlockStmt:
-				// x, err := v.M(…)  followed by  if err != nil { … }
+				// x, err := v.M(…)  followed, at once or after the lock is let go, by  if err != nil { … } —
+				// whose body, where it is one tagless switch, is judged as the switch above is: its default.
 				for i, s := range st.List {
 					as, ok := s.(*ast.AssignStmt)
 					if !ok || !callsMutator(as) || i+1 >= len(st.List) {
 						continue
 					}
-					if next, ok := st.List[i+1].(*ast.IfStmt); ok && next.Init == nil {
-						report(next.Body)
+					for _, later := range st.List[i+1:] {
+						next, ok := later.(*ast.IfStmt)
+						if !ok || next.Init != nil || !isErrNotNil(next.Cond) {
+							continue
+						}
+						judge(next.Body)
+						break
 					}
 				}
 			}
@@ -220,4 +256,15 @@ func TestNoHandlerWordsAFailedVaultWriteWithoutTheVaultsSentence(t *testing.T) {
 	if sites < 12 {
 		t.Errorf("the scan judged %d failed-write sites; there are at least twelve — it has stopped matching", sites)
 	}
+}
+
+// isErrNotNil is the condition `err != nil`.
+func isErrNotNil(e ast.Expr) bool {
+	b, ok := e.(*ast.BinaryExpr)
+	if !ok || b.Op != token.NEQ {
+		return false
+	}
+	x, xok := b.X.(*ast.Ident)
+	y, yok := b.Y.(*ast.Ident)
+	return xok && yok && x.Name == "err" && y.Name == "nil"
 }

@@ -136,7 +136,12 @@ func xfaAsksForDynamicRender(ctx *model.Context, o types.Object) bool {
 		}
 		cp := sd
 		cp.Content = nil
-		if err := cp.Decode(); err != nil {
+		// Decoded within what is left of the bound: a packet that inflates past it stops there, as one that is
+		// larger before decoding does (code-review v2.56.0 W5 — a flate bomb here ran on every validated read).
+		if err := DecodeWithin(&cp, int64(left)); err != nil {
+			if errors.Is(err, ErrDecodeLimit) {
+				return false
+			}
 			continue
 		}
 		if len(cp.Content) > left {

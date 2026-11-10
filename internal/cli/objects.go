@@ -81,7 +81,7 @@ func cmdObjectsRemove(args []string) int {
 	inPlaceFlag(fs, &inPlace)
 	fs.Usage = usageFunc(fs, "nib objects remove IN --page N --picture K --digest D -o OUT  |  ... -w IN",
 		"Remove one picture from a page: the operator that draws it, and its tag when the tag holds nothing else.\n"+
-			"The picture leaves the file unless another page still draws it. A signed document, one in a signing\n"+
+			"The picture leaves the file unless another page or the form still uses it. A signed document, one in a signing\n"+
 			"ceremony and a picture inside a repeated page element are refused.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -127,8 +127,11 @@ func cmdObjectsRemove(args []string) int {
 		if r.LinksOver > 0 {
 			fmt.Fprintf(os.Stderr, "%d link(s) over the picture are still on the page\n", r.LinksOver)
 		}
-		if len(r.SharedWith) > 0 {
+		switch {
+		case len(r.SharedWith) > 0:
 			fmt.Fprintf(os.Stderr, "the picture stays in the file: page(s) %v still draw it\n", r.SharedWith)
+		case r.StaysInFile:
+			fmt.Fprintln(os.Stderr, "the picture stays in the file: the form still uses it")
 		}
 	}
 	if inPlace {

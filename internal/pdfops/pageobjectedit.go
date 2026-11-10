@@ -563,7 +563,7 @@ func pageAsItStands(ctx *model.Context, pg pdfread.Page, nr int) (pageRemoval, e
 	}
 	keep := pageRemoval{page: nr}
 	for _, o := range pageObjectsOf(nr, newDisplaySpace(pg), pr, nil).Objects {
-		keep.want = append(keep.want, o.Digest)
+		keep.want = append(keep.want, o.operator)
 	}
 	for _, r := range pr.runs {
 		keep.text = append(keep.text, r.text)
@@ -668,7 +668,7 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	}
 	for i, o := range objs.Objects {
 		if !gone[i] {
-			plan.want = append(plan.want, o.Digest)
+			plan.want = append(plan.want, o.operator)
 		}
 	}
 	for _, r := range pr.runs {
@@ -796,7 +796,7 @@ func verifyWritten(out []byte, plans []pageRemoval) error {
 		got := pageObjectsOf(p.page, newDisplaySpace(pg), pr, nil)
 		var digests, text []string
 		for _, o := range got.Objects {
-			digests = append(digests, o.Digest)
+			digests = append(digests, o.operator)
 		}
 		for _, r := range pr.runs {
 			text = append(text, r.text)

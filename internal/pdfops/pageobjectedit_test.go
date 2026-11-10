@@ -225,6 +225,34 @@ func TestAStaleAddressIsRefusedAndNothingIsWritten(t *testing.T) {
 	}
 }
 
+// A replayed address does not remove the other of two identical pictures (code-review v2.56.0 C1): once ordinal 0
+// goes, its twin is ordinal 0 with the same operator, and only the twin count in the digest tells the two apart. A
+// picture that has no twin keeps its address across another's removal, so a listing stays good for it.
+func TestAReplayedAddressDoesNotRemoveTheOtherOfTwoIdenticalPictures(t *testing.T) {
+	pdf := removeFixture("q 10 0 0 10 5 5 cm /Im0 Do Q\nq 10 0 0 10 5 5 cm /Im0 Do Q\nq 20 0 0 20 40 40 cm /Im0 Do Q", nil)
+	objs := readObjects(t, pdf, 1)
+	if len(objs.Objects) != 3 || objs.Objects[0].Digest != objs.Objects[1].Digest || objs.Objects[0].Digest == objs.Objects[2].Digest {
+		t.Fatalf("fixture: want two twins and one other, got %+v", objs.Objects)
+	}
+	first := ObjectEdit{Kind: ObjectEditDelete, Page: 1, Ordinal: 0, Digest: objs.Objects[0].Digest}
+	out, _, err := EditPageObjects(pdf, []ObjectEdit{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := readObjects(t, out, 1)
+	if len(after.Objects) != 2 {
+		t.Fatalf("the first removal left %d pictures, want 2", len(after.Objects))
+	}
+	again, _, err := EditPageObjects(out, []ObjectEdit{first})
+	if again != nil {
+		t.Fatal("the replayed address returned bytes: it removed the twin")
+	}
+	wantRefusal(t, err, CauseObjectChanged)
+	if after.Objects[1].Digest != objs.Objects[2].Digest {
+		t.Error("the picture with no twin changed its address when another picture was removed")
+	}
+}
+
 func TestAFormDrawnPictureIsRefused(t *testing.T) {
 	pdf := removeFixture("q /Fm0 Do Q", nil)
 	objs := readObjects(t, pdf, 1)

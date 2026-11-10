@@ -20,6 +20,11 @@ func isolate(t *testing.T) string {
 	t.Setenv("TMPDIR", tmp)
 	resetRoot()
 	t.Cleanup(resetRoot)
+	// The lock is what these tests judge, so the grace for a .live not yet locked is taken away; the one test of
+	// that grace sets it back.
+	saved := liveGrace
+	liveGrace = 0
+	t.Cleanup(func() { liveGrace = saved })
 	return tmp
 }
 
@@ -227,6 +232,35 @@ func TestADirectoryMidCreationIsNotSwept(t *testing.T) {
 	}
 	if n, _ := Sweep(nil); n != 1 {
 		t.Fatal("an old directory with no .live was not swept")
+	}
+}
+
+// TestALiveFileNotYetLockedIsNotSwept is the gap inside New between creating .live and locking it (code-review
+// v2.56.0 W3): a sweep in it took the lock and removed the directory a starting Nib was making.
+func TestALiveFileNotYetLockedIsNotSwept(t *testing.T) {
+	isolate(t)
+	liveGrace = 10 * time.Second
+	r, _ := Root()
+	p := filepath.Join(r, "nib-office-1-starting")
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p, liveFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * creationGrace)
+	if err := os.Chtimes(p, old, old); err != nil { // the directory's own grace is past; only .live's protects it
+		t.Fatal(err)
+	}
+	if n, _ := Sweep(nil); n != 0 {
+		t.Fatal("a directory whose .live is not locked yet was swept")
+	}
+	stale := time.Now().Add(-2 * liveGrace)
+	if err := os.Chtimes(filepath.Join(p, liveFile), stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := Sweep(nil); n != 1 {
+		t.Fatal("an old unlocked .live was not swept")
 	}
 }
 

@@ -80,7 +80,7 @@ func scoreDeletion(before, after pageReading, addressed int) (string, string) {
 		if i >= addressed {
 			j = i + 1
 		}
-		if o.Digest != b[j].Digest {
+		if o.operator != b[j].operator {
 			return deletedDigestsDiffer, fmt.Sprintf("survivor %d is not original %d", i, j)
 		}
 		if o.Box != b[j].Box || o.OnPage != b[j].OnPage {
@@ -402,7 +402,7 @@ func TestObjectDeleteCorpus(t *testing.T) {
 // can read differently.
 func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	obj := func(d string, x float64) PageObject {
-		return PageObject{Digest: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true}
+		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true}
 	}
 	before := pageReading{objs: PageObjects{Objects: []PageObject{obj("a", 0), obj("b", 0.2), obj("c", 0.4)}}, runs: 3}
 	after := func(runs int, os ...PageObject) pageReading {

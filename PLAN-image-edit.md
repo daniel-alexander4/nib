@@ -32,6 +32,8 @@ An ordinal alone shifts when anything before it is edited; a span alone shifts w
 
 **(plan-review pin: the address, 2026-11-06)** The ordinal is the **image-only index among `pageRuns.images`** from the new reader's own walk, never `seq` (`w.draws` counts runs, images and, only under `keepShapes`, shapes: `textrun.go:1514`, `pageshape.go:136`, `flowregion.go:95`, so `readPageDrawings` and `MapPage` number one picture differently). The window selects by the index and box it was handed and never recomputes one from the page map or pdf.js. The digest covers the operator bytes plus the preceding `cm` and the `q` depth, so two identical `Do`s stay distinct. The server takes the span from its own re-read and **never accepts one**, and re-derives `inForm` itself, refusing before any `Edit` is built (a form Do'd twice gives two records with one span). `baseRev` is **required** from the window (the CLI takes a page-stream digest as its precondition instead); the route snapshots `docBytes` once, edits that snapshot, and commits with the snapshot base, parsing outside `s.mu` as `fateOf` does. Several objects in one request: sort spans descending, reject overlap, verify every digest against the re-read before any `Replace`. After the write the door re-reads and requires exactly one fewer image per removed object and an equal text-run count, else it refuses `rewrite-differs` and leaves the document untouched. Observed by: a test that the index is identical with and without `keepShapes`; a two-identical-`Do` page where a right-digest/wrong-ordinal request is refused; a form Do'd twice; a two-pictures-in-one-request fixture; a `/Contents` array fixture.
 
+**(phase-close pin: the address, 2026-11-09)** "Two identical `Do`s stay distinct" held only until one of them went: its twin then took its ordinal with the same digest, and a replayed address removed it (code-review v2.56.0 C1). The address's digest now also counts the page's pictures that share the operator (ADR-220); the after-check compares operator digests. "`baseRev` is required" is superseded by S02's grill pin 1 and ADR-219 §2. *(phase-close 2026-11-09)*
+
 ### D3 — Delete removes the painting operator and nothing around it *(assumed; proven by the S01 probe before S02 builds on it)*
 `q … cm /Im0 Do Q` becomes `q … cm  Q`: the state operators stay, so the stream stays balanced whatever surrounds the picture, and draw order of everything else is untouched. This avoids the one thing `drawingBrackets.around` (`claimtagging.go:315-340`) exists to handle (pdfcpu ends an inline image only at `EI`+space+`Q`) because the whole inline image is removed. The edit is `contentstream.Edit.Replace(span.start, span.end, nil)` then `setPageContent` (`tagemit.go:79`), the pair `region` already uses (`structregion.go:262-267`). The assumption to falsify: a page whose stream, once an operator is removed, pdfcpu's relaxed validator or a viewer reads differently. S01 measures that over the local corpora before any route exists.
 
@@ -84,8 +86,8 @@ Stage 1 seed: this document. Stage 2 grill: below. Stages 3-6 (subsystem rounds,
 
 ## Build order
 
-### P01 — Delete one picture
-**Path:** a click on a picture in Page Functions → Edit Objects → the window names it by (page, image ordinal, operator digest) from `ReadPageObjects` → `POST /api/page/objects` with `baseRev` → the wrapper refuses a signed or ceremony document → `pdfops.EditPageObjects` removes the painting operator (and its structure, D4) in one rewrite → `document.install` → the window reloads the page without the picture, and Undo puts it back. *(phase-open 2026-11-09)*
+### P01 — Delete one picture *(done 2026-11-09, v2.56.1)*
+**Path:** a click on a picture in Page Functions → Edit Objects → the window names it by (page, image ordinal, operator digest) from `ReadPageObjects` → `POST /api/page/objects` (no `baseRev`: the address is the check, ADR-219 §2 / ADR-220) → the wrapper refuses a signed or ceremony document → `pdfops.EditPageObjects` removes the painting operator (and its structure, D4) in one rewrite → `document.install` → the window reloads the page without the picture, and Undo puts it back. *(phase-open 2026-11-09)*
 Goal: select a picture the page draws and remove it from the page, safely, on an untagged, then a tagged, document.
 Exit criteria: a picture on an untagged page is removed from the window and Undo restores it; a Figure's picture is removed with its element or refused with a named cause; a signed, ceremony or form-drawn page is refused; `nib` has the same operation on the command line; the corpus probe shows no page read differently by pdfcpu or the checker.
 
@@ -174,6 +176,19 @@ selection the view's and the teardown's (code-review hand-off v2.55.0-p01s04). T
 passes, and goes red when the outline is misplaced (manual mutation); the whole tier ran 280/280 before the review
 fixes and is re-run at close. Tier 4 and tier 6 not fired (no session, ceremony, delivery, `p2p` or rendezvous path
 touched). Not run: `/redproof`'s blind pass. *(slice-close 2026-11-09)*
+
+**(phase-close ledger, 2026-11-09, v2.56.1)** Full-repo review `code-reviews/v2.56.0-p01-phase-close-image-edit-2026-11-09.md`: 1 critical (a replayed address removed the other of two identical pictures — fixed, ADR-220), 22 warnings and the infos dispositioned (P01's fixed; the rest's pre-existing defects filed as /pending 967-976). Exit criteria, clause by clause:
+- [x] a picture on an untagged page is removed from the window — tier 3 `test/ui/editobjects.test.mjs` (real binary, turned page, the second picture by its geometry); tier 3 280 pass / 0 fail at the close.
+- [x] and Undo restores it — the same test, bytes equal.
+- [x] a Figure's picture is removed with its element — `TestAFiguresOnlyPictureGoesWithItsElement`; S02 live run on two tagged corpus documents.
+- [x] or refused with a named cause — `tagged-shared` / `tagged-last` / `tagged` door tests (inventory O11); 32 corpus pictures refused `tagged-shared`.
+- [x] a signed page is refused — door, route and CLI tests (O9).
+- [x] a ceremony page is refused — route (reopened cold) and, from this close, CLI (`TestNibObjectsRefusesAConvenedDocumentInTheRoutesWords`).
+- [x] a form-drawn page is refused — `TestAFormDrawnPictureIsRefused`; 190 corpus pictures refused `form-drawn`.
+- [x] `nib` has the same operation on the command line — `nib objects` / `nib objects remove`, same door and words (CLI tests).
+- [x] the corpus probe shows no page read differently by pdfcpu — re-run at the close after ADR-220's change to the after-check: 410 listed, 644 attempted, **644 clean**, differs none, residue alone 0.
+- [ ] **not met:** no page read differently by the checker — 206 checked: 186 same, 17 fewer, **3 more**: two `5 t1` (ADR-032's intended drop of the PDF/UA identification on any change) and one `7.21.7 t1` that a no-op rewrite also causes (/pending 966, not this phase's code). Carried to the closing batch.
+Required-run gates (CLAUDE.md): tier 4 and tier 6 do not fire — no session, ceremony, delivery, discovery, `p2p` or rendezvous path touched in P01 or its close. Full suite on the closing tree: see the commit. Graduation: 25 inventory rows, all `keep-live`, actionable subset 0 (`instruments/image-edit.md`). *(phase-close 2026-11-09)*
 
 ### P02 — Move and resize
 Goal: change where a picture is drawn, on the cases where one `cm` places it, and refuse the rest by name (D8).

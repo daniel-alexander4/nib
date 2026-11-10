@@ -11726,7 +11726,8 @@ $('armedOffBtn').onclick = () => disarmEditingTools();
 // `POST /api/page/objects`. It is NOT a placement tool: `placeFromKeyboard` would drag a mark at the page centre.
 
 // OBJECT_CAUSES are the words for every cause the door can answer with, the same sentences `nib objects` prints.
-// `TestEveryObjectCauseIsSaidInTheWindow` (internal/pdfops) holds the keys equal to pdfops' table, both ways.
+// `TestEveryObjectCauseIsSaidInTheWindow` (internal/pdfops) holds the keys and their sentences equal to pdfops'
+// table, both ways.
 const OBJECT_CAUSES = {
   'signed': 'This document is signed. Changing it would break the signature.',
   'ceremony': 'This document is part of a signing ceremony; edit before you start one.',
@@ -11761,15 +11762,22 @@ async function pageObjects(owner, n) {
   const key = `${id}:${n}:${owner.loadedRev}`;
   if (objectsCache.has(key)) return objectsCache.get(key);
   objectsFetches++;
-  // The promise is what is cached, so two draws that miss together read the page once.
+  // The promise is what is cached, so two draws that miss together read the page once. A read that fails or throws
+  // leaves nothing cached, so the next draw asks again rather than re-awaiting the failure.
   const read = (async () => {
-    const res = await apiFetch('/api/page/objects?page=' + n, { docId: id });
-    if (!res.ok) {
+    try {
+      const res = await apiFetch('/api/page/objects?page=' + n, { docId: id });
+      if (!res.ok) {
+        objectsCache.delete(key);
+        objectNotice(await errText(res, 'Could not read the pictures on this page.'));
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
       objectsCache.delete(key);
-      objectNotice(await errText(res, 'Could not read the pictures on this page.'));
+      objectNotice((err && err.message) || 'Could not read the pictures on this page.');
       return null;
     }
-    return res.json();
   })();
   objectsCache.set(key, read);
   return read;
@@ -11959,7 +11967,11 @@ function removedWords(r, canUndo = true) {
 async function removeSelectedObject(owner = view) {
   const sel = objectSelectionFor(owner);
   if (!sel || !sel.editable) return;
+  // One removal at a time per view: a second press or a held Delete while the first is in flight is not sent
+  // (code-review v2.56.0 C1 — the door also refuses a replayed address, this keeps the window from asking).
+  if (owner.objectsRemoving) return;
   if (!confirmOverlayLoss(owner)) return; // the edited document is loaded back
+  owner.objectsRemoving = true;
   objectNotice('Removing the picture…');
   try {
     const res = await apiFetch('/api/page/objects', {
@@ -11973,6 +11985,12 @@ async function removeSelectedObject(owner = view) {
         owner.objectsSelected = null;
         owner.objectsFocus = null;
         objectNotice(objectCauseSentence('object-changed'));
+        // The document moved under this view: load it back first (ADR-146's way back), and the new revision is a new
+        // key. Where it did not, the listing this view holds is the stale one, so it is forgotten and read again.
+        if (await reloadIfMoved(owner)) return;
+        objectsCache.delete(`${sel.docId}:${sel.page}:${owner.loadedRev}`);
+        clearObjectOutlines(owner);
+        if (owner === view) reflectObjects();
         drawObjectOutlines(owner);
         return;
       }
@@ -11981,7 +11999,12 @@ async function removeSelectedObject(owner = view) {
     }
     const answer = await res.json();
     owner.objectsSelected = null;
-    if (owner.objectsFocus == null) owner.objectsFocus = sel.ordinal; // Remove from page: focus the next outline too
+    // Remove from page: focus the next outline too. objectsFocus is a place among the LAID outlines (off-page pictures
+    // are not laid), so it is the selected outline's place there, never its ordinal.
+    if (owner.objectsFocus == null) {
+      const at = (owner.objectsOutlines || []).findIndex((b) => b.dataset.ordinal === String(sel.ordinal));
+      owner.objectsFocus = at >= 0 ? at : 0;
+    }
     const focus = owner.objectsFocus;
     await setDocumentFromServer(answer, owner);
     // The reload's teardown disarms every tool (clearOverlays); this one stays armed on the document it just edited,
@@ -11993,6 +12016,8 @@ async function removeSelectedObject(owner = view) {
     drawObjectOutlines(owner);
   } catch (err) {
     objectNotice(err.message || 'Could not remove the picture.');
+  } finally {
+    owner.objectsRemoving = false;
   }
 }
 new MutationObserver(reflectPanCursor).observe(els.viewerWrap, { attributes: true, attributeFilter: ['style'] });
