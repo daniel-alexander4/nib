@@ -614,8 +614,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tags/remove", s.requireUnlocked(s.handleTagsRemove))
 	mux.HandleFunc("GET /api/tags/tree", s.requireUnlocked(s.handleTagsTree))
 	mux.HandleFunc("GET /api/tags/untagged", s.requireUnlocked(s.handleTagsUntagged))
-	// Removing a picture from a page (PLAN-image-edit P01.S02, ADR-219). The listing GET is P01.S04's, with the window
-	// that sends it: a route no client calls is a field no client sends (requestfields_test.go).
+	// The pictures a page draws (P01.S04, the window's Edit Objects reads it) and removing one (P01.S02), ADR-219.
+	mux.HandleFunc("GET /api/page/objects", s.requireUnlocked(s.handlePageObjects))
 	mux.HandleFunc("POST /api/page/objects", s.requireUnlocked(s.handlePageObjectsEdit))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
 	mux.HandleFunc("GET /api/paragraphs", s.requireUnlocked(s.handleParagraphs))

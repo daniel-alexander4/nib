@@ -467,6 +467,10 @@
 <button id="rotateLeftBtn" title="Rotate every page 90° counter-clockwise">Rotate all ↺</button>
       <button id="rotateRightBtn" title="Rotate every page 90° clockwise">Rotate all ↻</button>
           </div>
+          <div class="tbgroup" data-label="Edit Objects" data-fold="5">
+<button id="objectsBtn" title="Pick a picture on the page to remove it — click one, or Tab to the pictures and use the arrow keys">Edit Objects</button>
+      <button id="objectsRemoveBtn" title="Remove the selected picture from the page (Undo brings it back until you close this document)" disabled>Remove from page</button>
+            </div>
           <div class="tbgroup" data-label="Combine &amp; Compare" data-fold="2">
 <button id="combineBtn" title="Combine several PDFs or images into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
@@ -1435,6 +1439,9 @@
       <!-- An import was done (ADR-185, S02b): a file that is not a PDF became one. A polite status region and not
            #sessionNotice (role="alert"): nothing here needs an answer and nothing moves focus. One notice for a batch
            ("Imported 3 files"). Its words are authored in app.js's importNoticeWords, the one place that says it. -->
+      <!-- PLAN-image-edit P01.S04: what Edit Objects selected, refused or removed. Polite, as #importNotice: nothing
+           here needs an answer. Its words are app.js's (OBJECT_CAUSES, objectNoticeWords). -->
+      <div id="objectNotice" role="status" aria-live="polite" hidden><span id="objectNoticeText"></span></div>
       <div id="importNotice" role="status" aria-live="polite" hidden>
         <span id="importNoticeText"></span>
         <button id="importNoticeExport" type="button">Show Export</button>

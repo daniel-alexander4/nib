@@ -44,6 +44,9 @@ const CODE = stripComments(APP);
 // list is how a real tool gets quietly dropped, so every entry states what it is instead.
 const NOT_A_PLACEMENT_TOOL = {
   fitMode: 'a zoom/fit setting on the view (actualSize / fitPage / fitWidth), not a tool that draws',
+  // Edit Objects (PLAN-image-edit P01.S04) places nothing: it outlines the pictures a page already draws, and its
+  // keyboard path is its own — one Tab stop, arrows, Enter, Delete, Escape (editobjects.test.mjs).
+  objectsMode: 'Edit Objects selects a picture the page draws; it places no mark, and its outlines are its keyboard path',
 };
 
 function declaredTools() {

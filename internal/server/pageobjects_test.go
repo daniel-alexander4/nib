@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
-	"nib/internal/objedit"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
@@ -19,12 +18,10 @@ import (
 
 // The page objects' routes (PLAN-image-edit P01.S02).
 
-// pageObjectsOpen lists page 1's pictures of the open document as the door lists them (the listing route is
-// P01.S04's): from the bytes the server serves.
 func pageObjectsOpen(t *testing.T, c *http.Client, base string) pdfops.PageObjects {
 	t.Helper()
-	got, err := objedit.List(getBytes(t, c, base+"/api/pdf"), 1)
-	if err != nil {
+	var got pdfops.PageObjects
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/page/objects?page=1"), &got); err != nil {
 		t.Fatal(err)
 	}
 	return got
@@ -102,6 +99,11 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 	}
 	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
 		t.Fatal("a refused removal changed the document")
+	}
+	for _, q := range []string{"", "?page=0", "?page=x", "?page=9"} {
+		if code, _ := getAnswer(t, c, base+"/api/page/objects"+q); code != http.StatusBadRequest {
+			t.Errorf("objects%s = %d, want 400", q, code)
+		}
 	}
 }
 

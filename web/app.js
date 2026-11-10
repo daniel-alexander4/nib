@@ -3074,6 +3074,11 @@ function newView() {
   v.eventBus.on('pagerendered', () => relayoutOverlays(v));
   // A re-render replaces the page's children, so the Reading Order badges are drawn again (P09.S06c).
   v.eventBus.on('pagerendered', () => { if (v === view) drawReadingOrder(); });
+  // Edit Objects' outlines are laid on the page div, which a re-render empties (PLAN-image-edit P01.S04).
+  v.eventBus.on('pagerendered', (e) => {
+    if (v === view && v.objectsMode && (!e || !e.pageNumber || e.pageNumber === v.viewer.currentPageNumber)) drawObjectOutlines(v);
+  });
+  v.eventBus.on('pagechanging', () => { if (v === view && v.objectsMode) drawObjectOutlines(v); });
   v.eventBus.on('updatefindcontrolstate', ({ matchesCount }) => {
     if (v === view) renderFindCount(matchesCount);
   });
@@ -3611,7 +3616,7 @@ function repaintForActiveView() {
   if (view.signTotal) setSignBanner(); // NOT showSignBanner — that resets a recipient's progress
 
   reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
-  reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote();
+  reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote(); reflectObjects();
   all('.markers button').forEach((b) => setArmed(b, b.dataset.marker === view.markerMode));
   all(TOOL_BUTTONS).forEach((t) => setArmed(t, t.dataset.mode === view.activeTool));
   reflectAnnoControls();
@@ -3628,7 +3633,7 @@ function reflectZoom(scale) {
 function anyToolArmed() {
   return !!(view.redactMode || view.editMode || view.markerMode || view.splitBoxMode
     || view.cropMode || view.borderMode || view.dropdownMode || view.radioMode
-    || view.shapeMode || view.noteMode);
+    || view.shapeMode || view.noteMode || view.objectsMode);
 }
 
 
@@ -11701,17 +11706,295 @@ function reflectPanCursor() {
 const ARMED_NAMES = {
   redact: 'Redact', splitBox: 'Split by box', crop: 'Crop', edit: 'Edit text', marker: 'Flag',
   border: 'Border', dropdown: 'Dropdown', radio: 'Radio button', shape: 'Shape', note: 'Note',
-  checkbox: 'Checkbox', FREETEXT: 'Text', HIGHLIGHT: 'Highlight', INK: 'Draw',
+  checkbox: 'Checkbox', FREETEXT: 'Text', HIGHLIGHT: 'Highlight', INK: 'Draw', objects: 'Edit Objects',
 };
 // reflectArmedChip shows the bar's one contextual group while a tool is armed (ADR-087). With the
 // sidebar shut the armed button is out of sight, and a press on the page that draws instead of
 // scrolling has nothing on screen to explain it.
 function reflectArmedChip() {
-  const tool = armedTool() || view.activeTool;
+  // Edit Objects is armed like a tool but is not a placement tool (PLAN-image-edit P01.S04): it places nothing.
+  const tool = armedTool() || (view.objectsMode ? 'objects' : null) || view.activeTool;
   $('armedGroup').hidden = !tool;
   $('armedName').textContent = tool ? (ARMED_NAMES[tool] || 'Tool') : '';
 }
 $('armedOffBtn').onclick = () => disarmEditingTools();
+
+// ── Edit Objects (PLAN-image-edit P01.S04, ADR-219) ─────────────────────────────────────────────────────────────
+// A tool that acts on the open document, so it stays in the menu (ADR-105): armed, it lays a focusable outline over
+// each picture the current page draws, from `GET /api/page/objects` (the box is a fraction of the DISPLAYED page,
+// ADR-088); a click or Enter selects one, and Remove from page or Delete sends its address — never a position — to
+// `POST /api/page/objects`. It is NOT a placement tool: `placeFromKeyboard` would drag a mark at the page centre.
+
+// OBJECT_CAUSES are the words for every cause the door can answer with, the same sentences `nib objects` prints.
+// `TestEveryObjectCauseIsSaidInTheWindow` (internal/pdfops) holds the keys equal to pdfops' table, both ways.
+const OBJECT_CAUSES = {
+  'signed': 'This document is signed. Changing it would break the signature.',
+  'ceremony': 'This document is part of a signing ceremony; edit before you start one.',
+  'form-drawn': 'This picture is part of a repeated page element, such as a letterhead, so editing it would change other pages.',
+  'tagged': 'This picture is tagged in a way Nib cannot take apart safely, so it is left as it is.',
+  'tagged-shared': "This picture's tag also holds other content, so removing it would leave that tag describing something that is gone.",
+  'tagged-last': "This picture's tag is the only one in the document; to start again, remove all tags first.",
+  'not-isolated': 'This picture is drawn without the bracket that keeps its settings apart from the rest of the page, so removing it could change how the rest is drawn.',
+  'unreadable-box': 'Nib cannot work out where this picture is drawn.',
+  'off-page': 'This picture is drawn outside the page, where it cannot be seen.',
+  'object-changed': 'The page changed since you selected this. Select the picture again.',
+  'rewrite-differs': 'Nib checked the page after removing the picture and it was not the page it expected, so nothing was changed.',
+  'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot remove the picture.',
+  'bad-request': 'The request to remove a picture could not be read.',
+};
+function objectCauseSentence(cause, fallback) {
+  return OBJECT_CAUSES[cause] || fallback || `Nib could not remove the picture (${cause}).`;
+}
+
+// objectsCache holds each page's listing by (document, page, revision): hover and arrows never ask the server, and a
+// new revision — any install, an Undo — is a new key (D6's cost pin). objectsFetches is read by the jsdom tier.
+const objectsCache = new Map();
+let objectsFetches = 0;
+// A view's selection is `view.objectsSelected`: the picture's address as the listing gave it — page, ordinal, digest
+// — and the document it was read from (`docId`), so a selection can never be sent for another document (ADR-001;
+// code-review 2026-11-09: two letters from one template give the same address). `objectsDrawn` is the key the
+// view's outlines were laid for, and `objectsFocus` the outline to take focus when they are next laid.
+
+async function pageObjects(owner, n) {
+  const id = owner.docMeta && owner.docMeta.id;
+  if (!id) return null;
+  const key = `${id}:${n}:${owner.loadedRev}`;
+  if (objectsCache.has(key)) return objectsCache.get(key);
+  objectsFetches++;
+  // The promise is what is cached, so two draws that miss together read the page once.
+  const read = (async () => {
+    const res = await apiFetch('/api/page/objects?page=' + n, { docId: id });
+    if (!res.ok) {
+      objectsCache.delete(key);
+      objectNotice(await errText(res, 'Could not read the pictures on this page.'));
+      return null;
+    }
+    return res.json();
+  })();
+  objectsCache.set(key, read);
+  return read;
+}
+
+// objectNotice is the one writer of #objectNotice, a polite region (ADR-186's shape): selection, refusal, removal.
+function objectNotice(text) {
+  $('objectNoticeText').textContent = text || '';
+  $('objectNotice').hidden = !text;
+}
+
+// objectSelectionFor is owner's selection, only while it is armed and only for the document it holds now.
+function objectSelectionFor(owner) {
+  const sel = owner.objectsSelected;
+  return owner.objectsMode && sel && owner.docMeta && sel.docId === owner.docMeta.id ? sel : null;
+}
+
+function reflectObjects() {
+  setArmed($('objectsBtn'), !!view.objectsMode);
+  const sel = objectSelectionFor(view);
+  $('objectsRemoveBtn').disabled = !(sel && sel.editable) || $('objectsBtn').disabled;
+  reflectArmedChip();
+}
+
+// clearObjectOutlines removes owner's outlines only: another view's are its own (each view has its own pages).
+function clearObjectOutlines(owner = view) {
+  for (const el of owner.objectsOutlines || []) el.remove();
+  owner.objectsOutlines = [];
+  owner.objectsDrawn = null;
+}
+
+// exitObjects disarms Edit Objects; every disarm reaches it through disarmEditingTools, and a document going through
+// resetSharedDocState's list.
+function exitObjects(owner = view) {
+  if (!owner.objectsMode) return;
+  owner.objectsMode = false;
+  owner.objectsSelected = null;
+  clearObjectOutlines(owner);
+  if (owner === view) {
+    objectNotice('');
+    reflectObjects();
+  }
+}
+
+$('objectsBtn').onclick = () => {
+  const on = !view.objectsMode;
+  if (on) disarmEditingTools(); // one tool at a time, through the one door
+  view.objectsMode = on;
+  view.objectsSelected = null;
+  reflectObjects();
+  if (on) drawObjectOutlines(view);
+  else { clearObjectOutlines(view); objectNotice(''); }
+};
+$('objectsRemoveBtn').onclick = () => removeSelectedObject(view);
+
+// objectLabel is what a screen reader hears for one outline: its place among the page's pictures, and its description.
+function objectLabel(o, i, m, n) {
+  return `Picture ${i + 1} of ${m}, page ${n}` + (o.alt ? `: ${o.alt}` : '');
+}
+
+// drawObjectOutlines lays the current page's outlines: one Tab stop for the group (roving tabindex), arrows inside it.
+// It lays them once per (document, page, revision): a later render of the same page, a neighbour's render, or a page
+// change that comes back finds them laid and leaves focus where it is.
+async function drawObjectOutlines(owner) {
+  if (owner !== view || !owner.objectsMode || !owner.viewer) return;
+  const n = owner.viewer.currentPageNumber || 1;
+  const key = `${owner.docMeta && owner.docMeta.id}:${n}:${owner.loadedRev}`;
+  const pv0 = owner.viewer.getPageView(n - 1);
+  if (owner.objectsDrawn === key && pv0 && pv0.div && pv0.div.querySelector('.obj-outline')) return;
+  const objs = await pageObjects(owner, n);
+  // Asked again after the read: the user may have moved on, switched tabs or disarmed while it was in flight.
+  if (owner !== view || !owner.objectsMode || (owner.viewer.currentPageNumber || 1) !== n) return;
+  clearObjectOutlines(owner);
+  const pv = owner.viewer.getPageView(n - 1);
+  if (!objs || !pv || !pv.div) return;
+  owner.objectsDrawn = key;
+  // A selection on another page is not this page's: it is dropped, and Remove from page with it.
+  if (owner.objectsSelected && owner.objectsSelected.page !== n) {
+    owner.objectsSelected = null;
+    reflectObjects();
+  }
+  const list = (objs.objects || []).filter((o) => o.onPage);
+  if (!list.length) {
+    objectNotice(`Page ${n} draws no picture Nib can show.`);
+    if (owner.objectsFocus != null) { owner.objectsFocus = null; $('objectsBtn').focus(); }
+    return;
+  }
+  const sel = objectSelectionFor(owner) ? owner.objectsSelected.ordinal : null;
+  list.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'obj-outline' + (o.editable ? '' : ' obj-refused') + (o.ordinal === sel ? ' selected' : '');
+    const [left, top, right, bottom] = o.box;
+    b.style.left = `${left * 100}%`;
+    b.style.top = `${top * 100}%`;
+    b.style.width = `${(right - left) * 100}%`;
+    b.style.height = `${(bottom - top) * 100}%`;
+    b.dataset.page = String(n);
+    b.dataset.ordinal = String(o.ordinal);
+    b.tabIndex = (sel === null ? i === 0 : o.ordinal === sel) ? 0 : -1;
+    b.setAttribute('aria-label', objectLabel(o, i, list.length, n));
+    b.setAttribute('aria-pressed', o.ordinal === sel ? 'true' : 'false');
+    b.addEventListener('pointerdown', (ev) => ev.stopPropagation()); // a click on an outline is not a page press
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); selectObject(owner, n, o, b); });
+    b.addEventListener('keydown', (ev) => objectKey(ev, owner, n, o, b));
+    pv.div.appendChild(b);
+    owner.objectsOutlines.push(b);
+  });
+  // After a removal the outline at the same place in the list takes focus (or the one before it, or the button when
+  // none is left), so a keyboard user is not dropped out of the group.
+  if (owner.objectsFocus != null) {
+    const laid = [...pv.div.querySelectorAll('.obj-outline')];
+    const at = Math.min(owner.objectsFocus, laid.length - 1);
+    owner.objectsFocus = null;
+    if (at >= 0) {
+      laid.forEach((x, k) => { x.tabIndex = k === at ? 0 : -1; });
+      laid[at].focus();
+    } else $('objectsBtn').focus();
+  }
+}
+
+function selectObject(owner, n, o, b) {
+  owner.objectsSelected = { docId: owner.docMeta && owner.docMeta.id, page: n, ordinal: o.ordinal, digest: o.digest, editable: o.editable };
+  (owner.objectsOutlines || []).forEach((x) => {
+    const on = x === b;
+    x.classList.toggle('selected', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+    x.tabIndex = on ? 0 : -1;
+  });
+  b.focus();
+  const label = b.getAttribute('aria-label');
+  objectNotice(o.editable
+    ? `${label}, selected. Remove from page takes it off the page.` + (o.alt ? ' Its description goes with it.' : '')
+    : `${label}: ${objectCauseSentence(o.why)}`);
+  reflectObjects();
+}
+
+// objectKey: the keys of the outline that has focus, and of nothing else (D6's pin — the other Delete handlers are
+// per-element too, and this one must not fire for a stamp or a field).
+function objectKey(ev, owner, n, o, b) {
+  if (ev.target !== b || ev.defaultPrevented) return;
+  const outlines = [...(owner.objectsOutlines || [])];
+  const at = outlines.indexOf(b);
+  switch (ev.key) {
+    case 'ArrowRight': case 'ArrowDown': case 'ArrowLeft': case 'ArrowUp': {
+      ev.preventDefault();
+      const step = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : -1;
+      const next = outlines[(at + step + outlines.length) % outlines.length];
+      outlines.forEach((x) => { x.tabIndex = x === next ? 0 : -1; });
+      next.focus();
+      break;
+    }
+    case 'Enter': case ' ':
+      ev.preventDefault();
+      selectObject(owner, n, o, b);
+      break;
+    case 'Delete': case 'Backspace':
+      ev.preventDefault();
+      selectObject(owner, n, o, b);
+      if (o.editable) {
+        owner.objectsFocus = at;
+        removeSelectedObject(owner);
+      }
+      break;
+    case 'Escape':
+      ev.preventDefault();
+      ev.stopPropagation();
+      exitObjects();
+      $('objectsBtn').focus();
+      break;
+  }
+}
+
+// removedWords is what the window says after a removal: what went, what stayed, and how to get it back — and that
+// Undo cannot, when the document's history was dropped to keep within the memory budget (ADR-003).
+function removedWords(r, canUndo = true) {
+  const parts = [canUndo
+    ? 'Removed the picture from the page. Undo brings it back until you close this document.'
+    : 'Removed the picture from the page. Undo cannot bring it back: this document\'s history was let go to keep Nib within its memory budget.'];
+  if (r && r.elementRemoved) parts.push(r.alt ? `Its description, "${r.alt}", went with it.` : 'Its tag went with it.');
+  if (r && r.linksOver) parts.push(`${r.linksOver} link${r.linksOver === 1 ? '' : 's'} over it ${r.linksOver === 1 ? 'is' : 'are'} still on the page.`);
+  if (r && r.staysInFile) parts.push('The picture is still in the file, because another page or the form still uses it; Redact removes it for good.');
+  return parts.join(' ');
+}
+
+// removeSelectedObject sends the selected picture's address, pinned to the document it was read from (ADR-001).
+async function removeSelectedObject(owner = view) {
+  const sel = objectSelectionFor(owner);
+  if (!sel || !sel.editable) return;
+  if (!confirmOverlayLoss(owner)) return; // the edited document is loaded back
+  objectNotice('Removing the picture…');
+  try {
+    const res = await apiFetch('/api/page/objects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
+      body: JSON.stringify({ edits: [{ kind: 'delete', page: sel.page, ordinal: sel.ordinal, digest: sel.digest }] }),
+    });
+    if (!res.ok) {
+      let out = null;
+      try { out = await res.clone().json(); } catch { out = null; }
+      if (out && out.cause === 'object-changed') {
+        owner.objectsSelected = null;
+        owner.objectsFocus = null;
+        objectNotice(objectCauseSentence('object-changed'));
+        drawObjectOutlines(owner);
+        return;
+      }
+      objectNotice(out && out.cause ? objectCauseSentence(out.cause, out.error) : await errText(res, 'Could not remove the picture.'));
+      return;
+    }
+    const answer = await res.json();
+    owner.objectsSelected = null;
+    if (owner.objectsFocus == null) owner.objectsFocus = sel.ordinal; // Remove from page: focus the next outline too
+    const focus = owner.objectsFocus;
+    await setDocumentFromServer(answer, owner);
+    // The reload's teardown disarms every tool (clearOverlays); this one stays armed on the document it just edited,
+    // so the next picture is a Tab away — a new revision is a new cache key, so the page is read afresh.
+    owner.objectsMode = true;
+    owner.objectsFocus = focus;
+    objectNotice(removedWords(answer.removed && answer.removed[0], answer.canUndo !== false));
+    if (owner === view) reflectObjects();
+    drawObjectOutlines(owner);
+  } catch (err) {
+    objectNotice(err.message || 'Could not remove the picture.');
+  }
+}
 new MutationObserver(reflectPanCursor).observe(els.viewerWrap, { attributes: true, attributeFilter: ['style'] });
 
 // watchPannable keeps `.can-pan` true of a view exactly while its pages overflow its scroll box,
@@ -12744,7 +13027,7 @@ const EDITING_TOOLS = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn', 'clearFormBtn',
-  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
+  'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'objectsBtn',
   // OCR rewrites the document — it stamps a text layer — and was the one rewriting tool this list did not
   // name, so a sign-locked recipient could run it (/pending 830). ADR-106's door (`ensureText`) already
   // refuses a locked document; this is the button's half, and `runOCR` checks for itself.
@@ -12806,7 +13089,7 @@ function disarmEditingTools() {
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   exitSplitBox(); exitBorder(); exitShape(); exitCrop();
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); exitObjects();
   if (view.activeTool) setTool(view.activeTool); // setTool toggles: the armed mode again is off
   els.viewerWrap.style.cursor = '';
 }
@@ -15004,7 +15287,7 @@ const DOC_REQUIRED = [
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
-  'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
+  'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn', 'objectsBtn',
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageStampBtn', 'contentsBtn', 'hlPin', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'inspectBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn', 'clearFormBtn',
   'reloadBtn',
@@ -15692,6 +15975,7 @@ function clearOverlays(owner = view) {
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
   exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); // nor a pending placement mode
+  exitObjects(owner); // nor a picture selected in the document that is going (PLAN-image-edit P01.S04)
 }
 
 // resetSharedDocState is the ONE teardown both the open path and the close path

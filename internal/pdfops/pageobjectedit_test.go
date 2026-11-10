@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -319,8 +321,8 @@ const figureThenText = "/Figure <</MCID 0>> BDC q 100 0 0 80 10 10 cm /Im0 Do Q 
 func TestAFiguresOnlyPictureGoesWithItsElement(t *testing.T) {
 	pdf := objectFigureFixture(figureThenText, "0", "")
 	objs := readObjects(t, pdf, 1)
-	if !objs.Objects[0].Editable {
-		t.Fatalf("a Figure that holds only this picture is listed %q", objs.Objects[0].Why)
+	if !objs.Objects[0].Editable || objs.Objects[0].Alt != "A cat on a mat" {
+		t.Fatalf("a Figure that holds only this picture is listed %q, alt %q", objs.Objects[0].Why, objs.Objects[0].Alt)
 	}
 	out, res := removeOne(t, pdf, 1, 0)
 	if r := res.Removed[0]; !r.ElementRemoved || r.Alt != "A cat on a mat" {
@@ -541,5 +543,38 @@ func TestAPictureTheFormsDefaultsNameStaysInTheFileAndIsSaid(t *testing.T) {
 	_, plain := removeOne(t, removeFixture(twoPicturesAndText, nil), 1, 0)
 	if plain.Removed[0].StaysInFile {
 		t.Fatal("a picture nothing else names is said to stay in the file")
+	}
+}
+
+// TestEveryObjectCauseIsSaidInTheWindow — `web/app.js`'s OBJECT_CAUSES has exactly pdfops' causes, each with the same
+// sentence, so the window and `nib objects` say one thing (PLAN-image-edit P01.S04; REFLOW_CAUSES' shape).
+func TestEveryObjectCauseIsSaidInTheWindow(t *testing.T) {
+	src, err := os.ReadFile("../../web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "const OBJECT_CAUSES = {")
+	if i < 0 {
+		t.Fatal("web/app.js has no OBJECT_CAUSES table")
+	}
+	j := strings.Index(body[i:], "\n};")
+	table := body[i : i+j]
+	got := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*'([a-z-]+)': (['"])(.*)['"],\s*$`).FindAllStringSubmatch(table, -1) {
+		got[m[1]] = strings.ReplaceAll(m[3], `\'`, "'")
+	}
+	if len(got) < 10 {
+		t.Fatalf("setup: read %d causes from the table — the pattern is not reading it", len(got))
+	}
+	for _, c := range objectCauses() {
+		if got[c] != ObjectCauseWords(c) {
+			t.Errorf("cause %q: the window says %q, pdfops says %q", c, got[c], ObjectCauseWords(c))
+		}
+	}
+	for c := range got {
+		if ObjectCauseWords(c) == "" {
+			t.Errorf("the window has words for %q, which pdfops never answers with", c)
+		}
 	}
 }

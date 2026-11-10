@@ -241,6 +241,8 @@ type objectTagging struct {
 	why   string
 	owner *structElem
 	seq   *markedSeq
+	// alt is the owner's `/Alt`, read while the tree is in hand.
+	alt string
 }
 
 // taggingOf answers objectTagging for every marked picture pr lists, by image index; src is the page's content. tree nil with treeErr nil
@@ -295,7 +297,7 @@ func tagVerdict(ctx *model.Context, tree *structTree, treeErr error, pgObj int, 
 	if e.parent == nil && !otherTopLevelElement(ctx, tree, e) {
 		return objectTagging{why: WhyTaggedLast}
 	}
-	return objectTagging{owner: e, seq: seq}
+	return objectTagging{owner: e, seq: seq, alt: elementAlt(ctx, e)}
 }
 
 // sequenceAround is the innermost marked-content sequence with the picture's MCID that encloses its operator in

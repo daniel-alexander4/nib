@@ -1,10 +1,10 @@
 diff --git a/web/app.js b/web/app.js
 --- a/web/app.js
 +++ b/web/app.js
-@@ -9131,7 +9131,6 @@
- // scrolling has nothing on screen to explain it.
+@@ -11712,7 +11712,6 @@
  function reflectArmedChip() {
-   const tool = armedTool() || view.activeTool;
+   // Edit Objects is armed like a tool but is not a placement tool (PLAN-image-edit P01.S04): it places nothing.
+   const tool = armedTool() || (view.objectsMode ? 'objects' : null) || view.activeTool;
 -  $('armedGroup').hidden = !tool;
    $('armedName').textContent = tool ? (ARMED_NAMES[tool] || 'Tool') : '';
  }

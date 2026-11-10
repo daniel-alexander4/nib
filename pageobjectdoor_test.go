@@ -9,8 +9,7 @@ import (
 // refuses a signed document and one carrying a ceremony record, which `pdfops` cannot (it imports neither `sign` nor
 // `ceremony`), so a caller of `pdfops.EditPageObjects` anywhere else would skip both.
 //
-// The routing half (here): `internal/server` and `internal/cli` each call `objedit.Remove`, the CLI calls
-// `objedit.List` (the server's listing route is P01.S04's, and joins this list then), and
+// The routing half (here): `internal/server` and `internal/cli` each call `objedit.Remove` and `objedit.List`, and
 // nothing outside `internal/objedit` calls `pdfops.EditPageObjects`. The bypass half — no function inside `pdfops`
 // cuts a picture out of a page but the door — is `internal/pdfops`' own
 // `TestEveryPageObjectEditRoutesThroughTheDoorInsidePdfops`, which needs the package's types.
@@ -44,7 +43,7 @@ func TestEveryPageObjectEditRoutesThroughTheDoor(t *testing.T) {
 	if scanned < 100 {
 		t.Fatalf("the scan read %d non-test file(s) — too few to be the tree", scanned)
 	}
-	surfaces := map[string][]string{"Remove": {"server", "cli"}, "List": {"cli"}}
+	surfaces := map[string][]string{"Remove": {"server", "cli"}, "List": {"server", "cli"}}
 	for door, by := range doorCalls {
 		for _, surface := range surfaces[door] {
 			if by[surface] == 0 {

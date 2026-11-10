@@ -712,6 +712,13 @@ body > div[id$="Modal"] {
 .tags-text { flex: 1 1 100%; font-size: 12px; overflow-wrap: anywhere; }
 .tags-row label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }
 .tag-outline { position: absolute; outline: 2px solid var(--blue); outline-offset: 1px; pointer-events: none; z-index: 5; }
+/* Edit Objects (PLAN-image-edit P01.S04): two tones, so the outline reads at 3:1 against any picture or page. */
+.obj-outline { position: absolute; z-index: 6; padding: 0; margin: 0; background: transparent; cursor: pointer;
+  border: 2px solid #000; box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px #fff; }
+.obj-outline.obj-refused { border-style: dashed; cursor: not-allowed; }
+.obj-outline.selected { border-color: var(--blue); border-width: 3px; }
+.obj-outline:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px #fff, 0 0 0 7px #000; } /* the ring is set against black, whatever is under it */
 /* The structure tree panel (P09.S06a). Selection is shown by background AND by the focus ring, never colour alone. */
 .tagtree { list-style: none; margin: 0; padding: 0; }
 .tagtree [role="treeitem"] { font-size: 12px; padding: 3px 4px; border-radius: 4px; overflow-wrap: anywhere; color: var(--subtext0); }

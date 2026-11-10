@@ -75,6 +75,10 @@ function toolbarButtons() {
 const EXEMPT = new Set([
   // A preferences control; acts on no document.
   'editProfileBtn',
+  // Remove from page (PLAN-image-edit P01.S04) is NOT in DOC_REQUIRED because a document alone does not enable it:
+  // it acts on the SELECTED picture, so `reflectObjects` is its one writer, off until Edit Objects is armed and a
+  // removable picture is selected — DOC_REQUIRED would turn it on the moment a document opened.
+  'objectsRemoveBtn',
   // ── The rest became visible when this scan widened from the Edit pane to every pane.
   // Each is document-INDEPENDENT by design, which is why none was ever a defect.
   // They get up-front reasons rather than a blanket skip, per ADR-009.

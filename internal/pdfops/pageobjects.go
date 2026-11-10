@@ -88,6 +88,9 @@ type PageObject struct {
 	// MCID is the MCID in force, or -1; Stream the stream it is in (0 the page's, else a form's object number).
 	MCID   int `json:"mcid"`
 	Stream int `json:"stream"`
+	// Alt is the description (`/Alt`) of the structure element that owns it and would go with it, or "" (P01.S04:
+	// the window names a picture by its place and its description, and warns that the description goes too).
+	Alt string `json:"alt"`
 
 	// span is the operator in its stream; never on the wire — an edit takes it from its own re-read (D2). objNr is
 	// the image XObject's object number, 0 for an inline image.
@@ -146,6 +149,7 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 		tagWhy := WhyTagged
 		if t, ok := tagging[i]; ok {
 			tagWhy = t.why
+			o.Alt = t.alt
 		}
 		o.Editable, o.Why = objectEditability(im, o.OnPage, tagWhy)
 		out.Objects = append(out.Objects, o)

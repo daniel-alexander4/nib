@@ -152,8 +152,9 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// `handleScan`'s shape.
 	// 47: `handlePageObjectsEdit` (PLAN-image-edit P01.S02, ADR-219) removes a picture from the open document and commits
 	// it through commitMutation — `handleTagsEdit`'s shape.
-	if resolveSites != 47 {
-		t.Errorf("expected 47 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 48: `handlePageObjects` (P01.S04) lists one page's pictures for the window — read-only, `handleTagsUntagged`'s shape.
+	if resolveSites != 48 {
+		t.Errorf("expected 48 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and
