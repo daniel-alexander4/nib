@@ -268,6 +268,11 @@ const PUBLISHED = [
 // Every one carries its reason. An unexplained entry here is how a real produced-and-
 // unread shape gets parked and forgotten, which is the failure this file exists for.
 const EXCLUDED = {
+  // PLAN-image-edit P01.S02: `POST /api/page/objects` answers it (the document as every install answers it, and what
+  // was removed). Excluded, not listed with web/app.js, because nothing in the client sends that request yet: the
+  // window's Edit Objects is P01.S04, which reads `removed` and deletes this entry. Its readers today are the route
+  // test (internal/server/pageobjects_test.go) and `nib objects remove`, which prints every field of `removed`.
+  objectEditResponse: 'gated on PLAN-image-edit.md P01.S04 — the window that sends POST /api/page/objects is not built yet',
   // Client → server. These are DESERIALIZED by the handler beside them, so their reader
   // is that handler and the direction of the check is mirrored. The mirror class — a
   // field the client sends and the server never reads — is NOT covered by this file.

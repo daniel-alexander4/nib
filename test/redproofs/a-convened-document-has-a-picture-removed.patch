@@ -1,0 +1,12 @@
+diff --git a/internal/objedit/objedit.go b/internal/objedit/objedit.go
+--- a/internal/objedit/objedit.go
++++ b/internal/objedit/objedit.go
+@@ -36,7 +36,7 @@
+ 		ref := pdfops.RefuseObject(pdfops.CauseCeremony, 0, -1, err)
+ 		ref.Detail = "Nib could not read whether it carries a ceremony record."
+ 		return ref
+-	case rec != nil:
++	case rec != nil && false:
+ 		return pdfops.RefuseObject(pdfops.CauseCeremony, 0, -1, nil)
+ 	}
+ 	return nil

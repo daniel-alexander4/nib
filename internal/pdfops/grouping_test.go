@@ -295,6 +295,10 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 			"readPageDrawings": "the objects reader lists the pictures the region reader's walk kept, each at its own operator, for an edit to address (PLAN-image-edit D1); it reads no runs and groups nothing",
 			"pageRuns":         "pageObjectsOf takes the walk's images and its count of unread forms from the one walk; it reads no runs and groups nothing",
 		},
+		"pageobjectedit.go": {
+			"readPageDrawings": "the edit door re-reads a page's pictures to check an address and to read the written page back (PLAN-image-edit D2); it compares run texts and groups nothing",
+			"pageRuns":         "the door's tagging verdict reads the walk's images and marked sequences; it groups no runs",
+		},
 		"structview.go": {
 			"readPageRuns": "the structure view matches an existing tree's MCIDs to the text drawn under them, the truth reader's way, and groups nothing (P09.S01)",
 		},

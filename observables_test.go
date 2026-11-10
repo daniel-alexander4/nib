@@ -424,8 +424,9 @@ var published = map[string][]string{
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
 // unread observable gets parked and forgotten, which is the failure this file exists for.
 var excluded = map[string]string{
-	"pdfops.PageObjects":     "gated on PLAN-image-edit.md P01.S02, whose route publishes it to web/app.js (the window's Edit Objects, P01.S04); today only build/objectdelete.sh (TestObjectDeleteCorpus) and pageobjects_test.go read it.",
-	"pdfops.PageImageResult": "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
+	"pdfops.PageObjects":      "gated on PLAN-image-edit.md P01.S04: `nib objects` publishes it (P01.S02); S04 builds `GET /api/page/objects` and the window's Edit Objects, which read it; today `nib objects` prints it, and the route tests and build/objectdelete.sh read it.",
+	"pdfops.ObjectEditResult": "gated on PLAN-image-edit.md P01.S04: `POST /api/page/objects` answers it and the window says it in S04 (the description going, links kept, the picture staying in the file); today `nib objects remove` prints every field and the route test reads it.",
+	"pdfops.PageImageResult":  "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
 }
 
 // internalShapes names each shape whose declared readers are ALL inside its own declaring

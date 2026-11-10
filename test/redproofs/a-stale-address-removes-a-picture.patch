@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjects.go b/internal/pdfops/pageobjects.go
+--- a/internal/pdfops/pageobjects.go
++++ b/internal/pdfops/pageobjects.go
+@@ -203,7 +203,7 @@
+ 		return PageObject{}, false
+ 	}
+ 	o := objs.Objects[ordinal]
+-	if o.Ordinal != ordinal || o.Digest != digest {
++	if o.Ordinal != ordinal {
+ 		return PageObject{}, false
+ 	}
+ 	return o, true

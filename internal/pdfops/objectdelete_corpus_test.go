@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"nib/internal/contentstream"
 	"nib/internal/pdfread"
 	"nib/internal/uacheck"
 
@@ -67,7 +66,7 @@ func readPageForProbe(pdf []byte, page int) (pageReading, error) {
 	if err != nil {
 		return pageReading{}, err
 	}
-	return pageReading{objs: pageObjectsOf(page, newDisplaySpace(pg), pr), runs: len(pr.runs), text: runsKey(pr.runs)}, nil
+	return pageReading{objs: pageObjectsOf(page, newDisplaySpace(pg), pr, nil), runs: len(pr.runs), text: runsKey(pr.runs)}, nil
 }
 
 // scoreDeletion is the oracle: after is what the page reads once the picture at addressed was removed from before.
@@ -100,31 +99,16 @@ func scoreDeletion(before, after pageReading, addressed int) (string, string) {
 type deletion struct {
 	outcome, why string
 	out          []byte
+	// shared says the door answered that the picture stays in the file (`StaysInFile`: another page draws it, or the
+	// form's default resources name it).
+	shared bool
 }
 
-// removeObject writes pdf with the picture at (page, ordinal, digest) removed: the page is re-read inside the write and
-// the address must name the same operator there (D2), and only its span is cut — `q`, `cm` and `Q` stay (D3).
-func removeObject(pdf []byte, page, ordinal int, digest string) ([]byte, error) {
-	return writeMutated(pdf, func(ctx *model.Context) error {
-		pg := pageAt(ctx, pdfread.Pages(ctx), page)
-		pr, err := readPageDrawings(ctx, pg)
-		if err != nil {
-			return err
-		}
-		o, ok := ObjectAt(pageObjectsOf(page, newDisplaySpace(pg), pr), ordinal, digest)
-		if !ok {
-			return fmt.Errorf("object-changed: page %d has no picture %d with that digest", page, ordinal)
-		}
-		src, err := pdfread.PageContent(ctx, pg.Dict, page)
-		if err != nil {
-			return err
-		}
-		edited, err := contentstream.NewEdit(src).Replace(o.span.start, o.span.end, nil).Apply()
-		if err != nil {
-			return err
-		}
-		return setPageContent(ctx, pg.Dict, edited)
-	})
+// removeObject writes pdf with the picture at (page, ordinal, digest) removed, through the shipping door
+// (`EditPageObjects`, P01.S02): the page re-read inside the write, the address checked (D2), only the operator cut
+// (D3), its structure and resources with it, and the output read back.
+func removeObject(pdf []byte, page, ordinal int, digest string) ([]byte, ObjectEditResult, error) {
+	return EditPageObjects(pdf, []ObjectEdit{{Kind: ObjectEditDelete, Page: page, Ordinal: ordinal, Digest: digest}})
 }
 
 // probeDeletion removes the picture objs lists at ordinal and scores the page read back.
@@ -133,16 +117,17 @@ func probeDeletion(pdf []byte, page int, objs PageObjects, ordinal int) deletion
 	if err != nil {
 		return deletion{outcome: deletedUnreadable, why: err.Error()}
 	}
-	out, err := removeObject(pdf, page, ordinal, objs.Objects[ordinal].Digest)
+	out, res, err := removeObject(pdf, page, ordinal, objs.Objects[ordinal].Digest)
 	if err != nil {
 		return deletion{outcome: deletedNotWritten, why: err.Error()}
 	}
+	shared := len(res.Removed) == 1 && res.Removed[0].StaysInFile
 	after, err := readPageForProbe(out, page)
 	if err != nil {
 		return deletion{outcome: deletedUnreadable, why: err.Error(), out: out}
 	}
 	outcome, why := scoreDeletion(before, after, ordinal)
-	return deletion{outcome: outcome, why: why, out: out}
+	return deletion{outcome: outcome, why: why, out: out, shared: shared}
 }
 
 // imageStreams hashes the raw bytes of every image XObject in pdf, by object number.
@@ -216,6 +201,11 @@ type deleteTally struct {
 	// residue: of the deleted XObject pictures, how many are still in the file (same raw bytes) and how many pdfcpu's
 	// extraction still finds on the page.
 	inFile, notInFile, extractable, notExtractable, residueUnread int
+	// inFileShared are pictures still in the file that the door said another page draws; inFileAlone those it did not —
+	// D3's residue pin: the second must be zero.
+	inFileShared, inFileAlone int
+	// moreClauses counts, per checker clause, the documents a deletion made fail it newly.
+	moreClauses map[string]int
 	// checker: one deletion per document is checked before and after.
 	checked, uncheckable, moreDefects, fewerDefects, sameDefects int
 	byteChange                                                   int64
@@ -274,7 +264,7 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 			t.clean++
 			t.byteChange += int64(len(d.out) - len(pdf))
 			if o.objNr != 0 {
-				t.residue(pdf, d.out, page, o.objNr)
+				t.residue(pdf, d.out, page, o.objNr, d.shared)
 			}
 			if !checkedThisDoc {
 				checkedThisDoc = true
@@ -286,6 +276,11 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 				case defectChange(before, after) == "more":
 					t.checked++
 					t.moreDefects++
+					for c := range after {
+						if !before[c] {
+							t.note(&t.moreClauses, c)
+						}
+					}
 				case defectChange(before, after) == "fewer":
 					t.checked++
 					t.fewerDefects++
@@ -298,7 +293,7 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 	}
 }
 
-func (t *deleteTally) residue(pdf, out []byte, page, objNr int) {
+func (t *deleteTally) residue(pdf, out []byte, page, objNr int, shared bool) {
 	before, err1 := imageStreams(pdf)
 	after, err2 := imageStreams(out)
 	ex, err3 := extractableObjects(out, page)
@@ -314,9 +309,14 @@ func (t *deleteTally) residue(pdf, out []byte, page, objNr int) {
 			break
 		}
 	}
-	if found {
+	switch {
+	case found && shared:
 		t.inFile++
-	} else {
+		t.inFileShared++
+	case found:
+		t.inFile++
+		t.inFileAlone++
+	default:
 		t.notInFile++
 	}
 	if ex[objNr] {
@@ -347,11 +347,11 @@ func counts(m map[string]int) string {
 
 func (t *deleteTally) summary() string {
 	return fmt.Sprintf("docs=%d unreadable=%d not-rewritable=%d panicked=%d pictures=%d forms-not-read=%d "+
-		"not-editable[%s] attempted=%d clean=%d differs[%s] residue: in-file=%d gone=%d extractable=%d not-extractable=%d unread=%d "+
-		"checker: checked=%d uncheckable=%d more=%d fewer=%d same=%d bytes-change=%d",
+		"not-editable[%s] attempted=%d clean=%d differs[%s] residue: in-file=%d (kept by another holder %d, alone %d) gone=%d extractable=%d not-extractable=%d unread=%d "+
+		"checker: checked=%d uncheckable=%d more=%d[%s] fewer=%d same=%d bytes-change=%d",
 		t.docs, t.unreadable, t.notRewritable, t.panicked, t.pictures, t.formsNotRead, counts(t.notEditable), t.attempted,
-		t.clean, counts(t.differs), t.inFile, t.notInFile, t.extractable, t.notExtractable, t.residueUnread,
-		t.checked, t.uncheckable, t.moreDefects, t.fewerDefects, t.sameDefects, t.byteChange)
+		t.clean, counts(t.differs), t.inFile, t.inFileShared, t.inFileAlone, t.notInFile, t.extractable, t.notExtractable, t.residueUnread,
+		t.checked, t.uncheckable, t.moreDefects, counts(t.moreClauses), t.fewerDefects, t.sameDefects, t.byteChange)
 }
 
 // verdict is the run's three-way answer: too few pictures to say anything, a finding, or clean.
@@ -363,6 +363,8 @@ func (t *deleteTally) verdict() (ok bool, msg string) {
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d document(s) panicked the probe", t.panicked)
 	case t.clean != t.attempted:
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d of %d deletions read differently afterwards (%s)", t.attempted-t.clean, t.attempted, counts(t.differs))
+	case t.inFileAlone > 0:
+		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d removed picture(s) are still in the file and no other page draws them (D3's prune)", t.inFileAlone)
 	}
 	return true, ""
 }

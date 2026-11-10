@@ -85,6 +85,18 @@ var inspectionSites = map[string]func(pdf []byte) any{
 	// What every page draws that no element owns (ADR-125): page 0 is the whole document.
 	"ReadUntagged":    func(pdf []byte) any { u, err := ReadUntagged(pdf, 0); return []any{u, failed(err)} },
 	"ReadPageObjects": func(pdf []byte) any { o, err := ReadPageObjects(pdf, 1); return []any{o, failed(err)} },
+	// The edit door's after-check (PLAN-image-edit D2's pin), asked of page 1 as it stands.
+	"verifyWritten": func(pdf []byte) any {
+		ctx, err := inspectionRead(pdf)
+		if err != nil {
+			return failed(err)
+		}
+		keep, err := pageAsItStands(ctx, pageAt(ctx, pdfread.Pages(ctx), 1), 1)
+		if err != nil {
+			return failed(err)
+		}
+		return failed(verifyWritten(pdf, []pageRemoval{keep}))
+	},
 	// Reviewed as proposed: every element kept in the role it was offered.
 	"CommitTags": func(pdf []byte) any {
 		p, err := ProposeTags(pdf)

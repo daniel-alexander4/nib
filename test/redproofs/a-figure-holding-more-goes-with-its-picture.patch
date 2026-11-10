@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
+--- a/internal/pdfops/pageobjectedit.go
++++ b/internal/pdfops/pageobjectedit.go
+@@ -285,7 +285,7 @@
+ 	if e.objNr == 0 || (e.parent != nil && e.parent.objNr == 0) {
+ 		return objectTagging{why: WhyTagged}
+ 	}
+-	if entries, _ := kidsArray(ctx, e.dict); len(entries) != 1 {
++	if entries, _ := kidsArray(ctx, e.dict); false && len(entries) != 1 {
+ 		return objectTagging{why: WhyTaggedShared}
+ 	}
+ 	if e.parent == nil && !otherTopLevelElement(ctx, tree, e) {

@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjects.go b/internal/pdfops/pageobjects.go
+--- a/internal/pdfops/pageobjects.go
++++ b/internal/pdfops/pageobjects.go
+@@ -159,8 +159,6 @@
+ // the page's to edit whatever else is true of it.
+ func objectEditability(im drawnImage, onPage bool, tagWhy string) (bool, string) {
+ 	switch {
+-	case im.inForm:
+-		return false, WhyFormDrawn
+ 	case !finiteBox(im.box):
+ 		return false, WhyUnreadableBox
+ 	case !onPage:

@@ -1,0 +1,12 @@
+diff --git a/internal/objedit/objedit.go b/internal/objedit/objedit.go
+--- a/internal/objedit/objedit.go
++++ b/internal/objedit/objedit.go
+@@ -28,7 +28,7 @@
+ // lets an edit through; an entry, two entries, an embedded-files list nib could not read in full, and any other
+ // failure to look refuse.
+ func documentRefusal(pdf []byte) *pdfops.ObjectRefusal {
+-	if sign.HasSignatureBlob(pdf) {
++	if false && sign.HasSignatureBlob(pdf) {
+ 		return pdfops.RefuseObject(pdfops.CauseSigned, 0, -1, nil)
+ 	}
+ 	switch rec, err := pdfops.CeremonyRecord(pdf); {

@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -72,6 +73,7 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		t.Fatal("setup: the labelled two-page fixture does not claim both PDF/UA and PDF/A")
 	}
 	driven := 0
+	var drivenNames []string
 	var kept, keptA, unasked, unchanged []string
 	names := make([]string, 0, len(tagFates))
 	for n := range tagFates {
@@ -116,6 +118,7 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 			continue
 		}
 		driven++
+		drivenNames = append(drivenNames, name)
 		p := catalogPacket(t, out)
 		if !exemptUA && claimsUA(t, p) {
 			kept = append(kept, name)
@@ -137,6 +140,11 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		t.Errorf("the operations that returned the labelled fixture unchanged are [%s], want [%s].\n"+
 			"A row that changes nothing is asked nothing here: give it a fixture it changes (`uaDrive`), or add "+
 			"it to this list with the reason it has nothing to do.", got, want)
+	}
+	// A row whose drive errors is only logged above, so the picture edit is asked for by name (PLAN-image-edit
+	// P01.S02, plan-review pin: UA census): its own fixture carries a picture and both identifications.
+	if !slices.Contains(drivenNames, "EditPageObjects") {
+		t.Error("EditPageObjects was not driven: its fixture did not reach the edit")
 	}
 	if driven < 20 {
 		t.Errorf("only %d operation(s) were driven; the census is reporting coverage it barely has", driven)

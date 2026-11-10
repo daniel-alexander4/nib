@@ -349,7 +349,7 @@ func ReadUntagged(pdf []byte, page int) (UntaggedContent, error) {
 		}
 		sp := newDisplaySpace(pg)
 		// The image rows are the page objects' (`ReadPageObjects` is the one listing of a page's images, PLAN-image-edit D1).
-		out.Pieces = append(out.Pieces, untaggedPieces(nr, sp, groupUnowned(pr.runs), pageObjectsOf(nr, sp, pr).Objects, pr.paths)...)
+		out.Pieces = append(out.Pieces, untaggedPieces(nr, sp, groupUnowned(pr.runs), pageObjectsOf(nr, sp, pr, nil).Objects, pr.paths)...)
 	}
 	return out, nil
 }

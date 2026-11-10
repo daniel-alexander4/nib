@@ -48,8 +48,9 @@ func tooManyImages(n int) error {
 const (
 	// WhyFormDrawn: a form XObject's stream draws it, and editing the form changes every page that draws it (L5).
 	WhyFormDrawn = "form-drawn"
-	// WhyTagged: a marked-content sequence with an MCID is open around it, so a structure element owns it (D4; S02
-	// narrows this to a Figure that holds other content).
+	// WhyTagged: a marked-content sequence with an MCID is open around it and Nib cannot take its structure apart
+	// safely — two elements own it, its owner is written inline, the tree does not read, or it was not asked
+	// (D4; the other tagged causes are `WhyTaggedShared` and `WhyTaggedLast`).
 	WhyTagged = "tagged"
 	// WhyNotIsolated: no `q` is open around it, so nothing brackets the state it is drawn in (D3's hostile pin).
 	WhyNotIsolated = "not-isolated"
@@ -118,12 +119,19 @@ func ReadPageObjects(pdf []byte, page int) (PageObjects, error) {
 	if err != nil {
 		return PageObjects{}, err
 	}
-	return pageObjectsOf(page, newDisplaySpace(pg), pr), nil
+	var tagging map[int]objectTagging
+	if src, serr := pdfread.PageContent(ctx, pg.Dict, page); pg.Ref != nil && serr == nil {
+		tree, treeErr := readTreeForEdit(ctx, livePageObjects(ctx))
+		tagging = taggingOf(ctx, tree, treeErr, pg.Ref.ObjectNumber.Value(), pr, src)
+	}
+	return pageObjectsOf(page, newDisplaySpace(pg), pr, tagging), nil
 }
 
 // pageObjectsOf lists pr's images as page objects — the one place `pageRuns.images` becomes a listing. pr must come
-// from the region reader (`readPageDrawings`), the only one that sets an image's digest.
-func pageObjectsOf(nr int, sp displaySpace, pr pageRuns) PageObjects {
+// from the region reader (`readPageDrawings`), the only one that sets an image's digest. tagging is what the
+// structure tree says of each marked picture (`taggingOf`); nil means it was not asked, and every marked picture is
+// then `tagged`.
+func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectTagging) PageObjects {
 	out := PageObjects{Page: nr, Objects: make([]PageObject, 0, len(pr.images)), FormsNotRead: pr.formsUnread}
 	for i, im := range pr.images {
 		o := PageObject{Page: nr, Ordinal: i, Kind: "image", Digest: hex.EncodeToString(im.digest[:]), QDepth: im.qDepth,
@@ -135,16 +143,21 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns) PageObjects {
 			o.PlaceSpan = &[2]int{im.place.start, im.place.end}
 		}
 		o.Box, o.OnPage = pieceRect(sp, im.box)
-		o.Editable, o.Why = objectEditability(im, o.OnPage)
+		tagWhy := WhyTagged
+		if t, ok := tagging[i]; ok {
+			tagWhy = t.why
+		}
+		o.Editable, o.Why = objectEditability(im, o.OnPage, tagWhy)
 		out.Objects = append(out.Objects, o)
 	}
 	return out
 }
 
 // objectEditability is the ONE answer to whether an edit may act on a picture, and why not. onPage is whether its
-// box places on the displayed page (`pieceRect`). Order is the order of the causes' weight: a form-drawn picture is
-// not the page's to edit whatever else is true of it.
-func objectEditability(im drawnImage, onPage bool) (bool, string) {
+// box places on the displayed page (`pieceRect`); tagWhy is the structure tree's verdict on a marked picture ("" when
+// it may go with its element, `tagVerdict`). Order is the order of the causes' weight: a form-drawn picture is not
+// the page's to edit whatever else is true of it.
+func objectEditability(im drawnImage, onPage bool, tagWhy string) (bool, string) {
 	switch {
 	case im.inForm:
 		return false, WhyFormDrawn
@@ -152,8 +165,8 @@ func objectEditability(im drawnImage, onPage bool) (bool, string) {
 		return false, WhyUnreadableBox
 	case !onPage:
 		return false, WhyOffPage
-	case im.marked:
-		return false, WhyTagged
+	case im.marked && tagWhy != "":
+		return false, tagWhy
 	case im.qDepth < 1:
 		return false, WhyNotIsolated
 	}

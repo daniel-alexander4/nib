@@ -150,8 +150,10 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 45: `handleExportSVG` (ADR-205) reads the open document's bytes and answers one page drawn as an SVG — `handleExportDocument`'s shape.
 	// 46: `handleInspect` (/pending 406) reads the open document's bytes for what it says about itself — read-only,
 	// `handleScan`'s shape.
-	if resolveSites != 46 {
-		t.Errorf("expected 46 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 47: `handlePageObjectsEdit` (PLAN-image-edit P01.S02, ADR-219) removes a picture from the open document and commits
+	// it through commitMutation — `handleTagsEdit`'s shape.
+	if resolveSites != 47 {
+		t.Errorf("expected 47 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

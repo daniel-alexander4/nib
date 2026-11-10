@@ -329,6 +329,8 @@ var geometryKeepers = map[string]func(t *testing.T, pdf []byte) ([]byte, error){
 		return CommitTags(pdf, reviews)
 	},
 	"RemoveStructure": func(_ *testing.T, pdf []byte) ([]byte, error) { return RemoveStructure(pdf) },
+	// Removing a picture cuts its operator and moves nothing else the page draws (PLAN-image-edit P01.S02, D3).
+	"EditPageObjects": func(_ *testing.T, pdf []byte) ([]byte, error) { return removeFirstPicture(pdf) },
 	"EditStructure": func(_ *testing.T, pdf []byte) ([]byte, error) {
 		v, err := readStructureView(pdf)
 		if err != nil {
@@ -356,6 +358,60 @@ var notApplicable = map[string]bool{
 	"CommitTags/tagged": true, "CommitTags/scan": true,
 	"EditStructure/body text": true, "EditStructure/scan": true, "EditStructure/turned and offset": true,
 	"RemoveStructure/body text": true, "RemoveStructure/scan": true, "RemoveStructure/turned and offset": true,
+	// Removing a picture takes its operator away by design, which this test's "draws its own content unchanged"
+	// cannot tell from moving it; three fixtures draw no picture at all. What a flag needs — that nothing ELSE the
+	// page draws moves — is `TestRemovingAPictureMovesNothingElseAFlagCouldBeBeside` (PLAN-image-edit P01.S02).
+	"EditPageObjects/body text": true, "EditPageObjects/scan": true, "EditPageObjects/tagged": true, "EditPageObjects/turned and offset": true,
+}
+
+// TestRemovingAPictureMovesNothingElseAFlagCouldBeBeside — the flag census's question for a picture's removal: on the
+// flagged scan, the page afterwards draws exactly its operators before minus the one `Do`, at the same size.
+func TestRemovingAPictureMovesNothingElseAFlagCouldBeBeside(t *testing.T) {
+	doc := flaggedFixtures(t)["scan"]
+	out, err := removeFirstPicture(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keepsDrawnGeometry(doc, out); err == nil {
+		t.Fatal("setup: the census's own check passed, so the picture was not removed")
+	}
+	bctx, err := pdfread.ReadOptimized(doc, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actx, err := pdfread.ReadOptimized(out, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, ap := pdfread.Pages(bctx), pdfread.Pages(actx)
+	bc, _ := pdfread.PageContent(bctx, bp[0].Dict, 1)
+	ac, _ := pdfread.PageContent(actx, ap[0].Dict, 1)
+	was, is := drawnOps(bc), drawnOps(ac)
+	gone := -1
+	for i, op := range was {
+		if opName(op) == "Do" {
+			gone = i
+			break
+		}
+	}
+	want := append(append([]string{}, was[:gone]...), was[gone+1:]...)
+	if gone < 0 || strings.Join(is, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("after removing the picture the page draws %q, want its operators before minus the Do: %q", is, want)
+	}
+	bw, bh := mustShown(t, bp[0]).size()
+	aw, ah := mustShown(t, ap[0]).size()
+	if !shownNear(bw, aw) || !shownNear(bh, ah) {
+		t.Fatalf("the page is shown at %.2fx%.2f, was %.2fx%.2f", aw, ah, bw, bh)
+	}
+}
+
+func mustShown(t *testing.T, pg pdfread.Page) shown {
+	t.Helper()
+	s, err := shownOf(pg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func TestEveryRewriteOfAHeldDocumentKeepsWhatAFlagWasPlacedBeside(t *testing.T) {

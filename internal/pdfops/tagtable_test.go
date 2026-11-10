@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -243,6 +244,34 @@ var tagFates = map[string]tagFate{
 	"ShrinkToSize":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { out, _, err := ShrinkToSize(b, 1<<20); return out, err }},
 	"StampPages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return StampPages(b, PageStamp{Kind: StampKindImage, Image: onePixelPNG(), Pages: []string{"1"}})
+	}},
+	// A picture removed from a page (PLAN-image-edit P01.S02). `drive` acts on the census's own fixture, which draws no
+	// picture, so the censuses that use it (this one, the ua1 oracle, the XFA census, the flag census) record it as not
+	// exercised rather than measuring a document they did not hand it; the tagged case is held by
+	// `TestAFiguresOnlyPictureGoesWithItsElement` (completeness gate, no new defect). The identification census's
+	// `uaDrive` builds a picture page that carries both identifications, so that census does drive it.
+	"EditPageObjects": {verdict: "carried", drive: removeFirstPicture, uaDrive: func(b []byte) ([]byte, error) {
+		// The XFA census reads this drive too: a document carrying an XFA form is acted on as given, so its refusal
+		// (ADR-145, `pdfread.Write`) or its having no picture is what it measures, never a document built here.
+		if x, err := pdfread.ReadXFA(b); err == nil && x != "" {
+			return removeFirstPicture(b)
+		}
+		titled, err := SetTitle(removeFixture(twoPicturesAndText, nil), "Census")
+		if err != nil {
+			return nil, err
+		}
+		ua, err := testpdf.WithUAIdentification(titled)
+		if err != nil {
+			return nil, err
+		}
+		in, err := testpdf.WithPDFAIdentification(ua)
+		if err != nil {
+			return nil, err
+		}
+		if claims, err := testpdf.ClaimsUA(in); err != nil || !claims {
+			return nil, fmt.Errorf("setup: the picture fixture does not claim PDF/UA (%v)", err)
+		}
+		return removeFirstPicture(in)
 	}},
 	"AddNotes":      {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddNotes(b, []Note{{Page: 1, X: 10, Y: 10, Text: "n"}}) }},
 	"AddAttachment": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddAttachment(b, "a.txt", []byte("hi")) }},

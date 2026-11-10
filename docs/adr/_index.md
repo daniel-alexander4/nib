@@ -1061,3 +1061,5 @@ home today.
   — `Format.Kind` (six groups) on every row and in the status; groups and formats alphabetical; `(<tool> is installed)` / `(needs <tool>, not found on this computer)` / `(built in)`.
 - [ADR-218](218-helper-programs-is-a-settings-page-and-opens-panel-is-nibs-own.md) — **Helper Programs is a Settings page, and Open…'s panel is Nib's own**
   — seven Settings entries; six programs with what, how, indicator and link (held to `MissingTool.Vendor`); `#openFormats` replaces the `title` (hover, focus, scroll, Escape); green/red per-theme tokens; a not-found line opens its program's section (`toolKey`).
+- [ADR-219](219-a-picture-is-removed-through-one-door-that-refuses-a-signed-or-ceremony-document.md) — **A picture is removed from a page through one door, which refuses a signed or ceremony document**
+  — `pdfops.EditPageObjects` behind `internal/objedit`; address (page, ordinal, digest) re-checked in the rewrite; operator only, resources pruned, `/Thumb` dropped; a tagged picture goes with its element or refuses by cause; the page read back.

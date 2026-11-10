@@ -91,8 +91,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
-		"ReadPageObjects":        "gated — PLAN-image-edit.md P01.S02. The objects reader; its route `POST /api/page/objects` and the CLI verb are S02's, and `build/objectdelete.sh` reads it today.",
-		"ObjectAt":               "gated — PLAN-image-edit.md P01.S02. The address check the delete door makes on its re-read (D2); only pageobjects_test.go reads it today.",
 		"PageLinks":              "gated — PLAN-import-export.md P02.S03c. The document model reads links through pageLinksIn; this is the by-bytes door beside MapPage.",
 		"ExportPages":            "gated — PLAN-import-export.md P02.S03c. The document model's page read; only exportpage_test.go reads it today.",
 		"PlaceholderCounts":      "gated — PLAN-import-export.md P02.S03c. What an export says it could not carry; the model's notice reads it.",
@@ -109,6 +107,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"ExportBidi":             "test-support — three text-direction controls in a Hebrew line; docmodel/read's test counts them (/pending 947).",
 		"ExportModelSet":         "test-support — the document model reader's fixtures (visibility, tree against proposal); docmodel/read's tests read them (ADR-192).",
 		"FormatMIMEs":            "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
+		"TwoPictures":            "test-support — testpdf's two-picture page, the fixture the page objects' wrapper, route and CLI tests remove a picture from (PLAN-image-edit P01.S02).",
 		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +
 			"compare the signature block a party was shown with the one embedded (ADR-158, /pending 367).",
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +

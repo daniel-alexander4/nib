@@ -159,9 +159,11 @@ func TestACmWithNoQIsNotIsolated(t *testing.T) {
 	}
 }
 
-func TestAPictureThatIsAMarkedSequencesOnlyContentIsTagged(t *testing.T) {
+// A marked picture in a document with NO structure tree is owned by nothing, so it is removable with its bracket
+// (P01.S02 refined S01's blanket `tagged`: pageobjectedit_test.go holds the tree's cases).
+func TestAPictureThatIsAMarkedSequencesOnlyContentIsRemovableWithNoTree(t *testing.T) {
 	objs := readObjects(t, objectsFixture("/Figure <</MCID 3>> BDC q 10 0 0 10 5 5 cm /Im0 Do Q EMC\n/Artifact BMC q 10 0 0 10 50 5 cm /Im1 Do Q EMC"), 1)
-	wantWhys(t, objs, WhyTagged, "ok")
+	wantWhys(t, objs, "ok", "ok")
 	if objs.Objects[0].MCID != 3 || !objs.Objects[0].Tagged || !objs.Objects[1].Decoration || objs.Objects[1].MCID != -1 {
 		t.Fatalf("objects = %+v", objs.Objects)
 	}

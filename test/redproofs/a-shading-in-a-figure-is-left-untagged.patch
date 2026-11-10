@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
+--- a/internal/pdfops/pageobjectedit.go
++++ b/internal/pdfops/pageobjectedit.go
+@@ -334,7 +334,7 @@
+ 		if at >= im.start && at < im.end {
+ 			continue
+ 		}
+-		if tok.Kind == contentstream.Operator && paintingOperators[string(tok.Bytes(src[seq.opener.end:end]))] {
++		if false && tok.Kind == contentstream.Operator && paintingOperators[string(tok.Bytes(src[seq.opener.end:end]))] {
+ 			return true
+ 		}
+ 	}

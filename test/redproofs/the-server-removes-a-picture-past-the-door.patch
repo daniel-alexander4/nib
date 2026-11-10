@@ -1,0 +1,12 @@
+diff --git a/internal/server/pageobjects.go b/internal/server/pageobjects.go
+--- a/internal/server/pageobjects.go
++++ b/internal/server/pageobjects.go
+@@ -79,7 +79,7 @@
+ 	// Read ONCE: this is the state the undo entry records, and the base the commit checks (commitMutation's
+ 	// contract) — the route edits the server's own bytes, so no client revision is echoed (lostupdate_test.go).
+ 	before := s.docBytes(doc)
+-	result, res, err := objedit.Remove(before, edits)
++	result, res, err := pdfops.EditPageObjects(before, edits)
+ 	if err != nil {
+ 		writeObjectRefusal(w, err)
+ 		return

@@ -1,0 +1,11 @@
+diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
+--- a/internal/pdfops/pageobjectedit.go
++++ b/internal/pdfops/pageobjectedit.go
+@@ -467,7 +467,6 @@
+ 			r := &plans[i].removed[j]
+ 			r.SharedWith = pagesNamingXObject(ctx, walked, objNr)
+ 			if len(r.SharedWith) == 0 {
+-				dropFromPageTreeNodes(ctx, objNr)
+ 			}
+ 			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
+ 		}

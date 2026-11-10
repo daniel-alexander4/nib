@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
+--- a/internal/pdfops/pageobjectedit.go
++++ b/internal/pdfops/pageobjectedit.go
+@@ -166,7 +166,7 @@
+ 		if errors.As(err, &ref) {
+ 			return nil, ObjectEditResult{}, err
+ 		}
+-		return nil, ObjectEditResult{}, RefuseObject(CauseNotRewritable, 0, -1, err)
++		return nil, ObjectEditResult{}, err
+ 	}
+ 	if err := verifyWritten(out, plans); err != nil {
+ 		return nil, ObjectEditResult{}, err

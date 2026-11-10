@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
+--- a/internal/pdfops/pageobjectedit.go
++++ b/internal/pdfops/pageobjectedit.go
+@@ -469,7 +469,7 @@
+ 			if len(r.SharedWith) == 0 {
+ 				dropFromPageTreeNodes(ctx, objNr)
+ 			}
+-			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
++			r.StaysInFile = len(r.SharedWith) > 0
+ 		}
+ 	}
+ 	return append(plans, extra...), nil

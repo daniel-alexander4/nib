@@ -39,10 +39,12 @@ var flagRoutes = map[string]flagRoute{
 	"handleTagsCommit":    {"keepsGeometry", []string{"tagwrite.Commit"}, []string{"CommitTags"}},
 	"handleTagsEdit":      {"keepsGeometry", []string{"tagwrite.Edit"}, []string{"EditStructure"}},
 	"handleTagsRemove":    {"keepsGeometry", []string{"tagwrite.Remove"}, []string{"RemoveStructure"}},
-	"handleReflow":        {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
-	"handlePages":         {"flagsStripped", []string{"formFileBytes"}, nil},
-	"handleOutlineSet":    {"flagsStripped", []string{"formFileBytes"}, nil},
-	"handleReload":        {"installsFile", nil, nil},
+	// A picture's operator is cut and nothing else the page draws moves (PLAN-image-edit P01.S02, D3).
+	"handlePageObjectsEdit": {"keepsGeometry", []string{"objedit.Remove"}, []string{"EditPageObjects"}},
+	"handleReflow":          {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
+	"handlePages":           {"flagsStripped", []string{"formFileBytes"}, nil},
+	"handleOutlineSet":      {"flagsStripped", []string{"formFileBytes"}, nil},
+	"handleReload":          {"installsFile", nil, nil},
 }
 
 // TestEveryRewriteOfAHeldDocumentIsClassifiedForItsFlags is the census: every function in this package that
