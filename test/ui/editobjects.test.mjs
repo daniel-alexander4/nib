@@ -101,3 +101,51 @@ test('a click on the second of two pictures on a turned page removes that pictur
   for (let i = 0; i < 60 && (await served()) === removed; i++) await page.waitForTimeout(250);
   assert.equal(await served(), opened, 'Undo did not bring back the document byte for byte');
 });
+
+// PLAN-image-edit P02.S03: a drag on the turned page moves the second picture by what the pointer travelled, in the
+// page's displayed fractions; the server reads it back there, the page draws it there, and Undo puts the bytes back.
+test('a drag moves the second picture on the turned page where the pointer went, and Undo puts the bytes back', async () => {
+  const opened = await served();
+  const before = await listing();
+  assert.equal(before.length, 2, `setup: the page lists ${before.length} pictures, want 2`);
+  assert.ok(before[1].movable, `setup: the second picture is not movable (${before[1].moveWhy})`);
+  if (await page.evaluate(() => document.getElementById('objectsBtn').getAttribute('aria-pressed') !== 'true')) await page.click('#objectsBtn');
+  await page.waitForFunction(() => document.querySelectorAll('.viewerContainer:not([hidden]) .obj-outline').length === 2, null, { timeout: 15000 });
+
+  const geo = await page.evaluate((box) => {
+    const pageEl = document.querySelector('.viewerContainer:not([hidden]) .page');
+    pageEl.scrollIntoView({ block: 'center' });
+    const rect = pageEl.getBoundingClientRect();
+    const cs = getComputedStyle(pageEl);
+    const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+    const w = rect.width - bl - (parseFloat(cs.borderRightWidth) || 0);
+    const hgt = rect.height - bt - (parseFloat(cs.borderBottomWidth) || 0);
+    const [l, t, r, b] = box;
+    return { x0: rect.x + bl, y0: rect.y + bt, w, h: hgt, cx: rect.x + bl + w * (l + r) / 2, cy: rect.y + bt + hgt * (t + b) / 2 };
+  }, before[1].box);
+  const dx = -Math.round(geo.w * 0.3), dy = -Math.round(geo.h * 0.2);
+  await page.mouse.move(Math.round(geo.cx), Math.round(geo.cy));
+  await page.mouse.down();
+  await page.mouse.move(Math.round(geo.cx) + dx / 2, Math.round(geo.cy) + dy / 2, { steps: 4 });
+  await page.mouse.move(Math.round(geo.cx) + dx, Math.round(geo.cy) + dy, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(() => /^Moved the picture/.test(document.getElementById('objectNoticeText').textContent), null, { timeout: 15000 });
+
+  const after = await listing();
+  const want = before[1].box.map((v, i) => v + (i % 2 === 0 ? dx / geo.w : dy / geo.h));
+  after[1].box.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < 0.004,
+    `the server reads the moved picture at ${after[1].box}, not where it was dragged (${want})`));
+  assert.equal(after[0].digest, before[0].digest, 'the other picture changed');
+  // What the page draws at the new centre is the second picture's grey.
+  await page.waitForTimeout(500);
+  const grey = await page.evaluate(({ fx, fy }) => {
+    const c = document.querySelector('.viewerContainer:not([hidden]) .page canvas');
+    return c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data[0];
+  }, { fx: (want[0] + want[2]) / 2, fy: (want[1] + want[3]) / 2 });
+  assert.ok(Math.abs(grey - 0x7a) <= 6, `the page draws grey ${grey} where the picture was dragged, not the picture's 122`);
+
+  const moved = await served();
+  await page.click('#undoBtn');
+  for (let i = 0; i < 60 && (await served()) === moved; i++) await page.waitForTimeout(250);
+  assert.equal(await served(), opened, 'Undo did not bring back the document byte for byte');
+});

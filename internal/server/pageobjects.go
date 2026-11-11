@@ -16,14 +16,16 @@ import (
 // document draws, each with its address, and remove pictures by that address. Both go through `internal/objedit`,
 // which refuses a signed or ceremony document for these routes and for `nib objects` alike.
 
-// maxObjectEditBytes caps a removal request. One edit is under 200 bytes of JSON and a request carries at most 64
+// maxObjectEditBytes caps an edit request. One edit is under 200 bytes of JSON and a request carries at most 64
 // (`pdfops`' ceiling); 64 KiB is five times that, and anything larger is not a request this route makes.
 const maxObjectEditBytes = 64 << 10
 
-// objectEditResponse is a removal's answer: the document as every install route answers it, and what was removed.
+// objectEditResponse is an edit's answer: the document as every install route answers it, what was removed and what
+// was moved.
 type objectEditResponse struct {
 	docResponse
 	Removed []pdfops.RemovedObject `json:"removed"`
+	Moved   []pdfops.MovedObject   `json:"moved"`
 }
 
 // handlePageObjects answers GET /api/page/objects?page=N: the pictures that page draws, from the server's own bytes,
@@ -88,7 +90,7 @@ func (s *Server) handlePageObjectsEdit(w http.ResponseWriter, r *http.Request) {
 	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
-	writeJSON(w, objectEditResponse{docResponse: s.docResponse(doc), Removed: res.Removed})
+	writeJSON(w, objectEditResponse{docResponse: s.docResponse(doc), Removed: res.Removed, Moved: res.Moved})
 }
 
 // writeObjectRefusal answers a refused object edit: its cause and its sentence, 409 for a stale address and 422

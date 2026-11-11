@@ -31,6 +31,53 @@ func removeBody(page, ordinal int, digest string) map[string]any {
 	return map[string]any{"edits": []map[string]any{{"kind": "delete", "page": page, "ordinal": ordinal, "digest": digest}}}
 }
 
+func moveBody(page, ordinal int, digest string, l, t, r, b float64) map[string]any {
+	return map[string]any{"edits": []map[string]any{{"kind": "move", "page": page, "ordinal": ordinal, "digest": digest, "box": []float64{l, t, r, b}}}}
+}
+
+// The window's move (PLAN-image-edit P02.S03): the route installs it, the picture reads back at the box asked, the
+// other picture is untouched, the old address is stale, and Undo brings the document back byte for byte.
+func TestThePageObjectsRouteMovesAPictureAndUndoPutsItBack(t *testing.T) {
+	src := testpdf.TwoPictures()
+	base, c, csrf := openTagsFixture(t, src)
+	original := getBytes(t, c, base+"/api/pdf")
+	objs := pageObjectsOpen(t, c, base)
+	if len(objs.Objects) != 2 || !objs.Objects[0].Movable {
+		t.Fatalf("listed %+v", objs.Objects)
+	}
+	code, body := postTags(t, c, csrf, base+"/api/page/objects", moveBody(1, 0, objs.Objects[0].Digest, 0.5, 0.5, 0.7, 0.6))
+	if code != http.StatusOK {
+		t.Fatalf("move = %d: %s", code, body)
+	}
+	var answer struct {
+		Removed []pdfops.RemovedObject `json:"removed"`
+		Moved   []pdfops.MovedObject   `json:"moved"`
+	}
+	if err := json.Unmarshal([]byte(body), &answer); err != nil || len(answer.Moved) != 1 || answer.Moved[0].Ordinal != 0 || len(answer.Removed) != 0 {
+		t.Fatalf("answer %s (%v)", body, err)
+	}
+	after := pageObjectsOpen(t, c, base)
+	want := pdfops.MapRect{0.5, 0.5, 0.7, 0.6}
+	for k := range want {
+		if d := after.Objects[0].Box[k] - want[k]; d > 1e-6 || d < -1e-6 {
+			t.Fatalf("the picture reads at %v, asked %v", after.Objects[0].Box, want)
+		}
+	}
+	if after.Objects[1].Digest != objs.Objects[1].Digest {
+		t.Fatal("the other picture changed")
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/page/objects", moveBody(1, 0, objs.Objects[0].Digest, 0.1, 0.1, 0.2, 0.2)); code != http.StatusConflict ||
+		objectRefusalCause(t, body) != pdfops.CauseObjectChanged {
+		t.Fatalf("the old address = %d %s, want 409 object-changed", code, body)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if !bytes.Equal(original, getBytes(t, c, base+"/api/pdf")) {
+		t.Fatal("Undo did not bring back the document as it was")
+	}
+}
+
 func objectRefusalCause(t *testing.T, body string) string {
 	t.Helper()
 	var r struct{ Cause, Error string }
@@ -91,9 +138,9 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 		{"the right digest at the wrong ordinal", removeBody(1, 1, objs.Objects[0].Digest), http.StatusConflict, pdfops.CauseObjectChanged},
 		{"no edit", map[string]any{"edits": []any{}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 		{"an unknown field", withField(removeBody(1, 0, objs.Objects[0].Digest), "baseRev", 3), http.StatusBadRequest, pdfops.CauseBadRequest},
-		// The route removes only until the window sends a move (P02.S01 grill pin 1): a move is refused, and so is its box.
-		{"a move", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
-		{"a move's box", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.2, 0.2}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"a move with no box", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"a removal with a box", map[string]any{"edits": []map[string]any{{"kind": "delete", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.2, 0.2}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"a move's box off the page", moveBody(1, 0, objs.Objects[0].Digest, 0.1, 0.1, 1.2, 0.2), http.StatusBadRequest, pdfops.CauseBadRequest},
 	} {
 		code, body := postTags(t, c, csrf, base+"/api/page/objects", tc.body)
 		if code != tc.code || objectRefusalCause(t, body) != tc.cause {

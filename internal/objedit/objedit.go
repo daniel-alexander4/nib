@@ -73,11 +73,9 @@ func Edit(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditResul
 	return out, res, nil
 }
 
-// DecodeEdits reads a request: `{"edits": [{"kind": "delete", "page", "ordinal", "digest"}]}`. A body that is not
-// that shape is a `bad-request` refusal. The route removes only: a move's `box` is not read here until the window
-// sends one (PLAN-image-edit P02.S01 grill pin 1 — `requestfields_test.go` refuses a field no client sends): a `box`
-// is an unknown field here, and a move without one is the door's `bad-request`, so a move is made with
-// `nib objects move` alone.
+// DecodeEdits reads a request: `{"edits": [{"kind": "delete" | "move", "page", "ordinal", "digest", "box"}]}`, the
+// box a move's place in displayed-page fractions (the window's Edit Objects sends it, PLAN-image-edit P02.S03). A body
+// that is not that shape is a `bad-request` refusal; whether a box fits its kind is the door's to say.
 func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	var body struct {
 		Edits []routeEdit `json:"edits"`
@@ -90,17 +88,18 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	}
 	out := make([]pdfops.ObjectEdit, len(body.Edits))
 	for i, e := range body.Edits {
-		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest}
+		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest, Box: e.Box}
 	}
 	return out, nil
 }
 
-// routeEdit is an edit as the route reads it: `pdfops.ObjectEdit` without the move's box.
+// routeEdit is an edit as the route reads it.
 type routeEdit struct {
-	Kind    string `json:"kind"`
-	Page    int    `json:"page"`
-	Ordinal int    `json:"ordinal"`
-	Digest  string `json:"digest"`
+	Kind    string          `json:"kind"`
+	Page    int             `json:"page"`
+	Ordinal int             `json:"ordinal"`
+	Digest  string          `json:"digest"`
+	Box     *pdfops.MapRect `json:"box"`
 }
 
 // Refusal is err's refusal, when it is one.

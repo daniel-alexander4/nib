@@ -134,7 +134,7 @@ fi
 # its own boot, because it installs its own field objects and a storage spy.
 # 131 since v2.54.0 (inspect.test.mjs): Inspect this file… shows what the document says about itself (/pending 406) —
 # its own boot, because it answers /api/inspect itself.
-Nib_expect_files=132
+Nib_expect_files=133
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

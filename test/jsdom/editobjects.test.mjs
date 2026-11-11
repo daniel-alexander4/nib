@@ -152,7 +152,7 @@ test('when the history was let go, the words do not promise Undo', async () => {
   await settleMore();
   assert.match(notice(), /^Removed the picture from the page\. Undo cannot bring it back/, `the region says "${notice()}"`);
   assert.match(notice(), /2 links over it are still on the page\./, 'the links kept over the picture are not said');
-  assert.match(notice(), /still in the file/, 'a picture that stays in the file is not said to');
+  assert.match(notice(), /still in the file, because page 2 still uses it;/, 'a picture that stays in the file is not said to, or not where');
   postReply = null;
 });
 
