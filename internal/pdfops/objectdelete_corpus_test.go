@@ -208,7 +208,13 @@ type deleteTally struct {
 	inFile, notInFile, extractable, notExtractable, residueUnread int
 	// inFileShared are pictures still in the file that the door said another page draws; inFileAlone those it did not —
 	// D3's residue pin: the second must be zero.
-	inFileShared, inFileAlone int
+	// inFileTwin those whose bytes another object the file already carried still holds (the removed copy went).
+	inFileShared, inFileAlone, inFileTwin int
+	// aloneAt names each inFileAlone by the list's line, page and object number. Capped; line numbers only, so nothing
+	// of the documents is printed.
+	aloneAt []string
+	// line is the corpus list's line of the document being read, for aloneAt.
+	line int
 	// moreClauses counts, per checker clause, the documents a deletion made fail it newly.
 	moreClauses map[string]int
 	// checker: one deletion per document is checked before and after.
@@ -387,6 +393,45 @@ func scoreMove(before, after pageReading, addressed int, target MapRect) string 
 	return deletedClean
 }
 
+// The residue of one removed picture: gone from the file; still there and another page draws it (shared); still there
+// as a twin the file already carried — fewer copies of its bytes after than before, counted by copies and not by
+// object number because a write may renumber (P02 phase close: all 9 the full corpus first found were twins); or
+// alone — as many copies as before, the prune missing it (D3's residue, a finding).
+const (
+	residueGone   = "gone"
+	residueShared = "shared"
+	residueTwin   = "twin"
+	residueAlone  = "alone"
+)
+
+func residueOf(before, after map[int][32]byte, objNr int, shared bool) string {
+	want, ok := before[objNr]
+	if !ok {
+		return residueGone
+	}
+	nAfter := copiesOf(after, want)
+	switch {
+	case nAfter == 0:
+		return residueGone
+	case shared:
+		return residueShared
+	case nAfter < copiesOf(before, want):
+		return residueTwin
+	}
+	return residueAlone
+}
+
+// copiesOf counts the objects in streams holding exactly the bytes h.
+func copiesOf(streams map[int][32]byte, h [32]byte) int {
+	n := 0
+	for _, x := range streams {
+		if x == h {
+			n++
+		}
+	}
+	return n
+}
+
 func (t *deleteTally) residue(pdf, out []byte, page, objNr int, shared bool) {
 	before, err1 := imageStreams(pdf)
 	after, err2 := imageStreams(out)
@@ -395,21 +440,19 @@ func (t *deleteTally) residue(pdf, out []byte, page, objNr int, shared bool) {
 		t.residueUnread++
 		return
 	}
-	want, ok := before[objNr]
-	found := false
-	for _, h := range after {
-		if ok && h == want {
-			found = true
-			break
-		}
-	}
-	switch {
-	case found && shared:
+	switch residueOf(before, after, objNr, shared) {
+	case residueShared:
 		t.inFile++
 		t.inFileShared++
-	case found:
+	case residueTwin:
+		t.inFile++
+		t.inFileTwin++
+	case residueAlone:
 		t.inFile++
 		t.inFileAlone++
+		if len(t.aloneAt) < 40 {
+			t.aloneAt = append(t.aloneAt, fmt.Sprintf("%d:p%d:obj%d", t.line, page, objNr))
+		}
 	default:
 		t.notInFile++
 	}
@@ -441,10 +484,10 @@ func counts(m map[string]int) string {
 
 func (t *deleteTally) summary() string {
 	return fmt.Sprintf("docs=%d unreadable=%d not-rewritable=%d panicked=%d pictures=%d forms-not-read=%d "+
-		"not-editable[%s] attempted=%d clean=%d differs[%s] residue: in-file=%d (kept by another holder %d, alone %d) gone=%d extractable=%d not-extractable=%d unread=%d "+
+		"not-editable[%s] attempted=%d clean=%d differs[%s] residue: in-file=%d (kept by another holder %d, a twin the file carried %d, alone %d) gone=%d extractable=%d not-extractable=%d unread=%d "+
 		"checker: checked=%d uncheckable=%d more=%d[%s] fewer=%d same=%d bytes-change=%d",
 		t.docs, t.unreadable, t.notRewritable, t.panicked, t.pictures, t.formsNotRead, counts(t.notEditable), t.attempted,
-		t.clean, counts(t.differs), t.inFile, t.inFileShared, t.inFileAlone, t.notInFile, t.extractable, t.notExtractable, t.residueUnread,
+		t.clean, counts(t.differs), t.inFile, t.inFileShared, t.inFileTwin, t.inFileAlone, t.notInFile, t.extractable, t.notExtractable, t.residueUnread,
 		t.checked, t.uncheckable, t.moreDefects, counts(t.moreClauses), t.fewerDefects, t.sameDefects, t.byteChange)
 }
 
@@ -477,12 +520,14 @@ func TestObjectDeleteCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tally deleteTally
-	missing := 0
+	missing, listed := 0, 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		p := strings.TrimSpace(line)
 		if p == "" || strings.HasPrefix(p, "#") {
 			continue
 		}
+		listed++
+		tally.line = listed
 		data, err := os.ReadFile(p)
 		if err != nil {
 			missing++
@@ -491,6 +536,9 @@ func TestObjectDeleteCorpus(t *testing.T) {
 		tally.document(data, 4, 4)
 	}
 	fmt.Printf("OBJECTDELETE missing=%d %s\n", missing, tally.summary())
+	if len(tally.aloneAt) > 0 {
+		fmt.Printf("OBJECTDELETE alone-at (list line:page:object) %s\n", strings.Join(tally.aloneAt, " "))
+	}
 	fmt.Printf("OBJECTMOVE movable=%d attempted=%d clean=%d differs[%s] not-movable[%s]\n", tally.movable,
 		tally.moveAttempted, tally.moveClean, counts(tally.moveDiffers), counts(tally.notMovable))
 	if ok, msg := tally.verdict(); !ok {
@@ -550,6 +598,29 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	}
 	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor}).verdict(); !ok {
 		t.Errorf("a clean run at the floor is not clean: %q", msg)
+	}
+}
+
+// The residue rule without a corpus: a twin the file carried is not the prune missing the picture, and a renumbered
+// survivor is.
+func TestARemovedPicturesTwinIsNotResidue(t *testing.T) {
+	a, b := [32]byte{1}, [32]byte{2}
+	for _, c := range []struct {
+		name          string
+		before, after map[int][32]byte
+		shared        bool
+		want          string
+	}{
+		{"gone", map[int][32]byte{5: a, 6: b}, map[int][32]byte{6: b}, false, residueGone},
+		{"a twin stayed", map[int][32]byte{5: a, 7: a}, map[int][32]byte{7: a}, false, residueTwin},
+		{"the prune missed it", map[int][32]byte{5: a}, map[int][32]byte{5: a}, false, residueAlone},
+		{"missed and renumbered", map[int][32]byte{5: a}, map[int][32]byte{9: a}, false, residueAlone},
+		{"missed beside a twin", map[int][32]byte{5: a, 7: a}, map[int][32]byte{5: a, 7: a}, false, residueAlone},
+		{"another page draws it", map[int][32]byte{5: a}, map[int][32]byte{5: a}, true, residueShared},
+	} {
+		if got := residueOf(c.before, c.after, 5, c.shared); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }
 
