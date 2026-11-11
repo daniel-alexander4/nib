@@ -295,6 +295,53 @@ test('an edit while another is in flight says so, and is not sent', async () => 
   postReply = null;
 });
 
+test('turning Edit Objects off drops a pending burst, even when it is turned straight back on', async () => {
+  const sent = posts.length;
+  const o = outlines()[0];
+  o.focus();
+  key(o, 'ArrowRight', { shiftKey: true });
+  $('objectsBtn').click(); // off: through exitObjects, as Escape is
+  $('objectsBtn').click(); // and on again inside the burst's pause
+  await wait(700);
+  await settleMore();
+  assert.equal(posts.length, sent, 'a burst thrown away by the off button was sent when the tool came back');
+  assert.equal(outlines().length, 3, 'the tool did not come back');
+});
+
+test('a click on a picture during its burst leaves the burst to be sent', async () => {
+  const sent = posts.length;
+  const o = outlines()[0];
+  o.focus();
+  key(o, 'ArrowRight', { shiftKey: true });
+  ptr(o, 'pointerdown', 150, 150);
+  ptr(o, 'pointerup', 150, 150);
+  o.click();
+  await wait(700);
+  await settleMore();
+  assert.equal(posts.length, sent + 1, `a click during a burst sent ${posts.length - sent} requests`);
+  near(posts[sent].edits[0].box, [0.11, 0.1, 0.31, 0.2], 'the burst a click did not swallow');
+});
+
+test('a re-render gives the keyboard back to the picture that held it, and a burst keeps its place', async () => {
+  const sent = posts.length;
+  const o = outlines()[1];
+  o.focus();
+  key(o, 'ArrowRight', { shiftKey: true });
+  outlines().forEach((x) => x.remove()); // pdf.js' PageView.reset, as a zoom does
+  assert.notEqual(doc.activeElement, o, 'fixture: removing the focused outline left it focused');
+  viewers[viewers.length - 1].eventBus.dispatch('pagerendered', { pageNumber: 1 });
+  await settleMore();
+  const back = doc.activeElement;
+  assert.ok(back && back.classList.contains('obj-outline') && back.dataset.ordinal === '1',
+    `after a re-render the keyboard is on ${back && (back.dataset.ordinal ?? back.tagName)}`);
+  assert.ok(Math.abs(parseFloat(back.style.left) - 51) < 1e-9, `a burst redrawn mid-way is at ${back.style.left}`);
+  key(back, 'ArrowRight', { shiftKey: true });
+  await wait(700);
+  await settleMore();
+  assert.equal(posts.length, sent + 1, `a burst across a re-render sent ${posts.length - sent} requests`);
+  near(posts[sent].edits[0].box, [0.52, 0.5, 0.82, 0.7], 'a burst across a re-render');
+});
+
 test('a burst pending when another document comes to the front is dropped, not sent', async () => {
   const sent = posts.length;
   const o = outlines()[0];

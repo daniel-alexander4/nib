@@ -1221,6 +1221,13 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			clipping = true
 		case "gs":
 			gs.extGState = true
+			// A soft mask hides part of what follows as a clip does, and has no box the walk keeps: a picture drawn
+			// under one is marked as under a rough clip, so it is not listed movable (P02 phase close, W11).
+			if os := last(1); os != nil {
+				if name, ok := os[0].name(src); ok && w.softMasked(res, name) {
+					gs.clipRough = true
+				}
+			}
 		case "g", "rg", "k", "G", "RG", "K":
 			// The colour is read only for a reader that re-emits it (a paragraph set on another page, P07.S05): every other
 			// reader walks past it, as it walks past every mark (P07 phase-close review — measured +0.75-1 µs per colour
@@ -1558,6 +1565,30 @@ func weakerWidthSource(a, b widthSource) widthSource {
 		return b
 	}
 	return a
+}
+
+// softMasked reports whether the graphics state dictionary `name` in res sets a soft mask (`/SMask` other than
+// `/None`). One that cannot be read is not one: an unreadable `gs` changes nothing else the walk keeps either.
+func (w *runWalker) softMasked(res types.Dict, name string) bool {
+	if res == nil {
+		return false
+	}
+	states, err := w.xt.DereferenceDict(res["ExtGState"])
+	if err != nil || states == nil {
+		return false
+	}
+	st, err := w.xt.DereferenceDict(states[name])
+	if err != nil || st == nil {
+		return false
+	}
+	mask, ok := st["SMask"]
+	if !ok || mask == nil {
+		return false
+	}
+	if n, ok := mask.(types.Name); ok && n == "None" {
+		return false
+	}
+	return true
 }
 
 // fontFor resolves a font resource, loaded once per font: keyed by object number for an indirect font

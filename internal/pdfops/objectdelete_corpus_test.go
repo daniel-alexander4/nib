@@ -36,6 +36,9 @@ const (
 	deletedUnreadable    = "unreadable-after"
 	// objectDeleteFloor is the fewest pictures a corpus run must read to say anything (the population pin).
 	objectDeleteFloor = 1000
+	// objectMoveFloor is the fewest moves a run must attempt to say anything of the move mode: without it a movability
+	// that regressed to "nothing movable" reads OK at 0 of 0 (P02 phase close, W9). The corpus attempts 341.
+	objectMoveFloor = 100
 )
 
 // pageReading is one page's pictures, its text-run count and a key over every run's text, font and origin, from one
@@ -360,6 +363,10 @@ func scoreMove(before, after pageReading, addressed int, target MapRect) string 
 	}
 	for i := range a {
 		if i == addressed {
+			// The moved slot is the same picture, drawn by the same operator bytes (the door's `painter`), where asked.
+			if a[i].painter != b[i].painter {
+				return deletedDigestsDiffer
+			}
 			for k := range target {
 				if math.Abs(a[i].Box[k]-target[k]) > 1e-6 {
 					return deletedBoxesDiffer
@@ -452,6 +459,8 @@ func (t *deleteTally) verdict() (ok bool, msg string) {
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d of %d deletions read differently afterwards (%s)", t.attempted-t.clean, t.attempted, counts(t.differs))
 	case t.inFileAlone > 0:
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d removed picture(s) are still in the file and no other page draws them (D3's prune)", t.inFileAlone)
+	case t.moveAttempted < objectMoveFloor:
+		return false, fmt.Sprintf("OBJECTMOVE TOO-FEW: %d moves attempted, fewer than the %d a run needs to say anything (%d movable)", t.moveAttempted, objectMoveFloor, t.movable)
 	case t.moveClean != t.moveAttempted:
 		return false, fmt.Sprintf("OBJECTMOVE FINDING: %d of %d moves read differently afterwards (%s)", t.moveAttempted-t.moveClean, t.moveAttempted, counts(t.moveDiffers))
 	}
@@ -493,7 +502,7 @@ func TestObjectDeleteCorpus(t *testing.T) {
 // can read differently.
 func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	obj := func(d string, x float64) PageObject {
-		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true}
+		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true, painter: [32]byte{d[0]}}
 	}
 	before := pageReading{objs: PageObjects{Objects: []PageObject{obj("a", 0), obj("b", 0.2), obj("c", 0.4)}}, runs: 3}
 	after := func(runs int, os ...PageObject) pageReading {
@@ -523,6 +532,9 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	if ok, msg := few.verdict(); ok || !strings.Contains(msg, "TOO-FEW") {
 		t.Errorf("below the floor: %v %q", ok, msg)
 	}
+	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5}).verdict(); ok || !strings.Contains(msg, "OBJECTMOVE TOO-FEW") {
+		t.Errorf("a run that attempted no move: %v %q", ok, msg)
+	}
 	found := deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 4}
 	if ok, msg := found.verdict(); ok || !strings.Contains(msg, "FINDING") {
 		t.Errorf("a finding: %v %q", ok, msg)
@@ -536,8 +548,8 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	if got := defectChange(map[string]bool{"7.1 t3": true, "7.2 t1": true}, map[string]bool{"7.2 t1": true}); got != "fewer" {
 		t.Errorf("a clause cleared reads %q, want fewer", got)
 	}
-	if ok, _ := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5}).verdict(); !ok {
-		t.Error("a clean run at the floor is not clean")
+	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor}).verdict(); !ok {
+		t.Errorf("a clean run at the floor is not clean: %q", msg)
 	}
 }
 
@@ -545,12 +557,14 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 // not — the moved picture elsewhere, another picture moved or swapped, the text changed.
 func TestTheObjectMoveOracleSeesWhereThePictureWent(t *testing.T) {
 	obj := func(d string, x float64) PageObject {
-		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true}
+		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true, painter: [32]byte{d[0]}}
 	}
 	before := pageReading{objs: PageObjects{Objects: []PageObject{obj("a", 0), obj("b", 0.2)}}, runs: 1, text: "t"}
 	target := MapRect{0.5, 0.5, 0.6, 0.6}
-	moved := obj("a2", 0)
+	moved := obj("a2", 0) // a new cm, so a new operator; the same painter ('a')
 	moved.Box = target
+	another := obj("x", 0) // another picture's bytes at the moved slot, where asked
+	another.Box = target
 	read := func(text string, os ...PageObject) pageReading {
 		return pageReading{objs: PageObjects{Objects: os}, runs: 1, text: text}
 	}
@@ -563,6 +577,7 @@ func TestTheObjectMoveOracleSeesWhereThePictureWent(t *testing.T) {
 	}{
 		{"moved where asked", read("t", moved, obj("b", 0.2)), deletedClean},
 		{"moved elsewhere", read("t", elsewhere, obj("b", 0.2)), deletedBoxesDiffer},
+		{"another picture where asked", read("t", another, obj("b", 0.2)), deletedDigestsDiffer},
 		{"the other one moved too", read("t", moved, obj("b", 0.3)), deletedBoxesDiffer},
 		{"the other one swapped", read("t", moved, obj("c", 0.2)), deletedDigestsDiffer},
 		{"a picture went", read("t", moved), deletedCountDiffers},

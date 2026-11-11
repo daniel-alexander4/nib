@@ -101,6 +101,10 @@ func TestASignedDocumentIsRefusedBeforeAnyRead(t *testing.T) {
 		t.Fatal("bytes were returned for a signed document")
 	}
 	wantCause(t, err, pdfops.CauseSigned)
+	plain, err := List(testpdf.TwoPictures(), 1)
+	if err != nil || len(plain.Objects) == 0 || !plain.Objects[0].Movable {
+		t.Fatalf("fixture: the unsigned twin's first picture is not movable (%+v, %v) — the laid refusal is untested", plain, err)
+	}
 	objs, err := List(signed, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +112,9 @@ func TestASignedDocumentIsRefusedBeforeAnyRead(t *testing.T) {
 	for _, o := range objs.Objects {
 		if o.Editable || o.Why != pdfops.CauseSigned {
 			t.Fatalf("a signed document's picture is listed %v %q", o.Editable, o.Why)
+		}
+		if o.Movable || o.MoveWhy != pdfops.CauseSigned {
+			t.Fatalf("a signed document's picture is listed movable %v %q", o.Movable, o.MoveWhy)
 		}
 	}
 }
@@ -125,13 +132,15 @@ func TestAConvenedDocumentIsRefusedColdEvenUnsigned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if objs.Objects[0].Editable || objs.Objects[0].Why != pdfops.CauseCeremony {
+	if objs.Objects[0].Editable || objs.Objects[0].Why != pdfops.CauseCeremony ||
+		objs.Objects[0].Movable || objs.Objects[0].MoveWhy != pdfops.CauseCeremony {
 		t.Fatalf("listed %+v", objs.Objects[0])
 	}
 }
 
 func TestARequestThatIsNotEditsIsABadRequest(t *testing.T) {
-	for _, body := range []string{"", "{", `{"edits": 3}`, `{"edits": [], "extra": 1}`} {
+	for _, body := range []string{"", "{", `{"edits": 3}`, `{"edits": [], "extra": 1}`, `{"edits": []} {"edits": []}`,
+		`{"edits": [{"kind": "move", "page": 1, "ordinal": 0, "digest": "d", "box": [0.1, 0.1, 0.3, 0.3, 9]}]}`} {
 		_, err := DecodeEdits(strings.NewReader(body))
 		wantCause(t, err, pdfops.CauseBadRequest)
 	}

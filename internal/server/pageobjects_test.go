@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +142,9 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 		{"a move with no box", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 		{"a removal with a box", map[string]any{"edits": []map[string]any{{"kind": "delete", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.2, 0.2}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 		{"a move's box off the page", moveBody(1, 0, objs.Objects[0].Digest, 0.1, 0.1, 1.2, 0.2), http.StatusBadRequest, pdfops.CauseBadRequest},
+		// Go drops a fifth number into a fixed array without a word: the box is read as a slice and counted.
+		{"a box of five numbers", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.3, 0.3, 9}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"a box of three numbers", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.3}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 	} {
 		code, body := postTags(t, c, csrf, base+"/api/page/objects", tc.body)
 		if code != tc.code || objectRefusalCause(t, body) != tc.cause {
@@ -154,6 +158,21 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 		if code, _ := getAnswer(t, c, base+"/api/page/objects"+q); code != http.StatusBadRequest {
 			t.Errorf("objects%s = %d, want 400", q, code)
 		}
+	}
+}
+
+// TestALostUpdateIsObjectChanged — an install landing between the edit's read and its commit is the route's one 409,
+// with the cause the window recovers from; the byte cap keeps the shared answer.
+func TestALostUpdateIsObjectChanged(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if !wroteObjectChanged(rec, errDocChanged) {
+		t.Fatal("a lost update was not answered")
+	}
+	if rec.Code != http.StatusConflict || objectRefusalCause(t, rec.Body.String()) != pdfops.CauseObjectChanged {
+		t.Fatalf("a lost update answered %d %s, want 409 %s", rec.Code, rec.Body, pdfops.CauseObjectChanged)
+	}
+	if wroteObjectChanged(httptest.NewRecorder(), ErrTooManyBytes) || wroteObjectChanged(httptest.NewRecorder(), nil) {
+		t.Fatal("a commit refusal that is not a lost update, or no refusal, was answered as object-changed")
 	}
 }
 

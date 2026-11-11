@@ -82,17 +82,28 @@ func TestATurnedOuterMatrixIsUndone(t *testing.T) {
 	}
 }
 
-// The conversion against hand arithmetic, not only against point: on a page turned a quarter, a box from the top-left
-// of the display at (0.2, 0.1)-(0.45, 0.3) is user x 60..180 (the display's top-to-bottom runs along user x) and
-// user y 160..360.
+// The conversion against hand arithmetic, not only against point (whose inverse it is, so a mistake made in both
+// would pass every round trip): a box from the top-left of the display at (0.2, 0.1)-(0.45, 0.3) on a 600 × 800
+// page, at every turn. /Rotate turns the page clockwise for display, so the display's top-left corner is user
+// (0, 800) unturned, (0, 0) at 90, (600, 0) at 180 and (600, 800) at 270; from there the display's x and y run along
+// user x or y, one way or the other.
 func TestTheConversionLandsWhereArithmeticSays(t *testing.T) {
-	pdf := removeFixture("q 100 0 0 80 100 100 cm /Im0 Do Q", map[int]string{
-		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Rotate 90 /Resources 9 0 R /Contents 4 0 R >>",
-	})
-	out, _ := moveObject(t, pdf, 1, 0, MapRect{0.2, 0.1, 0.45, 0.3})
-	got := readObjects(t, out, 1).Objects[0].userBox
-	if want := [4]float64{60, 160, 180, 360}; !boxesAgree(got, want) {
-		t.Fatalf("user box %v, want %v", got, want)
+	for _, c := range []struct {
+		rotate string
+		want   [4]float64
+	}{
+		{"", [4]float64{120, 560, 270, 720}},            // x 600·[0.2, 0.45]; y 800 − 800·[0.3, 0.1]
+		{"/Rotate 90", [4]float64{60, 160, 180, 360}},   // x 600·[0.1, 0.3]; y 800·[0.2, 0.45]
+		{"/Rotate 180", [4]float64{330, 80, 480, 240}},  // x 600 − 600·[0.45, 0.2]; y 800·[0.1, 0.3]
+		{"/Rotate 270", [4]float64{420, 440, 540, 640}}, // x 600 − 600·[0.3, 0.1]; y 800 − 800·[0.45, 0.2]
+	} {
+		pdf := removeFixture("q 100 0 0 80 100 100 cm /Im0 Do Q", map[int]string{
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] " + c.rotate + " /Resources 9 0 R /Contents 4 0 R >>",
+		})
+		out, _ := moveObject(t, pdf, 1, 0, MapRect{0.2, 0.1, 0.45, 0.3})
+		if got := readObjects(t, out, 1).Objects[0].userBox; !boxesAgree(got, c.want) {
+			t.Errorf("%q: user box %v, want %v", c.rotate, got, c.want)
+		}
 	}
 }
 
@@ -107,7 +118,8 @@ func TestAnInlineImageMoves(t *testing.T) {
 }
 
 // TestTheConversionHoldsAtEveryTurn is the one conversion (`unpoint`) through the door, read back through the
-// listing (`point`): every `/Rotate`, a crop box away from the origin, and `/UserUnit`.
+// listing (`point`): every `/Rotate`, a crop box away from the origin, and `/UserUnit` — which no conversion reads,
+// because a fraction of the page is the same fraction at any unit size; that case pins that none starts to.
 func TestTheConversionHoldsAtEveryTurn(t *testing.T) {
 	want := MapRect{0.2, 0.1, 0.45, 0.3}
 	for _, page := range []string{
@@ -201,6 +213,44 @@ func TestAClipThatIsNotOneStraightRectangleStopsAMove(t *testing.T) {
 		o := readObjects(t, removeFixture(content, nil), 1).Objects[0]
 		if o.Movable || o.MoveWhy != WhyClipped {
 			t.Errorf("%s: movable %v, %q", name, o.Movable, o.MoveWhy)
+		}
+	}
+}
+
+// A soft mask hides part of the page as a clip does, so a picture drawn under one is not movable; a graphics state
+// with no mask, a mask of /None, and a mask the `Q` has taken away again leave it movable (P02 phase close, W11).
+// A page-sized clip that rounding left a hair inside the page still leaves it open; one a point inside does not.
+func TestAClipARoundingInsideThePageLeavesItOpen(t *testing.T) {
+	for _, c := range []struct {
+		name, clip string
+		movable    bool
+	}{
+		{"a hair inside", "0 0 599.9999999 800 re W n", true},
+		{"through a scaled cm", "q 0.1 0 0 0.1 0 0 cm 0 0 5999.999999 8000 re W n", true},
+		{"a point inside", "0 0 599 800 re W n", false},
+	} {
+		o := readObjects(t, removeFixture(c.clip+" q 100 0 0 80 10 10 cm /Im0 Do Q", nil), 1).Objects[0]
+		if o.Movable != c.movable {
+			t.Errorf("%s: movable %v (%q), want %v", c.name, o.Movable, o.MoveWhy, c.movable)
+		}
+	}
+}
+
+func TestASoftMaskStopsAMoveAsAClipDoes(t *testing.T) {
+	res := "<< /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R /Im1 8 0 R /Fm0 7 0 R >> /ExtGState << " +
+		"/GSm << /SMask << /Type /Mask /S /Luminosity /G 7 0 R >> >> /GSn << /SMask /None >> /GSa << /ca 0.5 >> >> >>"
+	for _, c := range []struct {
+		name, content string
+		movable       bool
+	}{
+		{"a soft mask", "/GSm gs q 100 0 0 80 10 10 cm /Im0 Do Q", false},
+		{"a soft mask of /None", "/GSn gs q 100 0 0 80 10 10 cm /Im0 Do Q", true},
+		{"an alpha and no mask", "/GSa gs q 100 0 0 80 10 10 cm /Im0 Do Q", true},
+		{"a soft mask the Q took back", "q /GSm gs Q q 100 0 0 80 10 10 cm /Im0 Do Q", true},
+	} {
+		o := readObjects(t, removeFixture(c.content, map[int]string{9: res}), 1).Objects[0]
+		if o.Movable != c.movable || (!c.movable && o.MoveWhy != WhyClipped) {
+			t.Errorf("%s: movable %v (%q), want %v", c.name, o.Movable, o.MoveWhy, c.movable)
 		}
 	}
 }

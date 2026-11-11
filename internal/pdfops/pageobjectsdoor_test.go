@@ -127,12 +127,15 @@ var pictureCutters = map[string]string{
 
 // TestEveryPageObjectEditRoutesThroughTheDoorInsidePdfops is the bypass half of the page objects' door census
 // (the routing half is the repo root's `pageobjectdoor_test.go`): by TYPE, every function that selects a
-// `drawnImage`'s or a `PageObject`'s `span` and calls `setPageContent` is the door or a named exemption.
+// `drawnImage`'s or a `PageObject`'s `span` or `place` and calls `setPageContent` is the door or a named exemption.
 func TestEveryPageObjectEditRoutesThroughTheDoorInsidePdfops(t *testing.T) {
 	fset, files, info := typeCheckedPackage(t, ".")
 	spans, writes := map[string]bool{}, map[string]bool{}
 	for sel, s := range info.Selections {
-		if sel.Sel.Name == "span" && s.Kind() == types.FieldVal && (receiverIs(s, "drawnImage") || receiverIs(s, "PageObject")) {
+		// `span` is what a removal cuts and `place` what a move rewrites (its `cm`): a helper reading either and writing
+		// the page is a picture edit (PLAN-image-edit P02 close, W8).
+		if (sel.Sel.Name == "span" || sel.Sel.Name == "place") && s.Kind() == types.FieldVal &&
+			(receiverIs(s, "drawnImage") || receiverIs(s, "PageObject")) {
 			spans[filepath.Base(fset.Position(sel.Pos()).Filename)+":"+enclosingFunc(files, sel.Pos())] = true
 		}
 	}

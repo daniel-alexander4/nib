@@ -231,12 +231,20 @@ func objectMovability(im drawnImage, sp displaySpace) (bool, string) {
 		return false, WhyNotUpright
 	case !im.outerOK:
 		return false, WhyUnreadableBox
-	case im.clipRough || !boxWithin(sp.box, im.clipBox):
+	case im.clipRough || !clipLeavesPageOpen(sp.box, im.clipBox):
 		// Only a clip that leaves the whole displayed page open: under a tighter one nearly every move is cut, so a
 		// picture listed movable would refuse almost every box it was dragged to (measured: 20 of 394 corpus moves).
 		return false, WhyClipped
 	}
 	return true, ""
+}
+
+// clipLeavesPageOpen says the clip's box holds the whole displayed page, to displayEpsilon of the page's size: a
+// producer's page-sized clip reached through a scaled `cm` can land a rounding error inside the page, and refusing
+// every picture under it `clipped` would be a refusal of nothing (P02 phase close, W12).
+func clipLeavesPageOpen(page, clip [4]float64) bool {
+	tol := displayEpsilon * math.Max(page[2]-page[0], page[3]-page[1])
+	return clip[0] <= page[0]+tol && clip[1] <= page[1]+tol && clip[2] >= page[2]-tol && clip[3] >= page[3]-tol
 }
 
 // displayEpsilon is how far past the page's edge, as a fraction of it, a box may reach and still be wholly on it:

@@ -11820,6 +11820,7 @@ function exitObjects(owner = view) {
   owner.objectsMode = false;
   owner.objectsSelected = null;
   owner.objectsReselect = null;
+  owner.objectsKeyFocus = null;
   dropObjectNudge(owner);
   clearObjectOutlines(owner);
   if (owner === view) {
@@ -11831,11 +11832,11 @@ function exitObjects(owner = view) {
 $('objectsBtn').onclick = () => {
   const on = !view.objectsMode;
   if (on) disarmEditingTools(); // one tool at a time, through the one door
-  view.objectsMode = on;
+  if (!on) { exitObjects(view); return; } // the one disarm: a pending burst and a re-selection go with it
+  view.objectsMode = true;
   view.objectsSelected = null;
   reflectObjects();
-  if (on) drawObjectOutlines(view);
-  else { clearObjectOutlines(view); objectNotice(''); }
+  drawObjectOutlines(view);
 };
 $('objectsRemoveBtn').onclick = () => removeSelectedObject(view);
 
@@ -11909,11 +11910,21 @@ async function drawObjectOutlines(owner) {
       selectObject(owner, n, o, b);
     });
     b.addEventListener('keydown', (ev) => objectKey(ev, owner, n, o, b));
+    // Which outline holds the keyboard, so a re-render (pdf.js takes the outlines out of the page) gives it back.
+    b.addEventListener('focus', () => { owner.objectsKeyFocus = o.ordinal; });
+    b.addEventListener('blur', (ev) => { if (ev.relatedTarget) owner.objectsKeyFocus = null; });
+    const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+    if (held) { placeObjectOutline(b, held.box); held.b = b; } // a burst redrawn mid-way stays where it was nudged
     pv.div.appendChild(b);
     owner.objectsOutlines.push(b);
   });
   // After a removal the outline at the same place in the list takes focus (or the one before it, or the button when
   // none is left), so a keyboard user is not dropped out of the group.
+  if (owner.objectsFocus == null && owner.objectsKeyFocus != null &&
+      (!document.activeElement || document.activeElement === document.body)) {
+    const at = list.findIndex((o) => o.ordinal === owner.objectsKeyFocus);
+    if (at >= 0) owner.objectsFocus = at;
+  }
   if (owner.objectsFocus != null) {
     const laid = [...pv.div.querySelectorAll('.obj-outline')];
     const at = Math.min(owner.objectsFocus, laid.length - 1);
@@ -11988,7 +11999,7 @@ function enableObjectGestures(owner, n, o, b) {
     mode = null;
     if (pid !== null) { try { b.releasePointerCapture(pid); } catch { /* already released */ } pid = null; }
     activeGestures.delete(end);
-      if (!moved) return;
+    if (!moved) return;
     moved = false;
     placeObjectOutline(b, o.box); // aborted: back where the page draws it; a drop re-places it before sending
   };
@@ -11996,10 +12007,10 @@ function enableObjectGestures(owner, n, o, b) {
     delete b.dataset.dragged; // a press is never the end of an earlier drag (a touch drag has no click to clear it)
     if (e.button !== 0 || owner.objectsEditing || owner !== view) return;
     mode = e.target.closest('.obj-resize') ? 'resize' : 'drag';
-    // A burst of nudges on this picture is where the drag starts from: the drag carries it, and it is not sent apart.
+    // A burst of nudges on this picture is where a drag starts from. It is taken over only once the press travels
+    // (pointermove): a plain click leaves it to be sent on its own timer.
     const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
-    if (held) { clearTimeout(held.timer); activeGestures.delete(held.end); owner.objectsNudge = null; }
-    from = held ? held.box : o.box.slice();
+    from = held ? held.box.slice() : o.box.slice();
     sx = e.clientX; sy = e.clientY; moved = false; box = from.slice(); pid = e.pointerId;
     try { b.setPointerCapture(e.pointerId); } catch { /* not every pointer can be captured */ }
     activeGestures.add(end);
@@ -12009,6 +12020,10 @@ function enableObjectGestures(owner, n, o, b) {
     const pv = owner.viewer && owner.viewer.getPageView(n - 1);
     if (!pv || !pv.div) return;
     if (!moved && Math.hypot(e.clientX - sx, e.clientY - sy) < 3) return;
+    if (!moved) {
+      const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+      if (held) { clearTimeout(held.timer); activeGestures.delete(held.end); owner.objectsNudge = null; from = held.box.slice(); }
+    }
     moved = true;
     const W = pv.div.clientWidth || 1, H = pv.div.clientHeight || 1;
     box = gestureBox(mode, from, (e.clientX - sx) / W, (e.clientY - sy) / H, e.shiftKey);

@@ -43,7 +43,7 @@ func documentRefusal(pdf []byte) *pdfops.ObjectRefusal {
 }
 
 // List reads the pictures page of pdf draws, as `pdfops.ReadPageObjects` does, with the document's own refusal laid
-// over every picture: on a signed or ceremony document none is editable, and Why says so.
+// over every picture: on a signed or ceremony document none is editable or movable, and Why and MoveWhy say so.
 func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 	objs, err := pdfops.ReadPageObjects(pdf, page)
 	if err != nil {
@@ -52,6 +52,7 @@ func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 	if ref := documentRefusal(pdf); ref != nil {
 		for i := range objs.Objects {
 			objs.Objects[i].Editable, objs.Objects[i].Why = false, ref.Cause
+			objs.Objects[i].Movable, objs.Objects[i].MoveWhy = false, ref.Cause
 		}
 	}
 	return objs, nil
@@ -83,23 +84,33 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
-		ref := pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, fmt.Errorf("%v", err))
-		return nil, ref
+		return nil, pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, fmt.Errorf("%v", err))
+	}
+	if dec.More() {
+		return nil, pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, errors.New("more follows the request's object"))
 	}
 	out := make([]pdfops.ObjectEdit, len(body.Edits))
 	for i, e := range body.Edits {
-		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest, Box: e.Box}
+		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest}
+		if e.Box != nil {
+			// A slice, not `pdfops.MapRect`: Go drops a fifth number into a fixed array and pads a short one with zeros.
+			if len(e.Box) != 4 {
+				return nil, pdfops.RefuseObject(pdfops.CauseBadRequest, e.Page, e.Ordinal,
+					fmt.Errorf("a box is four numbers, left, top, right and bottom; this one has %d", len(e.Box)))
+			}
+			out[i].Box = &pdfops.MapRect{e.Box[0], e.Box[1], e.Box[2], e.Box[3]}
+		}
 	}
 	return out, nil
 }
 
 // routeEdit is an edit as the route reads it.
 type routeEdit struct {
-	Kind    string          `json:"kind"`
-	Page    int             `json:"page"`
-	Ordinal int             `json:"ordinal"`
-	Digest  string          `json:"digest"`
-	Box     *pdfops.MapRect `json:"box"`
+	Kind    string    `json:"kind"`
+	Page    int       `json:"page"`
+	Ordinal int       `json:"ordinal"`
+	Digest  string    `json:"digest"`
+	Box     []float64 `json:"box"`
 }
 
 // Refusal is err's refusal, when it is one.

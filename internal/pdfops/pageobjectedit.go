@@ -922,7 +922,8 @@ type movedWant struct {
 	painter [32]byte
 }
 
-// moveTolerance is how far, in points, a moved picture's edges may read from the box asked: the `cm` is written
+// moveTolerance is how far, in user-space units (points unless the page sets `/UserUnit`), a moved picture's edges may
+// read from the box asked: the `cm` is written
 // exactly (`num`), so only the round trip through an inverse matrix and the reader's parse are left.
 const moveTolerance = 1e-3
 

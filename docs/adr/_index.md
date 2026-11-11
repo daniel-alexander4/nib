@@ -1067,3 +1067,5 @@ home today.
   — extends ADR-219 §2: a replayed address cannot name the twin of the removed picture; the after-check compares operator digests; the window sends one removal at a time and reads again on `object-changed`.
 - [ADR-221](221-a-picture-moves-only-where-one-cm-places-it-alone.md) — **A picture moves only where one `cm` places it alone, and the window's route waits for the window**
   — movable read from the bytes (`q … cm <image> Q`, plain, on the page, unclipped); one conversion (`unpoint`); the after-check by box; `nib objects move`; the route reads no `box` until P02.S03.
+- [ADR-222](222-a-soft-mask-is-a-clip-to-a-move-and-a-body-decoded-elsewhere-is-in-the-census.md) — **A soft mask is a clip to a move, and a request body decoded in another package is in the field census**
+  — extends ADR-221 §1 (an `/SMask` marks the clip rough; the clip test has `displayEpsilon` of slack); supersedes ADR-221 §4's rationale: the request-field census now follows `objedit`/`tagwrite` decoders and a caller-built object.

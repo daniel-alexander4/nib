@@ -131,6 +131,11 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 			"`invitationRoster` for the CLI and harness callers that do send one — build/pairrepro.sh " +
 				"passes `-F invitation=`. The web client posts none, and /pending 436 closed by " +
 				"giving the convener a dial that does not need one rather than by adding the field."},
+		"/api/tags/edit rect": {cliOnly,
+			"a region edit names its place by `rect` or by `pieces` (ADR-125); the window ticks pieces and " +
+				"sends only those, and `nib tag edit` reads the same `tagwrite.DecodeEdits` shape from a file, " +
+				"where a rectangle is what a script can write. Seen once the census followed a body decoded in " +
+				"another package (PLAN-image-edit P02 close, W7)."},
 		"/api/session/initiate transport": {harnessOnly,
 			"build/pairrepro.sh line 1062 passes `-F transport=$transport` on this route, so a run " +
 				"can force TCP or QUIC. The web client never does — it has no reason to choose."},
@@ -228,6 +233,14 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 	if nclientJSON < 90 {
 		t.Fatalf("the client JSON scan found %d (route, key) pairs and web/app.js stringifies well "+
 			"over a hundred — every JSON field would report as unsent", nclientJSON)
+	}
+
+	// A body handed to another package to decode is in the population (W7): before it was followed, these routes
+	// contributed no pair at all and read exactly like routes whose every field is sent.
+	for _, pair := range []string{"/api/page/objects box", "/api/page/objects digest", "/api/tags/edit kind", "/api/tags/commit role"} {
+		if !serverJSON[pair] {
+			t.Errorf("the server JSON scan does not see %q — a body decoded in another package has left the population", pair)
+		}
 	}
 
 	var members []string
@@ -637,6 +650,9 @@ func jsonFieldsRead(home *serverPkg, imported map[string]*serverPkg, helpers map
 			if fun.Sel.Name == "Decode" && isJSONDecoderOfRequest(fun.X) {
 				target = pointerArg(call.Args)
 			}
+			if pkgID, ok := fun.X.(*ast.Ident); ok && passesRequestBody(call.Args) {
+				foreignDecodeFields(imported, pkgID.Name, fun.Sel.Name, out, untagged)
+			}
 		case *ast.Ident:
 			callee = fun.Name
 		}
@@ -650,6 +666,83 @@ func jsonFieldsRead(home *serverPkg, imported map[string]*serverPkg, helpers map
 		}
 		if callee != "" {
 			jsonFieldsRead(home, imported, helpers, callee, seen, depth+1, out, untagged)
+		}
+		return true
+	})
+}
+
+// passesRequestBody reports whether a call hands the request body (`r.Body`, however wrapped) to its callee.
+func passesRequestBody(args []ast.Expr) bool {
+	for _, a := range args {
+		found := false
+		ast.Inspect(a, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Body" {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "r" {
+					found = true
+				}
+			}
+			return !found
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// foreignDecodeFields reads the fields a function in ANOTHER `internal/` package decodes from the reader the handler
+// handed it — `objedit.DecodeEdits(io.LimitReader(r.Body, …))`, `tagwrite.DecodeEdits(…)`. Without it those routes
+// contributed no pair at all, which reads exactly like a route whose every field is sent (PLAN-image-edit P02 close,
+// W7). The decode is found by shape: a `json.NewDecoder` built from one of the function's parameters, then any
+// `.Decode(&v)` in that function, v's type resolved in that package.
+func foreignDecodeFields(imported map[string]*serverPkg, pkgName, fn string, out, untagged map[string]bool) {
+	pkg, seen := imported[pkgName]
+	if !seen {
+		pkg, _ = parseGoPkg(filepath.Join("internal", pkgName))
+		imported[pkgName] = pkg
+	}
+	if pkg == nil {
+		return
+	}
+	fd := pkg.funcs[fn]
+	if fd == nil || fd.Body == nil || fd.Type.Params == nil {
+		return
+	}
+	params := map[string]bool{}
+	for _, p := range fd.Type.Params.List {
+		for _, pn := range p.Names {
+			params[pn.Name] = true
+		}
+	}
+	fromParam := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "NewDecoder" {
+			for _, a := range call.Args {
+				if id, ok := a.(*ast.Ident); ok && params[id.Name] {
+					fromParam = true
+				}
+			}
+		}
+		return true
+	})
+	if !fromParam {
+		return
+	}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Decode" {
+			if v := pointerArg(call.Args); v != "" {
+				if te := varType(fd, v); te != nil {
+					structFields(pkg, imported, te, 0, out, untagged)
+				}
+			}
 		}
 		return true
 	})
@@ -814,6 +907,9 @@ var (
 	jsURLEnc   = regexp.MustCompile(`['"]([a-zA-Z][\w-]*)=`)
 	jsStringif = regexp.MustCompile(`JSON\.stringify\(`)
 	jsBareArg  = regexp.MustCompile(`^\(\s*([A-Za-z_$][\w$]*)\s*\)$`)
+	// jsShorthandArg is `({ edits })`; jsPassedName a bare name passed in a call or an array (`[edit]`, `(edit,`).
+	jsShorthandArg = regexp.MustCompile(`^\(\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*\)$`)
+	jsPassedName   = regexp.MustCompile(`[\[(,]\s*([A-Za-z_$][\w$]*)\s*[\]),]`)
 )
 
 // jsSource reads web/app.js with its comments blanked, and indexes its function bodies.
@@ -1009,24 +1105,21 @@ func clientJSONSends(t *testing.T) (pairs, folded map[string]bool, n int) {
 			stringified := matchedParen(args, s[1]-1)
 			jsObjectKeys(stringified, fields) // shape 1
 			bare := jsBareArg.FindStringSubmatch(strings.TrimSpace(stringified))
-			if bare == nil || open < 0 {
+			// `JSON.stringify({ edits })`: the object is the wire's, its one value the callers' (shape 3c below).
+			short := jsShorthandArg.FindStringSubmatch(strings.TrimSpace(stringified))
+			if (bare == nil && short == nil) || open < 0 {
 				continue
 			}
-			// shape 3a: `body.mode = …`
-			assigned := regexp.MustCompile(`\b` + regexp.QuoteMeta(bare[1]) + `\.([A-Za-z_$][\w$]*)\s*=[^=]`)
-			for _, a := range assigned.FindAllStringSubmatch(outside[open:close+1], -1) {
-				fields[a[1]] = true
-			}
-			// shape 3b: what this function's callers pass
-			if name := j.callableName(open); name != "" {
-				callSite := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\(`)
-				for _, cs := range callSite.FindAllStringIndex(src, -1) {
-					if cs[0] >= open && cs[0] <= close {
-						continue // the declaration itself
-					}
-					jsObjectKeys(matchedParen(src, cs[1]-1), fields)
+			if bare != nil {
+				// shape 3a: `body.mode = …`
+				assigned := regexp.MustCompile(`\b` + regexp.QuoteMeta(bare[1]) + `\.([A-Za-z_$][\w$]*)\s*=[^=]`)
+				for _, a := range assigned.FindAllStringSubmatch(outside[open:close+1], -1) {
+					fields[a[1]] = true
 				}
 			}
+			// shape 3b: what this function's callers pass — and 3c, an object a caller built under a name and passed
+			// by it (`const edit = {…}; edit.alt = …; sendTagEdits([edit], …)`, PLAN-image-edit P02 close W7).
+			callersSend(j, open, close, fields, 2)
 		}
 		if open >= 0 {
 			jsObjectKeys(outside[open:close+1], fields) // shape 2
@@ -1252,6 +1345,90 @@ func matchedParen(src string, lp int) string {
 		}
 	}
 	return src[lp:]
+}
+
+// callersSend is shape 3b and 3c: what the callers of the function opening at `open` pass it — the object literals in
+// each call's arguments, and an object a caller built under a name and passed by it (`const edit = {…}; edit.alt = …;
+// sendTagEdits([edit], …)`). A caller that only forwards one of its own parameters (`applyTagEdit(...edits)` →
+// `sendTagEdits(edits.map(…))`) is followed to ITS callers, `hops` deep (PLAN-image-edit P02 close, W7).
+func callersSend(j *jsSource, open, close int, fields map[string]bool, hops int) {
+	src := j.src
+	name := j.callableName(open)
+	if name == "" || hops <= 0 {
+		return
+	}
+	callSite := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\(`)
+	for _, cs := range callSite.FindAllStringIndex(src, -1) {
+		if cs[0] >= open && cs[0] <= close {
+			continue // the declaration itself
+		}
+		callArgs := matchedParen(src, cs[1]-1)
+		jsObjectKeys(callArgs, fields)
+		cOpen, cClose := j.enclosingFunc(cs[0])
+		if cOpen < 0 {
+			continue
+		}
+		caller := src[cOpen : cClose+1]
+		for _, id := range jsPassedName.FindAllStringSubmatch(callArgs, -1) {
+			built := regexp.MustCompile(`\b(?:const|let|var)\s+` + regexp.QuoteMeta(id[1]) + `\s*=\s*\{`)
+			if b := built.FindStringIndex(caller); b != nil {
+				jsObjectKeys(matchedBrace(caller, b[1]-1), fields)
+			}
+			set := regexp.MustCompile(`\b` + regexp.QuoteMeta(id[1]) + `\.([A-Za-z_$][\w$]*)\s*=[^=]`)
+			for _, a := range set.FindAllStringSubmatch(caller, -1) {
+				fields[a[1]] = true
+			}
+		}
+		for _, p := range jsParams(src, cOpen) {
+			if regexp.MustCompile(`\b` + regexp.QuoteMeta(p) + `\b`).MatchString(callArgs) {
+				callersSend(j, cOpen, cClose, fields, hops-1)
+				break
+			}
+		}
+	}
+}
+
+// jsParams is the parameter names of the function whose body opens at `open`: the `(…)` straight before it, read
+// back from the brace (`async function f(a, ...b) {`, `const f = (a) => {`).
+func jsParams(src string, open int) []string {
+	rp := strings.LastIndexByte(src[:open], ')')
+	if rp < 0 || strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(src[rp+1:open]), "=>")) != "" {
+		return nil
+	}
+	d := 0
+	for k := rp; k >= 0; k-- {
+		switch src[k] {
+		case ')':
+			d++
+		case '(':
+			d--
+			if d == 0 {
+				var out []string
+				for _, m := range regexp.MustCompile(`(?:^|,)\s*(?:\.\.\.)?([A-Za-z_$][\w$]*)`).FindAllStringSubmatch(src[k+1:rp], -1) {
+					out = append(out, m[1])
+				}
+				return out
+			}
+		}
+	}
+	return nil
+}
+
+// matchedBrace is matchedParen for an object literal: from the `{` at lb to its partner.
+func matchedBrace(src string, lb int) string {
+	d := 0
+	for j := lb; j < len(src); j++ {
+		switch src[j] {
+		case '{':
+			d++
+		case '}':
+			d--
+			if d == 0 {
+				return src[lb : j+1]
+			}
+		}
+	}
+	return src[lb:]
 }
 
 // stripJSComments removes line and block comments while leaving string and template literals whole,

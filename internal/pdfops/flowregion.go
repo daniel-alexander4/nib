@@ -105,7 +105,7 @@ func (w *runWalker) markImage(kind markKind, gs runGState, src []byte, span opSp
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
 			im.digest = objectDigest(src, span, gs.place, gs.qDepth)
-			im.ctm, im.clipBox, im.clipRough = gs.ctm, gs.clip, gs.clipRough
+			im.clipBox, im.clipRough = gs.clip, gs.clipRough
 			if span.start >= 0 && span.end <= len(src) && span.start <= span.end {
 				im.painter = sha256.Sum256(src[span.start:span.end])
 			}
@@ -206,15 +206,15 @@ type drawnImage struct {
 	qDepth int
 	// digest names the operator for an address (`objectDigest`, D2): set only by the region reader.
 	digest [32]byte
-	// ctm is the matrix the image is drawn under, outer the matrix in force before place's `cm` (`runGState.placeM`
-	// undone), and clipBox the box the clip in force lies within, in user space. alone says the bytes around the
-	// image are exactly `q a b c d e f cm <image> Q`: place is the only `cm` of its `q`, which draws and clips nothing
-	// else (`aloneInBracket`). All four are the region reader's, for a move (PLAN-image-edit P02.S01).
-	ctm, outer runMatrix
-	outerOK    bool
-	clipBox    [4]float64
-	clipRough  bool
-	alone      bool
+	// outer is the matrix in force before place's `cm` (`runGState.placeM` undone), and clipBox the box the clip in
+	// force lies within, in user space. alone says the bytes around the image are exactly `q a b c d e f cm <image> Q`:
+	// place is the only `cm` of its `q`, which draws and clips nothing else (`aloneInBracket`). All are the region
+	// reader's, for a move (PLAN-image-edit P02.S01).
+	outer     runMatrix
+	outerOK   bool
+	clipBox   [4]float64
+	clipRough bool
+	alone     bool
 	// painter is SHA-256 over the image's own operator bytes and nothing around them: what a moved picture must
 	// still be after the move, whose `cm` (and so whose digest) it changed.
 	painter [32]byte
@@ -373,7 +373,8 @@ func uprightBox(m runMatrix) bool {
 
 // straightRect says a clipping path is one rectangle drawn straight: one `re` and the `W` that marks it (the walk
 // counts both as construction operators), under a CTM that turns it by quarter turns at most — the only clip whose
-// box (`clipTo`) is the clip itself.
+// box (`clipTo`) is the clip itself. `rects == 1` states the intent and cannot refuse alone: any other path ending in
+// `W` is a move and a segment first, three operators at least (P02 phase close, measured by mutation).
 func straightRect(d drawnPath, ctm runMatrix) bool {
 	return d.rects == 1 && d.ops == 2 && uprightBox(ctm)
 }
