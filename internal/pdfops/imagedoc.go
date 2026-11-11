@@ -268,11 +268,17 @@ func ImageToDocument(data []byte, name string) ([]byte, error) {
 // ImageToDocumentCtx is ImageToDocument under a caller's context, which ends a long multi-page import between
 // pages. A GIF becomes a page per frame, a BMP a page, a TIFF a page per image directory (P01.S03a).
 func ImageToDocumentCtx(ctx context.Context, data []byte, name string) ([]byte, error) {
+	return imageToDocument(ctx, data, name, rasterLimits{})
+}
+
+// imageToDocument is ImageToDocumentCtx under the import's own limits (ImportOptions.MaxPixels and Single).
+func imageToDocument(ctx context.Context, data []byte, name string, lim rasterLimits) ([]byte, error) {
 	if _, ok := sniffImage(data); !ok {
 		return nil, ErrNotAnImage
 	}
 	j, cancel := newRasterJob(ctx)
 	defer cancel()
+	j.lim = lim
 	if err := j.addFile(data); err != nil {
 		return nil, err
 	}

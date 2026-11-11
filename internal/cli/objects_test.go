@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,7 +132,9 @@ func TestNibObjectsRefusesAConvenedDocumentInTheRoutesWords(t *testing.T) {
 func TestNibObjectsWantsItsFlags(t *testing.T) {
 	for _, args := range [][]string{{"x.pdf"}, {"remove", "x.pdf", "--page", "1"}, {"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d"},
 		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,0.2,0.3"},
-		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,a,0.3,0.4"}} {
+		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,a,0.3,0.4"},
+		{"replace", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d"},
+		{"replace", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--with", "y.png", "--alt", "a", "--keep-alt"}} {
 		var code int
 		captureStderr(t, func() { code = cmdObjects(args) })
 		if code != 2 {
@@ -177,5 +181,53 @@ func TestNibObjectsMovesAPicture(t *testing.T) {
 	}
 	if b2, _ := os.ReadFile(in); string(b2) != string(b) {
 		t.Fatal("the refused move rewrote the file")
+	}
+}
+
+// `nib objects replace` puts another picture in a picture's place through the same door, importing it as the window's
+// upload is; a signed document is refused before its picture is read (a file that is not there is never opened).
+func TestNibObjectsReplacesAPicture(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.pdf")
+	if err := os.WriteFile(in, testpdf.TwoPictures(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 30, 30))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	pic := filepath.Join(dir, "new.png")
+	if err := os.WriteFile(pic, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	objs := listObjectsJSON(t, in)
+	if _, code := captureStdout(t, func() int {
+		return cmdObjects([]string{"replace", in, "--page", "1", "--picture", "1", "--digest", objs.Objects[0].Digest, "--with", pic, "-w"})
+	}); code != 0 {
+		t.Fatalf("replace exited %d", code)
+	}
+	after := listObjectsJSON(t, in)
+	if len(after.Objects) != 2 || after.Objects[0].Digest == objs.Objects[0].Digest || after.Objects[1].Digest != objs.Objects[1].Digest {
+		t.Fatalf("after: %+v", after.Objects)
+	}
+	certPEM, keyPEM, err := sign.GenerateIdentity("Nib Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := sign.Sign(testpdf.TwoPictures(), certPEM, keyPEM, sign.Options{Name: "Nib Test", When: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sin := filepath.Join(dir, "signed.pdf")
+	if err := os.WriteFile(sin, signed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	msg := captureStderr(t, func() {
+		code = cmdObjects([]string{"replace", sin, "--page", "1", "--picture", "1", "--digest", listObjectsJSON(t, sin).Objects[0].Digest, "--with", filepath.Join(dir, "absent.png"), "-w"})
+	})
+	if code != 1 || !strings.Contains(msg, pdfops.ObjectCauseWords(pdfops.CauseSigned)) {
+		t.Fatalf("a signed document: exited %d saying %q (the signature, not the missing picture, must refuse)", code, msg)
 	}
 }

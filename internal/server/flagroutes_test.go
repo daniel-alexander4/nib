@@ -40,11 +40,12 @@ var flagRoutes = map[string]flagRoute{
 	"handleTagsEdit":      {"keepsGeometry", []string{"tagwrite.Edit"}, []string{"EditStructure"}},
 	"handleTagsRemove":    {"keepsGeometry", []string{"tagwrite.Remove"}, []string{"RemoveStructure"}},
 	// A picture's operator is cut and nothing else the page draws moves (PLAN-image-edit P01.S02, D3).
-	"handlePageObjectsEdit": {"keepsGeometry", []string{"objedit.Edit"}, []string{"EditPageObjects"}},
-	"handleReflow":          {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
-	"handlePages":           {"flagsStripped", []string{"formFileBytes"}, nil},
-	"handleOutlineSet":      {"flagsStripped", []string{"formFileBytes"}, nil},
-	"handleReload":          {"installsFile", nil, nil},
+	"handlePageObjectsEdit":    {"keepsGeometry", []string{"objedit.Edit"}, []string{"EditPageObjects"}},
+	"handlePageObjectsReplace": {"keepsGeometry", []string{"objedit.Edit"}, []string{"EditPageObjects"}},
+	"handleReflow":             {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
+	"handlePages":              {"flagsStripped", []string{"formFileBytes"}, nil},
+	"handleOutlineSet":         {"flagsStripped", []string{"formFileBytes"}, nil},
+	"handleReload":             {"installsFile", nil, nil},
 }
 
 // TestEveryRewriteOfAHeldDocumentIsClassifiedForItsFlags is the census: every function in this package that

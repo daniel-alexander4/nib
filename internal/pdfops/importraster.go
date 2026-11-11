@@ -91,6 +91,21 @@ type rasterJob struct {
 	segs   [][]byte
 	out    int   // bytes of PDF so far, against maxConvertedBytes
 	pixels int64 // everything charged so far — decoded pages and a GIF's held frames alike — against importTotalPixels
+	lim    rasterLimits
+}
+
+// rasterLimits are a caller's own limits below the import's: a picture's pixel ceiling, and one page only.
+type rasterLimits struct {
+	maxPixels int64
+	single    bool
+}
+
+// several refuses a file of n pages where the caller asked for one.
+func (j *rasterJob) several(n int) error {
+	if j.lim.single && n > 1 {
+		return fmt.Errorf("%w: it has %d", ErrSeveralPages, n)
+	}
+	return nil
 }
 
 func newRasterJob(ctx context.Context) (*rasterJob, context.CancelFunc) {
@@ -108,6 +123,10 @@ func (j *rasterJob) charge(w, h int) error {
 	if px > maxImagePixels {
 		return fmt.Errorf("%w: it is %d×%d — %d megapixels, and Nib opens images up to %d",
 			ErrImagePixels, w, h, px/1_000_000, maxImagePixels/1_000_000)
+	}
+	if j.lim.maxPixels > 0 && px > j.lim.maxPixels {
+		return fmt.Errorf("%w: it is %d×%d — %d megapixels, and Nib puts pictures on a page up to %d",
+			ErrImagePixels, w, h, px/1_000_000, j.lim.maxPixels/1_000_000)
 	}
 	if j.pixels+px > importTotalPixels {
 		return fmt.Errorf("%w: all together past %d megapixels", ErrImagePixels, importTotalPixels/1_000_000)
@@ -197,6 +216,11 @@ func (j *rasterJob) addFile(data []byte) error {
 		return j.addBMP(data)
 	case formatTIFF:
 		ifds, err := walkTIFF(data)
+		if err == nil {
+			if err := j.several(len(ifds)); err != nil {
+				return err
+			}
+		}
 		switch {
 		case err != nil && (len(ifds) > 0 || errors.Is(err, ErrTooManyPages)):
 			return err // a chain that began and broke: opening its first page would lose the rest without a word
@@ -364,6 +388,9 @@ func (j *rasterJob) addGIF(data []byte) error {
 	}
 	if len(frames) == 0 {
 		return ErrNoPages
+	}
+	if err := j.several(len(frames)); err != nil {
+		return err
 	}
 	// Every frame becomes a page of the logical screen's size, and the frames' own pixels are held by
 	// DecodeAll together, so both are charged before it runs.

@@ -86,7 +86,8 @@ func importRefusal(err error) (status int, msg string) {
 		return http.StatusRequestTimeout, "the conversion was cancelled"
 	case errors.Is(err, pdfops.ErrNotADocument), errors.Is(err, pdfops.ErrCorruptDocument), errors.Is(err, pdfops.ErrNotText), errors.Is(err, pdfops.ErrNotAPDF),
 		errors.Is(err, pdfops.ErrExtensionDisagrees), errors.Is(err, pdfops.ErrArchiveRefused), errors.Is(err, pdfops.ErrPackageNamesOutside),
-		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrCSVUnreadable):
+		errors.Is(err, pdfops.ErrNoPages), errors.Is(err, pdfops.ErrTIFFCompression), errors.Is(err, pdfops.ErrImagePixels), errors.Is(err, pdfops.ErrCSVUnreadable),
+		errors.Is(err, pdfops.ErrFormatNotAllowed), errors.Is(err, pdfops.ErrSeveralPages):
 		return http.StatusUnsupportedMediaType, err.Error()
 	}
 	if tool, ok := pdfops.MissingToolFor(err); ok {

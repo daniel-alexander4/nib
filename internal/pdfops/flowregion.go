@@ -105,7 +105,7 @@ func (w *runWalker) markImage(kind markKind, gs runGState, src []byte, span opSp
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
 			im.digest = objectDigest(src, span, gs.place, gs.qDepth)
-			im.clipBox, im.clipRough = gs.clip, gs.clipRough
+			im.ctm, im.clipBox, im.clipRough = gs.ctm, gs.clip, gs.clipRough
 			if span.start >= 0 && span.end <= len(src) && span.start <= span.end {
 				im.painter = sha256.Sum256(src[span.start:span.end])
 			}
@@ -210,7 +210,9 @@ type drawnImage struct {
 	// force lies within, in user space. alone says the bytes around the image are exactly `q a b c d e f cm <image> Q`:
 	// place is the only `cm` of its `q`, which draws and clips nothing else (`aloneInBracket`). All are the region
 	// reader's, for a move (PLAN-image-edit P02.S01).
-	outer     runMatrix
+	outer runMatrix
+	// ctm is the matrix the image is drawn under: what a replace reads the drawn proportion from (P03.S01).
+	ctm       runMatrix
 	outerOK   bool
 	clipBox   [4]float64
 	clipRough bool

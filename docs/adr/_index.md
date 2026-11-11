@@ -1069,3 +1069,5 @@ home today.
   — movable read from the bytes (`q … cm <image> Q`, plain, on the page, unclipped); one conversion (`unpoint`); the after-check by box; `nib objects move`; the route reads no `box` until P02.S03.
 - [ADR-222](222-a-soft-mask-is-a-clip-to-a-move-and-a-body-decoded-elsewhere-is-in-the-census.md) — **A soft mask is a clip to a move, and a request body decoded in another package is in the field census**
   — extends ADR-221 §1 (an `/SMask` marks the clip rough; the clip test has `displayEpsilon` of slack); supersedes ADR-221 §4's rationale: the request-field census now follows `objedit`/`tagwrite` decoders and a caller-built object.
+- [ADR-223](223-a-picture-is-replaced-through-the-import-function-and-keeps-its-tag.md) — **A picture is replaced through the import function, and keeps its tag and its place**
+  — `ImportOptions.Only`/`Single`/`MaxPixels` (50 MP) inside Import; `objedit.Check` before the import; one image lifted, the name added to the page's own resources; fitted when movable (EXIF turn folded), else filled and said; a described Figure needs an answer.

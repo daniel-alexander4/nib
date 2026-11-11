@@ -433,10 +433,11 @@ func TestAMarkedPictureNoTreeOwnsIsRemovedWithItsBracket(t *testing.T) {
 func TestEveryObjectCauseHasItsWords(t *testing.T) {
 	want := []string{CauseBadRequest, CauseCeremony, WhyFormDrawn, CauseNotRewritable, WhyNotIsolated, CauseObjectChanged,
 		WhyOffPage, CauseRewriteDiffers, CauseSigned, WhyTagged, WhyTaggedLast, WhyTaggedShared, WhyUnreadableBox,
-		WhyNotAlone, WhyNotUpright, WhyPartlyOffPage, WhyClipped}
+		WhyNotAlone, WhyNotUpright, WhyPartlyOffPage, WhyClipped,
+		WhyImageMask, WhyObjectReferenced, WhyOrientation, CauseAltUnanswered, CauseNotOneImage}
 	got := objectCauses()
-	if len(got) != 17 || len(want) != 17 {
-		t.Fatalf("%d causes, want 17: %v", len(got), got)
+	if len(got) != 22 || len(want) != 22 {
+		t.Fatalf("%d causes, want 22: %v", len(got), got)
 	}
 	for _, c := range want {
 		if ObjectCauseWords(c) == "" {

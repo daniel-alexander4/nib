@@ -671,12 +671,13 @@ func jsonFieldsRead(home *serverPkg, imported map[string]*serverPkg, helpers map
 	})
 }
 
-// passesRequestBody reports whether a call hands the request body (`r.Body`, however wrapped) to its callee.
+// passesRequestBody reports whether a call hands the request body (`r.Body`, however wrapped) to its callee — or a
+// form field of it (`r.FormValue("edits")`, a multipart route's JSON, PLAN-image-edit P03.S01).
 func passesRequestBody(args []ast.Expr) bool {
 	for _, a := range args {
 		found := false
 		ast.Inspect(a, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Body" {
+			if sel, ok := n.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Body" || sel.Sel.Name == "FormValue") {
 				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "r" {
 					found = true
 				}

@@ -426,6 +426,7 @@ var published = map[string][]string{
 var excluded = map[string]string{
 	"pdfops.PageObjects":      "gated on PLAN-image-edit.md P01.S04: `nib objects` publishes it (P01.S02); S04 builds `GET /api/page/objects` and the window's Edit Objects, which read it; today `nib objects` prints it, and the route tests and build/objectdelete.sh read it.",
 	"pdfops.ObjectEditResult": "gated on PLAN-image-edit.md P01.S04: `POST /api/page/objects` answers it and the window says it in S04 (the description going, links kept, the picture staying in the file); today `nib objects remove` prints every field and the route test reads it.",
+	"pdfops.ImportOptions":    "an INPUT, not an observable: `ReplacementImport` (PLAN-image-edit P03.S01) returns the options a replacement is imported under, which `pdfops.Import` reads; nothing leaves the process in it.",
 	"pdfops.PageImageResult":  "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
 }
 

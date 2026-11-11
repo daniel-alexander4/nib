@@ -617,6 +617,7 @@ func (s *Server) Handler() http.Handler {
 	// The pictures a page draws (P01.S04, the window's Edit Objects reads it) and removing one (P01.S02), ADR-219.
 	mux.HandleFunc("GET /api/page/objects", s.requireUnlocked(s.handlePageObjects))
 	mux.HandleFunc("POST /api/page/objects", s.requireUnlocked(s.handlePageObjectsEdit))
+	mux.HandleFunc("POST /api/page/objects/replace", s.requireUnlocked(s.handlePageObjectsReplace))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
 	mux.HandleFunc("GET /api/paragraphs", s.requireUnlocked(s.handleParagraphs))
 	mux.HandleFunc("GET /api/pagemap", s.requireUnlocked(s.handlePageMap))

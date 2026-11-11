@@ -116,6 +116,9 @@ func TestASignedDocumentIsRefusedBeforeAnyRead(t *testing.T) {
 		if o.Movable || o.MoveWhy != pdfops.CauseSigned {
 			t.Fatalf("a signed document's picture is listed movable %v %q", o.Movable, o.MoveWhy)
 		}
+		if o.Replaceable || o.ReplaceWhy != pdfops.CauseSigned {
+			t.Fatalf("a signed document's picture is listed replaceable %v %q", o.Replaceable, o.ReplaceWhy)
+		}
 	}
 }
 

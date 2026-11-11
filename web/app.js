@@ -608,6 +608,9 @@ function applyStatus(st) {
   if (fmts.length) paintOpenFormats(fmts);
   paintHelpers(st);
   els.combineInput.accept = ['application/pdf', ...fmts.filter((f) => f.image).flatMap((f) => f.mime)].join(',');
+  // Replace… takes a picture Nib reads itself: the rows that are an image and need no outside tool (the server's
+  // RasterFormatKeys, PLAN-image-edit P03.S01), so a HEIC photo is not offered and then refused.
+  $('objectsReplaceFile').accept = fmts.filter((f) => f.image && !f.tool).flatMap((f) => f.mime).join(',');
   // ...and SAY so, which the narrowed picker never did: a user with a .docx met the missing
   // converter as their file not appearing in the dialog, with nothing naming the reason. Both
   // elements are authored hidden in index.html, so a machine that has LibreOffice never sees
@@ -11739,6 +11742,11 @@ const OBJECT_CAUSES = {
   'unreadable-box': 'Nib cannot work out where this picture is drawn.',
   'off-page': 'This picture is drawn outside the page, where it cannot be seen.',
   'object-changed': 'The page changed since you selected this. Select the picture again.',
+  'image-mask': 'This is a shape painted in one colour, not a photo or a drawing; Nib does not replace it.',
+  'object-referenced': 'This picture\'s object is referred to from the document\'s tags, so Nib does not replace it.',
+  'orientation': 'The new picture is a turned photo, and this picture is placed in a way Nib cannot turn; turn the photo upright first.',
+  'alt-unanswered': 'This picture has a description. Give the new picture its own description, or choose to keep the old one.',
+  'not-one-image': 'The new picture could not be read as one picture.',
   'rewrite-differs': 'Nib checked the page after changing the picture and it was not the page it expected, so nothing was changed.',
   'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot change the picture.',
   'bad-request': 'The request to change a picture could not be read.',
@@ -11803,6 +11811,11 @@ function reflectObjects() {
   setArmed($('objectsBtn'), !!view.objectsMode);
   const sel = objectSelectionFor(view);
   $('objectsRemoveBtn').disabled = !(sel && sel.editable) || $('objectsBtn').disabled;
+  $('objectsReplaceBtn').disabled = !(sel && sel.replaceable) || $('objectsBtn').disabled;
+  // The description row belongs to the one picture it was opened for: any other selection — another described picture
+  // in this document, or another document's — puts it away, so a description is never carried to a picture it was not
+  // written for (P03.S01 review C1).
+  if (!sel || objectAltFor !== objectAltKey(sel)) hideObjectAlt();
   reflectArmedChip();
 }
 
@@ -11821,6 +11834,7 @@ function exitObjects(owner = view) {
   owner.objectsSelected = null;
   owner.objectsReselect = null;
   owner.objectsKeyFocus = null;
+  if (owner === view) hideObjectAlt();
   dropObjectNudge(owner);
   clearObjectOutlines(owner);
   if (owner === view) {
@@ -11839,6 +11853,14 @@ $('objectsBtn').onclick = () => {
   drawObjectOutlines(view);
 };
 $('objectsRemoveBtn').onclick = () => removeSelectedObject(view);
+$('objectsReplaceBtn').onclick = () => replaceSelectedObject(view);
+$('objectsReplaceFile').onchange = () => replaceWithPickedFile();
+$('objectsAltGo').onclick = () => replaceSelectedObject(view);
+$('objectsAlt').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') { ev.preventDefault(); replaceSelectedObject(view); }
+});
+// Keeping the old description and typing a new one are two answers: the tick puts the field away so only one is given.
+$('objectsKeepAlt').onchange = () => { $('objectsAlt').disabled = $('objectsKeepAlt').checked; };
 
 // objectLabel is what a screen reader hears for one outline: its place among the page's pictures, and its description.
 function objectLabel(o, i, m, n) {
@@ -11953,7 +11975,7 @@ function placeObjectOutline(b, box) {
 
 function objectSelectionRecord(owner, n, o) {
   return { docId: owner.docMeta && owner.docMeta.id, page: n, ordinal: o.ordinal, digest: o.digest, editable: o.editable,
-    movable: !!o.movable };
+    movable: !!o.movable, replaceable: !!o.replaceable, alt: o.alt || '' };
 }
 
 // selectedWords is what selecting a picture says: its label (with its description, objectLabel), then what can be done
@@ -12227,27 +12249,118 @@ async function removeSelectedObject(owner = view) {
   drawObjectOutlines(owner);
 }
 
-// sendObjectEdit sends one edit of the selected picture — a move to `box`, or with none a removal — pinned to the
+// objectAltFor is the picture the description row is open for (objectAltKey), or null.
+let objectAltFor = null;
+
+// objectAltKey names one picture of one document at one listing: what a description row answers for.
+function objectAltKey(sel) {
+  return `${sel.docId}:${sel.page}:${sel.ordinal}:${sel.digest}`;
+}
+
+// hideObjectAlt puts the description row away, empty: it belongs to one replace and is never carried to the next.
+function hideObjectAlt() {
+  objectAltFor = null;
+  $('objectsAltRow').hidden = true;
+  $('objectsAlt').value = '';
+  $('objectsAlt').disabled = false;
+  $('objectsKeepAlt').checked = false;
+}
+
+// replacePending is the replace a file picker was opened for: the view and the selection at the press (ADR-001).
+let replacePending = null;
+
+// replaceSelectedObject opens the picker for the picture selected in owner. A described picture first asks for the new
+// picture's description, or for the old one to be kept: a description of the old picture is never kept silently.
+function replaceSelectedObject(owner = view) {
+  const sel = objectSelectionFor(owner);
+  if (!sel || !sel.replaceable) return;
+  if (owner.objectsEditing) {
+    objectNoticeFor(owner, 'Nib is still changing the last picture; try again when it is done.');
+    return;
+  }
+  dropObjectNudge(owner);
+  const answered = objectAltFor === objectAltKey(sel) && ($('objectsKeepAlt').checked || $('objectsAlt').value.trim());
+  if (sel.alt && !answered) {
+    if (objectAltFor !== objectAltKey(sel)) hideObjectAlt();
+    objectAltFor = objectAltKey(sel);
+    $('objectsAltRow').hidden = false;
+    objectNoticeFor(owner, `This picture is described as "${sel.alt}". Type a description for the new picture, or tick Keep the old description, then press Replace….`);
+    $('objectsAlt').focus();
+    return;
+  }
+  // The answer is read now, at the press that opens the picker, for this picture: never later, from a row that may
+  // have moved on.
+  const keep = !!sel.alt && $('objectsKeepAlt').checked;
+  replacePending = { owner, sel, keepAlt: keep, alt: sel.alt && !keep ? $('objectsAlt').value.trim() : '' };
+  $('objectsReplaceFile').value = '';
+  $('objectsReplaceFile').click();
+}
+
+// replaceWithPickedFile sends the picked file for the replace the picker was opened for, if that view still holds the
+// document and the tool is still armed on it.
+async function replaceWithPickedFile() {
+  const p = replacePending;
+  replacePending = null;
+  const input = $('objectsReplaceFile');
+  const file = input.files && input.files[0];
+  if (!p || !file) return;
+  const { owner, sel } = p;
+  if (!owner.objectsMode || !owner.docMeta || sel.docId !== owner.docMeta.id) return;
+  const swap = { file, alt: p.alt, keepAlt: p.keepAlt };
+  const answer = await sendObjectEdit(owner, sel, null, null, swap);
+  if (!answer) return;
+  // After the reload (which clears it with the rest of the tool's state), as a move does: the same picture, by place.
+  owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, ordinal: sel.ordinal };
+  hideObjectAlt();
+  objectNoticeFor(owner, replacedWords(answer.replaced && answer.replaced[0], answer.canUndo !== false));
+  if (owner === view) reflectObjects();
+  drawObjectOutlines(owner);
+}
+
+// replacedWords is what a replace says: done, how it sits in the old place, and the description it now has.
+function replacedWords(r, canUndo = true) {
+  const parts = [canUndo
+    ? 'Replaced the picture. Undo puts the old one back.'
+    : 'Replaced the picture. Undo cannot put the old one back: this document\'s history was let go to keep Nib within its memory budget.'];
+  if (r && r.fitted) parts.push('It is fitted inside the old picture\'s place, keeping its proportions.');
+  if (r && r.stretched) parts.push('It is stretched to fill the old picture\'s place: its proportions differ, and this picture cannot be moved.');
+  if (r && r.turned) parts.push('It was turned upright.');
+  if (r && r.alt) parts.push(`Its description is "${r.alt}".`);
+  return parts.join(' ');
+}
+
+// sendObjectEdit sends one edit of the selected picture — a move to `box`, a replace with `swap` (the picked file and the description's answer), or with neither a removal — pinned to the
 // document it was read from (ADR-001), installs the answer and keeps Edit Objects armed; it answers the install's
 // answer, or null where nothing was installed (the refusal is said in #objectNotice). One edit at a time per view: a
 // second press, a held Delete or a drop while the first is in flight is not sent (code-review v2.56.0 C1 — the door
 // also refuses a replayed address, this keeps the window from asking).
-async function sendObjectEdit(owner, sel, box, focus = null) {
+async function sendObjectEdit(owner, sel, box, focus = null, swap = null) {
   if (owner.objectsEditing) {
     objectNoticeFor(owner, 'Nib is still changing the last picture; try again when it is done.');
     return null;
   }
   if (!confirmOverlayLoss(owner)) return null; // the edited document is loaded back
   owner.objectsEditing = true;
-  objectNoticeFor(owner, box ? 'Moving the picture…' : 'Removing the picture…');
+  const verb = swap ? 'replace' : box ? 'move' : 'remove';
+  objectNoticeFor(owner, swap ? 'Replacing the picture…' : box ? 'Moving the picture…' : 'Removing the picture…');
   try {
-    const edit = box
-      ? { kind: 'move', page: sel.page, ordinal: sel.ordinal, digest: sel.digest, box }
-      : { kind: 'delete', page: sel.page, ordinal: sel.ordinal, digest: sel.digest };
-    const res = await apiFetch('/api/page/objects', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
-      body: JSON.stringify({ edits: [edit] }),
-    });
+    let res;
+    if (swap) {
+      // A replace is a multipart body: the picture, and the edit as the JSON the other route reads (one decoder).
+      const edit = { kind: 'replace', page: sel.page, ordinal: sel.ordinal, digest: sel.digest, alt: swap.alt, keepAlt: swap.keepAlt };
+      const form = new FormData();
+      form.append('file', swap.file, swap.file.name);
+      form.append('edits', JSON.stringify({ edits: [edit] }));
+      res = await apiFetch('/api/page/objects/replace', { method: 'POST', docId: owner.docMeta.id, body: form });
+    } else {
+      const edit = box
+        ? { kind: 'move', page: sel.page, ordinal: sel.ordinal, digest: sel.digest, box }
+        : { kind: 'delete', page: sel.page, ordinal: sel.ordinal, digest: sel.digest };
+      res = await apiFetch('/api/page/objects', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
+        body: JSON.stringify({ edits: [edit] }),
+      });
+    }
     if (!res.ok) {
       let out = null;
       try { out = await res.clone().json(); } catch { out = null; }
@@ -12264,7 +12377,6 @@ async function sendObjectEdit(owner, sel, box, focus = null) {
         drawObjectOutlines(owner);
         return null;
       }
-      const verb = box ? 'move' : 'remove';
       objectNoticeFor(owner, out && out.cause ? objectCauseSentence(out.cause, out.error) : await errText(res, `Could not ${verb} the picture.`));
       return null;
     }
@@ -12277,7 +12389,7 @@ async function sendObjectEdit(owner, sel, box, focus = null) {
     owner.objectsFocus = focus;
     return answer;
   } catch (err) {
-    objectNoticeFor(owner, err.message || (box ? 'Could not move the picture.' : 'Could not remove the picture.'));
+    objectNoticeFor(owner, err.message || `Could not ${verb} the picture.`);
     return null;
   } finally {
     owner.objectsEditing = false;

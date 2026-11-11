@@ -94,6 +94,11 @@ type PageObject struct {
 	// structure, so a tagged picture's tag causes do not stop it (P02.S01 grill pin 3).
 	Movable bool   `json:"movable"`
 	MoveWhy string `json:"moveWhy"`
+	// Replaceable says a replace may act on it, ReplaceWhy the cause when it may not: `objectEditability` without the
+	// tag causes, because a replace keeps the element (PLAN-image-edit P03.S01). The door adds what only the
+	// image's own object can say (a stencil, a structure reference) when it is asked.
+	Replaceable bool   `json:"replaceable"`
+	ReplaceWhy  string `json:"replaceWhy"`
 	// PlaceSpan is the byte span of the `cm` that last set the matrix at its `q` level, or null.
 	PlaceSpan *[2]int `json:"placeSpan"`
 	// QDepth is how many `q` are open around it.
@@ -183,6 +188,7 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 		}
 		o.Editable, o.Why = objectEditability(im, o.OnPage, tagWhy)
 		o.Movable, o.MoveWhy = objectMovability(im, sp)
+		o.Replaceable, o.ReplaceWhy = objectEditability(im, o.OnPage, "")
 		out.Objects = append(out.Objects, o)
 	}
 	return out

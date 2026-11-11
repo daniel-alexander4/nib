@@ -381,3 +381,77 @@ func TestImportNameIsBasePlusPDF(t *testing.T) {
 		}
 	}
 }
+
+// Replacing a picture admits only a raster Nib reads itself (PLAN-image-edit P03.S01): Only refuses a PDF at the
+// passthrough — even one named like a picture — and any other format after classification, and nil admits everything.
+func TestOnlyAdmitsTheNamedFormatsAndAPDFOnlyWhenNamed(t *testing.T) {
+	only := RasterFormatKeys()
+	for _, c := range []struct {
+		name string
+		b    []byte
+		o    ImportOptions
+		ok   bool
+	}{
+		{"a PNG among the rasters", pngBytes(t, 8, 8), ImportOptions{Only: only}, true},
+		{"a PDF named a.png", tinyPDF(t), ImportOptions{Only: only}, false},
+		{"a PNG where only JPEG is admitted", pngBytes(t, 8, 8), ImportOptions{Only: []string{"jpeg"}}, false},
+		{"a PDF where pdf is named", tinyPDF(t), ImportOptions{Only: []string{"pdf"}}, true},
+		{"a PDF with no list", tinyPDF(t), ImportOptions{}, true},
+	} {
+		_, err := importBytes(t, c.b, "a.png", c.o)
+		if c.ok && err != nil {
+			t.Errorf("%s: refused: %v", c.name, err)
+		}
+		if !c.ok && !errors.Is(err, ErrFormatNotAllowed) {
+			t.Errorf("%s: %v, want ErrFormatNotAllowed", c.name, err)
+		}
+	}
+	if got := refusalCause(fmt.Errorf("x: %w", ErrFormatNotAllowed)); got != "format-not-allowed" {
+		t.Errorf("counted as %q", got)
+	}
+}
+
+func TestTheRasterFormatsAreTheImagesNibReadsItself(t *testing.T) {
+	got := map[string]bool{}
+	for _, k := range RasterFormatKeys() {
+		got[k] = true
+	}
+	for _, k := range []string{"png", "jpeg", "tiff", "webp", "gif", "bmp"} {
+		if !got[k] {
+			t.Errorf("%s is not a raster Nib reads itself", k)
+		}
+	}
+	for _, k := range []string{"heic", "svg", "cbz", "pdf"} {
+		if got[k] {
+			t.Errorf("%s is listed, and it starts a tool or is not one picture", k)
+		}
+	}
+}
+
+// Single refuses a picture file of several pages from their count; MaxPixels is a picture's own ceiling.
+func TestSingleAndMaxPixelsRefuseFromTheHeader(t *testing.T) {
+	for name, b := range map[string][]byte{
+		"a two-frame GIF": gifOf(t, 4, 4),
+		"a two-page TIFF": tiffOf([]int{40, 80}, 0, false, false),
+	} {
+		if _, err := importBytes(t, b, "x", ImportOptions{Single: true}); !errors.Is(err, ErrSeveralPages) {
+			t.Errorf("%s under Single: %v, want ErrSeveralPages", name, err)
+		}
+		if _, err := importBytes(t, b, "x", ImportOptions{}); err != nil {
+			t.Errorf("%s without Single: %v", name, err)
+		}
+	}
+	if _, err := importBytes(t, gifOf(t, 4), "x.gif", ImportOptions{Single: true}); err != nil {
+		t.Errorf("a one-frame GIF under Single: %v", err)
+	}
+	png := pngBytes(t, 100, 100)
+	if _, err := importBytes(t, png, "x.png", ImportOptions{MaxPixels: 9_999}); !errors.Is(err, ErrImagePixels) {
+		t.Errorf("10,000 pixels under a 9,999 ceiling: %v, want ErrImagePixels", err)
+	}
+	if _, err := importBytes(t, png, "x.png", ImportOptions{MaxPixels: 10_000}); err != nil {
+		t.Errorf("10,000 pixels at a 10,000 ceiling: %v", err)
+	}
+	if got := refusalCause(fmt.Errorf("x: %w", ErrSeveralPages)); got != "several-pages" {
+		t.Errorf("counted as %q", got)
+	}
+}

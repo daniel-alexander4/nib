@@ -149,3 +149,62 @@ test('a drag moves the second picture on the turned page where the pointer went,
   for (let i = 0; i < 60 && (await served()) === moved; i++) await page.waitForTimeout(250);
   assert.equal(await served(), opened, 'Undo did not bring back the document byte for byte');
 });
+
+test('Replace… puts a picked picture in the second picture\'s place on the turned page, and Undo puts the bytes back', async () => {
+  const opened = await served();
+  const before = await listing();
+  assert.ok(before[1].replaceable, `setup: the second picture is not replaceable (${before[1].replaceWhy})`);
+  if (await page.evaluate(() => document.getElementById('objectsBtn').getAttribute('aria-pressed') !== 'true')) await page.click('#objectsBtn');
+  // The window lays the outlines of the listing it holds; the test before this one ended on an Undo, so wait for the
+  // outline of the second picture to stand where the server's listing puts it, or the address sent is the moved one's.
+  await page.waitForFunction((box) => {
+    const ol = document.querySelectorAll('.viewerContainer:not([hidden]) .obj-outline');
+    return ol.length === 2 && Math.abs(parseFloat(ol[1].style.left) - box[0] * 100) < 0.5 && Math.abs(parseFloat(ol[1].style.top) - box[1] * 100) < 0.5;
+  }, before[1].box, { timeout: 15000 });
+  await page.evaluate(() => document.querySelectorAll('.viewerContainer:not([hidden]) .obj-outline')[1].click());
+  await page.waitForFunction(() => !document.getElementById('objectsReplaceBtn').disabled, null, { timeout: 15000 });
+  // A red picture, made by the browser's own canvas: 40 × 20, so it is fitted inside the old box by its proportion.
+  const red = Buffer.from(await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 40; c.height = 20;
+    const g = c.getContext('2d');
+    g.fillStyle = '#e01010';
+    g.fillRect(0, 0, 40, 20);
+    return c.toDataURL('image/png').split(',')[1];
+  }), 'base64');
+  const sent = [];
+  const onRequest = (r) => { if (r.url().includes('/api/page/objects/replace')) sent.push(r.method()); };
+  page.on('request', onRequest);
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('#objectsReplaceBtn')]);
+  await chooser.setFiles({ name: 'red.png', mimeType: 'image/png', buffer: red });
+  let said = '';
+  for (let i = 0; i < 60 && !/^Replaced the picture/.test(said); i++) {
+    await page.waitForTimeout(250);
+    said = await page.evaluate(() => document.getElementById('objectNoticeText').textContent);
+  }
+  page.off('request', onRequest);
+  assert.match(said, /^Replaced the picture/, `after picking the file the window says "${said}" (${sent.length} replace request(s) sent)`);
+
+  const after = await listing();
+  assert.equal(after.length, 2, `the page lists ${after.length} pictures after the replace`);
+  assert.equal(after[0].digest, before[0].digest, 'the other picture changed');
+  assert.notEqual(after[1].digest, before[1].digest, 'the second picture is the one it was');
+  after[1].box.forEach((v, i) => assert.ok(i < 2 ? v >= before[1].box[i] - 0.002 : v <= before[1].box[i] + 0.002,
+    `the new picture at ${after[1].box} is not inside the old one's place ${before[1].box}`));
+  // The page is drawn again after the install: read the pixel until the render has landed, a few seconds at most.
+  let px = [];
+  for (let i = 0; i < 40; i++) {
+    px = await page.evaluate(({ fx, fy }) => {
+      const c = document.querySelector('.viewerContainer:not([hidden]) .page canvas');
+      return c ? Array.from(c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data) : [];
+    }, { fx: (after[1].box[0] + after[1].box[2]) / 2, fy: (after[1].box[1] + after[1].box[3]) / 2 });
+    if (px[0] > 180 && px[1] < 80 && px[2] < 80) break;
+    await page.waitForTimeout(150);
+  }
+  assert.ok(px[0] > 180 && px[1] < 80 && px[2] < 80, `the page draws ${px} where the new picture is, not its red`);
+
+  const replaced = await served();
+  await page.click('#undoBtn');
+  for (let i = 0; i < 60 && (await served()) === replaced; i++) await page.waitForTimeout(250);
+  assert.equal(await served(), opened, 'Undo did not bring back the document byte for byte');
+});

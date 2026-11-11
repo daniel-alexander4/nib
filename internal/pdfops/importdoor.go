@@ -3,9 +3,11 @@ package pdfops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -68,6 +70,17 @@ type ImportOptions struct {
 	// door sets it: a document keeps a path only because the file was a PDF, and a file that has become a
 	// Word document must not be converted over that path.
 	PDFOnly bool
+	// Only, when not nil, is the format keys this import may read: anything else — a PDF included, which is
+	// decided before any other format — is refused with ErrFormatNotAllowed before the source is read whole.
+	// Replacing a picture passes RasterFormatKeys (PLAN-image-edit P03.S01): a PDF named `.png` would otherwise
+	// come back as it was, with every filter and key its author chose.
+	Only []string
+	// Single refuses a picture file holding more than one page (a GIF's frames, a TIFF's pages) with
+	// ErrSeveralPages, from their count, before a frame is decoded.
+	Single bool
+	// MaxPixels, when above zero, is a picture's own ceiling in pixels below maxImagePixels, charged from its
+	// header as that cap is.
+	MaxPixels int64
 }
 
 // ImportResult is a PDF and the facts a caller reports about how it was made.
@@ -107,6 +120,12 @@ var ImportGate = gate.New(2, 16)
 // ErrNotAPDF is a non-PDF offered to a PDFOnly import.
 var ErrNotAPDF = errors.New("that file isn't a PDF")
 
+// ErrFormatNotAllowed refuses a source whose format the caller did not admit (ImportOptions.Only).
+var ErrFormatNotAllowed = errors.New("that file is not a kind of picture Nib can put on a page")
+
+// ErrSeveralPages refuses a picture file holding more than one page where one picture is wanted (Single).
+var ErrSeveralPages = errors.New("that file holds more than one picture")
+
 // ConversionError is a conversion that was attempted and failed — as opposed to a file that was refused
 // before one. Image is true for the native image producer, whose failures are the person's picture, not a
 // converter's.
@@ -143,6 +162,10 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 	}
 	head = head[:n] // a source that shrank since it was measured is not zero-padded into a different file
 	if LooksLikePDF(head[:min(int64(len(head)), int64(pdfHeaderWindow))]) {
+		if o.Only != nil && !slices.Contains(o.Only, "pdf") {
+			fkey = "pdf"
+			return nil, fmt.Errorf("%w: it is a PDF", ErrFormatNotAllowed)
+		}
 		data, err := readAll(src, size)
 		if err != nil {
 			return nil, err
@@ -163,6 +186,9 @@ func Import(ctx context.Context, src io.ReaderAt, size int64, name string, o Imp
 		return nil, err
 	}
 	fkey = f.Key
+	if o.Only != nil && !slices.Contains(o.Only, f.Key) {
+		return nil, fmt.Errorf("%w: it is %s", ErrFormatNotAllowed, f.Label)
+	}
 	if f.Family == FamilyText && size > importTextBytes {
 		return nil, ErrImportTooLarge
 	}
@@ -276,7 +302,7 @@ func convertImport(ctx context.Context, data []byte, name string, f Format, o Im
 	case f.Key == "cbz":
 		pdf, err = CBZToDocument(ctx, data, name)
 	case f.Image:
-		pdf, err = ImageToDocumentCtx(ctx, data, name)
+		pdf, err = imageToDocument(ctx, data, name, rasterLimits{maxPixels: o.MaxPixels, single: o.Single})
 	case f.Family == FamilyPostScript:
 		pdf, err = ConvertPostScriptToPDF(ctx, data, f.Key == "eps")
 	case f.Family == FamilyHTML:
@@ -368,6 +394,10 @@ func refusalCause(err error) string {
 	switch {
 	case errors.Is(err, ErrNotAPDF):
 		return "not-a-pdf"
+	case errors.Is(err, ErrFormatNotAllowed):
+		return "format-not-allowed"
+	case errors.Is(err, ErrSeveralPages):
+		return "several-pages"
 	case errors.Is(err, ErrImportTooLarge), errors.Is(err, ErrConvertedTooLarge):
 		return "cap:input-bytes"
 	case errors.Is(err, ErrConverterOverMemory):

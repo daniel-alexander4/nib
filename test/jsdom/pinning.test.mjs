@@ -57,6 +57,7 @@ const MUTATING = [
   '/api/reflow',
   // PLAN-image-edit P01.S02: removes a picture from a page and commits it through commitMutation.
   '/api/page/objects',
+  '/api/page/objects/replace',
   // P07.S02a (v1.117.155). Convene commits new bytes into the open document — a readme,
   // N signature pages, a ceremony page and the embedded record — so it is a mutating route
   // like any other and must be driven by the misaddressed-document guard below.

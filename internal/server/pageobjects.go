@@ -24,9 +24,14 @@ const maxObjectEditBytes = 64 << 10
 // was moved.
 type objectEditResponse struct {
 	docResponse
-	Removed []pdfops.RemovedObject `json:"removed"`
-	Moved   []pdfops.MovedObject   `json:"moved"`
+	Removed  []pdfops.RemovedObject  `json:"removed"`
+	Moved    []pdfops.MovedObject    `json:"moved"`
+	Replaced []pdfops.ReplacedObject `json:"replaced"`
 }
+
+// maxObjectReplaceBytes caps a replace's upload: a 48-megapixel PNG measured 42 MB (PLAN-image-edit P03.S01), and the
+// picture's own ceiling (pdfops.ReplaceMaxPixels) refuses what is larger in pixels whatever its bytes.
+const maxObjectReplaceBytes = 128 << 20
 
 // handlePageObjects answers GET /api/page/objects?page=N: the pictures that page draws, from the server's own bytes,
 // for the window's Edit Objects (P01.S04). It writes nothing.
@@ -94,7 +99,63 @@ func (s *Server) handlePageObjectsEdit(w http.ResponseWriter, r *http.Request) {
 	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteObjectChanged(w, err) || wroteCommitFailure(w, err) {
 		return
 	}
-	writeJSON(w, objectEditResponse{docResponse: s.docResponse(doc), Removed: res.Removed, Moved: res.Moved})
+	writeJSON(w, objectEditResponse{docResponse: s.docResponse(doc), Removed: res.Removed, Moved: res.Moved, Replaced: res.Replaced})
+}
+
+// handlePageObjectsReplace answers POST /api/page/objects/replace: a multipart body of the new picture (`file`) and
+// the edit (`edits`, the JSON `POST /api/page/objects` reads, holding one `replace`). The document's own refusal is
+// asked first, so a signed document's upload is never imported; the picture is imported through the server's one
+// import door, admitting only a raster Nib reads itself, one page, under replace's pixel ceiling; the door then
+// lifts it into the page as one undoable install.
+func (s *Server) handlePageObjectsReplace(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	cleanup, ok := parseMultipart(w, r, maxObjectReplaceBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
+	raw := r.FormValue("edits")
+	if len(raw) > maxObjectEditBytes {
+		writeObjectRefusal(w, pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, errors.New("the edit is longer than any edit this route reads")))
+		return
+	}
+	edits, err := objedit.DecodeEdits(strings.NewReader(raw))
+	if err != nil {
+		writeObjectRefusal(w, err)
+		return
+	}
+	if len(edits) != 1 || edits[0].Kind != pdfops.ObjectEditReplace {
+		writeObjectRefusal(w, pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, errors.New("a replacement names one picture to replace")))
+		return
+	}
+	before := s.docBytes(doc)
+	if err := objedit.Check(before); err != nil {
+		writeObjectRefusal(w, err)
+		return
+	}
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "missing file")
+		return
+	}
+	defer f.Close()
+	got, ok := s.importOrRefuse(w, r.Context(), f, hdr.Size, hdr.Filename, pdfops.ReplacementImport("replace"))
+	if !ok {
+		return
+	}
+	edits[0].With = got.PDF
+	result, res, err := objedit.Edit(before, edits)
+	if err != nil {
+		writeObjectRefusal(w, err)
+		return
+	}
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteObjectChanged(w, err) || wroteCommitFailure(w, err) {
+		return
+	}
+	writeJSON(w, objectEditResponse{docResponse: s.docResponse(doc), Removed: res.Removed, Moved: res.Moved, Replaced: res.Replaced})
 }
 
 // wroteObjectChanged answers a lost update — another install landing between this edit's read and its commit

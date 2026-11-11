@@ -1,13 +1,19 @@
 package pdfops
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"math"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"nib/internal/pdfread"
@@ -39,6 +45,8 @@ const (
 	// objectMoveFloor is the fewest moves a run must attempt to say anything of the move mode: without it a movability
 	// that regressed to "nothing movable" reads OK at 0 of 0 (P02 phase close, W9). The corpus attempts 341.
 	objectMoveFloor = 100
+	// objectReplaceFloor is the same pin for the replace mode (P03.S01): one replace per page read.
+	objectReplaceFloor = 100
 )
 
 // pageReading is one page's pictures, its text-run count and a key over every run's text, font and origin, from one
@@ -223,7 +231,11 @@ type deleteTally struct {
 	// The move mode (P02.S01, D8): pictures listed movable, moves attempted, moves read back as asked with the page
 	// otherwise as it was, the outcome of every other move, and why the rest were not movable.
 	movable, moveAttempted, moveClean int
-	moveDiffers, notMovable           map[string]int
+	// The replace mode (P03.S01): one replaceable picture a page replaced by a fixed picture, read back inside its old
+	// box with the page otherwise as it was.
+	replaceAttempted, replaceClean int
+	replaceDiffers                 map[string]int
+	moveDiffers, notMovable        map[string]int
 }
 
 func (t *deleteTally) note(m *map[string]int, k string) {
@@ -259,9 +271,18 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 			return
 		}
 		t.formsNotRead += objs.FormsNotRead
-		tried, moved := 0, 0
+		tried, moved, replaced := 0, 0, false
 		for _, o := range objs.Objects {
 			t.pictures++
+			if o.Replaceable && !replaced {
+				replaced = true
+				t.replaceAttempted++
+				if outcome := probeReplace(pdf, page, objs, o.Ordinal); outcome == deletedClean {
+					t.replaceClean++
+				} else {
+					t.note(&t.replaceDiffers, outcome)
+				}
+			}
 			if !o.Movable {
 				t.note(&t.notMovable, o.MoveWhy)
 			} else {
@@ -320,6 +341,82 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 			}
 		}
 	}
+}
+
+// probeReplacement is the fixed picture every replace puts in place: a 30 × 20 PNG, imported as the route imports one.
+var probeReplacement = sync.OnceValue(func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 30, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 30; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(8 * x), G: 90, B: uint8(10 * y), A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil
+	}
+	src, size := BytesSource(buf.Bytes())
+	res, err := Import(context.Background(), src, size, "probe.png", ReplacementImport("probe"))
+	if err != nil {
+		return nil
+	}
+	return res.PDF
+})
+
+// probeReplace replaces one picture and scores the page read back (`scoreReplace`).
+func probeReplace(pdf []byte, page int, objs PageObjects, ordinal int) string {
+	before, err := readPageForProbe(pdf, page)
+	if err != nil {
+		return deletedUnreadable
+	}
+	with := probeReplacement()
+	if with == nil {
+		return deletedNotWritten + ":probe-picture"
+	}
+	o := objs.Objects[ordinal]
+	e := ObjectEdit{Kind: ObjectEditReplace, Page: page, Ordinal: ordinal, Digest: o.Digest, With: with, KeepAlt: o.Alt != ""}
+	out, _, err := EditPageObjects(pdf, []ObjectEdit{e})
+	if err != nil {
+		var ref *ObjectRefusal
+		if errors.As(err, &ref) {
+			return deletedNotWritten + ":" + ref.Cause
+		}
+		return deletedNotWritten
+	}
+	after, err := readPageForProbe(out, page)
+	if err != nil {
+		return deletedUnreadable
+	}
+	return scoreReplace(before, after, ordinal)
+}
+
+// scoreReplace is the replace's oracle: the same count, the addressed picture's box inside its old box (fitted or
+// filled) and its operator changed, every other picture's operator and box as before, the text as it was.
+func scoreReplace(before, after pageReading, addressed int) string {
+	b, a := before.objs.Objects, after.objs.Objects
+	if len(a) != len(b) {
+		return deletedCountDiffers
+	}
+	for i := range a {
+		if i == addressed {
+			if a[i].operator == b[i].operator {
+				return deletedDigestsDiffer
+			}
+			ob, nb := b[i].userBox, a[i].userBox
+			const slack = 1e-3
+			if nb[0] < ob[0]-slack || nb[1] < ob[1]-slack || nb[2] > ob[2]+slack || nb[3] > ob[3]+slack {
+				return deletedBoxesDiffer
+			}
+			continue
+		}
+		if a[i].operator != b[i].operator || a[i].Box != b[i].Box {
+			return deletedDigestsDiffer
+		}
+	}
+	if after.runs != before.runs || after.text != before.text {
+		return deletedTextDiffers
+	}
+	return deletedClean
 }
 
 // moveTarget is the box a probe moves a picture to: shrunk to nine tenths about its own top-left corner and shifted
@@ -504,6 +601,10 @@ func (t *deleteTally) verdict() (ok bool, msg string) {
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d removed picture(s) are still in the file and no other page draws them (D3's prune)", t.inFileAlone)
 	case t.moveAttempted < objectMoveFloor:
 		return false, fmt.Sprintf("OBJECTMOVE TOO-FEW: %d moves attempted, fewer than the %d a run needs to say anything (%d movable)", t.moveAttempted, objectMoveFloor, t.movable)
+	case t.replaceAttempted < objectReplaceFloor:
+		return false, fmt.Sprintf("OBJECTREPLACE TOO-FEW: %d replaces attempted, fewer than the %d a run needs to say anything", t.replaceAttempted, objectReplaceFloor)
+	case t.replaceClean != t.replaceAttempted:
+		return false, fmt.Sprintf("OBJECTREPLACE FINDING: %d of %d replaces read differently afterwards (%s)", t.replaceAttempted-t.replaceClean, t.replaceAttempted, counts(t.replaceDiffers))
 	case t.moveClean != t.moveAttempted:
 		return false, fmt.Sprintf("OBJECTMOVE FINDING: %d of %d moves read differently afterwards (%s)", t.moveAttempted-t.moveClean, t.moveAttempted, counts(t.moveDiffers))
 	}
@@ -539,6 +640,7 @@ func TestObjectDeleteCorpus(t *testing.T) {
 	if len(tally.aloneAt) > 0 {
 		fmt.Printf("OBJECTDELETE alone-at (list line:page:object) %s\n", strings.Join(tally.aloneAt, " "))
 	}
+	fmt.Printf("OBJECTREPLACE attempted=%d clean=%d differs[%s]\n", tally.replaceAttempted, tally.replaceClean, counts(tally.replaceDiffers))
 	fmt.Printf("OBJECTMOVE movable=%d attempted=%d clean=%d differs[%s] not-movable[%s]\n", tally.movable,
 		tally.moveAttempted, tally.moveClean, counts(tally.moveDiffers), counts(tally.notMovable))
 	if ok, msg := tally.verdict(); !ok {
@@ -596,8 +698,48 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	if got := defectChange(map[string]bool{"7.1 t3": true, "7.2 t1": true}, map[string]bool{"7.2 t1": true}); got != "fewer" {
 		t.Errorf("a clause cleared reads %q, want fewer", got)
 	}
-	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor}).verdict(); !ok {
+	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor}).verdict(); ok || !strings.Contains(msg, "OBJECTREPLACE TOO-FEW") {
+		t.Errorf("a run that attempted no replace: %v %q", ok, msg)
+	}
+	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor,
+		replaceAttempted: objectReplaceFloor, replaceClean: objectReplaceFloor - 1}).verdict(); ok || !strings.Contains(msg, "OBJECTREPLACE FINDING") {
+		t.Errorf("a replace that read differently: %v %q", ok, msg)
+	}
+	if ok, msg := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5, moveAttempted: objectMoveFloor, moveClean: objectMoveFloor,
+		replaceAttempted: objectReplaceFloor, replaceClean: objectReplaceFloor}).verdict(); !ok {
 		t.Errorf("a clean run at the floor is not clean: %q", msg)
+	}
+}
+
+// The replace oracle without a corpus: the new picture inside the old box is clean; outside it, the old picture still
+// there, another picture changed or the text changed is not.
+func TestTheObjectReplaceOracleSeesWhatWentWhere(t *testing.T) {
+	obj := func(d string, x float64) PageObject {
+		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, userBox: [4]float64{x * 600, 0, x*600 + 60, 60}, OnPage: true}
+	}
+	before := pageReading{objs: PageObjects{Objects: []PageObject{obj("a", 0), obj("b", 0.2)}}, runs: 1, text: "t"}
+	read := func(text string, os ...PageObject) pageReading {
+		return pageReading{objs: PageObjects{Objects: os}, runs: 1, text: text}
+	}
+	inside := obj("n", 0)
+	inside.userBox = [4]float64{0, 15, 60, 45}
+	outside := obj("n", 0)
+	outside.userBox = [4]float64{0, 0, 70, 60}
+	for _, c := range []struct {
+		name  string
+		after pageReading
+		want  string
+	}{
+		{"inside the old box", read("t", inside, obj("b", 0.2)), deletedClean},
+		{"past the old box", read("t", outside, obj("b", 0.2)), deletedBoxesDiffer},
+		{"the old picture still there", read("t", obj("a", 0), obj("b", 0.2)), deletedDigestsDiffer},
+		{"another picture changed", read("t", inside, obj("c", 0.2)), deletedDigestsDiffer},
+		{"a picture went", read("t", inside), deletedCountDiffers},
+		{"the text changed", read("u", inside, obj("b", 0.2)), deletedTextDiffers},
+	} {
+		if got := scoreReplace(before, c.after, 0); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }
 

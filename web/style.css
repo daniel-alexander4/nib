@@ -713,6 +713,7 @@ body > div[id$="Modal"] {
 .tags-row label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }
 .tag-outline { position: absolute; outline: 2px solid var(--blue); outline-offset: 1px; pointer-events: none; z-index: 5; }
 /* Edit Objects (PLAN-image-edit P01.S04): two tones, so the outline reads at 3:1 against any picture or page. */
+.objalt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em; padding: 0.25em 0.5em; }
 .obj-outline { position: absolute; z-index: 6; padding: 0; margin: 0; background: transparent; cursor: pointer;
   border: 2px solid #000; box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px #fff; }
 .obj-outline.obj-refused { border-style: dashed; cursor: not-allowed; }

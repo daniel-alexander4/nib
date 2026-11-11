@@ -42,8 +42,17 @@ func documentRefusal(pdf []byte) *pdfops.ObjectRefusal {
 	return nil
 }
 
+// Check is the document's own refusal — a signature or a ceremony record — or nil. A replace asks it before it
+// imports the new picture, so an upload is not read for a document that will be refused (PLAN-image-edit P03.S01).
+func Check(pdf []byte) error {
+	if ref := documentRefusal(pdf); ref != nil {
+		return ref
+	}
+	return nil
+}
+
 // List reads the pictures page of pdf draws, as `pdfops.ReadPageObjects` does, with the document's own refusal laid
-// over every picture: on a signed or ceremony document none is editable or movable, and Why and MoveWhy say so.
+// over every picture: on a signed or ceremony document none is editable, movable or replaceable, and each cause says so.
 func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 	objs, err := pdfops.ReadPageObjects(pdf, page)
 	if err != nil {
@@ -53,6 +62,7 @@ func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 		for i := range objs.Objects {
 			objs.Objects[i].Editable, objs.Objects[i].Why = false, ref.Cause
 			objs.Objects[i].Movable, objs.Objects[i].MoveWhy = false, ref.Cause
+			objs.Objects[i].Replaceable, objs.Objects[i].ReplaceWhy = false, ref.Cause
 		}
 	}
 	return objs, nil
@@ -61,8 +71,8 @@ func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 // Edit applies edits — removals and moves — to pdf as one rewrite. A signed or ceremony document is refused before
 // anything is read; the rest are `pdfops.EditPageObjects`' refusals, every one an `*pdfops.ObjectRefusal`.
 func Edit(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditResult, error) {
-	if ref := documentRefusal(pdf); ref != nil {
-		return nil, pdfops.ObjectEditResult{}, ref
+	if err := Check(pdf); err != nil {
+		return nil, pdfops.ObjectEditResult{}, err
 	}
 	out, res, err := pdfops.EditPageObjects(pdf, edits)
 	if err != nil {
@@ -91,7 +101,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	}
 	out := make([]pdfops.ObjectEdit, len(body.Edits))
 	for i, e := range body.Edits {
-		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest}
+		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest, Alt: e.Alt, KeepAlt: e.KeepAlt}
 		if e.Box != nil {
 			// A slice, not `pdfops.MapRect`: Go drops a fifth number into a fixed array and pads a short one with zeros.
 			if len(e.Box) != 4 {
@@ -111,6 +121,9 @@ type routeEdit struct {
 	Ordinal int       `json:"ordinal"`
 	Digest  string    `json:"digest"`
 	Box     []float64 `json:"box"`
+	// Alt and KeepAlt are a replace's answer about a described picture's description.
+	Alt     string `json:"alt"`
+	KeepAlt bool   `json:"keepAlt"`
 }
 
 // Refusal is err's refusal, when it is one.

@@ -30,6 +30,18 @@ type Format struct {
 	Kind string
 }
 
+// RasterFormatKeys is the one answer to "a picture Nib reads itself": the keys of the rows that are a raster image
+// and start no outside tool (PLAN-image-edit P03.S01's allowlist for a replacement picture).
+func RasterFormatKeys() []string {
+	var out []string
+	for _, f := range Formats() {
+		if f.Image && f.Tool == ToolNone {
+			out = append(out, f.Key)
+		}
+	}
+	return out
+}
+
 // The groups Open…'s tooltip lists the formats under (ADR-217).
 const (
 	KindBooks      = "Books"

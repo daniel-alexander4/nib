@@ -21,15 +21,19 @@ func cmdObjects(args []string) int {
 	if len(args) > 0 && args[0] == "move" {
 		return cmdObjectsMove(args[1:])
 	}
+	if len(args) > 0 && args[0] == "replace" {
+		return cmdObjectsReplace(args[1:])
+	}
 	fs := flag.NewFlagSet("nib objects", flag.ContinueOnError)
 	var page int
 	var asJSON bool
 	fs.IntVar(&page, "page", 0, "the page to list, from 1 (required)")
 	fs.BoolVar(&asJSON, "json", false, "print the listing as JSON")
-	fs.Usage = usageFunc(fs, "nib objects IN --page N [--json]  |  nib objects remove ...  |  nib objects move ...",
+	fs.Usage = usageFunc(fs, "nib objects IN --page N [--json]  |  nib objects remove ...  |  nib objects move ...  |  nib objects replace ...",
 		"List the pictures page N draws, in drawing order, each with its number, its digest, where it is on the page\n"+
 			"and whether Nib can remove it and move it (and why not). \"nib objects remove\" takes one off the page by\n"+
-			"that number and digest; \"nib objects move\" places one in a new box. IN may be - (stdin).")
+			"that number and digest; \"nib objects move\" places one in a new box; \"nib objects replace\" puts another\n"+
+			"picture in its place. IN may be - (stdin).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -169,9 +173,81 @@ func cmdObjectsMove(args []string) int {
 	return writeEdited(in, out, inPlace, result)
 }
 
+// cmdObjectsReplace is `nib objects replace IN --page N --picture K --digest D --with FILE [--alt TEXT | --keep-alt]
+// -o OUT` (or -w IN): FILE is imported as the window's upload is (`pdfops.ReplacementImport`), after the document's
+// own refusal, and put in the picture's place (PLAN-image-edit P03.S01).
+func cmdObjectsReplace(args []string) int {
+	fs := flag.NewFlagSet("nib objects replace", flag.ContinueOnError)
+	var page, picture int
+	var digest, with, alt, out string
+	var keepAlt, inPlace bool
+	fs.IntVar(&page, "page", 0, "the page, from 1 (required)")
+	fs.IntVar(&picture, "picture", 0, "the picture's number as \"nib objects\" lists it, from 1 (required)")
+	fs.StringVar(&digest, "digest", "", "the picture's digest as \"nib objects\" lists it (required)")
+	fs.StringVar(&with, "with", "", "the picture to put in its place: PNG, JPEG, TIFF, WebP, GIF or BMP (required)")
+	fs.StringVar(&alt, "alt", "", "a new description for a described picture")
+	fs.BoolVar(&keepAlt, "keep-alt", false, "keep a described picture's description for the new picture")
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.Usage = usageFunc(fs, "nib objects replace IN --page N --picture K --digest D --with FILE [--alt TEXT | --keep-alt] -o OUT  |  ... -w IN",
+		"Put another picture in one picture's place. Where the picture can be moved the new one is fitted inside its\n"+
+			"box keeping its proportion; otherwise it fills the box. A described picture needs --alt or --keep-alt. A\n"+
+			"signed document, one in a signing ceremony and a picture inside a repeated page element are refused.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if page < 1 || picture < 1 || digest == "" || with == "" {
+		errf("--page, --picture, --digest and --with are all required (\"nib objects IN --page N\" lists them)")
+		return 2
+	}
+	if keepAlt && alt != "" {
+		// Two flags that contradict each other are the command line's to refuse, before any file is read; the door
+		// refuses the same request from the route (P03.S01 review W3).
+		errf("--alt and --keep-alt cannot be combined")
+		return 2
+	}
+	e := pdfops.ObjectEdit{Kind: pdfops.ObjectEditReplace, Page: page, Ordinal: picture - 1, Digest: digest, Alt: alt, KeepAlt: keepAlt}
+	in, result, res, code := editObjectsWith(fs, out, inPlace, e, func(pdf []byte, e *pdfops.ObjectEdit) error {
+		if err := objedit.Check(pdf); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(with)
+		if err != nil {
+			return err
+		}
+		src, size := pdfops.BytesSource(data)
+		ctx, stop := interruptContext()
+		defer stop()
+		got, err := pdfops.Import(ctx, src, size, with, pdfops.ReplacementImport("cli"))
+		if err != nil {
+			return err
+		}
+		e.With = got.PDF
+		return nil
+	})
+	if code != 0 {
+		return code
+	}
+	for _, r := range res.Replaced {
+		switch {
+		case r.Stretched:
+			fmt.Fprintln(os.Stderr, "the new picture is stretched to the old one's box: its proportions differ, and this picture cannot be moved")
+		case r.Turned != 0:
+			fmt.Fprintf(os.Stderr, "the new picture was turned upright (%d degrees)\n", r.Turned)
+		}
+	}
+	return writeEdited(in, out, inPlace, result)
+}
+
 // editObjects reads the one input a picture edit names (IN, or the file -w rewrites) and applies e through the door.
 // A non-zero code is the command's exit: 2 for a request the door could not read, 1 for every other refusal.
 func editObjects(fs *flag.FlagSet, out string, inPlace bool, e pdfops.ObjectEdit) (string, []byte, pdfops.ObjectEditResult, int) {
+	return editObjectsWith(fs, out, inPlace, e, nil)
+}
+
+// editObjectsWith is editObjects with prep run on the document before the edit — a replace asks the document's own
+// refusal and imports its picture there, so a signed document's picture is never read.
+func editObjectsWith(fs *flag.FlagSet, out string, inPlace bool, e pdfops.ObjectEdit, prep func(pdf []byte, e *pdfops.ObjectEdit) error) (string, []byte, pdfops.ObjectEditResult, int) {
 	var in string
 	if inPlace {
 		if out != "" {
@@ -193,6 +269,12 @@ func editObjects(fs *flag.FlagSet, out string, inPlace bool, e pdfops.ObjectEdit
 	if err != nil {
 		errf("%v", err)
 		return "", nil, pdfops.ObjectEditResult{}, 1
+	}
+	if prep != nil {
+		if err := prep(pdf, &e); err != nil {
+			errf("%s: %s", inputName(in), strings.TrimPrefix(err.Error(), "pdfops: "))
+			return "", nil, pdfops.ObjectEditResult{}, 1
+		}
 	}
 	result, res, err := objedit.Edit(pdf, []pdfops.ObjectEdit{e})
 	if err != nil {

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -45,6 +46,12 @@ type ObjectEdit struct {
 	Digest  string `json:"digest"`
 	// Box is a move's target, as fractions of the displayed page (the listing's space, ADR-088); nil for a removal.
 	Box *MapRect `json:"box,omitempty"`
+	// With is a replace's picture: `Import`'s one-page PDF of it, made by the caller (never on the wire). Alt is the
+	// new description for a described picture, KeepAlt the choice to keep the one it has (P03.S01: a description
+	// of the old picture is never kept silently).
+	With    []byte `json:"-"`
+	Alt     string `json:"alt,omitempty"`
+	KeepAlt bool   `json:"keepAlt,omitempty"`
 }
 
 // The refusal causes besides `objectEditability`'s (`WhyFormDrawn` and the rest), each a stable string.
@@ -87,6 +94,11 @@ var objectCauseWords = map[string]string{
 	WhyNotUpright:       "This picture is turned, mirrored or slanted on the page; Nib moves only pictures that sit straight.",
 	WhyPartlyOffPage:    "Part of this picture is outside the page, so Nib cannot show all of it to move.",
 	WhyClipped:          "This picture is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.",
+	WhyImageMask:        "This is a shape painted in one colour, not a photo or a drawing; Nib does not replace it.",
+	WhyObjectReferenced: "This picture's object is referred to from the document's tags, so Nib does not replace it.",
+	WhyOrientation:      "The new picture is a turned photo, and this picture is placed in a way Nib cannot turn; turn the photo upright first.",
+	CauseAltUnanswered:  "This picture has a description. Give the new picture its own description, or choose to keep the old one.",
+	CauseNotOneImage:    "The new picture could not be read as one picture.",
 }
 
 // ObjectCauseWords is the sentence a refusal with cause says, or "" for a cause there is none for.
@@ -162,6 +174,8 @@ type ObjectEditResult struct {
 	Removed []RemovedObject `json:"removed"`
 	// Moved is one entry per moved picture, in the order asked.
 	Moved []MovedObject `json:"moved"`
+	// Replaced is one entry per replaced picture, in the order asked.
+	Replaced []ReplacedObject `json:"replaced"`
 }
 
 // MovedObject is what a move did: the picture's address before it, the box it was placed in as the written page
@@ -196,9 +210,10 @@ func EditPageObjects(pdf []byte, edits []ObjectEdit) ([]byte, ObjectEditResult, 
 	if err := verifyWritten(out, plans); err != nil {
 		return nil, ObjectEditResult{}, err
 	}
-	res := ObjectEditResult{Removed: []RemovedObject{}, Moved: []MovedObject{}}
+	res := ObjectEditResult{Removed: []RemovedObject{}, Moved: []MovedObject{}, Replaced: []ReplacedObject{}}
 	byAddr := map[[2]int]RemovedObject{}
 	movedAt := map[[2]int]MovedObject{}
+	replacedAt := map[[2]int]ReplacedObject{}
 	for _, p := range plans {
 		for _, r := range p.removed {
 			byAddr[[2]int{r.Page, r.Ordinal}] = r
@@ -206,11 +221,17 @@ func EditPageObjects(pdf []byte, edits []ObjectEdit) ([]byte, ObjectEditResult, 
 		for _, m := range p.movedAnswers {
 			movedAt[[2]int{m.Page, m.Ordinal}] = m
 		}
+		for _, r := range p.replacedAnswers {
+			replacedAt[[2]int{r.Page, r.Ordinal}] = r
+		}
 	}
 	for _, e := range edits {
-		if e.Kind == ObjectEditMove {
+		switch e.Kind {
+		case ObjectEditMove:
 			res.Moved = append(res.Moved, movedAt[[2]int{e.Page, e.Ordinal}])
-		} else {
+		case ObjectEditReplace:
+			res.Replaced = append(res.Replaced, replacedAt[[2]int{e.Page, e.Ordinal}])
+		default:
 			res.Removed = append(res.Removed, byAddr[[2]int{e.Page, e.Ordinal}])
 		}
 	}
@@ -232,6 +253,13 @@ func groupObjectEdits(edits []ObjectEdit) ([][]ObjectEdit, error) {
 		case ObjectEditDelete:
 			if e.Box != nil {
 				return nil, badObjectRequest("A removal takes no box.")
+			}
+		case ObjectEditReplace:
+			if e.Box != nil {
+				return nil, badObjectRequest("A replacement takes no box: the new picture goes where the old one is.")
+			}
+			if len(e.With) == 0 {
+				return nil, badObjectRequest("A replacement names the picture to put in its place.")
 			}
 		case ObjectEditMove:
 			if e.Box == nil {
@@ -279,6 +307,11 @@ type pageRemoval struct {
 	// is what the moves answer.
 	moved        map[int]movedWant
 	movedAnswers []MovedObject
+	// replaced holds, by index into want, what a replaced picture must read as; replacedObjNrs the old image's object
+	// number (0 inline), pruned from every page as a removal's is; replacedAnswers what the replaces answer.
+	replaced        map[int]replacedWant
+	replacedObjNrs  []int
+	replacedAnswers []ReplacedObject
 }
 
 // objectTagging is what the structure tree says about one marked picture: the verdict (`objectEditability`'s
@@ -524,6 +557,29 @@ func removeObjects(ctx *model.Context, pages [][]ObjectEdit) ([]pageRemoval, err
 			}
 			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
 		}
+		for _, objNr := range plans[i].replacedObjNrs {
+			if objNr == 0 {
+				continue
+			}
+			for _, nr := range pagesNamingXObject(ctx, walked, objNr) {
+				if pruned[nr] {
+					continue
+				}
+				pruned[nr] = true
+				pg := pageAt(ctx, walked, nr)
+				kept, err := pageAsItStands(ctx, pg, nr)
+				if err != nil {
+					return nil, err
+				}
+				if err := pruneOnePage(ctx, pg, nr); err != nil {
+					return nil, err
+				}
+				extra = append(extra, kept)
+			}
+			if len(pagesNamingXObject(ctx, walked, objNr)) == 0 {
+				dropFromPageTreeNodes(ctx, objNr)
+			}
+		}
 	}
 	return append(plans, extra...), nil
 }
@@ -656,6 +712,13 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	var unowned []int
 	sp := newDisplaySpace(pg)
 	moved := map[int][4]float64{}
+	replaced := map[int]replacedWant{}
+	type newName struct {
+		name string
+		ref  types.IndirectRef
+	}
+	var names []newName
+	taken := map[string]bool{}
 	for _, e := range edits {
 		o, ok := ObjectAt(objs, e.Ordinal, e.Digest)
 		if !ok {
@@ -675,6 +738,61 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 			moved[e.Ordinal] = target
 			plan.movedAnswers = append(plan.movedAnswers, MovedObject{Page: nr, Ordinal: e.Ordinal,
 				LinksOver: linksInside(ctx, pg.Dict, im.box)})
+			continue
+		}
+		if e.Kind == ObjectEditReplace {
+			im := pr.images[e.Ordinal]
+			// The element stays, so a removal's tag causes do not apply; every other cause does (`Replaceable`).
+			if !o.Replaceable {
+				return pageRemoval{}, false, RefuseObject(o.ReplaceWhy, nr, e.Ordinal, nil)
+			}
+			if why := replaceBlocked(ctx, o, src); why != "" {
+				return pageRemoval{}, false, RefuseObject(why, nr, e.Ordinal, nil)
+			}
+			t := tagging[e.Ordinal]
+			alt := o.Alt
+			switch {
+			case e.KeepAlt && strings.TrimSpace(e.Alt) != "":
+				return pageRemoval{}, false, &ObjectRefusal{Cause: CauseBadRequest, Page: nr, Ordinal: e.Ordinal, Detail: "It both keeps the old description and gives a new one."}
+			case o.Alt != "" && !e.KeepAlt && strings.TrimSpace(e.Alt) == "":
+				return pageRemoval{}, false, RefuseObject(CauseAltUnanswered, nr, e.Ordinal, nil)
+			case strings.TrimSpace(e.Alt) != "" && !e.KeepAlt:
+				if t.owner == nil {
+					why := WhyTaggedShared
+					if !im.marked {
+						why = CauseBadRequest
+					}
+					return pageRemoval{}, false, &ObjectRefusal{Cause: why, Page: nr, Ordinal: e.Ordinal, Detail: "Nib cannot give this picture a description of its own."}
+				}
+				v, err := escapedAlt(e.Alt)
+				if err != nil {
+					return pageRemoval{}, false, RefuseObject(CauseBadRequest, nr, e.Ordinal, err)
+				}
+				t.owner.dict["Alt"] = v
+				alt = strings.TrimSpace(e.Alt)
+			}
+			l, err := liftImage(ctx, e.With)
+			if err != nil {
+				return pageRemoval{}, false, err
+			}
+			box, cm, turned, fitted, stretched, why := replacementPlacement(im, o, l, sp.rot)
+			if why != "" {
+				return pageRemoval{}, false, RefuseObject(why, nr, e.Ordinal, nil)
+			}
+			if err := carryLayer(ctx, o, l.ref); err != nil {
+				return pageRemoval{}, false, RefuseObject(CauseNotRewritable, nr, e.Ordinal, err)
+			}
+			name := freshXObjectName(ctx, pg, taken)
+			if cm != nil {
+				edit.Replace(im.place.start, im.place.end, cm)
+			}
+			op := doOperator(name)
+			edit.Replace(o.span.start, o.span.end, op)
+			names = append(names, newName{name, l.ref})
+			replaced[e.Ordinal] = replacedWant{box: box, painter: sha256.Sum256(op), raw: l.raw}
+			plan.replacedAnswers = append(plan.replacedAnswers, ReplacedObject{Page: nr, Ordinal: e.Ordinal,
+				Fitted: fitted, Stretched: stretched, Turned: turned, Alt: alt})
+			plan.replacedObjNrs = append(plan.replacedObjNrs, o.objNr)
 			continue
 		}
 		if !o.Editable {
@@ -728,13 +846,28 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 		}
 	}
 	delete(pg.Dict, "Thumb")
-	if len(gone) > 0 { // a move names no new resource and drops none, so only a removal prunes
+	// A move names no new resource and drops none, so only a removal or a replace prunes. A replace's new name is
+	// entered after the prune, in the fresh dictionary the prune gave the page, so no page sharing the old one sees it.
+	if len(gone) > 0 || len(names) > 0 {
 		if err := pruneOnePage(ctx, pg, nr); err != nil {
 			return pageRemoval{}, false, err
 		}
 	}
+	for _, n := range names {
+		if err := addXObjectName(ctx, pg.Dict, n.name, n.ref); err != nil {
+			return pageRemoval{}, false, RefuseObject(CauseNotRewritable, nr, -1, err)
+		}
+	}
 	for i, o := range objs.Objects {
 		if gone[i] {
+			continue
+		}
+		if r, ok := replaced[i]; ok {
+			if plan.replaced == nil {
+				plan.replaced = map[int]replacedWant{}
+			}
+			plan.replaced[len(plan.want)] = r
+			plan.want = append(plan.want, "")
 			continue
 		}
 		if b, ok := moved[i]; ok {
@@ -877,6 +1010,22 @@ func verifyWritten(out []byte, plans []pageRemoval) error {
 		if err := rewriteAgrees(p, got.Objects, text); err != nil {
 			return err
 		}
+		// A replaced slot's `Do` names the lifted stream: its bytes, read back, are the bytes lifted.
+		for i, r := range p.replaced {
+			if i >= len(got.Objects) || got.Objects[i].objNr == 0 {
+				return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's new picture %d is not an image object", p.page, i+1))
+			}
+			sd, _, err := ctx.DereferenceStreamDict(*types.NewIndirectRef(got.Objects[i].objNr, 0))
+			if err != nil || sd == nil || sha256.Sum256(sd.Raw) != r.raw {
+				return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's new picture %d is not the picture put there", p.page, i+1))
+			}
+		}
+		for k := range p.replacedAnswers {
+			a := &p.replacedAnswers[k]
+			if at := movedIndex(p, a.Ordinal); at >= 0 && at < len(got.Objects) {
+				a.Box = got.Objects[at].Box
+			}
+		}
 		for k := range p.movedAnswers {
 			m := &p.movedAnswers[k]
 			if at := movedIndex(p, m.Ordinal); at >= 0 && at < len(got.Objects) {
@@ -893,6 +1042,13 @@ func rewriteAgrees(p pageRemoval, got []PageObject, text []string) error {
 		return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d draws %d pictures, and %d were expected", p.page, len(got), len(p.want)))
 	}
 	for i, o := range got {
+		if r, ok := p.replaced[i]; ok {
+			// Where it was put, and drawn by a `Do` of the new name; turned by the placement only where it was asked to.
+			if !boxesAgree(o.userBox, r.box) || o.painter != r.painter {
+				return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's picture %d is not the picture put there, where it was put", p.page, i+1))
+			}
+			continue
+		}
 		if m, moved := p.moved[i]; moved {
 			// Where it was asked, drawn straight (a turned or mirrored matrix can fill the same box), and by the
 			// same operator bytes (a different picture can sit in the same box).
@@ -968,11 +1124,17 @@ func moveBoxProblem(b MapRect) string {
 // before it: the picture's new matrix [w 0 0 h x y] followed by outer undone, so cm × outer is that matrix (PDF's
 // row-vector order, `runMatrix.mul`). Written by `num`, the content stream's one number writer: exact, no exponent.
 func placementFor(target [4]float64, outer runMatrix) ([]byte, bool) {
+	return placementTurned(target, outer, 0)
+}
+
+// placementTurned is placementFor with the unit square first turned clockwise by deg (`unitTurn`): a replacement
+// photo whose EXIF turn Import put on its page's /Rotate is drawn upright (P03.S01).
+func placementTurned(target [4]float64, outer runMatrix, deg int) ([]byte, bool) {
 	inv, ok := outer.inverse()
 	if !ok {
 		return nil, false
 	}
-	m := runMatrix{target[2] - target[0], 0, 0, target[3] - target[1], target[0], target[1]}.mul(inv)
+	m := unitTurn(deg).mul(runMatrix{target[2] - target[0], 0, 0, target[3] - target[1], target[0], target[1]}).mul(inv)
 	var b strings.Builder
 	for _, v := range m {
 		if !finite(v) {
