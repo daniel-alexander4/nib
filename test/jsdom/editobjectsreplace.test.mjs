@@ -103,7 +103,7 @@ test('a picked file is one multipart request naming the picture, and the answer 
   await settleMore();
   assert.equal(posts.length, 1, `one pick sent ${posts.length} requests`);
   assert.equal(posts[0].file.name, 'new.png');
-  assert.deepEqual(posts[0].edits.edits, [{ kind: 'replace', page: 1, ordinal: 0, digest: 'd'.repeat(63) + '0', alt: '', keepAlt: false }]);
+  assert.deepEqual(posts[0].edits.edits, [{ kind: 'replace', object: 'picture', page: 1, ordinal: 0, digest: 'd'.repeat(63) + '0', alt: '', keepAlt: false }]);
   assert.match(notice(), /^Replaced the picture\. Undo puts the old one back\. It is fitted inside the old picture's place, keeping its proportions\.$/, `after: "${notice()}"`);
   assert.ok(outlines()[0].classList.contains('selected'), 'the replaced picture is not selected again');
 });

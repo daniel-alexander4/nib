@@ -11734,29 +11734,33 @@ $('armedOffBtn').onclick = () => disarmEditingTools();
 const OBJECT_CAUSES = {
   'signed': 'This document is signed. Changing it would break the signature.',
   'ceremony': 'This document is part of a signing ceremony; edit before you start one.',
-  'form-drawn': 'This picture is part of a repeated page element, such as a letterhead, so editing it would change other pages.',
-  'tagged': 'This picture is tagged in a way Nib cannot take apart safely, so it is left as it is.',
+  'form-drawn': 'This is part of a repeated page element, such as a letterhead, so editing it would change other pages.',
+  'tagged': 'This is tagged in a way Nib cannot take apart safely, so it is left as it is.',
   'tagged-shared': "This picture's tag also holds other content, so removing it would leave that tag describing something that is gone.",
   'tagged-last': "This picture's tag is the only one in the document; to start again, remove all tags first.",
   'not-isolated': 'This picture is drawn without the bracket that keeps its settings apart from the rest of the page, so removing it could change how the rest is drawn.',
-  'unreadable-box': 'Nib cannot work out where this picture is drawn.',
-  'off-page': 'This picture is drawn outside the page, where it cannot be seen.',
-  'object-changed': 'The page changed since you selected this. Select the picture again.',
+  'unreadable-box': 'Nib cannot work out where this is drawn.',
+  'off-page': 'This is drawn outside the page, where it cannot be seen.',
+  'object-changed': 'The page changed since you selected this. Select it again.',
   'image-mask': 'This is a shape painted in one colour, not a photo or a drawing; Nib does not replace it.',
   'object-referenced': 'This picture\'s object is referred to from the document\'s tags, so Nib does not replace it.',
   'orientation': 'The new picture is a turned photo, and this picture is placed in a way Nib cannot turn; turn the photo upright first.',
   'alt-unanswered': 'This picture has a description. Give the new picture its own description, or choose to keep the old one.',
   'not-one-image': 'The new picture could not be read as one picture.',
-  'rewrite-differs': 'Nib checked the page after changing the picture and it was not the page it expected, so nothing was changed.',
-  'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot change the picture.',
-  'bad-request': 'The request to change a picture could not be read.',
+  'rewrite-differs': 'Nib checked the page after the change and it was not the page it expected, so nothing was changed.',
+  'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot make the change.',
+  'bad-request': 'The request to change the page could not be read.',
   'not-alone': 'This picture is placed together with other drawing, so moving it on its own could move or change that too.',
   'not-upright': 'This picture is turned, mirrored or slanted on the page; Nib moves only pictures that sit straight.',
-  'partly-off-page': 'Part of this picture is outside the page, so Nib cannot show all of it to move.',
-  'clipped': 'This picture is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.',
+  'partly-off-page': 'Part of this is outside the page, so Nib cannot show all of it to move.',
+  'clipped': 'This is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.',
+  'clips': 'This drawing also sets a clip that hides part of what is drawn after it, so removing or moving it would change other things on the page.',
+  'patterned': 'This drawing is painted with a pattern laid on the page, so moving it would change what it shows; Nib leaves it where it is.',
+  'not-a-picture': 'This is a drawing, not a picture; Nib replaces only pictures.',
+  'not-path-only': 'This drawing has other settings written inside it, so removing or moving it could change what is drawn after it.',
 };
 function objectCauseSentence(cause, fallback) {
-  return OBJECT_CAUSES[cause] || fallback || `Nib could not change the picture (${cause}).`;
+  return OBJECT_CAUSES[cause] || fallback || `Nib could not make the change (${cause}).`;
 }
 
 // objectsCache holds each page's listing by (document, page, revision): hover and arrows never ask the server, and a
@@ -11781,13 +11785,13 @@ async function pageObjects(owner, n) {
       const res = await apiFetch('/api/page/objects?page=' + n, { docId: id });
       if (!res.ok) {
         objectsCache.delete(key);
-        objectNotice(await errText(res, 'Could not read the pictures on this page.'));
+        objectNotice(await errText(res, 'Could not read the pictures and drawings on this page.'));
         return null;
       }
       return await res.json();
     } catch (err) {
       objectsCache.delete(key);
-      objectNotice((err && err.message) || 'Could not read the pictures on this page.');
+      objectNotice((err && err.message) || 'Could not read the pictures and drawings on this page.');
       return null;
     }
   })();
@@ -11811,7 +11815,7 @@ function reflectObjects() {
   setArmed($('objectsBtn'), !!view.objectsMode);
   const sel = objectSelectionFor(view);
   $('objectsRemoveBtn').disabled = !(sel && sel.editable) || $('objectsBtn').disabled;
-  $('objectsReplaceBtn').disabled = !(sel && sel.replaceable) || $('objectsBtn').disabled;
+  $('objectsReplaceBtn').disabled = !(sel && sel.replaceable && !isDrawing(sel)) || $('objectsBtn').disabled;
   // The description row belongs to the one picture it was opened for: any other selection — another described picture
   // in this document, or another document's — puts it away, so a description is never carried to a picture it was not
   // written for (P03.S01 review C1).
@@ -11862,10 +11866,22 @@ $('objectsAlt').addEventListener('keydown', (ev) => {
 // Keeping the old description and typing a new one are two answers: the tick puts the field away so only one is given.
 $('objectsKeepAlt').onchange = () => { $('objectsAlt').disabled = $('objectsKeepAlt').checked; };
 
-// objectLabel is what a screen reader hears for one outline: its place among the page's pictures, and its description.
+// objectLabel is what a screen reader hears for one outline: its place among the page's pictures, or among its
+// drawings (PLAN-image-edit P03.S03: they are numbered apart), and a picture's description.
 function objectLabel(o, i, m, n) {
-  return `Picture ${i + 1} of ${m}, page ${n}` + (o.alt ? `: ${o.alt}` : '');
+  const what = isDrawing(o) && (o.kind === 'rule' || o.kind === 'box') ? ` (a ${o.kind === 'rule' ? 'line' : 'box'})` : '';
+  return `${isDrawing(o) ? 'Drawing' : 'Picture'} ${i + 1} of ${m}${what}, page ${n}` + (o.alt ? `: ${o.alt}` : '');
 }
+
+// isDrawing says a listing entry, a selection or an answer is a drawing: painted paths the page groups as one
+// (P03.S03), counted apart from the pictures. Absent `object` is a picture.
+function isDrawing(o) { return !!o && o.object === 'drawing'; }
+
+// objectId names one listed object on its page: which list, then its place in it — picture 0 and drawing 0 are two.
+function objectId(o) { return `${isDrawing(o) ? 'drawing' : 'picture'}:${o.ordinal}`; }
+
+// objectNoun is how the window names what an edit acts on.
+function objectNoun(o) { return isDrawing(o) ? 'drawing' : 'picture'; }
 
 // drawObjectOutlines lays the current page's outlines: one Tab stop for the group (roving tabindex), arrows inside it.
 // It lays them once per (document, page, revision): a later render of the same page, a neighbour's render, or a page
@@ -11888,13 +11904,16 @@ async function drawObjectOutlines(owner) {
     owner.objectsSelected = null;
     reflectObjects();
   }
-  const list = (objs.objects || []).filter((o) => o.onPage);
+  // Pictures, then drawings (P03.S03): each list numbered on its own, so an outline is named by objectId.
+  const pictures = (objs.objects || []).filter((o) => o.onPage);
+  const drawings = (objs.drawings || []).filter((o) => o.onPage);
+  const list = pictures.concat(drawings);
   // After a move the same picture is selected again: a move keeps its place in the page's order (its ordinal), and its
   // digest is the new listing's.
   if (owner.objectsReselect) {
     const want = owner.objectsReselect;
     owner.objectsReselect = null;
-    const at = want.page === n && owner.docMeta && want.docId === owner.docMeta.id ? list.findIndex((o) => o.ordinal === want.ordinal) : -1;
+    const at = want.page === n && owner.docMeta && want.docId === owner.docMeta.id ? list.findIndex((o) => objectId(o) === want.id) : -1;
     if (at >= 0) {
       owner.objectsSelected = objectSelectionRecord(owner, n, list[at]);
       owner.objectsFocus = at;
@@ -11902,18 +11921,23 @@ async function drawObjectOutlines(owner) {
     }
   }
   if (!list.length) {
-    objectNotice(`Page ${n} draws no picture Nib can show.`);
+    objectNotice(`Page ${n} draws no picture or drawing Nib can show.`);
     if (owner.objectsFocus != null) { owner.objectsFocus = null; $('objectsBtn').focus(); }
     return;
   }
-  const sel = objectSelectionFor(owner) ? owner.objectsSelected.ordinal : null;
+  const sel = objectSelectionFor(owner) ? objectId(owner.objectsSelected) : null;
+  // An outline that holds another listed one lies under it (`.obj-holds`, one step down), so a line drawn on a panel,
+  // or a chart on a picture, can still be pressed. Two steps and no more: an outline stays below the page's marks
+  // (`.ovl`, 8) and the notices (11), and the page order — arrows, a screen reader's — stays the list's.
+  const holds = (a, b) => a !== b && a.box[0] <= b.box[0] && a.box[1] <= b.box[1] && a.box[2] >= b.box[2] && a.box[3] >= b.box[3];
   list.forEach((o, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'obj-outline' + (o.editable || o.movable ? '' : ' obj-refused') + (o.movable ? ' obj-movable' : '') +
-      (o.ordinal === sel ? ' selected' : '');
+      (isDrawing(o) ? ' obj-drawing' : '') + (list.some((x) => holds(o, x)) ? ' obj-holds' : '') + (objectId(o) === sel ? ' selected' : '');
     placeObjectOutline(b, o.box);
-    if (o.movable) {
+    // A drawing is moved, never resized (the door refuses another size): only a picture has the corner.
+    if (o.movable && !isDrawing(o)) {
       const h = document.createElement('span');
       h.className = 'obj-resize';
       h.setAttribute('aria-hidden', 'true');
@@ -11921,9 +11945,11 @@ async function drawObjectOutlines(owner) {
     }
     b.dataset.page = String(n);
     b.dataset.ordinal = String(o.ordinal);
-    b.tabIndex = (sel === null ? i === 0 : o.ordinal === sel) ? 0 : -1;
-    b.setAttribute('aria-label', objectLabel(o, i, list.length, n));
-    b.setAttribute('aria-pressed', o.ordinal === sel ? 'true' : 'false');
+    b.dataset.object = objectNoun(o);
+    b.tabIndex = (sel === null ? i === 0 : objectId(o) === sel) ? 0 : -1;
+    const among = isDrawing(o) ? [i - pictures.length, drawings.length] : [i, pictures.length];
+    b.setAttribute('aria-label', objectLabel(o, among[0], among[1], n));
+    b.setAttribute('aria-pressed', objectId(o) === sel ? 'true' : 'false');
     b.addEventListener('pointerdown', (ev) => ev.stopPropagation()); // a click on an outline is not a page press
     if (o.movable) enableObjectGestures(owner, n, o, b);
     b.addEventListener('click', (ev) => {
@@ -11933,9 +11959,9 @@ async function drawObjectOutlines(owner) {
     });
     b.addEventListener('keydown', (ev) => objectKey(ev, owner, n, o, b));
     // Which outline holds the keyboard, so a re-render (pdf.js takes the outlines out of the page) gives it back.
-    b.addEventListener('focus', () => { owner.objectsKeyFocus = o.ordinal; });
+    b.addEventListener('focus', () => { owner.objectsKeyFocus = objectId(o); });
     b.addEventListener('blur', (ev) => { if (ev.relatedTarget) owner.objectsKeyFocus = null; });
-    const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+    const held = owner.objectsNudge && owner.objectsNudge.id === objectId(o) ? owner.objectsNudge : null;
     if (held) { placeObjectOutline(b, held.box); held.b = b; } // a burst redrawn mid-way stays where it was nudged
     pv.div.appendChild(b);
     owner.objectsOutlines.push(b);
@@ -11944,11 +11970,11 @@ async function drawObjectOutlines(owner) {
   // none is left), so a keyboard user is not dropped out of the group.
   if (owner.objectsFocus == null && owner.objectsKeyFocus != null &&
       (!document.activeElement || document.activeElement === document.body)) {
-    const at = list.findIndex((o) => o.ordinal === owner.objectsKeyFocus);
+    const at = list.findIndex((o) => objectId(o) === owner.objectsKeyFocus);
     if (at >= 0) owner.objectsFocus = at;
   }
   if (owner.objectsFocus != null) {
-    const laid = [...pv.div.querySelectorAll('.obj-outline')];
+    const laid = owner.objectsOutlines;
     const at = Math.min(owner.objectsFocus, laid.length - 1);
     owner.objectsFocus = null;
     if (at >= 0) {
@@ -11974,8 +12000,8 @@ function placeObjectOutline(b, box) {
 }
 
 function objectSelectionRecord(owner, n, o) {
-  return { docId: owner.docMeta && owner.docMeta.id, page: n, ordinal: o.ordinal, digest: o.digest, editable: o.editable,
-    movable: !!o.movable, replaceable: !!o.replaceable, alt: o.alt || '' };
+  return { docId: owner.docMeta && owner.docMeta.id, page: n, object: objectNoun(o), ordinal: o.ordinal, digest: o.digest,
+    editable: o.editable, movable: !!o.movable, replaceable: !!o.replaceable, alt: o.alt || '' };
 }
 
 // selectedWords is what selecting a picture says: its label (with its description, objectLabel), then what can be done
@@ -11985,17 +12011,18 @@ function selectedWords(o, label) {
   const parts = [`${label}, selected.`];
   parts.push(o.editable ? 'Remove from page takes it off the page.' + (o.alt ? ' Its description goes with it.' : '')
     : `It cannot be removed: ${objectCauseSentence(o.why)}`);
-  if (o.movable) parts.push('Drag it, or press Shift and an arrow key, to move it; drag its corner, or press Control, Shift and an arrow key, to resize it.');
+  if (o.movable && isDrawing(o)) parts.push('Drag it, or press Shift and an arrow key, to move it.');
+  else if (o.movable) parts.push('Drag it, or press Shift and an arrow key, to move it; drag its corner, or press Control, Shift and an arrow key, to resize it.');
   else if (o.moveWhy) parts.push(`It cannot be moved: ${objectCauseSentence(o.moveWhy)}`);
   return parts.join(' ');
 }
 
 function selectObject(owner, n, o, b) {
   // A burst of nudges on another picture is that picture's move: it is sent, not dropped, when the selection moves on.
-  if (owner.objectsNudge && owner.objectsNudge.ordinal !== o.ordinal) sendObjectNudge(owner);
+  if (owner.objectsNudge && owner.objectsNudge.id !== objectId(o)) sendObjectNudge(owner);
   owner.objectsSelected = objectSelectionRecord(owner, n, o);
   // What the user picked last is what an install selects again (not the picture a burst was sent for).
-  owner.objectsPicked = { docId: owner.objectsSelected.docId, page: n, ordinal: o.ordinal };
+  owner.objectsPicked = { docId: owner.objectsSelected.docId, page: n, id: objectId(o) };
   (owner.objectsOutlines || []).forEach((x) => {
     const on = x === b;
     x.classList.toggle('selected', on);
@@ -12031,7 +12058,7 @@ function enableObjectGestures(owner, n, o, b) {
     mode = e.target.closest('.obj-resize') ? 'resize' : 'drag';
     // A burst of nudges on this picture is where a drag starts from. It is taken over only once the press travels
     // (pointermove): a plain click leaves it to be sent on its own timer.
-    const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+    const held = owner.objectsNudge && owner.objectsNudge.id === objectId(o) ? owner.objectsNudge : null;
     from = held ? held.box.slice() : o.box.slice();
     sx = e.clientX; sy = e.clientY; moved = false; box = from.slice(); pid = e.pointerId;
     try { b.setPointerCapture(e.pointerId); } catch { /* not every pointer can be captured */ }
@@ -12043,7 +12070,7 @@ function enableObjectGestures(owner, n, o, b) {
     if (!pv || !pv.div) return;
     if (!moved && Math.hypot(e.clientX - sx, e.clientY - sy) < 3) return;
     if (!moved) {
-      const held = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+      const held = owner.objectsNudge && owner.objectsNudge.id === objectId(o) ? owner.objectsNudge : null;
       if (held) { clearTimeout(held.timer); activeGestures.delete(held.end); owner.objectsNudge = null; from = held.box.slice(); }
     }
     moved = true;
@@ -12103,10 +12130,11 @@ function nudgeObject(ev, owner, n, o, b) {
   if (!d) return false;
   ev.preventDefault();
   const sel = objectSelectionFor(owner);
-  if (!sel || sel.ordinal !== o.ordinal) selectObject(owner, n, o, b);
+  if (!sel || objectId(sel) !== objectId(o)) selectObject(owner, n, o, b);
   if (!o.movable) { objectNotice(`It cannot be moved: ${objectCauseSentence(o.moveWhy)}`); return true; }
+  if ((ev.ctrlKey || ev.metaKey) && isDrawing(o)) { objectNotice('A drawing is moved, not resized.'); return true; }
   if (owner.objectsEditing) return true;
-  const pending = owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal ? owner.objectsNudge : null;
+  const pending = owner.objectsNudge && owner.objectsNudge.id === objectId(o) ? owner.objectsNudge : null;
   if (!pending) dropObjectNudge(owner);
   const from = pending ? pending.box : o.box.slice();
   const step = KEY_NUDGE_FRAC;
@@ -12126,7 +12154,7 @@ function nudgeObject(ev, owner, n, o, b) {
   // Registered as a gesture: a tab switch (abortDrags) drops the burst and puts the outline back, as it ends a drag.
   const end = () => dropObjectNudge(owner);
   activeGestures.add(end);
-  owner.objectsNudge = { ordinal: o.ordinal, box, o, b, sel: objectSelectionFor(owner), end,
+  owner.objectsNudge = { id: objectId(o), box, o, b, sel: objectSelectionFor(owner), end,
     timer: setTimeout(() => sendObjectNudge(owner), OBJECT_NUDGE_WAIT) };
   return true;
 }
@@ -12154,9 +12182,10 @@ function dropObjectNudge(owner) {
 
 // movedWords is what the window says after a move: where it went is on screen, so what stays and how to undo it.
 function movedWords(m, o, canUndo = true) {
+  const noun = objectNoun(o);
   const parts = [canUndo
-    ? 'Moved the picture. Undo puts it back.'
-    : 'Moved the picture. Undo cannot put it back: this document\'s history was let go to keep Nib within its memory budget.'];
+    ? `Moved the ${noun}. Undo puts it back.`
+    : `Moved the ${noun}. Undo cannot put it back: this document's history was let go to keep Nib within its memory budget.`];
   if (o && o.alt) parts.push(`Its description, "${o.alt}", stays with it.`);
   if (m && m.linksOver) parts.push(`${m.linksOver} link${m.linksOver === 1 ? '' : 's'} over where it was ${m.linksOver === 1 ? 'is' : 'are'} still there.`);
   return parts.join(' ');
@@ -12166,13 +12195,13 @@ function movedWords(m, o, canUndo = true) {
 // the edit is refused, or sel is no longer of this document or armed view, its outline goes back.
 async function moveSelectedObject(owner, sel, box, b, o) {
   const live = owner.objectsMode && sel && owner.docMeta && sel.docId === owner.docMeta.id;
-  if (!live || !sel.movable || sel.ordinal !== o.ordinal) { placeObjectOutline(b, o.box); return; }
+  if (!live || !sel.movable || objectId(sel) !== objectId(o)) { placeObjectOutline(b, o.box); return; }
   const answer = await sendObjectEdit(owner, sel, box);
   if (!answer) {
     if (b.isConnected) placeObjectOutline(b, o.box);
     return;
   }
-  owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, ordinal: sel.ordinal };
+  owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, id: objectId(sel) };
   objectNoticeFor(owner, movedWords(answer.moved && answer.moved[0], o, answer.canUndo !== false));
   if (owner === view) reflectObjects();
   drawObjectOutlines(owner);
@@ -12196,7 +12225,7 @@ function objectKey(ev, owner, n, o, b) {
     }
     case 'Enter': case ' ':
       ev.preventDefault();
-      if (owner.objectsNudge && owner.objectsNudge.ordinal === o.ordinal) { sendObjectNudge(owner); break; }
+      if (owner.objectsNudge && owner.objectsNudge.id === objectId(o)) { sendObjectNudge(owner); break; }
       selectObject(owner, n, o, b);
       break;
     case 'Delete': case 'Backspace':
@@ -12219,9 +12248,10 @@ function objectKey(ev, owner, n, o, b) {
 // removedWords is what the window says after a removal: what went, what stayed, and how to get it back — and that
 // Undo cannot, when the document's history was dropped to keep within the memory budget (ADR-003).
 function removedWords(r, canUndo = true) {
+  const noun = objectNoun(r);
   const parts = [canUndo
-    ? 'Removed the picture from the page. Undo brings it back until you close this document.'
-    : 'Removed the picture from the page. Undo cannot bring it back: this document\'s history was let go to keep Nib within its memory budget.'];
+    ? `Removed the ${noun} from the page. Undo brings it back until you close this document.`
+    : `Removed the ${noun} from the page. Undo cannot bring it back: this document's history was let go to keep Nib within its memory budget.`];
   if (r && r.elementRemoved) parts.push(r.alt ? `Its description, "${r.alt}", went with it.` : 'Its tag went with it.');
   if (r && r.linksOver) parts.push(`${r.linksOver} link${r.linksOver === 1 ? '' : 's'} over it ${r.linksOver === 1 ? 'is' : 'are'} still on the page.`);
   if (r && r.staysInFile) {
@@ -12241,7 +12271,7 @@ async function removeSelectedObject(owner = view) {
   dropObjectNudge(owner);
   // Remove from page: focus the next outline too. objectsFocus is a place among the LAID outlines (off-page pictures
   // are not laid), so it is the selected outline's place there, never its ordinal.
-  const at = (owner.objectsOutlines || []).findIndex((b) => b.dataset.ordinal === String(sel.ordinal));
+  const at = (owner.objectsOutlines || []).findIndex((b) => b.dataset.object === sel.object && b.dataset.ordinal === String(sel.ordinal));
   const answer = await sendObjectEdit(owner, sel, null, owner.objectsFocus != null ? owner.objectsFocus : (at >= 0 ? at : 0));
   if (!answer) return;
   objectNoticeFor(owner, removedWords(answer.removed && answer.removed[0], answer.canUndo !== false));
@@ -12254,7 +12284,7 @@ let objectAltFor = null;
 
 // objectAltKey names one picture of one document at one listing: what a description row answers for.
 function objectAltKey(sel) {
-  return `${sel.docId}:${sel.page}:${sel.ordinal}:${sel.digest}`;
+  return `${sel.docId}:${sel.page}:${objectId(sel)}:${sel.digest}`;
 }
 
 // hideObjectAlt puts the description row away, empty: it belongs to one replace and is never carried to the next.
@@ -12273,9 +12303,9 @@ let replacePending = null;
 // picture's description, or for the old one to be kept: a description of the old picture is never kept silently.
 function replaceSelectedObject(owner = view) {
   const sel = objectSelectionFor(owner);
-  if (!sel || !sel.replaceable) return;
+  if (!sel || !sel.replaceable || isDrawing(sel)) return; // a replace puts a picture in a picture's place
   if (owner.objectsEditing) {
-    objectNoticeFor(owner, 'Nib is still changing the last picture; try again when it is done.');
+    objectNoticeFor(owner, 'Nib is still making the last change; try again when it is done.');
     return;
   }
   dropObjectNudge(owner);
@@ -12310,7 +12340,7 @@ async function replaceWithPickedFile() {
   const answer = await sendObjectEdit(owner, sel, null, null, swap);
   if (!answer) return;
   // After the reload (which clears it with the rest of the tool's state), as a move does: the same picture, by place.
-  owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, ordinal: sel.ordinal };
+  owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, id: objectId(sel) };
   hideObjectAlt();
   objectNoticeFor(owner, replacedWords(answer.replaced && answer.replaced[0], answer.canUndo !== false));
   if (owner === view) reflectObjects();
@@ -12336,26 +12366,27 @@ function replacedWords(r, canUndo = true) {
 // also refuses a replayed address, this keeps the window from asking).
 async function sendObjectEdit(owner, sel, box, focus = null, swap = null) {
   if (owner.objectsEditing) {
-    objectNoticeFor(owner, 'Nib is still changing the last picture; try again when it is done.');
+    objectNoticeFor(owner, 'Nib is still making the last change; try again when it is done.');
     return null;
   }
   if (!confirmOverlayLoss(owner)) return null; // the edited document is loaded back
   owner.objectsEditing = true;
   const verb = swap ? 'replace' : box ? 'move' : 'remove';
-  objectNoticeFor(owner, swap ? 'Replacing the picture…' : box ? 'Moving the picture…' : 'Removing the picture…');
+  const noun = objectNoun(sel);
+  objectNoticeFor(owner, swap ? 'Replacing the picture…' : box ? `Moving the ${noun}…` : `Removing the ${noun}…`);
   try {
     let res;
     if (swap) {
       // A replace is a multipart body: the picture, and the edit as the JSON the other route reads (one decoder).
-      const edit = { kind: 'replace', page: sel.page, ordinal: sel.ordinal, digest: sel.digest, alt: swap.alt, keepAlt: swap.keepAlt };
+      const edit = { kind: 'replace', object: sel.object, page: sel.page, ordinal: sel.ordinal, digest: sel.digest, alt: swap.alt, keepAlt: swap.keepAlt };
       const form = new FormData();
       form.append('file', swap.file, swap.file.name);
       form.append('edits', JSON.stringify({ edits: [edit] }));
       res = await apiFetch('/api/page/objects/replace', { method: 'POST', docId: owner.docMeta.id, body: form });
     } else {
       const edit = box
-        ? { kind: 'move', page: sel.page, ordinal: sel.ordinal, digest: sel.digest, box }
-        : { kind: 'delete', page: sel.page, ordinal: sel.ordinal, digest: sel.digest };
+        ? { kind: 'move', object: sel.object, page: sel.page, ordinal: sel.ordinal, digest: sel.digest, box }
+        : { kind: 'delete', object: sel.object, page: sel.page, ordinal: sel.ordinal, digest: sel.digest };
       res = await apiFetch('/api/page/objects', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
         body: JSON.stringify({ edits: [edit] }),
@@ -12377,7 +12408,7 @@ async function sendObjectEdit(owner, sel, box, focus = null, swap = null) {
         drawObjectOutlines(owner);
         return null;
       }
-      objectNoticeFor(owner, out && out.cause ? objectCauseSentence(out.cause, out.error) : await errText(res, `Could not ${verb} the picture.`));
+      objectNoticeFor(owner, out && out.cause ? objectCauseSentence(out.cause, out.error) : await errText(res, `Could not ${verb} the ${noun}.`));
       return null;
     }
     const answer = await res.json();
@@ -12389,7 +12420,7 @@ async function sendObjectEdit(owner, sel, box, focus = null, swap = null) {
     owner.objectsFocus = focus;
     return answer;
   } catch (err) {
-    objectNoticeFor(owner, err.message || `Could not ${verb} the picture.`);
+    objectNoticeFor(owner, err.message || `Could not ${verb} the ${noun}.`);
     return null;
   } finally {
     owner.objectsEditing = false;

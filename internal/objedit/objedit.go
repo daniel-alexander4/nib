@@ -51,8 +51,9 @@ func Check(pdf []byte) error {
 	return nil
 }
 
-// List reads the pictures page of pdf draws, as `pdfops.ReadPageObjects` does, with the document's own refusal laid
-// over every picture: on a signed or ceremony document none is editable, movable or replaceable, and each cause says so.
+// List reads the pictures and drawings page of pdf draws, as `pdfops.ReadPageObjects` does, with the document's own
+// refusal laid over every one: on a signed or ceremony document none is editable, movable or replaceable, and each
+// cause says so.
 func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 	objs, err := pdfops.ReadPageObjects(pdf, page)
 	if err != nil {
@@ -63,6 +64,10 @@ func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 			objs.Objects[i].Editable, objs.Objects[i].Why = false, ref.Cause
 			objs.Objects[i].Movable, objs.Objects[i].MoveWhy = false, ref.Cause
 			objs.Objects[i].Replaceable, objs.Objects[i].ReplaceWhy = false, ref.Cause
+		}
+		for i := range objs.Drawings {
+			objs.Drawings[i].Editable, objs.Drawings[i].Why = false, ref.Cause
+			objs.Drawings[i].Movable, objs.Drawings[i].MoveWhy = false, ref.Cause
 		}
 	}
 	return objs, nil
@@ -84,9 +89,10 @@ func Edit(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditResul
 	return out, res, nil
 }
 
-// DecodeEdits reads a request: `{"edits": [{"kind": "delete" | "move", "page", "ordinal", "digest", "box"}]}`, the
-// box a move's place in displayed-page fractions (the window's Edit Objects sends it, PLAN-image-edit P02.S03). A body
-// that is not that shape is a `bad-request` refusal; whether a box fits its kind is the door's to say.
+// DecodeEdits reads a request: `{"edits": [{"kind": "delete" | "move", "object", "page", "ordinal", "digest", "box"}]}`,
+// the box a move's place in displayed-page fractions (the window's Edit Objects sends it, PLAN-image-edit P02.S03), and
+// object "picture" (or absent) or "drawing" — which listing the ordinal counts in (P03.S03). A body that is not that
+// shape is a `bad-request` refusal; whether a box or an object fits its kind is the door's to say.
 func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	var body struct {
 		Edits []routeEdit `json:"edits"`
@@ -101,7 +107,7 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	}
 	out := make([]pdfops.ObjectEdit, len(body.Edits))
 	for i, e := range body.Edits {
-		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest, Alt: e.Alt, KeepAlt: e.KeepAlt}
+		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Object: e.Object, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest, Alt: e.Alt, KeepAlt: e.KeepAlt}
 		if e.Box != nil {
 			// A slice, not `pdfops.MapRect`: Go drops a fifth number into a fixed array and pads a short one with zeros.
 			if len(e.Box) != 4 {
@@ -116,7 +122,9 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 
 // routeEdit is an edit as the route reads it.
 type routeEdit struct {
-	Kind    string    `json:"kind"`
+	Kind string `json:"kind"`
+	// Object is "picture", "drawing" or absent (a picture).
+	Object  string    `json:"object"`
 	Page    int       `json:"page"`
 	Ordinal int       `json:"ordinal"`
 	Digest  string    `json:"digest"`

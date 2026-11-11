@@ -1071,3 +1071,5 @@ home today.
   — extends ADR-221 §1 (an `/SMask` marks the clip rough; the clip test has `displayEpsilon` of slack); supersedes ADR-221 §4's rationale: the request-field census now follows `objedit`/`tagwrite` decoders and a caller-built object.
 - [ADR-223](223-a-picture-is-replaced-through-the-import-function-and-keeps-its-tag.md) — **A picture is replaced through the import function, and keeps its tag and its place**
   — `ImportOptions.Only`/`Single`/`MaxPixels` (50 MP) inside Import; `objedit.Check` before the import; one image lifted, the name added to the page's own resources; fitted when movable (EXIF turn folded), else filled and said; a described Figure needs an answer.
+- [ADR-224](224-a-drawing-is-one-object-moved-by-its-own-operands.md) — **A drawing is one object, grouped by the region reader's one door and moved by its own operands**
+  — `groupDrawnPaths` the one grouping (two callers); a plain box joins nothing it holds with room (supersedes ADR-125's rule in part); `object: "drawing"` addresses; delete removes every member, move translates each path's operands; the window waits on the instrument's 0.90 (measured 0.893).

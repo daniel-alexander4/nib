@@ -62,8 +62,19 @@ func (s *Server) handlePageObjects(w http.ResponseWriter, r *http.Request) {
 			"error": "could not read the pictures on this page: " + strings.TrimPrefix(err.Error(), "pdfops: ")})
 		return
 	}
+	if !drawingsInWindow {
+		got.Drawings, got.DrawingsUngrouped = []pdfops.PageObject{}, false
+	}
 	writeJSON(w, got)
 }
+
+// drawingsInWindow says the window is offered a page's drawings (PLAN-image-edit P03.S03). It is off because the
+// grouping did not meet the threshold fixed before it was measured: `build/drawinggroup.sh` scored 0.893 of a fresh
+// hand-labelled sample's drawings matched exactly (108 of 121, 16 pages, 2026-11-10, v2.60.0), against 0.90. The misses
+// are forms ruled by lines that do not touch (one grid read as a dozen drawings) and a logo or a word drawn in parts.
+// `nib objects` lists and edits drawings whatever this says; only the window's offer waits. Turn it on only with a run
+// of the instrument at or over the threshold on a sample labelled after the change.
+const drawingsInWindow = false
 
 // handlePageObjectsEdit answers POST /api/page/objects: `{"edits": [{"kind": "delete" | "move", "page", "ordinal",
 // "digest", "box"}]}` removes or moves those pictures (a move's box in displayed-page fractions) as one undoable

@@ -103,7 +103,7 @@ test('a drag moves the picture: the outline follows, nothing is sent until the d
   await settleMore();
   assert.equal(posts.length, 1, `one drop sent ${posts.length} requests`);
   const e = posts[0].edits[0];
-  assert.deepEqual({ ...e, box: undefined }, { kind: 'move', page: 1, ordinal: 0, digest: 'd'.repeat(63) + '0', box: undefined });
+  assert.deepEqual({ ...e, box: undefined }, { kind: 'move', object: 'picture', page: 1, ordinal: 0, digest: 'd'.repeat(63) + '0', box: undefined });
   near(e.box, [0.3, 0.2, 0.5, 0.3], 'the move box');
   assert.match(notice(), /^Moved the picture\. Undo puts it back\. 1 link over where it was is still there\.$/, `after the move: "${notice()}"`);
   const again = outlines()[0];
@@ -157,7 +157,7 @@ test('a picture that cannot move says why, and a nudge or a drag on it sends not
   o.focus();
   key(o, 'ArrowRight', { shiftKey: true });
   await settle();
-  assert.match(notice(), /^It cannot be moved: This picture is part of a repeated page element/, `says "${notice()}"`);
+  assert.match(notice(), /^It cannot be moved: This is part of a repeated page element/, `says "${notice()}"`);
   ptr(o, 'pointerdown', 150, 850);
   ptr(o, 'pointermove', 400, 850);
   ptr(o, 'pointerup', 400, 850);
@@ -188,7 +188,7 @@ test('a refused move says why and puts the outline back', async () => {
   ptr(o, 'pointermove', 300, 300);
   ptr(o, 'pointerup', 300, 300);
   await settleMore();
-  assert.match(notice(), /^This picture is drawn under a clip/, `a refusal says "${notice()}"`);
+  assert.match(notice(), /^This is drawn under a clip/, `a refusal says "${notice()}"`);
   assert.equal(outlines()[0].style.left, left, 'a refused move left the outline where it was dropped');
   postReply = null;
 });
@@ -288,7 +288,7 @@ test('an edit while another is in flight says so, and is not sent', async () => 
   b.click();
   key(b, 'Delete');
   await settle();
-  assert.match(notice(), /^Nib is still changing the last picture/, `a second edit in flight says "${notice()}"`);
+  assert.match(notice(), /^Nib is still making the last change/, `a second edit in flight says "${notice()}"`);
   release();
   await settleMore();
   assert.equal(posts.length, sent + 1, `two edits sent ${posts.length - sent} requests`);

@@ -138,12 +138,26 @@ type drawnPath struct {
 	// ops every construction operator: one `re` and nothing else is a plain box.
 	stroked, curved bool
 	rects, ops      int
+	// ctm and qDepth are the graphics state it is painted in (the matrix, the nesting); stm the stream that draws it (0 the page's, else the form's object number); clips that a `W` made
+	// it a clip as well as a painted path. A drawing's edit reads them (PLAN-image-edit P03.S03).
+	ctm    runMatrix
+	qDepth int
+	stm    int
+	clips  bool
+	// mcid is the MCID in force where it is painted, or -1; patterned that what it paints is a pattern's (`runGState`'s
+	// fillPattern for a fill, strokePattern for a stroke); clipBox and clipRough the clip in force (`runGState.clip`,
+	// `clipRough`); bytes the path object's own bytes, span's, in its stream.
+	mcid      int
+	patterned bool
+	clipBox   [4]float64
+	clipRough bool
+	bytes     []byte
 }
 
 // keepPath records the path under construction as painted, ending at the painting operator's end, and starts
 // a new one. A path with no point is not kept. One a `W` made the clip and an operator then painted IS painted,
 // and is kept.
-func (w *runWalker) keepPath(d *drawnPath, p markBox, gs runGState, stroked bool, end int) {
+func (w *runWalker) keepPath(d *drawnPath, src []byte, p markBox, gs runGState, stroked, filled bool, end int) {
 	if !w.keepDrawings {
 		return
 	}
@@ -158,9 +172,16 @@ func (w *runWalker) keepPath(d *drawnPath, p markBox, gs runGState, stroked bool
 			b = [4]float64{b[0] - half, b[1] - half, b[2] + half, b[3] + half}
 		}
 		d.box, d.stroked, d.span.end = b, stroked, end
+		d.ctm, d.qDepth, d.stm = gs.ctm, gs.qDepth, w.stm
+		d.clipBox, d.clipRough = gs.clip, gs.clipRough
+		if d.span.start <= end && end <= len(src) {
+			d.bytes = src[d.span.start:end]
+		}
+		d.patterned = (filled && gs.fillPattern) || (stroked && gs.strokePattern)
 		// Covered if a sequence was open where the path began or is where it is painted (one may not open inside
 		// a path object; a stream that does it is read as covering).
-		d.artifact, d.marked = d.artifact || w.inArtifact(), d.marked || w.currentMCID() >= 0
+		d.mcid = w.currentMCID()
+		d.artifact, d.marked = d.artifact || w.inArtifact(), d.marked || d.mcid >= 0
 		d.art = w.countPiece(false)
 		w.paths = append(w.paths, *d)
 	}

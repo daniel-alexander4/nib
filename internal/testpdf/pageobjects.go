@@ -20,3 +20,19 @@ func TwoPictures() []byte {
 		7: image("NIBPLANTEDIMAGEB"),
 	})
 }
+
+// PictureAndDrawings is TwoPictures' first picture, text, and two drawings: a ruled box of four touching rules and a
+// lone curve (PLAN-image-edit P03.S03).
+func PictureAndDrawings() []byte {
+	content := "q 100 0 0 80 10 10 cm /Im0 Do Q\n" +
+		"100 600 m 300 600 l S\n100 650 m 300 650 l S\n100 600 m 100 650 l S\n300 600 m 300 650 l S\n" +
+		"BT /F1 12 Tf 10 700 Td (Hello) Tj ET\n400 300 m 420 360 480 360 500 300 c f"
+	return assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R >> >> /Contents 4 0 R >>",
+		4: "<< /Length " + strconv.Itoa(len(content)) + " >>\nstream\n" + content + "\nendstream",
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		6: "<< /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 16 >>\nstream\nNIBPLANTEDIMAGEA\nendstream",
+	})
+}

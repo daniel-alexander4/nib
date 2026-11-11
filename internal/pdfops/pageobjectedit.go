@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -38,9 +39,18 @@ const (
 // and every edit is a re-read of its page.
 const maxObjectEdits = 64
 
-// ObjectEdit names one picture by the address a read handed out (D2) and what to do to it.
+// ObjectPicture and ObjectDrawing are the two listings an address counts in (PLAN-image-edit P03.S03): a picture's
+// ordinal counts pictures and a drawing's counts drawings, so picture 3 and drawing 3 are two objects.
+const (
+	ObjectPicture = "picture"
+	ObjectDrawing = "drawing"
+)
+
+// ObjectEdit names one picture or drawing by the address a read handed out (D2) and what to do to it.
 type ObjectEdit struct {
-	Kind    string `json:"kind"`
+	Kind string `json:"kind"`
+	// Object is ObjectPicture ("" reads as one) or ObjectDrawing: which listing Ordinal counts in.
+	Object  string `json:"object,omitempty"`
 	Page    int    `json:"page"`
 	Ordinal int    `json:"ordinal"`
 	Digest  string `json:"digest"`
@@ -79,26 +89,30 @@ const (
 var objectCauseWords = map[string]string{
 	CauseSigned:         "This document is signed. Changing it would break the signature.",
 	CauseCeremony:       "This document is part of a signing ceremony; edit before you start one.",
-	WhyFormDrawn:        "This picture is part of a repeated page element, such as a letterhead, so editing it would change other pages.",
-	WhyTagged:           "This picture is tagged in a way Nib cannot take apart safely, so it is left as it is.",
+	WhyFormDrawn:        "This is part of a repeated page element, such as a letterhead, so editing it would change other pages.",
+	WhyTagged:           "This is tagged in a way Nib cannot take apart safely, so it is left as it is.",
 	WhyTaggedShared:     "This picture's tag also holds other content, so removing it would leave that tag describing something that is gone.",
 	WhyTaggedLast:       "This picture's tag is the only one in the document; to start again, remove all tags first.",
 	WhyNotIsolated:      "This picture is drawn without the bracket that keeps its settings apart from the rest of the page, so removing it could change how the rest is drawn.",
-	WhyUnreadableBox:    "Nib cannot work out where this picture is drawn.",
-	WhyOffPage:          "This picture is drawn outside the page, where it cannot be seen.",
-	CauseObjectChanged:  "The page changed since you selected this. Select the picture again.",
-	CauseRewriteDiffers: "Nib checked the page after changing the picture and it was not the page it expected, so nothing was changed.",
-	CauseNotRewritable:  "Nib cannot write this document back without changing it, so it cannot change the picture.",
-	CauseBadRequest:     "The request to change a picture could not be read.",
+	WhyUnreadableBox:    "Nib cannot work out where this is drawn.",
+	WhyOffPage:          "This is drawn outside the page, where it cannot be seen.",
+	CauseObjectChanged:  "The page changed since you selected this. Select it again.",
+	CauseRewriteDiffers: "Nib checked the page after the change and it was not the page it expected, so nothing was changed.",
+	CauseNotRewritable:  "Nib cannot write this document back without changing it, so it cannot make the change.",
+	CauseBadRequest:     "The request to change the page could not be read.",
 	WhyNotAlone:         "This picture is placed together with other drawing, so moving it on its own could move or change that too.",
 	WhyNotUpright:       "This picture is turned, mirrored or slanted on the page; Nib moves only pictures that sit straight.",
-	WhyPartlyOffPage:    "Part of this picture is outside the page, so Nib cannot show all of it to move.",
-	WhyClipped:          "This picture is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.",
+	WhyPartlyOffPage:    "Part of this is outside the page, so Nib cannot show all of it to move.",
+	WhyClipped:          "This is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.",
 	WhyImageMask:        "This is a shape painted in one colour, not a photo or a drawing; Nib does not replace it.",
 	WhyObjectReferenced: "This picture's object is referred to from the document's tags, so Nib does not replace it.",
 	WhyOrientation:      "The new picture is a turned photo, and this picture is placed in a way Nib cannot turn; turn the photo upright first.",
 	CauseAltUnanswered:  "This picture has a description. Give the new picture its own description, or choose to keep the old one.",
 	CauseNotOneImage:    "The new picture could not be read as one picture.",
+	WhyClips:            "This drawing also sets a clip that hides part of what is drawn after it, so removing or moving it would change other things on the page.",
+	WhyPatterned:        "This drawing is painted with a pattern laid on the page, so moving it would change what it shows; Nib leaves it where it is.",
+	WhyNotAPicture:      "This is a drawing, not a picture; Nib replaces only pictures.",
+	WhyNotPathOnly:      "This drawing has other settings written inside it, so removing or moving it could change what is drawn after it.",
 }
 
 // ObjectCauseWords is the sentence a refusal with cause says, or "" for a cause there is none for.
@@ -152,9 +166,11 @@ func badObjectRequest(detail string) *ObjectRefusal {
 	return &ObjectRefusal{Cause: CauseBadRequest, Ordinal: -1, Detail: detail}
 }
 
-// RemovedObject is what removing one picture did.
+// RemovedObject is what removing one picture or drawing did.
 type RemovedObject struct {
-	Page    int    `json:"page"`
+	Page int `json:"page"`
+	// Object is ObjectPicture or ObjectDrawing, as the edit named it.
+	Object  string `json:"object"`
 	Ordinal int    `json:"ordinal"`
 	Kind    string `json:"kind"`
 	// ElementRemoved says the structure element that owned it went with it; Alt is that element's description.
@@ -182,6 +198,7 @@ type ObjectEditResult struct {
 // reads it, and the links over where it was, which stay there (a link is the page's, not the picture's).
 type MovedObject struct {
 	Page      int     `json:"page"`
+	Object    string  `json:"object"`
 	Ordinal   int     `json:"ordinal"`
 	Box       MapRect `json:"box"`
 	LinksOver int     `json:"linksOver"`
@@ -211,31 +228,47 @@ func EditPageObjects(pdf []byte, edits []ObjectEdit) ([]byte, ObjectEditResult, 
 		return nil, ObjectEditResult{}, err
 	}
 	res := ObjectEditResult{Removed: []RemovedObject{}, Moved: []MovedObject{}, Replaced: []ReplacedObject{}}
-	byAddr := map[[2]int]RemovedObject{}
-	movedAt := map[[2]int]MovedObject{}
-	replacedAt := map[[2]int]ReplacedObject{}
+	byAddr := map[objectAddr]RemovedObject{}
+	movedAt := map[objectAddr]MovedObject{}
+	replacedAt := map[objectAddr]ReplacedObject{}
 	for _, p := range plans {
 		for _, r := range p.removed {
-			byAddr[[2]int{r.Page, r.Ordinal}] = r
+			byAddr[objectAddr{r.Page, r.Object, r.Ordinal}] = r
 		}
 		for _, m := range p.movedAnswers {
-			movedAt[[2]int{m.Page, m.Ordinal}] = m
+			movedAt[objectAddr{m.Page, m.Object, m.Ordinal}] = m
 		}
 		for _, r := range p.replacedAnswers {
-			replacedAt[[2]int{r.Page, r.Ordinal}] = r
+			replacedAt[objectAddr{r.Page, ObjectPicture, r.Ordinal}] = r
 		}
 	}
 	for _, e := range edits {
+		at := objectAddr{e.Page, objectOf(e), e.Ordinal}
 		switch e.Kind {
 		case ObjectEditMove:
-			res.Moved = append(res.Moved, movedAt[[2]int{e.Page, e.Ordinal}])
+			res.Moved = append(res.Moved, movedAt[at])
 		case ObjectEditReplace:
-			res.Replaced = append(res.Replaced, replacedAt[[2]int{e.Page, e.Ordinal}])
+			res.Replaced = append(res.Replaced, replacedAt[at])
 		default:
-			res.Removed = append(res.Removed, byAddr[[2]int{e.Page, e.Ordinal}])
+			res.Removed = append(res.Removed, byAddr[at])
 		}
 	}
 	return out, res, nil
+}
+
+// objectAddr is an address without its digest: the page, the listing, the ordinal in it.
+type objectAddr struct {
+	page    int
+	object  string
+	ordinal int
+}
+
+// objectOf is the listing an edit names: ObjectPicture when it names none.
+func objectOf(e ObjectEdit) string {
+	if e.Object == "" {
+		return ObjectPicture
+	}
+	return e.Object
 }
 
 // groupObjectEdits checks the request and groups it by page, pages ascending.
@@ -246,9 +279,18 @@ func groupObjectEdits(edits []ObjectEdit) ([][]ObjectEdit, error) {
 	case len(edits) > maxObjectEdits:
 		return nil, badObjectRequest(fmt.Sprintf("It names %d pictures, and one request removes at most %d.", len(edits), maxObjectEdits))
 	}
-	seen := map[[2]int]bool{}
+	seen := map[objectAddr]bool{}
 	byPage := map[int][]ObjectEdit{}
 	for _, e := range edits {
+		switch e.Object {
+		case "", ObjectPicture:
+		case ObjectDrawing:
+			if e.Kind == ObjectEditReplace {
+				return nil, RefuseObject(WhyNotAPicture, e.Page, e.Ordinal, nil)
+			}
+		default:
+			return nil, badObjectRequest(fmt.Sprintf("%q is not something on a page Nib edits: it is a picture or a drawing.", e.Object))
+		}
 		switch e.Kind {
 		case ObjectEditDelete:
 			if e.Box != nil {
@@ -272,11 +314,11 @@ func groupObjectEdits(edits []ObjectEdit) ([][]ObjectEdit, error) {
 			return nil, badObjectRequest(fmt.Sprintf("%q is not an edit Nib makes to a picture.", e.Kind))
 		}
 		if e.Page < 1 || e.Ordinal < 0 {
-			return nil, badObjectRequest(fmt.Sprintf("Page %d, picture %d is not an address: pages and pictures count from 1.", e.Page, e.Ordinal+1))
+			return nil, badObjectRequest(fmt.Sprintf("Page %d, %s %d is not an address: pages and %ss count from 1.", e.Page, objectOf(e), e.Ordinal+1, objectOf(e)))
 		}
-		k := [2]int{e.Page, e.Ordinal}
+		k := objectAddr{e.Page, objectOf(e), e.Ordinal}
 		if seen[k] {
-			return nil, badObjectRequest(fmt.Sprintf("It names picture %d of page %d twice.", e.Ordinal+1, e.Page))
+			return nil, badObjectRequest(fmt.Sprintf("It names %s %d of page %d twice.", objectOf(e), e.Ordinal+1, e.Page))
 		}
 		seen[k] = true
 		byPage[e.Page] = append(byPage[e.Page], e)
@@ -312,6 +354,34 @@ type pageRemoval struct {
 	replaced        map[int]replacedWant
 	replacedObjNrs  []int
 	replacedAnswers []ReplacedObject
+	// paths is what every painted path the written page draws must read as, in the walk's order: the paths it drew
+	// minus a removed drawing's, a moved drawing's with its box translated (PLAN-image-edit P03.S03).
+	paths []pathWant
+	// movedDrawings holds, by ordinal, a moved drawing's translation and the box it was asked into (user space).
+	movedDrawings map[int]drawingMove
+}
+
+// drawingMove is one drawing's move: the box it lands in, in the page's user space.
+type drawingMove struct {
+	box [4]float64
+}
+
+// pathWant is what the after-check holds one painted path to: the same bytes, or, for a moved drawing's path, the
+// same number of construction operators with its box where the translation put it.
+type pathWant struct {
+	bytes [32]byte
+	moved bool
+	box   [4]float64
+	ops   int
+}
+
+// pathsAsTheyStand is every painted path as it must read when nothing is done to it.
+func pathsAsTheyStand(paths []drawnPath) []pathWant {
+	out := make([]pathWant, len(paths))
+	for i, p := range paths {
+		out[i] = pathWant{bytes: sha256.Sum256(p.bytes)}
+	}
+	return out
 }
 
 // objectTagging is what the structure tree says about one marked picture: the verdict (`objectEditability`'s
@@ -664,7 +734,7 @@ func pageAsItStands(ctx *model.Context, pg pdfread.Page, nr int) (pageRemoval, e
 	if err != nil {
 		return pageRemoval{}, err
 	}
-	keep := pageRemoval{page: nr}
+	keep := pageRemoval{page: nr, paths: pathsAsTheyStand(pr.paths)}
 	for _, o := range pageObjectsOf(nr, newDisplaySpace(pg), pr, nil).Objects {
 		keep.want = append(keep.want, o.operator)
 	}
@@ -719,7 +789,52 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	}
 	var names []newName
 	taken := map[string]bool{}
+	// taken are the drawings' paths removed or rewritten, by their index in the walk's list (`pr.paths`).
+	pathsTaken := map[int]takenPath{}
 	for _, e := range edits {
+		if objectOf(e) == ObjectDrawing {
+			d, ok := DrawingAt(objs, e.Ordinal, e.Digest)
+			if !ok {
+				return pageRemoval{}, false, RefuseObject(CauseObjectChanged, nr, e.Ordinal, nil)
+			}
+			if e.Kind == ObjectEditMove {
+				if !d.Movable {
+					return pageRemoval{}, false, RefuseObject(d.MoveWhy, nr, e.Ordinal, nil)
+				}
+				target := sp.unrect(*e.Box)
+				dx, dy := target[0]-d.userBox[0], target[1]-d.userBox[1]
+				if !sameSize(target, d.userBox) {
+					return pageRemoval{}, false, &ObjectRefusal{Cause: CauseBadRequest, Page: nr, Ordinal: e.Ordinal,
+						Detail: "A drawing is moved, never resized: the box must be the size the drawing is."}
+				}
+				for k, p := range d.members {
+					b, ok := translatedPath(p, dx, dy)
+					if !ok {
+						return pageRemoval{}, false, RefuseObject(WhyNotPathOnly, nr, e.Ordinal, nil)
+					}
+					edit.Replace(p.span.start, p.span.end, b)
+					pathsTaken[d.memberAt[k]] = takenPath{moved: true, bytes: b, dx: dx, dy: dy}
+				}
+				if plan.movedDrawings == nil {
+					plan.movedDrawings = map[int]drawingMove{}
+				}
+				plan.movedDrawings[e.Ordinal] = drawingMove{box: [4]float64{d.userBox[0] + dx, d.userBox[1] + dy, d.userBox[2] + dx, d.userBox[3] + dy}}
+				plan.movedAnswers = append(plan.movedAnswers, MovedObject{Page: nr, Object: ObjectDrawing, Ordinal: e.Ordinal,
+					LinksOver: linksInside(ctx, pg.Dict, d.userBox)})
+				continue
+			}
+			if !d.Editable {
+				return pageRemoval{}, false, RefuseObject(d.Why, nr, e.Ordinal, nil)
+			}
+			for k, p := range d.members {
+				edit.Replace(p.span.start, p.span.end, nil)
+				pathsTaken[d.memberAt[k]] = takenPath{}
+			}
+			plan.removed = append(plan.removed, RemovedObject{Page: nr, Object: ObjectDrawing, Ordinal: e.Ordinal, Kind: d.Kind,
+				SharedWith: []int{}, LinksOver: linksInside(ctx, pg.Dict, d.userBox)})
+			plan.objNrs = append(plan.objNrs, 0)
+			continue
+		}
 		o, ok := ObjectAt(objs, e.Ordinal, e.Digest)
 		if !ok {
 			return pageRemoval{}, false, RefuseObject(CauseObjectChanged, nr, e.Ordinal, nil)
@@ -736,7 +851,7 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 			}
 			edit.Replace(im.place.start, im.place.end, cm)
 			moved[e.Ordinal] = target
-			plan.movedAnswers = append(plan.movedAnswers, MovedObject{Page: nr, Ordinal: e.Ordinal,
+			plan.movedAnswers = append(plan.movedAnswers, MovedObject{Page: nr, Object: ObjectPicture, Ordinal: e.Ordinal,
 				LinksOver: linksInside(ctx, pg.Dict, im.box)})
 			continue
 		}
@@ -800,7 +915,7 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 		}
 		gone[e.Ordinal] = true
 		edit.Replace(o.span.start, o.span.end, nil)
-		r := RemovedObject{Page: nr, Ordinal: e.Ordinal, Kind: o.Kind, SharedWith: []int{},
+		r := RemovedObject{Page: nr, Object: ObjectPicture, Ordinal: e.Ordinal, Kind: o.Kind, SharedWith: []int{},
 			LinksOver: linksInside(ctx, pg.Dict, pr.images[e.Ordinal].box)}
 		if t, marked := tagging[e.Ordinal]; marked {
 			if t.seq != nil {
@@ -883,7 +998,32 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	for _, r := range pr.runs {
 		plan.text = append(plan.text, r.text)
 	}
+	// Every path the page draws is held — an empty record too, so a page left with none is checked for none.
+	plan.paths = make([]pathWant, 0, len(pr.paths))
+	for i, p := range pr.paths {
+		t, was := pathsTaken[i]
+		switch {
+		case !was:
+			plan.paths = append(plan.paths, pathWant{bytes: sha256.Sum256(p.bytes)})
+		case t.moved:
+			// The rewrite's own bytes, and the box the translation puts it in.
+			plan.paths = append(plan.paths, pathWant{bytes: sha256.Sum256(t.bytes), moved: true, ops: p.ops,
+				box: [4]float64{p.box[0] + t.dx, p.box[1] + t.dy, p.box[2] + t.dx, p.box[3] + t.dy}})
+		}
+	}
 	return plan, len(owners) > 0, nil
+}
+
+// takenPath is what an edit did to one path of a drawing: removed it, or moved it by (dx, dy) as bytes.
+type takenPath struct {
+	moved  bool
+	bytes  []byte
+	dx, dy float64
+}
+
+// sameSize says two user-space boxes are one size, to moveTolerance.
+func sameSize(a, b [4]float64) bool {
+	return math.Abs((a[2]-a[0])-(b[2]-b[0])) <= moveTolerance && math.Abs((a[3]-a[1])-(b[3]-b[1])) <= moveTolerance
 }
 
 // elementAlt is the element's `/Alt`, or "".
@@ -1010,6 +1150,15 @@ func verifyWritten(out []byte, plans []pageRemoval) error {
 		if err := rewriteAgrees(p, got.Objects, text); err != nil {
 			return err
 		}
+		if err := pathsAgree(p, pr.paths); err != nil {
+			return err
+		}
+		// A moved drawing's paths were each found where the translation put them, so its box is the box it was asked into.
+		for k := range p.movedAnswers {
+			if m := &p.movedAnswers[k]; m.Object == ObjectDrawing {
+				m.Box, _ = pieceRect(newDisplaySpace(pg), p.movedDrawings[m.Ordinal].box)
+			}
+		}
 		// A replaced slot's `Do` names the lifted stream: its bytes, read back, are the bytes lifted.
 		for i, r := range p.replaced {
 			if i >= len(got.Objects) || got.Objects[i].objNr == 0 {
@@ -1028,6 +1177,9 @@ func verifyWritten(out []byte, plans []pageRemoval) error {
 		}
 		for k := range p.movedAnswers {
 			m := &p.movedAnswers[k]
+			if m.Object == ObjectDrawing {
+				continue
+			}
 			if at := movedIndex(p, m.Ordinal); at >= 0 && at < len(got.Objects) {
 				m.Box = got.Objects[at].Box
 			}
@@ -1072,6 +1224,26 @@ func rewriteAgrees(p pageRemoval, got []PageObject, text []string) error {
 	return nil
 }
 
+// pathsAgree holds a written page's painted paths to p.paths: every path the edit did not touch is there by the same
+// bytes, in the same order; a moved drawing's path has its construction count and the box the translation asked; a
+// removed drawing's is gone. Both builders of a plan (`removeOnPage`, `pageAsItStands`) record every path, so a plan
+// with none recorded is a page that must draw none.
+func pathsAgree(p pageRemoval, got []drawnPath) error {
+	if len(got) != len(p.paths) {
+		return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d paints %d paths, and %d were expected", p.page, len(got), len(p.paths)))
+	}
+	for i, w := range p.paths {
+		g := got[i]
+		if sha256.Sum256(g.bytes) != w.bytes {
+			return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's path %d is not the one that was there", p.page, i+1))
+		}
+		if w.moved && (g.ops != w.ops || !boxesAgree(g.box, w.box)) {
+			return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's path %d is not where the drawing was moved to", p.page, i+1))
+		}
+	}
+	return nil
+}
+
 // movedWant is what the after-check holds a moved picture to.
 type movedWant struct {
 	box     [4]float64
@@ -1093,11 +1265,12 @@ func boxesAgree(a, b [4]float64) bool {
 	return true
 }
 
-// movedIndex is where the picture at ordinal reads on the written page: its ordinal less the removals before it.
+// movedIndex is where the picture at ordinal reads on the written page: its ordinal less the picture removals before
+// it (a drawing's ordinal counts drawings, ADR-224).
 func movedIndex(p pageRemoval, ordinal int) int {
 	before := 0
 	for _, r := range p.removed {
-		if r.Ordinal < ordinal {
+		if r.Object == ObjectPicture && r.Ordinal < ordinal {
 			before++
 		}
 	}
@@ -1145,4 +1318,110 @@ func placementTurned(target [4]float64, outer runMatrix, deg int) ([]byte, bool)
 	}
 	b.WriteString("cm")
 	return []byte(b.String()), true
+}
+
+// pathOnly says p's bytes hold nothing but a path object: construction operators and their numbers, a clip operator
+// and the one painting operator. A producer may write other operators between a path's first point and its paint (a
+// colour, a `cm`, a `q`) and viewers draw it; taking or moving those bytes would change what is drawn after them, so a
+// drawing holding such a path is refused `not-path-only` (code-review of P03.S03).
+func pathOnly(p drawnPath) bool {
+	_, ok := pathOperands(p.bytes, func(contentstream.Token, int, int) {})
+	return ok
+}
+
+// translatedPath is p's bytes with every point it constructs moved by (dx, dy) in the page's user space: each
+// coordinate operand of `m l c v y` and the corner of `re` is rewritten, in the path's own space, by the translation
+// undone through its matrix's linear part (PLAN-image-edit P03.S03, slice-grill pin 3: one shape, never a `q … cm … Q`
+// wrap). Everything else — the paint operator, a `W`, whitespace, comments — is kept byte for byte. A token the shape
+// does not allow inside a path object, or an operand that is not a number, refuses (false).
+func translatedPath(p drawnPath, dx, dy float64) ([]byte, bool) {
+	inv, ok := linearPart(p.ctm).inverse()
+	if !ok {
+		return nil, false
+	}
+	lx, ly := inv.apply(dx, dy)
+	if !finite(lx) || !finite(ly) {
+		return nil, false
+	}
+	edit := contentstream.NewEdit(p.bytes)
+	bad := false
+	if _, ok := pathOperands(p.bytes, func(tok contentstream.Token, axis, _ int) {
+		v, _ := strconv.ParseFloat(string(tok.Bytes(p.bytes)), 64)
+		if v += [2]float64{lx, ly}[axis]; !finite(v) {
+			bad = true
+			return
+		}
+		edit.Replace(tok.Start, tok.End, []byte(num(v)))
+	}); !ok || bad {
+		return nil, false
+	}
+	out, err := edit.Apply()
+	return out, err == nil
+}
+
+// pathOperands walks a path object's bytes and calls visit for each coordinate operand — axis 0 for x, 1 for y,
+// and the point's number within its operator — and answers false for anything a path object may not hold: an
+// operator other than `m l c v y re h W W*` and one paint, a wrong operand count, a token that is not a PDF number
+// (`plainNumber`: no exponent, no hex, no Inf), or a string or array. `re` gives only its corner; its size stays.
+func pathOperands(src []byte, visit func(tok contentstream.Token, axis, point int)) (int, bool) {
+	var operands []contentstream.Token
+	ops := 0
+	for _, t := range contentstream.Tokenize(src) {
+		switch t.Kind {
+		case contentstream.Whitespace:
+			continue
+		case contentstream.Operand:
+			if !plainNumber(t.Bytes(src)) {
+				return ops, false
+			}
+			operands = append(operands, t)
+			continue
+		case contentstream.Operator:
+		default:
+			return ops, false
+		}
+		points, want := 0, 0
+		switch string(t.Bytes(src)) {
+		case "m", "l":
+			points, want = 1, 2
+		case "c":
+			points, want = 3, 6
+		case "v", "y":
+			points, want = 2, 4
+		case "re":
+			points, want = 1, 4
+		case "h", "W", "W*", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*":
+		default:
+			return ops, false
+		}
+		if len(operands) != want {
+			return ops, false
+		}
+		for k := 0; k < points; k++ {
+			visit(operands[2*k], 0, k)
+			visit(operands[2*k+1], 1, k)
+		}
+		ops++
+		operands = operands[:0]
+	}
+	return ops, len(operands) == 0
+}
+
+// plainNumber says b is a number as PDF writes one (ISO 32000-1 §7.3.3): a sign, digits and at most one point.
+func plainNumber(b []byte) bool {
+	i, digits, point := 0, 0, false
+	if len(b) > 0 && (b[0] == '+' || b[0] == '-') {
+		i++
+	}
+	for ; i < len(b); i++ {
+		switch c := b[i]; {
+		case c >= '0' && c <= '9':
+			digits++
+		case c == '.' && !point:
+			point = true
+		default:
+			return false
+		}
+	}
+	return digits > 0
 }

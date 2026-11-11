@@ -133,7 +133,7 @@ test('Delete on the focused picture removes exactly it, by address, and says wha
   key(o[1], 'Delete');
   await settleMore();
   assert.equal(posts.length, 1, `Delete sent ${posts.length} removals, want 1`);
-  assert.deepEqual(posts[0], { edits: [{ kind: 'delete', page: 1, ordinal: 1, digest: 'd'.repeat(63) + '1' }] },
+  assert.deepEqual(posts[0], { edits: [{ kind: 'delete', object: 'picture', page: 1, ordinal: 1, digest: 'd'.repeat(63) + '1' }] },
     'the removal does not name the focused picture by its address');
   assert.match(notice(), /^Removed the picture from the page\. Undo brings it back until you close this document\. Its description, "A cat", went with it\.$/,
     `after the removal the region says "${notice()}"`);
@@ -169,7 +169,7 @@ test('the same revision is not read twice; a stale address reads the page again 
   const asked = gets.length;
   key(o[0], 'Delete');
   await settleMore();
-  assert.equal(notice(), 'The page changed since you selected this. Select the picture again.', `a stale address says "${notice()}"`);
+  assert.equal(notice(), 'The page changed since you selected this. Select it again.', `a stale address says "${notice()}"`);
   // The stimulus: the server answered 409 and its revision did not move, so only a forgotten listing reads again.
   assert.equal(gets.length, asked + 1, 'a stale address did not read the page again');
   assert.equal(outlines().length, 1, 'the outlines were not laid from the page read again');

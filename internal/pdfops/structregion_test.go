@@ -627,6 +627,96 @@ func TestTheUntaggedReaderSaysWhatAFormDrawsAndWhatIsDecoration(t *testing.T) {
 	}
 }
 
+// TestTheGroupingDoorKeepsStandingStreamAndMCIDApart — the grouping door (`groupDrawnPaths`, PLAN-image-edit P03.S03
+// T01): decoration is one standing whatever `/Artifact` sequence holds it (nib's own commit writes one sequence per
+// path, ADR-125), two streams never make one drawing, a marked path joins only paths under its own MCID, and past
+// `clusterBudget` the door says so, because a drawing listed in parts must not be offered as whole.
+func TestTheGroupingDoorKeepsStandingStreamAndMCIDApart(t *testing.T) {
+	first := "300 400 m 320 460 380 460 400 400 c f\n"
+	second := "390 400 m 410 460 470 460 490 400 c f\n" // touches the first
+	kinds := func(src []byte) []string {
+		got, err := ReadUntagged(src, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, p := range got.Pieces {
+			out = append(out, fmt.Sprintf("%s decoration=%v", p.Kind, p.Decoration))
+		}
+		return out
+	}
+	if got := kinds(regionFixture("/Artifact BMC "+first+"EMC\n/Artifact BMC "+second+"EMC\n", "")); !reflect.DeepEqual(got, []string{"drawing decoration=true"}) {
+		t.Errorf("two touching curves in two artifact sequences list as %v, want one decoration drawing", got)
+	}
+	// Standing still parts them: the same two curves, one bare and one decoration, are two drawings.
+	if got := kinds(regionFixture(first+"/Artifact BMC "+second+"EMC\n", "")); !reflect.DeepEqual(got,
+		[]string{"drawing decoration=false", "drawing decoration=true"}) {
+		t.Errorf("a bare curve touching a decoration one lists as %v, want two drawings", got)
+	}
+	// A marked path is not listed, and does not join the bare path it touches into one: the bare one is listed alone.
+	if got := kinds(regionFixture("/P <</MCID 1>> BDC "+first+"EMC\n"+second, "")); !reflect.DeepEqual(got, []string{"drawing decoration=false"}) {
+		t.Errorf("a marked curve touching a bare one lists as %v, want the bare drawing alone", got)
+	}
+
+	// Two streams, at the door: two paths that touch and differ only by the stream that draws them.
+	a := drawnPath{box: [4]float64{0, 0, 10, 10}, curved: true, ops: 2, span: opSpan{0, 1}}
+	a.mcid = -1
+	for _, c := range []struct {
+		name string
+		edit func(*drawnPath)
+		want int
+	}{
+		{"alike", func(*drawnPath) {}, 1},
+		{"in form 12", func(p *drawnPath) { p.stm = 12 }, 2},
+		{"under MCID 3", func(p *drawnPath) { p.marked, p.mcid = true, 3 }, 2},
+	} {
+		x, y := a, a
+		y.box = [4]float64{5, 5, 15, 15}
+		c.edit(&y)
+		if groups, spent := groupDrawnPaths([]drawnPath{x, y}); len(groups) != c.want || spent {
+			t.Errorf("two touching paths, the second %s, group as %d drawing(s) (budget spent %v), want %d", c.name, len(groups), spent, c.want)
+		}
+	}
+	// Two marked paths under ONE MCID are one drawing (an element's drawing, which the listing refuses whole).
+	x, y := a, a
+	x.marked, x.mcid, y.marked, y.mcid, y.box = true, 3, true, 3, [4]float64{5, 5, 15, 15}
+	if groups, _ := groupDrawnPaths([]drawnPath{x, y}); len(groups) != 1 {
+		t.Errorf("two touching paths under one MCID group as %d drawings, want one", len(groups))
+	}
+	y.mcid = 4
+	if groups, _ := groupDrawnPaths([]drawnPath{x, y}); len(groups) != 2 {
+		t.Errorf("two touching paths under MCIDs 3 and 4 group as %d drawing(s), want two", len(groups))
+	}
+
+	// A fill and the outline drawn on it, one box: one shape, so one drawing — a ground holds what is on it WITH room.
+	fill := drawnPath{box: [4]float64{100, 100, 200, 120}, rects: 1, ops: 1, span: opSpan{60, 61}, mcid: -1}
+	ring := drawnPath{box: [4]float64{100, 100, 200, 120}, curved: true, ops: 9, span: opSpan{80, 81}, mcid: -1}
+	if groups, _ := groupDrawnPaths([]drawnPath{fill, ring}); len(groups) != 1 {
+		t.Errorf("a fill and its outline of one box group as %d drawings, want one", len(groups))
+	}
+	ground := fill
+	ground.box = [4]float64{90, 90, 210, 130}
+	if groups, _ := groupDrawnPaths([]drawnPath{ground, ring}); len(groups) != 2 {
+		t.Errorf("a ground with room around a drawing groups with it as %d drawing(s), want two", len(groups))
+	}
+
+	// The budget: a page of paths that all overlap is compared over at most clusterBudget pairs, and the door says
+	// it stopped; a page well under it does not.
+	many := func(n int) []drawnPath {
+		out := make([]drawnPath, n)
+		for i := range out {
+			out[i] = a
+		}
+		return out
+	}
+	if groups, spent := groupDrawnPaths(many(100)); spent || len(groups) != 1 {
+		t.Errorf("100 overlapping paths: %d group(s), budget spent %v; want one drawing, budget not spent", len(groups), spent)
+	}
+	if _, spent := groupDrawnPaths(many(3000)); !spent {
+		t.Errorf("3,000 overlapping paths (~4.5M pairs) did not spend a budget of %d pairs", clusterBudget)
+	}
+}
+
 // TestOnlyTheRegionReaderKeepsDrawings — the painted-path record is the region reader's alone: the run
 // reader, reflow's and the page map's keep none, so the proposer's walk carries nothing new (ADR-088,
 // ADR-125).

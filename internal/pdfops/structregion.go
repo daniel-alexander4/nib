@@ -354,6 +354,128 @@ func ReadUntagged(pdf []byte, page int) (UntaggedContent, error) {
 	return out, nil
 }
 
+// thinPath is a path a person reads as a line: straight, and no wider than a rule.
+func thinPath(p drawnPath) bool {
+	return !p.curved && math.Min(p.box[2]-p.box[0], p.box[3]-p.box[1]) <= ruleMax
+}
+
+// plainBoxPath is one rectangle and nothing else, not thin: a ground or a panel's fill.
+func plainBoxPath(p drawnPath) bool { return !p.curved && p.rects == 1 && p.ops == 1 && !thinPath(p) }
+
+// drawingKind is what a group of n paths led by first is listed as: a lone thin path a `rule`, a lone plain rectangle a
+// `box`, anything else a `drawing`.
+func drawingKind(first drawnPath, n int) string {
+	switch {
+	case n == 1 && thinPath(first):
+		return "rule"
+	case n == 1 && plainBoxPath(first):
+		return "box"
+	}
+	return "drawing"
+}
+
+// sameShapeSlack is how far apart, in user-space units, two boxes' edges may be and still be one shape's: a fill and
+// the outline drawn on it (a browser's code span paints both with the same box).
+const sameShapeSlack = 1.0
+
+// holdsWithRoom says box a holds box b whole and is not b's own box: a ground or a panel holds what is drawn on it with
+// room, and a fill exactly the size of the outline drawn on it is one shape with that outline (P03.S03 T02, measured:
+// six of the eleven drawings the labelled sample's grouping missed were such pairs).
+func holdsWithRoom(a, b [4]float64) bool {
+	if !covers(a, b) {
+		return false
+	}
+	for i := range a {
+		if math.Abs(a[i]-b[i]) > sameShapeSlack {
+			return true
+		}
+	}
+	return false
+}
+
+// drawnGroup is one group of painted paths: its members, as indexes into the paths the walk kept, in the order the page
+// draws them, and their union box.
+type drawnGroup struct {
+	members []int
+	box     [4]float64
+}
+
+// groupDrawnPaths is the ONE grouping of a page's painted paths into drawings (ADR-125; PLAN-image-edit P03.S03):
+// paths whose boxes touch are one drawing — among paths of the same standing (bare, decoration or marked; the same
+// MCID; and the same stream, the page's or one form's) — and never THROUGH a plain
+// rectangle that holds the other whole with room (`holdsWithRoom`), since a page's ground or a panel's fill touches
+// everything drawn on it — a fill exactly the other's size is the same shape's, and joins it. A
+// marked path belongs to an element, so it groups only with paths under its own MCID; the untagged listing drops those
+// groups and the objects listing refuses them (`tagged`). It answers the groups, in the order first met by left edge,
+// and whether the comparison budget ran out — past it, paths not yet joined stand alone, so a drawing
+// may be listed in parts and must not be offered as whole.
+//
+// Decoration is ONE standing whatever sequence holds it: nib's own tag commit writes each decoration path in an
+// `/Artifact` sequence of its own, and a region takes every whole sequence it touches (ADR-125), so two touching
+// decoration paths in two sequences are one drawing — the slice-grill's "compare by sequence" was measured against
+// that commit and refused (P03.S03 T01).
+func groupDrawnPaths(painted []drawnPath) ([]drawnGroup, bool) {
+	// ord is painted's indexes by left edge: the sweep compares only paths whose boxes can overlap. Members are
+	// answered as indexes into painted itself, so no path is ever named by where it sits in its stream (a form drawn
+	// twice draws the same bytes at the same offsets twice).
+	ord := make([]int, len(painted))
+	for i := range ord {
+		ord[i] = i
+	}
+	sort.SliceStable(ord, func(i, j int) bool { return painted[ord[i]].box[0] < painted[ord[j]].box[0] })
+	paths := make([]drawnPath, len(ord))
+	for k, i := range ord {
+		paths[k] = painted[i]
+	}
+	group := make([]int, len(paths))
+	for i := range group {
+		group[i] = i
+	}
+	find := func(i int) int {
+		for group[i] != i {
+			group[i] = group[group[i]]
+			i = group[i]
+		}
+		return i
+	}
+	spent, out := 0, false
+	for i := range paths {
+		for j := i + 1; j < len(paths) && paths[j].box[0] <= paths[i].box[2]; j++ {
+			if spent >= clusterBudget {
+				out = true
+				break
+			}
+			spent++
+			a, b := paths[i], paths[j]
+			if a.artifact != b.artifact || a.marked != b.marked || a.mcid != b.mcid || a.inForm != b.inForm ||
+				a.stm != b.stm || !touches(a.box, b.box) {
+				continue
+			}
+			if (plainBoxPath(a) && holdsWithRoom(a.box, b.box)) || (plainBoxPath(b) && holdsWithRoom(b.box, a.box)) {
+				continue
+			}
+			group[find(j)] = find(i)
+		}
+	}
+	var groups []drawnGroup
+	at := map[int]int{}
+	for i, p := range paths {
+		g := find(i)
+		k, ok := at[g]
+		if !ok {
+			k = len(groups)
+			at[g] = k
+			groups = append(groups, drawnGroup{box: p.box})
+		}
+		groups[k].members = append(groups[k].members, ord[i])
+		groups[k].box = unionBox(groups[k].box, p.box)
+	}
+	for _, g := range groups {
+		sort.Ints(g.members) // the order the page draws them
+	}
+	return groups, out
+}
+
 // untaggedPieces is one page's unowned pieces, listed: its text as the grouping door grouped it, the images it
 // draws and its painted paths.
 func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []PageObject, painted []drawnPath) []UntaggedPiece {
@@ -376,71 +498,24 @@ func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []PageOb
 	// decoration, the page's or a form's), and never THROUGH a plain rectangle that holds the other whole: a
 	// page's ground or a panel's fill touches everything drawn on it, and would make one drawing of the page.
 	// A path that joins nothing is listed for what it is: a thin `rule`, a plain `box`, or a drawing of one path.
-	var paths []drawnPath
-	for _, p := range painted {
-		if !p.marked {
-			paths = append(paths, p)
-		}
-	}
-	thin := func(p drawnPath) bool {
-		return !p.curved && math.Min(p.box[2]-p.box[0], p.box[3]-p.box[1]) <= ruleMax
-	}
-	plainBox := func(p drawnPath) bool { return !p.curved && p.rects == 1 && p.ops == 1 && !thin(p) }
-	sort.SliceStable(paths, func(i, j int) bool { return paths[i].box[0] < paths[j].box[0] })
-	group := make([]int, len(paths))
-	for i := range group {
-		group[i] = i
-	}
-	find := func(i int) int {
-		for group[i] != i {
-			group[i] = group[group[i]]
-			i = group[i]
-		}
-		return i
-	}
-	spent := 0
-	for i := range paths {
-		for j := i + 1; j < len(paths) && paths[j].box[0] <= paths[i].box[2] && spent < clusterBudget; j++ {
-			spent++
-			a, b := paths[i], paths[j]
-			if a.artifact != b.artifact || a.inForm != b.inForm || !touches(a.box, b.box) {
-				continue
-			}
-			if (plainBox(a) && covers(a.box, b.box)) || (plainBox(b) && covers(b.box, a.box)) {
-				continue
-			}
-			group[find(j)] = find(i)
-		}
-	}
+	groups, _ := groupDrawnPaths(painted)
 	type drawing struct {
 		box   [4]float64
 		first drawnPath
 		n     int
 	}
 	var drawings []*drawing
-	at := map[int]*drawing{}
-	for i, p := range paths {
-		g := find(i)
-		d := at[g]
-		if d == nil {
-			d = &drawing{box: p.box, first: p}
-			at[g] = d
-			drawings = append(drawings, d)
+	for _, g := range groups {
+		if painted[g.members[0]].marked {
+			continue // an element owns it
 		}
-		d.box = unionBox(d.box, p.box)
-		d.n++
+		drawings = append(drawings, &drawing{box: g.box, first: painted[g.members[0]], n: len(g.members)})
 	}
-	// Drawings first, then what stands alone as a rule or a plain box, each in the order the page draws them.
+	// Drawings first, then what stands alone as a rule or a plain box, each in the order the walk first met it, left
+	// edge first (`groupDrawnPaths` sorts by it).
 	for _, kind := range [3]string{"drawing", "rule", "box"} {
 		for _, d := range drawings {
-			is := "drawing"
-			switch {
-			case d.n == 1 && thin(d.first):
-				is = "rule"
-			case d.n == 1 && plainBox(d.first):
-				is = "box"
-			}
-			if is == kind {
+			if drawingKind(d.first, d.n) == kind {
 				add(kind, "", d.box, d.first.artifact, d.first.inForm)
 			}
 		}

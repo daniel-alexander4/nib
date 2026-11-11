@@ -31,9 +31,10 @@ func cmdObjects(args []string) int {
 	fs.BoolVar(&asJSON, "json", false, "print the listing as JSON")
 	fs.Usage = usageFunc(fs, "nib objects IN --page N [--json]  |  nib objects remove ...  |  nib objects move ...  |  nib objects replace ...",
 		"List the pictures page N draws, in drawing order, each with its number, its digest, where it is on the page\n"+
-			"and whether Nib can remove it and move it (and why not). \"nib objects remove\" takes one off the page by\n"+
-			"that number and digest; \"nib objects move\" places one in a new box; \"nib objects replace\" puts another\n"+
-			"picture in its place. IN may be - (stdin).")
+			"and whether Nib can remove it and move it (and why not); then its drawings — lines and shapes whose outlines\n"+
+			"touch, each one object — numbered on their own. \"nib objects remove\" takes one off the page by that number\n"+
+			"and digest; \"nib objects move\" places one in a new box; \"nib objects replace\" puts another picture in\n"+
+			"a picture's place. IN may be - (stdin).")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -58,8 +59,8 @@ func cmdObjects(args []string) int {
 	if asJSON {
 		return printTagJSON(objs)
 	}
-	if len(objs.Objects) == 0 {
-		fmt.Printf("page %d draws no pictures\n", page)
+	if len(objs.Objects) == 0 && len(objs.Drawings) == 0 {
+		fmt.Printf("page %d draws no pictures and no drawings\n", page)
 	}
 	for _, o := range objs.Objects {
 		state := "removable"
@@ -73,6 +74,21 @@ func cmdObjects(args []string) int {
 		fmt.Printf("picture %d  %s  %s  [%.4f %.4f %.4f %.4f]  %s; %s\n", o.Ordinal+1, o.Kind, o.Digest,
 			o.Box[0], o.Box[1], o.Box[2], o.Box[3], state, move)
 	}
+	for _, o := range objs.Drawings {
+		state := "removable"
+		if !o.Editable {
+			state = "not removable: " + pdfops.ObjectCauseWords(o.Why)
+		}
+		move := "movable"
+		if !o.Movable {
+			move = "not movable: " + pdfops.ObjectCauseWords(o.MoveWhy)
+		}
+		fmt.Printf("drawing %d  %s  %s  [%.4f %.4f %.4f %.4f]  %s; %s\n", o.Ordinal+1, o.Kind, o.Digest,
+			o.Box[0], o.Box[1], o.Box[2], o.Box[3], state, move)
+	}
+	if objs.DrawingsUngrouped {
+		fmt.Println("the page draws too many overlapping lines and shapes for Nib to group them; no drawing is listed")
+	}
 	if objs.FormsNotRead > 0 {
 		fmt.Printf("%d repeated page element(s) could not be read; what they draw is not listed\n", objs.FormsNotRead)
 	}
@@ -83,26 +99,27 @@ func cmdObjects(args []string) int {
 // precondition: a picture the file no longer draws at that number is refused, never another one removed.
 func cmdObjectsRemove(args []string) int {
 	fs := flag.NewFlagSet("nib objects remove", flag.ContinueOnError)
-	var page, picture int
+	var page, picture, drawing int
 	var digest, out string
 	var inPlace bool
 	fs.IntVar(&page, "page", 0, "the page, from 1 (required)")
-	fs.IntVar(&picture, "picture", 0, "the picture's number as \"nib objects\" lists it, from 1 (required)")
-	fs.StringVar(&digest, "digest", "", "the picture's digest as \"nib objects\" lists it (required)")
+	objectFlags(fs, &picture, &drawing)
+	fs.StringVar(&digest, "digest", "", "its digest as \"nib objects\" lists it (required)")
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
-	fs.Usage = usageFunc(fs, "nib objects remove IN --page N --picture K --digest D -o OUT  |  ... -w IN",
-		"Remove one picture from a page: the operator that draws it, and its tag when the tag holds nothing else.\n"+
-			"The picture leaves the file unless another page or the form still uses it. A signed document, one in a signing\n"+
-			"ceremony and a picture inside a repeated page element are refused.")
+	fs.Usage = usageFunc(fs, "nib objects remove IN --page N (--picture K | --drawing K) --digest D -o OUT  |  ... -w IN",
+		"Remove one picture or drawing from a page: the operators that draw it, and a picture's tag when the tag holds\n"+
+			"nothing else. A picture leaves the file unless another page or the form still uses it. A signed document, one in\n"+
+			"a signing ceremony and anything inside a repeated page element are refused, and so is a tagged drawing.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	if page < 1 || picture < 1 || digest == "" {
-		errf("--page, --picture and --digest are all required (\"nib objects IN --page N\" lists them)")
+	object, ordinal, ok := objectChosen(picture, drawing)
+	if page < 1 || !ok || digest == "" {
+		errf("--page, one of --picture or --drawing, and --digest are all required (\"nib objects IN --page N\" lists them)")
 		return 2
 	}
-	in, result, res, code := editObjects(fs, out, inPlace, pdfops.ObjectEdit{Kind: pdfops.ObjectEditDelete, Page: page, Ordinal: picture - 1, Digest: digest})
+	in, result, res, code := editObjects(fs, out, inPlace, pdfops.ObjectEdit{Kind: pdfops.ObjectEditDelete, Object: object, Page: page, Ordinal: ordinal, Digest: digest})
 	if code != 0 {
 		return code
 	}
@@ -111,7 +128,7 @@ func cmdObjectsRemove(args []string) int {
 			fmt.Fprintf(os.Stderr, "its tag went with it%s\n", altNote(r.Alt))
 		}
 		if r.LinksOver > 0 {
-			fmt.Fprintf(os.Stderr, "%d link(s) over the picture are still on the page\n", r.LinksOver)
+			fmt.Fprintf(os.Stderr, "%d link(s) over it are still on the page\n", r.LinksOver)
 		}
 		switch {
 		case len(r.SharedWith) > 0:
@@ -123,28 +140,47 @@ func cmdObjectsRemove(args []string) int {
 	return writeEdited(in, out, inPlace, result)
 }
 
+// objectFlags declares --picture and --drawing: an object is named by one of them, never both (PLAN-image-edit P03.S03).
+func objectFlags(fs *flag.FlagSet, picture, drawing *int) {
+	fs.IntVar(picture, "picture", 0, "the picture's number as \"nib objects\" lists it, from 1")
+	fs.IntVar(drawing, "drawing", 0, "the drawing's number as \"nib objects\" lists it, from 1")
+}
+
+// objectChosen is the object and ordinal --picture or --drawing named, and false unless exactly one did.
+func objectChosen(picture, drawing int) (string, int, bool) {
+	switch {
+	case picture >= 1 && drawing == 0:
+		return pdfops.ObjectPicture, picture - 1, true
+	case drawing >= 1 && picture == 0:
+		return pdfops.ObjectDrawing, drawing - 1, true
+	}
+	return "", 0, false
+}
+
 // cmdObjectsMove is `nib objects move IN --page N --picture K --digest D --box L,T,R,B -o OUT` (or -w IN): the box is
 // in the listing's space, fractions of the displayed page from its top-left corner (PLAN-image-edit P02.S01, D8).
 func cmdObjectsMove(args []string) int {
 	fs := flag.NewFlagSet("nib objects move", flag.ContinueOnError)
-	var page, picture int
+	var page, picture, drawing int
 	var digest, box, out string
 	var inPlace bool
 	fs.IntVar(&page, "page", 0, "the page, from 1 (required)")
-	fs.IntVar(&picture, "picture", 0, "the picture's number as \"nib objects\" lists it, from 1 (required)")
-	fs.StringVar(&digest, "digest", "", "the picture's digest as \"nib objects\" lists it (required)")
+	objectFlags(fs, &picture, &drawing)
+	fs.StringVar(&digest, "digest", "", "its digest as \"nib objects\" lists it (required)")
 	fs.StringVar(&box, "box", "", "the new box: left,top,right,bottom as fractions of the page, as the listing prints them (required)")
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
-	fs.Usage = usageFunc(fs, "nib objects move IN --page N --picture K --digest D --box L,T,R,B -o OUT  |  ... -w IN",
-		"Place one picture in a new box, which moves and resizes it. Only a picture drawn straight and on its own\n"+
-			"(one placement, nothing else drawn with it) is moved; its tag and description stay as they are. A signed\n"+
-			"document, one in a signing ceremony and a picture inside a repeated page element are refused.")
+	fs.Usage = usageFunc(fs, "nib objects move IN --page N (--picture K | --drawing K) --digest D --box L,T,R,B -o OUT  |  ... -w IN",
+		"Place one picture in a new box, which moves and resizes it, or move one drawing to a box of its own size.\n"+
+			"Only a picture drawn straight and on its own (one placement, nothing else drawn with it) is moved; its tag and\n"+
+			"description stay as they are. A drawing is moved, never resized. A signed document, one in a signing ceremony\n"+
+			"and anything inside a repeated page element are refused.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
-	if page < 1 || picture < 1 || digest == "" || box == "" {
-		errf("--page, --picture, --digest and --box are all required (\"nib objects IN --page N\" lists them)")
+	object, ordinal, ok := objectChosen(picture, drawing)
+	if page < 1 || !ok || digest == "" || box == "" {
+		errf("--page, one of --picture or --drawing, --digest and --box are all required (\"nib objects IN --page N\" lists them)")
 		return 2
 	}
 	var r pdfops.MapRect
@@ -161,13 +197,13 @@ func cmdObjectsMove(args []string) int {
 		}
 		r[i] = v
 	}
-	in, result, res, code := editObjects(fs, out, inPlace, pdfops.ObjectEdit{Kind: pdfops.ObjectEditMove, Page: page, Ordinal: picture - 1, Digest: digest, Box: &r})
+	in, result, res, code := editObjects(fs, out, inPlace, pdfops.ObjectEdit{Kind: pdfops.ObjectEditMove, Object: object, Page: page, Ordinal: ordinal, Digest: digest, Box: &r})
 	if code != 0 {
 		return code
 	}
 	for _, m := range res.Moved {
 		if m.LinksOver > 0 {
-			fmt.Fprintf(os.Stderr, "%d link(s) over where the picture was are still there\n", m.LinksOver)
+			fmt.Fprintf(os.Stderr, "%d link(s) over where it was are still there\n", m.LinksOver)
 		}
 	}
 	return writeEdited(in, out, inPlace, result)

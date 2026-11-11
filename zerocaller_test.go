@@ -107,6 +107,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"ExportBidi":             "test-support — three text-direction controls in a Hebrew line; docmodel/read's test counts them (/pending 947).",
 		"ExportModelSet":         "test-support — the document model reader's fixtures (visibility, tree against proposal); docmodel/read's tests read them (ADR-192).",
 		"FormatMIMEs":            "test-support — the table's MIME types for the desktop-file test (ADR-184); the file is generated, not built at runtime.",
+		"PictureAndDrawings":     "test-support — testpdf's page with a picture, a ruled box and a curve, the fixture the route and CLI tests edit a drawing on (PLAN-image-edit P03.S03).",
 		"TwoPictures":            "test-support — testpdf's two-picture page, the fixture the page objects' wrapper, route and CLI tests remove a picture from (PLAN-image-edit P01.S02).",
 		"PicturesIn": "test-support — testpdf's reader of the image XObjects a signed document carries, for the tests that " +
 			"compare the signature block a party was shown with the one embedded (ADR-158, /pending 367).",

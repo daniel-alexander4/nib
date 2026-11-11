@@ -342,3 +342,36 @@ func withField(body map[string]any, k string, v any) map[string]any {
 	}
 	return out
 }
+
+// Drawings at the route (PLAN-image-edit P03.S03): while `drawingsInWindow` is off the listing offers the window none,
+// and an edit naming a drawing by the address `nib objects` hands out is still made, as one Undo step.
+func TestTheRouteOffersNoDrawingsWhileTheGroupingIsBelowItsThresholdAndStillEditsOne(t *testing.T) {
+	src := testpdf.PictureAndDrawings()
+	base, c, csrf := openTagsFixture(t, src)
+	original := getBytes(t, c, base+"/api/pdf")
+	listed := pageObjectsOpen(t, c, base)
+	if drawingsInWindow || len(listed.Objects) != 1 || len(listed.Drawings) != 0 {
+		t.Fatalf("with the switch %v the window was offered %d drawing(s) and %d picture(s)", drawingsInWindow, len(listed.Drawings), len(listed.Objects))
+	}
+	objs, err := pdfops.ReadPageObjects(src, 1)
+	if err != nil || len(objs.Drawings) != 2 {
+		t.Fatalf("setup: the document draws %d drawings (%v)", len(objs.Drawings), err)
+	}
+	body := map[string]any{"edits": []map[string]any{{"kind": "delete", "object": "drawing", "page": 1, "ordinal": 0, "digest": objs.Drawings[0].Digest}}}
+	code, out := postTags(t, c, csrf, base+"/api/page/objects", body)
+	var answer struct {
+		Removed []pdfops.RemovedObject `json:"removed"`
+	}
+	if code != http.StatusOK || json.Unmarshal([]byte(out), &answer) != nil || len(answer.Removed) != 1 || answer.Removed[0].Object != pdfops.ObjectDrawing {
+		t.Fatalf("removing drawing 0 = %d: %s", code, out)
+	}
+	if after, err := pdfops.ReadPageObjects(getBytes(t, c, base+"/api/pdf"), 1); err != nil || len(after.Drawings) != 1 || len(after.Objects) != 1 {
+		t.Fatalf("after the removal the page draws %+v (%v)", after, err)
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	if !bytes.Equal(original, getBytes(t, c, base+"/api/pdf")) {
+		t.Fatal("Undo did not bring back the document as it was")
+	}
+}

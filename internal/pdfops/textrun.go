@@ -415,7 +415,23 @@ type runGState struct {
 	// clipRough says a clip in force is not what clip's box says it is: a path that is not one rectangle drawn
 	// straight, or text set to clip (`Tr` 4-7). Read only under keepDrawings, where a path's shape is kept.
 	clipRough bool
+	// fillPattern and strokePattern say the current fill or stroke colour is a pattern (`scn`/`SCN` naming one): what
+	// the path paints is the pattern's, laid in the pattern's own space, so moving the path slides it over a pattern
+	// that stays put (PLAN-image-edit P03.S03). Read only under keepDrawings.
+	fillPattern, strokePattern bool
 }
+
+// setPattern records whether the fill (fill) or stroke colour just set is a pattern.
+func (g *runGState) setPattern(fill, pattern bool) {
+	if fill {
+		g.fillPattern = pattern
+	} else {
+		g.strokePattern = pattern
+	}
+}
+
+// isFillColourOp says a colour operator sets the fill colour (lower case: `g rg k cs sc scn`), not the stroke colour.
+func isFillColourOp(op []byte) bool { return len(op) > 0 && op[0] >= 'a' && op[0] <= 'z' }
 
 func newRunGState() runGState {
 	inf := math.Inf(1)
@@ -1193,17 +1209,17 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 		case "S", "s", "B", "B*", "b", "b*":
 			gs.clipRough = gs.clipRough || (clipping && !straightRect(drawn, gs.ctm))
-			w.keepPath(&drawn, path, gs, true, tok.End)
+			op := string(tok.Bytes(src))
+			w.keepPath(&drawn, src, path, gs, true, op != "S" && op != "s", tok.End)
 			w.markPath(path, gs, true)
 			if w.keepShapes {
-				op := string(tok.Bytes(src))
 				w.keepPieces(&pieces, gs, true, op != "S" && op != "s", op == "s" || op == "b" || op == "b*")
 			}
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "f", "F", "f*":
 			gs.clipRough = gs.clipRough || (clipping && !straightRect(drawn, gs.ctm))
-			w.keepPath(&drawn, path, gs, false, tok.End)
+			w.keepPath(&drawn, src, path, gs, false, true, tok.End)
 			w.markPath(path, gs, false)
 			if w.keepShapes {
 				w.keepPieces(&pieces, gs, false, true, false)
@@ -1219,6 +1235,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "W", "W*":
 			construct(tok.Start, false)
 			clipping = true
+			drawn.clips = true
 		case "gs":
 			gs.extGState = true
 			// A soft mask hides part of what follows as a clip does, and has no box the walk keeps: a picture drawn
@@ -1229,6 +1246,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 			}
 		case "g", "rg", "k", "G", "RG", "K":
+			if w.keepDrawings {
+				gs.setPattern(isFillColourOp(tok.Bytes(src)), false)
+			}
 			// The colour is read only for a reader that re-emits it (a paragraph set on another page, P07.S05): every other
 			// reader walks past it, as it walks past every mark (P07 phase-close review — measured +0.75-1 µs per colour
 			// operator in every reader before it was gated).
@@ -1248,6 +1268,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "cs", "CS":
+			if w.keepDrawings {
+				// A colour space's initial colour is never a pattern: a pattern is chosen by `scn` naming it.
+				gs.setPattern(isFillColourOp(tok.Bytes(src)), false)
+			}
 			if !w.keepGlyphs && !w.keepMarks && !w.keepShapes {
 				break
 			}
@@ -1269,6 +1293,14 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "sc", "scn", "SC", "SCN":
+			if w.keepDrawings {
+				// Only a Pattern colour space's `scn`/`SCN` takes a name, and it names the pattern (ISO 32000-1 §8.6.8).
+				named := false
+				if len(ops) > 0 {
+					_, named = ops[len(ops)-1].name(src)
+				}
+				gs.setPattern(isFillColourOp(tok.Bytes(src)), named)
+			}
 			if !w.keepGlyphs && !w.keepMarks && !w.keepShapes {
 				break
 			}

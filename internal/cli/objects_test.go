@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,7 +136,9 @@ func TestNibObjectsWantsItsFlags(t *testing.T) {
 		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,0.2,0.3"},
 		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,a,0.3,0.4"},
 		{"replace", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d"},
-		{"replace", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--with", "y.png", "--alt", "a", "--keep-alt"}} {
+		{"replace", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--with", "y.png", "--alt", "a", "--keep-alt"},
+		{"remove", "x.pdf", "--page", "1", "--picture", "1", "--drawing", "1", "--digest", "d"},
+		{"move", "x.pdf", "--page", "1", "--drawing", "1", "--picture", "1", "--digest", "d", "--box", "0.1,0.2,0.3,0.4"}} {
 		var code int
 		captureStderr(t, func() { code = cmdObjects(args) })
 		if code != 2 {
@@ -229,5 +233,43 @@ func TestNibObjectsReplacesAPicture(t *testing.T) {
 	})
 	if code != 1 || !strings.Contains(msg, pdfops.ObjectCauseWords(pdfops.CauseSigned)) {
 		t.Fatalf("a signed document: exited %d saying %q (the signature, not the missing picture, must refuse)", code, msg)
+	}
+}
+
+// `nib objects` lists a page's drawings after its pictures, numbered on their own, and `--drawing K` removes and moves
+// one through the same door (PLAN-image-edit P03.S03) — whatever the window is offered.
+func TestNibObjectsListsRemovesAndMovesADrawing(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.pdf")
+	if err := os.WriteFile(in, testpdf.PictureAndDrawings(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	objs := listObjectsJSON(t, in)
+	if len(objs.Objects) != 1 || len(objs.Drawings) != 2 || objs.Drawings[1].Object != pdfops.ObjectDrawing {
+		t.Fatalf("listed %d pictures and %d drawings", len(objs.Objects), len(objs.Drawings))
+	}
+	plain, _ := captureStdout(t, func() int { return cmdObjects([]string{in, "--page", "1"}) })
+	if !strings.Contains(plain, "picture 1  image") || !strings.Contains(plain, "drawing 1  drawing") || !strings.Contains(plain, "drawing 2  drawing") {
+		t.Fatalf("the listing does not name the picture and the two drawings:\n%s", plain)
+	}
+	curve := objs.Drawings[1]
+	b := curve.Box
+	box := fmt.Sprintf("%g,%g,%g,%g", b[0]-0.05, b[1]+0.05, b[2]-0.05, b[3]+0.05)
+	if _, code := captureStdout(t, func() int {
+		return cmdObjects([]string{"move", in, "--page", "1", "--drawing", "2", "--digest", curve.Digest, "--box", box, "-w"})
+	}); code != 0 {
+		t.Fatalf("moving drawing 2 exited %d", code)
+	}
+	moved := listObjectsJSON(t, in)
+	if got := moved.Drawings[1].Box; math.Abs(got[0]-(b[0]-0.05)) > 1e-6 || math.Abs(got[1]-(b[1]+0.05)) > 1e-6 {
+		t.Fatalf("the curve reads at %v after a move to %s", got, box)
+	}
+	if _, code := captureStdout(t, func() int {
+		return cmdObjects([]string{"remove", in, "--page", "1", "--drawing", "1", "--digest", moved.Drawings[0].Digest, "-w"})
+	}); code != 0 {
+		t.Fatalf("removing drawing 1 exited %d", code)
+	}
+	if after := listObjectsJSON(t, in); len(after.Drawings) != 1 || len(after.Objects) != 1 {
+		t.Fatalf("after the removal the page lists %d pictures and %d drawings", len(after.Objects), len(after.Drawings))
 	}
 }

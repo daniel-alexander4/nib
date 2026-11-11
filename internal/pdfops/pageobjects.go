@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 
 	"nib/internal/pdfread"
 )
@@ -68,15 +69,32 @@ const (
 	WhyPartlyOffPage = "partly-off-page"
 	// WhyClipped: a clip in force hides part of the page, so a move could hide part of the picture.
 	WhyClipped = "clipped"
+
+	// Why a drawing cannot be removed or moved, beside the causes above (PLAN-image-edit P03.S03).
+	// WhyClips: a path of it is a clip as well as painted (`W` before its paint), so taking it changes what is
+	// drawn after it.
+	WhyClips = "clips"
+	// WhyPatterned: a path of it is painted with a pattern, which is laid in the pattern's own space: moving the path
+	// slides it over a pattern that stays where it is.
+	WhyPatterned = "patterned"
+	// WhyNotAPicture: a replace names a drawing.
+	WhyNotAPicture = "not-a-picture"
+	// WhyNotPathOnly: a path of it holds an operator a path object may not (a colour, a `cm`, a `q`) between its first
+	// point and its paint (`pathOnly`), so taking or moving its bytes would change what is drawn after it.
+	WhyNotPathOnly = "not-path-only"
 )
 
-// PageObject is one picture a page draws, as an edit addresses it: (Page, Ordinal, Digest), never position alone (L2).
+// PageObject is one picture or drawing a page draws, as an edit addresses it: (Page, Object, Ordinal, Digest), never
+// position alone (L2).
 type PageObject struct {
 	Page int `json:"page"`
+	// Object is ObjectPicture or ObjectDrawing: which of PageObjects' two lists it is in, and what Ordinal counts.
+	Object string `json:"object"`
 	// Ordinal is the picture's index among the pictures the page's walk met, in draw order, from 0 — never the shared
 	// draw-order count (`drawnImage.seq`), which numbers text and shapes too.
 	Ordinal int `json:"ordinal"`
-	// Kind is "image" (an image XObject's `Do`) or "inline" (`BI … EI`).
+	// Kind is, for a picture, "image" (an image XObject's `Do`) or "inline" (`BI … EI`); for a drawing, "drawing",
+	// "rule" (one thin straight path) or "box" (one plain rectangle) — `drawingKind`.
 	Kind string `json:"kind"`
 	// Digest is the address's digest, lowercase hex (`addressDigest`): SHA-256 over the operator's digest
 	// (`objectDigest`: its bytes, the `cm` that places it, the `q` depth) and how many pictures on the page share that
@@ -126,18 +144,28 @@ type PageObject struct {
 	userBox [4]float64
 	plain   bool
 	painter [32]byte
+	// members are a drawing's paths, in the order the page draws them, and memberAt where each is in the walk's list
+	// (`pageRuns.paths`); nil for a picture. A drawing has no one span: span is {-1, -1}.
+	members  []drawnPath
+	memberAt []int
 }
 
-// PageObjects is one page's pictures.
+// PageObjects is one page's pictures and drawings.
 type PageObjects struct {
 	Page    int          `json:"page"`
 	Objects []PageObject `json:"objects"`
+	// Drawings are the page's painted paths as the ONE grouping (`groupDrawnPaths`, ADR-125) makes them drawings, in
+	// the order the page draws each one's first path, numbered apart from the pictures (PLAN-image-edit P03.S03).
+	Drawings []PageObject `json:"drawings"`
+	// DrawingsUngrouped says the page draws more overlapping paths than the grouping compares (`clusterBudget`): a
+	// drawing could be listed in parts, so none is listed.
+	DrawingsUngrouped bool `json:"drawingsUngrouped"`
 	// FormsNotRead counts form XObjects the walk met and could not read; what they draw is not listed.
 	FormsNotRead int `json:"formsNotRead"`
 }
 
-// ReadPageObjects reads the pictures page of pdf draws, each with its address and whether an edit may act on it.
-// It writes nothing.
+// ReadPageObjects reads the pictures and drawings page of pdf draws, each with its address and whether an edit may act
+// on it. It writes nothing.
 func ReadPageObjects(pdf []byte, page int) (PageObjects, error) {
 	ctx, err := inspectionRead(pdf)
 	if err != nil {
@@ -160,7 +188,8 @@ func ReadPageObjects(pdf []byte, page int) (PageObjects, error) {
 	return pageObjectsOf(page, newDisplaySpace(pg), pr, tagging), nil
 }
 
-// pageObjectsOf lists pr's images as page objects — the one place `pageRuns.images` becomes a listing. pr must come
+// pageObjectsOf lists pr's images and drawings as page objects — the one place `pageRuns.images` becomes a listing,
+// and with `untaggedPieces` one of the two callers of the path grouping (`groupDrawnPaths`). pr must come
 // from the region reader (`readPageDrawings`), the only one that sets an image's digest. tagging is what the
 // structure tree says of each marked picture (`taggingOf`); nil means it was not asked, and every marked picture is
 // then `tagged`.
@@ -171,7 +200,7 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 		twins[im.digest]++
 	}
 	for i, im := range pr.images {
-		o := PageObject{Page: nr, Ordinal: i, Kind: "image", Digest: addressDigest(im.digest, twins[im.digest]), QDepth: im.qDepth,
+		o := PageObject{Page: nr, Object: ObjectPicture, Ordinal: i, Kind: "image", Digest: addressDigest(im.digest, twins[im.digest]), QDepth: im.qDepth,
 			InForm: im.inForm, Tagged: im.marked, Decoration: im.artifact, MCID: im.mcid, Stream: im.stm, span: im.span, objNr: im.objNr,
 			operator: hex.EncodeToString(im.digest[:]), userBox: im.box, plain: im.plain, painter: im.painter}
 		if im.objNr == 0 {
@@ -191,7 +220,150 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 		o.Replaceable, o.ReplaceWhy = objectEditability(im, o.OnPage, "")
 		out.Objects = append(out.Objects, o)
 	}
+	out.Drawings, out.DrawingsUngrouped = drawingsOf(nr, sp, pr.paths)
 	return out
+}
+
+// drawingsOf lists a page's painted paths as drawings: the grouping door's groups, each a PageObject numbered in the
+// order the page draws its first path. Past the grouping's budget it lists none and says so.
+func drawingsOf(nr int, sp displaySpace, painted []drawnPath) ([]PageObject, bool) {
+	groups, spent := groupDrawnPaths(painted)
+	if spent {
+		return []PageObject{}, true
+	}
+	type drawing struct {
+		at      []int // members, as indexes into painted, in draw order
+		members []drawnPath
+		box     [4]float64
+	}
+	ds := make([]drawing, 0, len(groups))
+	for _, g := range groups {
+		d := drawing{at: g.members, box: g.box}
+		for _, i := range g.members {
+			d.members = append(d.members, painted[i])
+		}
+		ds = append(ds, d)
+	}
+	sort.Slice(ds, func(i, j int) bool { return ds[i].at[0] < ds[j].at[0] })
+	out := make([]PageObject, 0, len(ds))
+	twins := map[[32]byte]int{}
+	digests := make([][32]byte, len(ds))
+	for i, d := range ds {
+		digests[i] = drawingDigest(d.members)
+		twins[digests[i]]++
+	}
+	for i, d := range ds {
+		first := d.members[0]
+		o := PageObject{Page: nr, Object: ObjectDrawing, Ordinal: i, Kind: drawingKind(first, len(d.members)),
+			Digest: addressDigest(digests[i], twins[digests[i]]), QDepth: first.qDepth, InForm: first.inForm, Tagged: first.marked,
+			Decoration: first.artifact, MCID: first.mcid, Stream: first.stm, operator: hex.EncodeToString(digests[i][:]),
+			userBox: d.box, members: d.members, memberAt: d.at, span: opSpan{-1, -1}}
+		o.Box, o.OnPage = pieceRect(sp, d.box)
+		o.Editable, o.Why = drawingEditability(d.members, d.box, o.OnPage)
+		o.Movable, o.MoveWhy = drawingMovability(d.members, d.box, sp)
+		o.Replaceable, o.ReplaceWhy = false, WhyNotAPicture
+		out = append(out, o)
+	}
+	return out, false
+}
+
+// drawingDigest names a drawing's operators for an address: SHA-256 under its own label over each member path's
+// stream, matrix and bytes, in draw order, length-prefixed — so a drawing's digest is never a picture's, and two
+// drawings drawn by the same bytes under the same matrix are twins (ADR-220's rule, restated for a drawing:
+// `addressDigest` counts them). The matrix stands where a picture's digest has its `cm`.
+func drawingDigest(members []drawnPath) [32]byte {
+	h := sha256.New()
+	h.Write([]byte("nib-drawing-v1\x00"))
+	var n [8]byte
+	for _, p := range members {
+		binary.BigEndian.PutUint64(n[:], uint64(p.stm))
+		h.Write(n[:])
+		for _, v := range p.ctm {
+			binary.BigEndian.PutUint64(n[:], math.Float64bits(v))
+			h.Write(n[:])
+		}
+		binary.BigEndian.PutUint64(n[:], uint64(len(p.bytes)))
+		h.Write(n[:])
+		h.Write(p.bytes)
+	}
+	var out [32]byte
+	h.Sum(out[:0])
+	return out
+}
+
+// drawingEditability is the ONE answer to whether a removal may act on a drawing, and why not. A path changes no
+// graphics state, so taking one needs no `q` around it (a picture's `not-isolated` does not apply) — unless it clips.
+func drawingEditability(members []drawnPath, box [4]float64, onPage bool) (bool, string) {
+	first := members[0]
+	switch {
+	case first.inForm:
+		return false, WhyFormDrawn
+	case !finiteBox(box):
+		return false, WhyUnreadableBox
+	case !onPage:
+		return false, WhyOffPage
+	case first.marked:
+		// A D4 analogue for a drawing's element is not decided (plan-review pin): listed, and refused.
+		return false, WhyTagged
+	}
+	for _, p := range members {
+		switch {
+		case p.clips:
+			return false, WhyClips
+		case !pathOnly(p):
+			return false, WhyNotPathOnly
+		}
+	}
+	return true, ""
+}
+
+// drawingMovability is the ONE answer to whether a move may act on a drawing, and why not. A move translates every
+// path by its own operands (`translatedPath`), so each path's matrix must be invertible; the drawing must be wholly on
+// the page and under a clip that leaves the page open, as a picture must; and a pattern fill or a clip refuses. A move
+// writes no structure, so a tagged drawing may move (as a tagged picture may).
+func drawingMovability(members []drawnPath, box [4]float64, sp displaySpace) (bool, string) {
+	first := members[0]
+	raw := sp.rect(box)
+	switch {
+	case first.inForm:
+		return false, WhyFormDrawn
+	case !finiteBox(box) || sp.w <= 0 || sp.h <= 0:
+		return false, WhyUnreadableBox
+	case raw[2] <= 0 || raw[0] >= 1 || raw[3] <= 0 || raw[1] >= 1:
+		return false, WhyOffPage
+	case raw[0] < -displayEpsilon || raw[1] < -displayEpsilon || raw[2] > 1+displayEpsilon || raw[3] > 1+displayEpsilon:
+		return false, WhyPartlyOffPage
+	}
+	for _, p := range members {
+		switch {
+		case p.clips:
+			return false, WhyClips
+		case !pathOnly(p):
+			return false, WhyNotPathOnly
+		case p.patterned:
+			return false, WhyPatterned
+		case p.clipRough || !clipLeavesPageOpen(sp.box, p.clipBox):
+			return false, WhyClipped
+		}
+		if _, ok := linearPart(p.ctm).inverse(); !ok {
+			return false, WhyUnreadableBox
+		}
+	}
+	return true, ""
+}
+
+// linearPart is m without its translation.
+func linearPart(m runMatrix) runMatrix { return runMatrix{m[0], m[1], m[2], m[3], 0, 0} }
+
+// DrawingAt is the drawing objs lists at ordinal, only when its digest is digest too (D2, as `ObjectAt`).
+func DrawingAt(objs PageObjects, ordinal int, digest string) (PageObject, bool) {
+	if ordinal < 0 || ordinal >= len(objs.Drawings) {
+		return PageObject{}, false
+	}
+	if o := objs.Drawings[ordinal]; o.Digest == digest {
+		return o, true
+	}
+	return PageObject{}, false
 }
 
 // objectEditability is the ONE answer to whether an edit may act on a picture, and why not. onPage is whether its
