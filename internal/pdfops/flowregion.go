@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"crypto/sha256"
 	"math"
 	"sort"
 	"strings"
@@ -104,6 +105,14 @@ func (w *runWalker) markImage(kind markKind, gs runGState, src []byte, span opSp
 		if w.keepDrawings {
 			im.art = w.countPiece(false)
 			im.digest = objectDigest(src, span, gs.place, gs.qDepth)
+			im.ctm, im.clipBox, im.clipRough = gs.ctm, gs.clip, gs.clipRough
+			if span.start >= 0 && span.end <= len(src) && span.start <= span.end {
+				im.painter = sha256.Sum256(src[span.start:span.end])
+			}
+			if inv, ok := gs.placeM.inverse(); ok {
+				im.outer, im.outerOK = inv.mul(gs.ctm), true
+			}
+			im.alone = aloneInBracket(src, span, gs.place)
 		}
 		w.draws++
 		im.seq, im.layerOff, im.translucent, im.clipped = w.draws, w.layerOff(), gs.extGState, !boxWithin(b.box, gs.clip)
@@ -197,6 +206,18 @@ type drawnImage struct {
 	qDepth int
 	// digest names the operator for an address (`objectDigest`, D2): set only by the region reader.
 	digest [32]byte
+	// ctm is the matrix the image is drawn under, outer the matrix in force before place's `cm` (`runGState.placeM`
+	// undone), and clipBox the box the clip in force lies within, in user space. alone says the bytes around the
+	// image are exactly `q a b c d e f cm <image> Q`: place is the only `cm` of its `q`, which draws and clips nothing
+	// else (`aloneInBracket`). All four are the region reader's, for a move (PLAN-image-edit P02.S01).
+	ctm, outer runMatrix
+	outerOK    bool
+	clipBox    [4]float64
+	clipRough  bool
+	alone      bool
+	// painter is SHA-256 over the image's own operator bytes and nothing around them: what a moved picture must
+	// still be after the move, whose `cm` (and so whose digest) it changed.
+	painter [32]byte
 }
 
 // imageCause reads the allowlist (P02.S03b, D18) from an image dictionary, so a picture is named before any
@@ -348,6 +369,13 @@ func plainBox(m runMatrix) bool {
 func uprightBox(m runMatrix) bool {
 	tol := 1e-6 * math.Max(math.Max(math.Abs(m[0]), math.Abs(m[1])), math.Max(math.Abs(m[2]), math.Abs(m[3])))
 	return (math.Abs(m[1]) <= tol && math.Abs(m[2]) <= tol) || (math.Abs(m[0]) <= tol && math.Abs(m[3]) <= tol)
+}
+
+// straightRect says a clipping path is one rectangle drawn straight: one `re` and the `W` that marks it (the walk
+// counts both as construction operators), under a CTM that turns it by quarter turns at most — the only clip whose
+// box (`clipTo`) is the clip itself.
+func straightRect(d drawnPath, ctm runMatrix) bool {
+	return d.rects == 1 && d.ops == 2 && uprightBox(ctm)
 }
 
 // markShading records `sh`, which paints the whole of the current clip. The clip is not tracked, so its box is every

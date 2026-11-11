@@ -58,6 +58,16 @@ const (
 	WhyUnreadableBox = "unreadable-box"
 	// WhyOffPage: it is drawn wholly outside the displayed page.
 	WhyOffPage = "off-page"
+
+	// Why a picture cannot be moved (`objectMovability`, D8), beside the causes above that apply to a move too.
+	// WhyNotAlone: its `q` holds more than one `cm` and the picture — another `cm`, something drawn, a clip.
+	WhyNotAlone = "not-alone"
+	// WhyNotUpright: it is turned, mirrored or slanted on the page, so a box does not say where it is.
+	WhyNotUpright = "not-upright"
+	// WhyPartlyOffPage: part of it is outside the displayed page, so the box Nib shows is not all of it.
+	WhyPartlyOffPage = "partly-off-page"
+	// WhyClipped: a clip in force hides part of the page, so a move could hide part of the picture.
+	WhyClipped = "clipped"
 )
 
 // PageObject is one picture a page draws, as an edit addresses it: (Page, Ordinal, Digest), never position alone (L2).
@@ -80,6 +90,10 @@ type PageObject struct {
 	// Editable says an edit may act on it; Why is the cause when it may not ("" when it may).
 	Editable bool   `json:"editable"`
 	Why      string `json:"why"`
+	// Movable says a move may act on it, MoveWhy the cause when it may not (`objectMovability`). A move writes no
+	// structure, so a tagged picture's tag causes do not stop it (P02.S01 grill pin 3).
+	Movable bool   `json:"movable"`
+	MoveWhy string `json:"moveWhy"`
 	// PlaceSpan is the byte span of the `cm` that last set the matrix at its `q` level, or null.
 	PlaceSpan *[2]int `json:"placeSpan"`
 	// QDepth is how many `q` are open around it.
@@ -102,6 +116,11 @@ type PageObject struct {
 	span     opSpan
 	objNr    int
 	operator string
+	// userBox is the picture's box in user space, unclamped, plain whether it is drawn straight and painter the
+	// digest of its own operator bytes: what a move's after-check compares (`rewriteAgrees`).
+	userBox [4]float64
+	plain   bool
+	painter [32]byte
 }
 
 // PageObjects is one page's pictures.
@@ -149,7 +168,7 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 	for i, im := range pr.images {
 		o := PageObject{Page: nr, Ordinal: i, Kind: "image", Digest: addressDigest(im.digest, twins[im.digest]), QDepth: im.qDepth,
 			InForm: im.inForm, Tagged: im.marked, Decoration: im.artifact, MCID: im.mcid, Stream: im.stm, span: im.span, objNr: im.objNr,
-			operator: hex.EncodeToString(im.digest[:])}
+			operator: hex.EncodeToString(im.digest[:]), userBox: im.box, plain: im.plain, painter: im.painter}
 		if im.objNr == 0 {
 			o.Kind = "inline"
 		}
@@ -163,6 +182,7 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 			o.Alt = t.alt
 		}
 		o.Editable, o.Why = objectEditability(im, o.OnPage, tagWhy)
+		o.Movable, o.MoveWhy = objectMovability(im, sp)
 		out.Objects = append(out.Objects, o)
 	}
 	return out
@@ -187,6 +207,41 @@ func objectEditability(im drawnImage, onPage bool, tagWhy string) (bool, string)
 	}
 	return true, ""
 }
+
+// objectMovability is the ONE answer to whether a move may act on a picture, and why not (D8): drawn by the page,
+// with a box that is a number and wholly on the displayed page, under a `q` holding exactly one `cm` and the picture
+// (`aloneInBracket`), drawn straight (`plain`), under a clip that leaves the whole displayed page open, and with an
+// outer matrix that can be undone. So every target inside the page (the door's `moveBoxProblem`) is seen whole.
+func objectMovability(im drawnImage, sp displaySpace) (bool, string) {
+	raw := sp.rect(im.box)
+	switch {
+	case im.inForm:
+		return false, WhyFormDrawn
+	case !finiteBox(im.box) || sp.w <= 0 || sp.h <= 0:
+		return false, WhyUnreadableBox
+	case raw[2] <= 0 || raw[0] >= 1 || raw[3] <= 0 || raw[1] >= 1:
+		return false, WhyOffPage
+	case raw[0] < -displayEpsilon || raw[1] < -displayEpsilon || raw[2] > 1+displayEpsilon || raw[3] > 1+displayEpsilon:
+		return false, WhyPartlyOffPage
+	case im.qDepth < 1:
+		return false, WhyNotIsolated
+	case !im.alone:
+		return false, WhyNotAlone
+	case !im.plain:
+		return false, WhyNotUpright
+	case !im.outerOK:
+		return false, WhyUnreadableBox
+	case im.clipRough || !boxWithin(sp.box, im.clipBox):
+		// Only a clip that leaves the whole displayed page open: under a tighter one nearly every move is cut, so a
+		// picture listed movable would refuse almost every box it was dragged to (measured: 20 of 394 corpus moves).
+		return false, WhyClipped
+	}
+	return true, ""
+}
+
+// displayEpsilon is how far past the page's edge, as a fraction of it, a box may reach and still be wholly on it:
+// a producer placing a picture at the page's edge writes a number that rounds either way.
+const displayEpsilon = 1e-6
 
 // objectDigest names an operator for an address: SHA-256 over its bytes in src, the bytes of the `cm` that places
 // it (place, or none), and the q depth, each length-prefixed so no two different triples hash alike.
@@ -244,4 +299,55 @@ func finiteBox(box [4]float64) bool {
 		}
 	}
 	return true
+}
+
+// aloneInBracket says the bytes around an image are exactly `q a b c d e f cm <image> Q`, white space apart: place
+// (the last `cm` since its level's `q`, `runGState.place`) follows the `q` straight away and the image follows the
+// `cm`, and a `Q` follows the image. So the `cm` is the only one at that level, nothing else is drawn or clipped in
+// the bracket, and rewriting it moves this picture and nothing else (D8). Read from the bytes because the walk keeps
+// only the LAST `cm` of a level (deepdive 2026-11-09). A comment between the `cm` and the image, or between the image
+// and the `Q`, makes it not alone. The `q` test is a byte look, not a token read (a comment ending in `q` passes it);
+// that is safe, because rewriting a `cm` changes nothing drawn before it and the outer matrix carries every earlier
+// `cm` — the `q` asks only that the bracket is the plain shape D8 names.
+func aloneInBracket(src []byte, span, place opSpan) bool {
+	if place.start < 0 || place.end > span.start || span.end > len(src) || span.start < 0 {
+		return false
+	}
+	white := func(b []byte) bool {
+		for _, c := range b {
+			switch c {
+			case 0, '\t', '\n', '\f', '\r', ' ':
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	if !white(src[place.end:span.start]) {
+		return false
+	}
+	i := place.start
+	for i > 0 && white(src[i-1:i]) {
+		i--
+	}
+	if i < 1 || src[i-1] != 'q' || (i >= 2 && !white(src[i-2:i-1]) && !isDelimiter(src[i-2])) {
+		return false
+	}
+	j := span.end
+	for j < len(src) && white(src[j:j+1]) {
+		j++
+	}
+	if j >= len(src) || src[j] != 'Q' {
+		return false
+	}
+	return j+1 == len(src) || white(src[j+1:j+2]) || isDelimiter(src[j+1])
+}
+
+// isDelimiter is one of PDF's delimiter characters (ISO 32000-1 §7.2.2).
+func isDelimiter(c byte) bool {
+	switch c {
+	case '(', ')', '<', '>', '[', ']', '{', '}', '/', '%':
+		return true
+	}
+	return false
 }

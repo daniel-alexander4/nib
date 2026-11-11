@@ -9,12 +9,12 @@ import (
 // refuses a signed document and one carrying a ceremony record, which `pdfops` cannot (it imports neither `sign` nor
 // `ceremony`), so a caller of `pdfops.EditPageObjects` anywhere else would skip both.
 //
-// The routing half (here): `internal/server` and `internal/cli` each call `objedit.Remove` and `objedit.List`, and
+// The routing half (here): `internal/server` and `internal/cli` each call `objedit.Edit` and `objedit.List`, and
 // nothing outside `internal/objedit` calls `pdfops.EditPageObjects`. The bypass half — no function inside `pdfops`
 // cuts a picture out of a page but the door — is `internal/pdfops`' own
 // `TestEveryPageObjectEditRoutesThroughTheDoorInsidePdfops`, which needs the package's types.
 func TestEveryPageObjectEditRoutesThroughTheDoor(t *testing.T) {
-	doorCalls := map[string]map[string]int{"Remove": {}, "List": {}}
+	doorCalls := map[string]map[string]int{"Edit": {}, "List": {}}
 	var bypasses []string
 	scanned := walkCallers(t, "internal/objedit", func(file, surface string, f *ast.File) {
 		objedit, _ := importNames(f, "nib/internal/objedit")
@@ -43,7 +43,7 @@ func TestEveryPageObjectEditRoutesThroughTheDoor(t *testing.T) {
 	if scanned < 100 {
 		t.Fatalf("the scan read %d non-test file(s) — too few to be the tree", scanned)
 	}
-	surfaces := map[string][]string{"Remove": {"server", "cli"}, "List": {"server", "cli"}}
+	surfaces := map[string][]string{"Edit": {"server", "cli"}, "List": {"server", "cli"}}
 	for door, by := range doorCalls {
 		for _, surface := range surfaces[door] {
 			if by[surface] == 0 {
@@ -53,7 +53,7 @@ func TestEveryPageObjectEditRoutesThroughTheDoor(t *testing.T) {
 		}
 	}
 	for _, b := range bypasses {
-		t.Errorf("%s directly: route the edit through objedit.Remove, so a signed or ceremony document is refused "+
+		t.Errorf("%s directly: route the edit through objedit.Edit, so a signed or ceremony document is refused "+
 			"(ADR-219, ADR-009)", b)
 	}
 }

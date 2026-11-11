@@ -409,12 +409,18 @@ type runGState struct {
 	// (`drawnImage.place`, PLAN-image-edit D1/D2). An unmatched `Q` changes neither.
 	qDepth int
 	place  opSpan
+	// placeM is the matrix place's `cm` set (identity with no place): with the CTM at the image it gives what was in
+	// force before the `cm` — the outer matrix a move keeps (PLAN-image-edit P02.S01).
+	placeM runMatrix
+	// clipRough says a clip in force is not what clip's box says it is: a path that is not one rectangle drawn
+	// straight, or text set to clip (`Tr` 4-7). Read only under keepDrawings, where a path's shape is kept.
+	clipRough bool
 }
 
 func newRunGState() runGState {
 	inf := math.Inf(1)
 	return runGState{ctm: runIdentity, th: 1, lw: 1, fill: "0 g", stroke: "0 G", fillSpace: "DeviceGray", strokeSpace: "DeviceGray",
-		clip: [4]float64{-inf, -inf, inf, inf}, place: opSpan{-1, -1}}
+		clip: [4]float64{-inf, -inf, inf, inf}, place: opSpan{-1, -1}, placeM: runIdentity}
 }
 
 // runFont is what the walk needs from a font dictionary.
@@ -1135,14 +1141,15 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		switch string(tok.Bytes(src)) {
 		case "q":
 			stack = append(stack, gs)
-			gs.qDepth, gs.place = gs.qDepth+1, opSpan{-1, -1}
+			gs.qDepth, gs.place, gs.placeM = gs.qDepth+1, opSpan{-1, -1}, runIdentity
 		case "Q":
 			if n := len(stack); n > 0 {
 				gs, stack = stack[n-1], stack[:n-1]
 			}
 		case "cm":
 			if v, ok := numbers(6); ok {
-				gs.ctm = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}.mul(gs.ctm)
+				gs.placeM = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}
+				gs.ctm = gs.placeM.mul(gs.ctm)
 				gs.place = opSpan{last(6)[0].start, tok.End}
 			}
 		case "w":
@@ -1185,6 +1192,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 			}
 		case "S", "s", "B", "B*", "b", "b*":
+			gs.clipRough = gs.clipRough || (clipping && !straightRect(drawn, gs.ctm))
 			w.keepPath(&drawn, path, gs, true, tok.End)
 			w.markPath(path, gs, true)
 			if w.keepShapes {
@@ -1194,6 +1202,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "f", "F", "f*":
+			gs.clipRough = gs.clipRough || (clipping && !straightRect(drawn, gs.ctm))
 			w.keepPath(&drawn, path, gs, false, tok.End)
 			w.markPath(path, gs, false)
 			if w.keepShapes {
@@ -1202,6 +1211,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "n":
+			gs.clipRough = gs.clipRough || (clipping && !straightRect(drawn, gs.ctm))
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 			pieces = shapePath{}
@@ -1310,6 +1320,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "Tr":
 			if v, ok := numbers(1); ok {
 				gs.tr = int(v[0])
+				gs.clipRough = gs.clipRough || gs.tr >= 4 // text that clips: the walk keeps no box for it
 			}
 		case "Td", "TD":
 			if v, ok := numbers(2); ok {
@@ -1653,7 +1664,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	gs.ctm = m.mul(gs.ctm)
 	// The form is another stream: a `cm` the caller drew is not one of its operators, so a picture the form draws
 	// before a `cm` of its own has no placement in the form's bytes (code-review 2026-11-09, P01.S01 #1).
-	gs.place = opSpan{-1, -1}
+	gs.place, gs.placeM = opSpan{-1, -1}, runIdentity
 	w.walk(body, formRes, gs, depth+1, visiting)
 	return true
 }

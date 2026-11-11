@@ -2,7 +2,9 @@ package pdfops
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -209,6 +211,10 @@ type deleteTally struct {
 	// checker: one deletion per document is checked before and after.
 	checked, uncheckable, moreDefects, fewerDefects, sameDefects int
 	byteChange                                                   int64
+	// The move mode (P02.S01, D8): pictures listed movable, moves attempted, moves read back as asked with the page
+	// otherwise as it was, the outcome of every other move, and why the rest were not movable.
+	movable, moveAttempted, moveClean int
+	moveDiffers, notMovable           map[string]int
 }
 
 func (t *deleteTally) note(m *map[string]int, k string) {
@@ -244,9 +250,23 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 			return
 		}
 		t.formsNotRead += objs.FormsNotRead
-		tried := 0
+		tried, moved := 0, 0
 		for _, o := range objs.Objects {
 			t.pictures++
+			if !o.Movable {
+				t.note(&t.notMovable, o.MoveWhy)
+			} else {
+				t.movable++
+				if moved < perPage {
+					moved++
+					t.moveAttempted++
+					if outcome := probeMove(pdf, page, objs, o.Ordinal); outcome == deletedClean {
+						t.moveClean++
+					} else {
+						t.note(&t.moveDiffers, outcome)
+					}
+				}
+			}
 			if !o.Editable {
 				t.note(&t.notEditable, o.Why)
 				continue
@@ -291,6 +311,73 @@ func (t *deleteTally) document(pdf []byte, maxPages, perPage int) {
 			}
 		}
 	}
+}
+
+// moveTarget is the box a probe moves a picture to: shrunk to nine tenths about its own top-left corner and shifted
+// by a hundredth of the page towards the page's middle, so it stays on the page and moves on both axes.
+func moveTarget(b MapRect) MapRect {
+	w, h := (b[2]-b[0])*0.9, (b[3]-b[1])*0.9
+	dx, dy := 0.01, 0.01
+	if b[0]+dx+w > 1 {
+		dx = -0.01
+	}
+	if b[1]+dy+h > 1 {
+		dy = -0.01
+	}
+	x, y := math.Max(0, b[0]+dx), math.Max(0, b[1]+dy)
+	return MapRect{x, y, x + w, y + h}
+}
+
+// probeMove moves the picture objs lists at ordinal and scores the page read back (`scoreMove`).
+func probeMove(pdf []byte, page int, objs PageObjects, ordinal int) string {
+	before, err := readPageForProbe(pdf, page)
+	if err != nil {
+		return deletedUnreadable
+	}
+	target := moveTarget(objs.Objects[ordinal].Box)
+	out, _, err := EditPageObjects(pdf, []ObjectEdit{{Kind: ObjectEditMove, Page: page, Ordinal: ordinal, Digest: objs.Objects[ordinal].Digest, Box: &target}})
+	if err != nil {
+		// The cause, so a refused move is said by what refused it (a bare "write failed" names nothing to fix).
+		var ref *ObjectRefusal
+		if errors.As(err, &ref) {
+			return deletedNotWritten + ":" + ref.Cause
+		}
+		return deletedNotWritten
+	}
+	after, err := readPageForProbe(out, page)
+	if err != nil {
+		return deletedUnreadable
+	}
+	return scoreMove(before, after, ordinal, target)
+}
+
+// scoreMove is the move's oracle: the same pictures in the same order, the addressed one at target (to a millionth
+// of the page), every other with its operator and box as before, and the text as it was.
+func scoreMove(before, after pageReading, addressed int, target MapRect) string {
+	b, a := before.objs.Objects, after.objs.Objects
+	if len(a) != len(b) {
+		return deletedCountDiffers
+	}
+	for i := range a {
+		if i == addressed {
+			for k := range target {
+				if math.Abs(a[i].Box[k]-target[k]) > 1e-6 {
+					return deletedBoxesDiffer
+				}
+			}
+			continue
+		}
+		if a[i].operator != b[i].operator {
+			return deletedDigestsDiffer
+		}
+		if a[i].Box != b[i].Box {
+			return deletedBoxesDiffer
+		}
+	}
+	if after.runs != before.runs || after.text != before.text {
+		return deletedTextDiffers
+	}
+	return deletedClean
 }
 
 func (t *deleteTally) residue(pdf, out []byte, page, objNr int, shared bool) {
@@ -365,6 +452,8 @@ func (t *deleteTally) verdict() (ok bool, msg string) {
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d of %d deletions read differently afterwards (%s)", t.attempted-t.clean, t.attempted, counts(t.differs))
 	case t.inFileAlone > 0:
 		return false, fmt.Sprintf("OBJECTDELETE FINDING: %d removed picture(s) are still in the file and no other page draws them (D3's prune)", t.inFileAlone)
+	case t.moveClean != t.moveAttempted:
+		return false, fmt.Sprintf("OBJECTMOVE FINDING: %d of %d moves read differently afterwards (%s)", t.moveAttempted-t.moveClean, t.moveAttempted, counts(t.moveDiffers))
 	}
 	return true, ""
 }
@@ -393,6 +482,8 @@ func TestObjectDeleteCorpus(t *testing.T) {
 		tally.document(data, 4, 4)
 	}
 	fmt.Printf("OBJECTDELETE missing=%d %s\n", missing, tally.summary())
+	fmt.Printf("OBJECTMOVE movable=%d attempted=%d clean=%d differs[%s] not-movable[%s]\n", tally.movable,
+		tally.moveAttempted, tally.moveClean, counts(tally.moveDiffers), counts(tally.notMovable))
 	if ok, msg := tally.verdict(); !ok {
 		t.Fatal(msg)
 	}
@@ -447,5 +538,38 @@ func TestTheObjectDeleteOracleSeesWhichPictureWent(t *testing.T) {
 	}
 	if ok, _ := (&deleteTally{pictures: objectDeleteFloor, attempted: 5, clean: 5}).verdict(); !ok {
 		t.Error("a clean run at the floor is not clean")
+	}
+}
+
+// The move oracle without a corpus: a move read back where asked is clean, and each way it can read differently is
+// not — the moved picture elsewhere, another picture moved or swapped, the text changed.
+func TestTheObjectMoveOracleSeesWhereThePictureWent(t *testing.T) {
+	obj := func(d string, x float64) PageObject {
+		return PageObject{Digest: d, operator: d, Box: MapRect{x, 0, x + 0.1, 0.1}, OnPage: true}
+	}
+	before := pageReading{objs: PageObjects{Objects: []PageObject{obj("a", 0), obj("b", 0.2)}}, runs: 1, text: "t"}
+	target := MapRect{0.5, 0.5, 0.6, 0.6}
+	moved := obj("a2", 0)
+	moved.Box = target
+	read := func(text string, os ...PageObject) pageReading {
+		return pageReading{objs: PageObjects{Objects: os}, runs: 1, text: text}
+	}
+	elsewhere := moved
+	elsewhere.Box = MapRect{0.5, 0.5, 0.6, 0.61}
+	for _, c := range []struct {
+		name  string
+		after pageReading
+		want  string
+	}{
+		{"moved where asked", read("t", moved, obj("b", 0.2)), deletedClean},
+		{"moved elsewhere", read("t", elsewhere, obj("b", 0.2)), deletedBoxesDiffer},
+		{"the other one moved too", read("t", moved, obj("b", 0.3)), deletedBoxesDiffer},
+		{"the other one swapped", read("t", moved, obj("c", 0.2)), deletedDigestsDiffer},
+		{"a picture went", read("t", moved), deletedCountDiffers},
+		{"the text changed", read("u", moved, obj("b", 0.2)), deletedTextDiffers},
+	} {
+		if got := scoreMove(before, c.after, 0, target); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }

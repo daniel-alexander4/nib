@@ -80,7 +80,7 @@ func (s *Server) handlePageObjectsEdit(w http.ResponseWriter, r *http.Request) {
 	// Read ONCE: this is the state the undo entry records, and the base the commit checks (commitMutation's
 	// contract) — the route edits the server's own bytes, so no client revision is echoed (lostupdate_test.go).
 	before := s.docBytes(doc)
-	result, res, err := objedit.Remove(before, edits)
+	result, res, err := objedit.Edit(before, edits)
 	if err != nil {
 		writeObjectRefusal(w, err)
 		return

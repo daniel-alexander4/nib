@@ -3,7 +3,9 @@ package pdfops
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -25,8 +27,11 @@ import (
 // reaches, an image's `/SMask` with it. The written output is read back and must be the page minus exactly what
 // was removed, or the edit is refused (`rewrite-differs`).
 
-// ObjectEditDelete is the one kind of edit P01 builds.
-const ObjectEditDelete = "delete"
+// ObjectEditDelete removes a picture (P01); ObjectEditMove places it in a new box (P02, D8).
+const (
+	ObjectEditDelete = "delete"
+	ObjectEditMove   = "move"
+)
 
 // maxObjectEdits bounds one request's edits: a person selecting pictures one page at a time is nowhere near it,
 // and every edit is a re-read of its page.
@@ -38,6 +43,8 @@ type ObjectEdit struct {
 	Page    int    `json:"page"`
 	Ordinal int    `json:"ordinal"`
 	Digest  string `json:"digest"`
+	// Box is a move's target, as fractions of the displayed page (the listing's space, ADR-088); nil for a removal.
+	Box *MapRect `json:"box,omitempty"`
 }
 
 // The refusal causes besides `objectEditability`'s (`WhyFormDrawn` and the rest), each a stable string.
@@ -73,9 +80,13 @@ var objectCauseWords = map[string]string{
 	WhyUnreadableBox:    "Nib cannot work out where this picture is drawn.",
 	WhyOffPage:          "This picture is drawn outside the page, where it cannot be seen.",
 	CauseObjectChanged:  "The page changed since you selected this. Select the picture again.",
-	CauseRewriteDiffers: "Nib checked the page after removing the picture and it was not the page it expected, so nothing was changed.",
-	CauseNotRewritable:  "Nib cannot write this document back without changing it, so it cannot remove the picture.",
-	CauseBadRequest:     "The request to remove a picture could not be read.",
+	CauseRewriteDiffers: "Nib checked the page after changing the picture and it was not the page it expected, so nothing was changed.",
+	CauseNotRewritable:  "Nib cannot write this document back without changing it, so it cannot change the picture.",
+	CauseBadRequest:     "The request to change a picture could not be read.",
+	WhyNotAlone:         "This picture is placed together with other drawing, so moving it on its own could move or change that too.",
+	WhyNotUpright:       "This picture is turned, mirrored or slanted on the page; Nib moves only pictures that sit straight.",
+	WhyPartlyOffPage:    "Part of this picture is outside the page, so Nib cannot show all of it to move.",
+	WhyClipped:          "This picture is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.",
 }
 
 // ObjectCauseWords is the sentence a refusal with cause says, or "" for a cause there is none for.
@@ -149,6 +160,17 @@ type RemovedObject struct {
 // ObjectEditResult is what an edit did, one entry per removed picture in the order asked.
 type ObjectEditResult struct {
 	Removed []RemovedObject `json:"removed"`
+	// Moved is one entry per moved picture, in the order asked.
+	Moved []MovedObject `json:"moved"`
+}
+
+// MovedObject is what a move did: the picture's address before it, the box it was placed in as the written page
+// reads it, and the links over where it was, which stay there (a link is the page's, not the picture's).
+type MovedObject struct {
+	Page      int     `json:"page"`
+	Ordinal   int     `json:"ordinal"`
+	Box       MapRect `json:"box"`
+	LinksOver int     `json:"linksOver"`
 }
 
 // EditPageObjects applies edits to pdf as ONE rewrite and answers what it did. Every refusal is an
@@ -174,15 +196,23 @@ func EditPageObjects(pdf []byte, edits []ObjectEdit) ([]byte, ObjectEditResult, 
 	if err := verifyWritten(out, plans); err != nil {
 		return nil, ObjectEditResult{}, err
 	}
-	res := ObjectEditResult{}
+	res := ObjectEditResult{Removed: []RemovedObject{}, Moved: []MovedObject{}}
 	byAddr := map[[2]int]RemovedObject{}
+	movedAt := map[[2]int]MovedObject{}
 	for _, p := range plans {
 		for _, r := range p.removed {
 			byAddr[[2]int{r.Page, r.Ordinal}] = r
 		}
+		for _, m := range p.movedAnswers {
+			movedAt[[2]int{m.Page, m.Ordinal}] = m
+		}
 	}
 	for _, e := range edits {
-		res.Removed = append(res.Removed, byAddr[[2]int{e.Page, e.Ordinal}])
+		if e.Kind == ObjectEditMove {
+			res.Moved = append(res.Moved, movedAt[[2]int{e.Page, e.Ordinal}])
+		} else {
+			res.Removed = append(res.Removed, byAddr[[2]int{e.Page, e.Ordinal}])
+		}
 	}
 	return out, res, nil
 }
@@ -198,7 +228,19 @@ func groupObjectEdits(edits []ObjectEdit) ([][]ObjectEdit, error) {
 	seen := map[[2]int]bool{}
 	byPage := map[int][]ObjectEdit{}
 	for _, e := range edits {
-		if e.Kind != ObjectEditDelete {
+		switch e.Kind {
+		case ObjectEditDelete:
+			if e.Box != nil {
+				return nil, badObjectRequest("A removal takes no box.")
+			}
+		case ObjectEditMove:
+			if e.Box == nil {
+				return nil, badObjectRequest("A move names the box to place the picture in.")
+			}
+			if why := moveBoxProblem(*e.Box); why != "" {
+				return nil, badObjectRequest(why)
+			}
+		default:
 			return nil, badObjectRequest(fmt.Sprintf("%q is not an edit Nib makes to a picture.", e.Kind))
 		}
 		if e.Page < 1 || e.Ordinal < 0 {
@@ -232,6 +274,11 @@ type pageRemoval struct {
 	text []string
 	// objNrs is each removed picture's image XObject object number, 0 for an inline image.
 	objNrs []int
+	// moved holds, by index into want, what a moved picture must read as: its box, drawn straight, by the same
+	// operator bytes; its want entry is "" because a move rewrites the `cm` its operator digest covers. movedAnswers
+	// is what the moves answer.
+	moved        map[int]movedWant
+	movedAnswers []MovedObject
 }
 
 // objectTagging is what the structure tree says about one marked picture: the verdict (`objectEditability`'s
@@ -607,10 +654,28 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	var owners []objectTagging
 	// unowned are the MCIDs of removed marked pictures no element lists: a stale `/ParentTree` slot for one is cleared.
 	var unowned []int
+	sp := newDisplaySpace(pg)
+	moved := map[int][4]float64{}
 	for _, e := range edits {
 		o, ok := ObjectAt(objs, e.Ordinal, e.Digest)
 		if !ok {
 			return pageRemoval{}, false, RefuseObject(CauseObjectChanged, nr, e.Ordinal, nil)
+		}
+		if e.Kind == ObjectEditMove {
+			im := pr.images[e.Ordinal]
+			if !o.Movable {
+				return pageRemoval{}, false, RefuseObject(o.MoveWhy, nr, e.Ordinal, nil)
+			}
+			target := sp.unrect(*e.Box)
+			cm, ok := placementFor(target, im.outer)
+			if !ok {
+				return pageRemoval{}, false, RefuseObject(WhyUnreadableBox, nr, e.Ordinal, nil)
+			}
+			edit.Replace(im.place.start, im.place.end, cm)
+			moved[e.Ordinal] = target
+			plan.movedAnswers = append(plan.movedAnswers, MovedObject{Page: nr, Ordinal: e.Ordinal,
+				LinksOver: linksInside(ctx, pg.Dict, im.box)})
+			continue
 		}
 		if !o.Editable {
 			return pageRemoval{}, false, RefuseObject(o.Why, nr, e.Ordinal, nil)
@@ -663,13 +728,24 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 		}
 	}
 	delete(pg.Dict, "Thumb")
-	if err := pruneOnePage(ctx, pg, nr); err != nil {
-		return pageRemoval{}, false, err
+	if len(gone) > 0 { // a move names no new resource and drops none, so only a removal prunes
+		if err := pruneOnePage(ctx, pg, nr); err != nil {
+			return pageRemoval{}, false, err
+		}
 	}
 	for i, o := range objs.Objects {
-		if !gone[i] {
-			plan.want = append(plan.want, o.operator)
+		if gone[i] {
+			continue
 		}
+		if b, ok := moved[i]; ok {
+			if plan.moved == nil {
+				plan.moved = map[int]movedWant{}
+			}
+			plan.moved[len(plan.want)] = movedWant{box: b, painter: o.painter}
+			plan.want = append(plan.want, "")
+			continue
+		}
+		plan.want = append(plan.want, o.operator)
 	}
 	for _, r := range pr.runs {
 		plan.text = append(plan.text, r.text)
@@ -794,27 +870,38 @@ func verifyWritten(out []byte, plans []pageRemoval) error {
 			return RefuseObject(CauseRewriteDiffers, p.page, -1, err)
 		}
 		got := pageObjectsOf(p.page, newDisplaySpace(pg), pr, nil)
-		var digests, text []string
-		for _, o := range got.Objects {
-			digests = append(digests, o.operator)
-		}
+		var text []string
 		for _, r := range pr.runs {
 			text = append(text, r.text)
 		}
-		if err := rewriteAgrees(p, digests, text); err != nil {
+		if err := rewriteAgrees(p, got.Objects, text); err != nil {
 			return err
+		}
+		for k := range p.movedAnswers {
+			m := &p.movedAnswers[k]
+			if at := movedIndex(p, m.Ordinal); at >= 0 && at < len(got.Objects) {
+				m.Box = got.Objects[at].Box
+			}
 		}
 	}
 	return nil
 }
 
 // rewriteAgrees holds a written page's pictures and text to what removing exactly p.removed leaves.
-func rewriteAgrees(p pageRemoval, digests, text []string) error {
-	if len(digests) != len(p.want) {
-		return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d draws %d pictures, and %d were expected", p.page, len(digests), len(p.want)))
+func rewriteAgrees(p pageRemoval, got []PageObject, text []string) error {
+	if len(got) != len(p.want) {
+		return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d draws %d pictures, and %d were expected", p.page, len(got), len(p.want)))
 	}
-	for i := range digests {
-		if digests[i] != p.want[i] {
+	for i, o := range got {
+		if m, moved := p.moved[i]; moved {
+			// Where it was asked, drawn straight (a turned or mirrored matrix can fill the same box), and by the
+			// same operator bytes (a different picture can sit in the same box).
+			if !boxesAgree(o.userBox, m.box) || !o.plain || o.painter != m.painter {
+				return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's picture %d is not the picture it moved, where it was moved to", p.page, i+1))
+			}
+			continue
+		}
+		if o.operator != p.want[i] {
 			return RefuseObject(CauseRewriteDiffers, p.page, -1, fmt.Errorf("page %d's picture %d is not the one that was there", p.page, i+1))
 		}
 	}
@@ -827,4 +914,72 @@ func rewriteAgrees(p pageRemoval, digests, text []string) error {
 		}
 	}
 	return nil
+}
+
+// movedWant is what the after-check holds a moved picture to.
+type movedWant struct {
+	box     [4]float64
+	painter [32]byte
+}
+
+// moveTolerance is how far, in points, a moved picture's edges may read from the box asked: the `cm` is written
+// exactly (`num`), so only the round trip through an inverse matrix and the reader's parse are left.
+const moveTolerance = 1e-3
+
+// boxesAgree says two user-space boxes have every edge within moveTolerance.
+func boxesAgree(a, b [4]float64) bool {
+	for i := range a {
+		if math.Abs(a[i]-b[i]) > moveTolerance {
+			return false
+		}
+	}
+	return true
+}
+
+// movedIndex is where the picture at ordinal reads on the written page: its ordinal less the removals before it.
+func movedIndex(p pageRemoval, ordinal int) int {
+	before := 0
+	for _, r := range p.removed {
+		if r.Ordinal < ordinal {
+			before++
+		}
+	}
+	return ordinal - before
+}
+
+// moveBoxProblem is why box cannot be a move's target, or "": four numbers, inside the displayed page, with room.
+func moveBoxProblem(b MapRect) string {
+	for _, v := range b {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return "The box is not four numbers."
+		}
+	}
+	if b[0] < 0 || b[1] < 0 || b[2] > 1 || b[3] > 1 {
+		return "The box reaches outside the page."
+	}
+	if b[2]-b[0] < regionMinSide || b[3]-b[1] < regionMinSide {
+		return "The box has no width or no height."
+	}
+	return ""
+}
+
+// placementFor is the `cm` that places the unit square at target (user space) when outer is the matrix in force
+// before it: the picture's new matrix [w 0 0 h x y] followed by outer undone, so cm × outer is that matrix (PDF's
+// row-vector order, `runMatrix.mul`). Written by `num`, the content stream's one number writer: exact, no exponent.
+func placementFor(target [4]float64, outer runMatrix) ([]byte, bool) {
+	inv, ok := outer.inverse()
+	if !ok {
+		return nil, false
+	}
+	m := runMatrix{target[2] - target[0], 0, 0, target[3] - target[1], target[0], target[1]}.mul(inv)
+	var b strings.Builder
+	for _, v := range m {
+		if !finite(v) {
+			return nil, false
+		}
+		b.WriteString(num(v))
+		b.WriteByte(' ')
+	}
+	b.WriteString("cm")
+	return []byte(b.String()), true
 }

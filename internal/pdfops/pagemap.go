@@ -217,6 +217,31 @@ func (sp displaySpace) point(x, y float64) (fx, fy float64) {
 	return u, 1 - v
 }
 
+// unpoint is point's inverse: a fraction of the displayed page, origin top-left, as user-space (x, y). Each turn
+// undoes its own arm of point, so a box placed through it reads back through rect where it was asked (P02.S01, D8:
+// the ONE conversion a move makes; `TestUnpointInvertsPointAtEveryTurn`).
+func (sp displaySpace) unpoint(fx, fy float64) (x, y float64) {
+	var u, v float64
+	switch sp.rot {
+	case 90:
+		u, v = fy, fx
+	case 180:
+		u, v = 1-fx, fy
+	case 270:
+		u, v = 1-fy, 1-fx
+	default:
+		u, v = fx, 1-fy
+	}
+	return sp.box[0] + u*(sp.box[2]-sp.box[0]), sp.box[1] + v*(sp.box[3]-sp.box[1])
+}
+
+// unrect is rect's inverse: a display rect as a user-space box.
+func (sp displaySpace) unrect(r MapRect) [4]float64 {
+	x0, y0 := sp.unpoint(r[0], r[1])
+	x1, y1 := sp.unpoint(r[2], r[3])
+	return [4]float64{math.Min(x0, x1), math.Min(y0, y1), math.Max(x0, x1), math.Max(y0, y1)}
+}
+
 // rect is a user-space box as a display rect.
 func (sp displaySpace) rect(b [4]float64) MapRect {
 	x0, y0 := sp.point(b[0], b[1])

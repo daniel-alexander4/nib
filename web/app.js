@@ -11739,9 +11739,13 @@ const OBJECT_CAUSES = {
   'unreadable-box': 'Nib cannot work out where this picture is drawn.',
   'off-page': 'This picture is drawn outside the page, where it cannot be seen.',
   'object-changed': 'The page changed since you selected this. Select the picture again.',
-  'rewrite-differs': 'Nib checked the page after removing the picture and it was not the page it expected, so nothing was changed.',
-  'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot remove the picture.',
-  'bad-request': 'The request to remove a picture could not be read.',
+  'rewrite-differs': 'Nib checked the page after changing the picture and it was not the page it expected, so nothing was changed.',
+  'not-rewritable': 'Nib cannot write this document back without changing it, so it cannot change the picture.',
+  'bad-request': 'The request to change a picture could not be read.',
+  'not-alone': 'This picture is placed together with other drawing, so moving it on its own could move or change that too.',
+  'not-upright': 'This picture is turned, mirrored or slanted on the page; Nib moves only pictures that sit straight.',
+  'partly-off-page': 'Part of this picture is outside the page, so Nib cannot show all of it to move.',
+  'clipped': 'This picture is drawn under a clip that hides part of the page, so moving it could hide some of it; Nib leaves it where it is.',
 };
 function objectCauseSentence(cause, fallback) {
   return OBJECT_CAUSES[cause] || fallback || `Nib could not remove the picture (${cause}).`;

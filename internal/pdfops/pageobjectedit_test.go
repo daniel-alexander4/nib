@@ -309,7 +309,7 @@ func TestADocumentThatDoesNotSurviveARewriteIsNotRewritable(t *testing.T) {
 // differ — a picture too many, the wrong picture, a run of text gone, a run's text changed — is refused.
 func TestTheWrittenPageIsHeldToWhatTheRemovalLeaves(t *testing.T) {
 	plan := pageRemoval{page: 1, want: []string{"b", "c"}, text: []string{"Hello", "World"}}
-	if err := rewriteAgrees(plan, []string{"b", "c"}, []string{"Hello", "World"}); err != nil {
+	if err := rewriteAgrees(plan, operatorsOf("b", "c"), []string{"Hello", "World"}); err != nil {
 		t.Fatalf("the page as planned is refused: %v", err)
 	}
 	for name, got := range map[string][2][]string{
@@ -319,7 +319,7 @@ func TestTheWrittenPageIsHeldToWhatTheRemovalLeaves(t *testing.T) {
 		"a run's text changed": {{"b", "c"}, {"Hello", "Wor"}},
 	} {
 		var ref *ObjectRefusal
-		if err := rewriteAgrees(plan, got[0], got[1]); !errors.As(err, &ref) || ref.Cause != CauseRewriteDiffers {
+		if err := rewriteAgrees(plan, operatorsOf(got[0]...), got[1]); !errors.As(err, &ref) || ref.Cause != CauseRewriteDiffers {
 			t.Errorf("%s: want a rewrite-differs refusal, got %v", name, err)
 		}
 	}
@@ -432,10 +432,11 @@ func TestAMarkedPictureNoTreeOwnsIsRemovedWithItsBracket(t *testing.T) {
 // adding one is a decision made here.
 func TestEveryObjectCauseHasItsWords(t *testing.T) {
 	want := []string{CauseBadRequest, CauseCeremony, WhyFormDrawn, CauseNotRewritable, WhyNotIsolated, CauseObjectChanged,
-		WhyOffPage, CauseRewriteDiffers, CauseSigned, WhyTagged, WhyTaggedLast, WhyTaggedShared, WhyUnreadableBox}
+		WhyOffPage, CauseRewriteDiffers, CauseSigned, WhyTagged, WhyTaggedLast, WhyTaggedShared, WhyUnreadableBox,
+		WhyNotAlone, WhyNotUpright, WhyPartlyOffPage, WhyClipped}
 	got := objectCauses()
-	if len(got) != 13 || len(want) != 13 {
-		t.Fatalf("%d causes, want 13: %v", len(got), got)
+	if len(got) != 17 || len(want) != 17 {
+		t.Fatalf("%d causes, want 17: %v", len(got), got)
 	}
 	for _, c := range want {
 		if ObjectCauseWords(c) == "" {
@@ -605,4 +606,13 @@ func TestEveryObjectCauseIsSaidInTheWindow(t *testing.T) {
 			t.Errorf("the window has words for %q, which pdfops never answers with", c)
 		}
 	}
+}
+
+// operatorsOf is a written page's pictures as the after-check reads them, by operator digest alone.
+func operatorsOf(ops ...string) []PageObject {
+	out := make([]PageObject, len(ops))
+	for i, o := range ops {
+		out[i] = PageObject{operator: o}
+	}
+	return out
 }

@@ -40,7 +40,7 @@ var flagRoutes = map[string]flagRoute{
 	"handleTagsEdit":      {"keepsGeometry", []string{"tagwrite.Edit"}, []string{"EditStructure"}},
 	"handleTagsRemove":    {"keepsGeometry", []string{"tagwrite.Remove"}, []string{"RemoveStructure"}},
 	// A picture's operator is cut and nothing else the page draws moves (PLAN-image-edit P01.S02, D3).
-	"handlePageObjectsEdit": {"keepsGeometry", []string{"objedit.Remove"}, []string{"EditPageObjects"}},
+	"handlePageObjectsEdit": {"keepsGeometry", []string{"objedit.Edit"}, []string{"EditPageObjects"}},
 	"handleReflow":          {"carriesFlags", []string{"pdfops.ReflowParagraph"}, nil},
 	"handlePages":           {"flagsStripped", []string{"formFileBytes"}, nil},
 	"handleOutlineSet":      {"flagsStripped", []string{"formFileBytes"}, nil},

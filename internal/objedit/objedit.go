@@ -57,9 +57,9 @@ func List(pdf []byte, page int) (pdfops.PageObjects, error) {
 	return objs, nil
 }
 
-// Remove applies edits to pdf as one rewrite. A signed or ceremony document is refused before anything is read;
-// the rest are `pdfops.EditPageObjects`' refusals, every one an `*pdfops.ObjectRefusal`.
-func Remove(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditResult, error) {
+// Edit applies edits — removals and moves — to pdf as one rewrite. A signed or ceremony document is refused before
+// anything is read; the rest are `pdfops.EditPageObjects`' refusals, every one an `*pdfops.ObjectRefusal`.
+func Edit(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditResult, error) {
 	if ref := documentRefusal(pdf); ref != nil {
 		return nil, pdfops.ObjectEditResult{}, ref
 	}
@@ -74,10 +74,13 @@ func Remove(pdf []byte, edits []pdfops.ObjectEdit) ([]byte, pdfops.ObjectEditRes
 }
 
 // DecodeEdits reads a request: `{"edits": [{"kind": "delete", "page", "ordinal", "digest"}]}`. A body that is not
-// that shape is a `bad-request` refusal.
+// that shape is a `bad-request` refusal. The route removes only: a move's `box` is not read here until the window
+// sends one (PLAN-image-edit P02.S01 grill pin 1 — `requestfields_test.go` refuses a field no client sends): a `box`
+// is an unknown field here, and a move without one is the door's `bad-request`, so a move is made with
+// `nib objects move` alone.
 func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 	var body struct {
-		Edits []pdfops.ObjectEdit `json:"edits"`
+		Edits []routeEdit `json:"edits"`
 	}
 	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
@@ -85,7 +88,19 @@ func DecodeEdits(r io.Reader) ([]pdfops.ObjectEdit, error) {
 		ref := pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, fmt.Errorf("%v", err))
 		return nil, ref
 	}
-	return body.Edits, nil
+	out := make([]pdfops.ObjectEdit, len(body.Edits))
+	for i, e := range body.Edits {
+		out[i] = pdfops.ObjectEdit{Kind: e.Kind, Page: e.Page, Ordinal: e.Ordinal, Digest: e.Digest}
+	}
+	return out, nil
+}
+
+// routeEdit is an edit as the route reads it: `pdfops.ObjectEdit` without the move's box.
+type routeEdit struct {
+	Kind    string `json:"kind"`
+	Page    int    `json:"page"`
+	Ordinal int    `json:"ordinal"`
+	Digest  string `json:"digest"`
 }
 
 // Refusal is err's refusal, when it is one.

@@ -1065,3 +1065,5 @@ home today.
   — `pdfops.EditPageObjects` behind `internal/objedit`; address (page, ordinal, digest) re-checked in the rewrite; operator only, resources pruned, `/Thumb` dropped; a tagged picture goes with its element or refuses by cause; the page read back.
 - [ADR-220](220-an-address-digest-counts-the-pictures-that-share-its-operator.md) — **An address's digest counts the pictures on its page that share its operator**
   — extends ADR-219 §2: a replayed address cannot name the twin of the removed picture; the after-check compares operator digests; the window sends one removal at a time and reads again on `object-changed`.
+- [ADR-221](221-a-picture-moves-only-where-one-cm-places-it-alone.md) — **A picture moves only where one `cm` places it alone, and the window's route waits for the window**
+  — movable read from the bytes (`q … cm <image> Q`, plain, on the page, unclipped); one conversion (`unpoint`); the after-check by box; `nib objects move`; the route reads no `box` until P02.S03.

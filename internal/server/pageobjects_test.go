@@ -91,6 +91,9 @@ func TestThePageObjectsRouteRefusesByCause(t *testing.T) {
 		{"the right digest at the wrong ordinal", removeBody(1, 1, objs.Objects[0].Digest), http.StatusConflict, pdfops.CauseObjectChanged},
 		{"no edit", map[string]any{"edits": []any{}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 		{"an unknown field", withField(removeBody(1, 0, objs.Objects[0].Digest), "baseRev", 3), http.StatusBadRequest, pdfops.CauseBadRequest},
+		// The route removes only until the window sends a move (P02.S01 grill pin 1): a move is refused, and so is its box.
+		{"a move", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
+		{"a move's box", map[string]any{"edits": []map[string]any{{"kind": "move", "page": 1, "ordinal": 0, "digest": objs.Objects[0].Digest, "box": []float64{0.1, 0.1, 0.2, 0.2}}}}, http.StatusBadRequest, pdfops.CauseBadRequest},
 	} {
 		code, body := postTags(t, c, csrf, base+"/api/page/objects", tc.body)
 		if code != tc.code || objectRefusalCause(t, body) != tc.cause {

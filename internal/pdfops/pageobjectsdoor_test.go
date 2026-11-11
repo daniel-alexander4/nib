@@ -27,7 +27,7 @@ var imageReadersExempt = map[string]string{
 	"exportvis.go:visibleRuns":       "the export's visibility filter drops OFF-layer pictures in place before the export reads them",
 	"pageobjectedit.go:taggingOf":    "the edit door's structure verdict for each marked picture, which the listing then carries (`pageObjectsOf`)",
 	"pageobjectedit.go:tagVerdict":   "the same verdict, one picture",
-	"pageobjectedit.go:removeOnPage": "the edit door reads the removed picture's box in user space to count links over it; the address came from the listing",
+	"pageobjectedit.go:removeOnPage": "the edit door reads the edited picture's box in user space to count links over it, and a moved picture's placement (its `cm`, outer matrix and clip) to rewrite it; the address came from the listing",
 	"structregion.go:regionElement": "the region edit takes the pictures inside a rectangle as content to tag (ADR-125), " +
 		"never a listing; the listing beside it (`untaggedPieces`) takes rows from the door",
 }

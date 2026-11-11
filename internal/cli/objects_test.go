@@ -97,7 +97,7 @@ func TestNibObjectsRefusesASignedDocumentInTheRoutesWords(t *testing.T) {
 }
 
 // A convened document is refused on the command line in the route's words, and the file is left as it was: the CLI
-// reaches the same door as the window (objedit.Remove), and this is that door's ceremony half seen from here.
+// reaches the same door as the window (objedit.Edit), and this is that door's ceremony half seen from here.
 func TestNibObjectsRefusesAConvenedDocumentInTheRoutesWords(t *testing.T) {
 	pdf := testpdf.TwoPictures()
 	hash, err := ceremony.DocumentHash(pdf)
@@ -128,11 +128,54 @@ func TestNibObjectsRefusesAConvenedDocumentInTheRoutesWords(t *testing.T) {
 }
 
 func TestNibObjectsWantsItsFlags(t *testing.T) {
-	for _, args := range [][]string{{"x.pdf"}, {"remove", "x.pdf", "--page", "1"}} {
+	for _, args := range [][]string{{"x.pdf"}, {"remove", "x.pdf", "--page", "1"}, {"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d"},
+		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,0.2,0.3"},
+		{"move", "x.pdf", "--page", "1", "--picture", "1", "--digest", "d", "--box", "0.1,a,0.3,0.4"}} {
 		var code int
 		captureStderr(t, func() { code = cmdObjects(args) })
 		if code != 2 {
 			t.Errorf("nib objects %v exited %d, want 2", args, code)
 		}
+	}
+}
+
+// `nib objects move` places a picture in the box it is given, in the listing's space, through the same door.
+func TestNibObjectsMovesAPicture(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.pdf")
+	if err := os.WriteFile(in, testpdf.TwoPictures(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	objs := listObjectsJSON(t, in)
+	if !objs.Objects[0].Movable {
+		t.Fatalf("fixture: picture 1 is not movable: %s", objs.Objects[0].MoveWhy)
+	}
+	plain, _ := captureStdout(t, func() int { return cmdObjects([]string{in, "--page", "1"}) })
+	if !strings.Contains(plain, "; movable") {
+		t.Fatalf("the listing does not say a picture is movable: %q", plain)
+	}
+	if _, code := captureStdout(t, func() int {
+		return cmdObjects([]string{"move", in, "--page", "1", "--picture", "1", "--digest", objs.Objects[0].Digest, "--box", "0.5,0.5,0.7,0.6", "-w"})
+	}); code != 0 {
+		t.Fatalf("move exited %d", code)
+	}
+	after := listObjectsJSON(t, in)
+	want := pdfops.MapRect{0.5, 0.5, 0.7, 0.6}
+	for k := range want {
+		if d := after.Objects[0].Box[k] - want[k]; d > 1e-6 || d < -1e-6 {
+			t.Fatalf("the picture reads at %v, asked %v", after.Objects[0].Box, want)
+		}
+	}
+	// The old address is gone: the same command again is refused, and the file is not written.
+	b, _ := os.ReadFile(in)
+	var code int
+	msg := captureStderr(t, func() {
+		code = cmdObjects([]string{"move", in, "--page", "1", "--picture", "1", "--digest", objs.Objects[0].Digest, "--box", "0.1,0.1,0.2,0.2", "-w"})
+	})
+	if code != 1 || !strings.Contains(msg, pdfops.ObjectCauseWords(pdfops.CauseObjectChanged)) {
+		t.Fatalf("a stale move exited %d saying %q", code, msg)
+	}
+	if b2, _ := os.ReadFile(in); string(b2) != string(b) {
+		t.Fatal("the refused move rewrote the file")
 	}
 }

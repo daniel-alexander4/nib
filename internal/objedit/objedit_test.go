@@ -78,7 +78,7 @@ func convenedTwoPictures(t *testing.T) []byte {
 
 func TestAPlainDocumentHasItsPictureRemoved(t *testing.T) {
 	pdf := testpdf.TwoPictures()
-	out, res, err := Remove(pdf, firstEdit(t, pdf))
+	out, res, err := Edit(pdf, firstEdit(t, pdf))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestAPlainDocumentHasItsPictureRemoved(t *testing.T) {
 func TestASignedDocumentIsRefusedBeforeAnyRead(t *testing.T) {
 	signed := signedTwoPictures(t)
 	edits := firstEdit(t, testpdf.TwoPictures())
-	out, _, err := Remove(signed, edits)
+	out, _, err := Edit(signed, edits)
 	if out != nil {
 		t.Fatal("bytes were returned for a signed document")
 	}
@@ -119,7 +119,7 @@ func TestAConvenedDocumentIsRefusedColdEvenUnsigned(t *testing.T) {
 	if sign.HasSignatureBlob(convened) {
 		t.Fatal("fixture: the convened document is signed")
 	}
-	_, _, err := Remove(convened, firstEdit(t, convened))
+	_, _, err := Edit(convened, firstEdit(t, convened))
 	wantCause(t, err, pdfops.CauseCeremony)
 	objs, err := List(convened, 1)
 	if err != nil {
@@ -161,6 +161,6 @@ func TestABrokenCeremonyRecordStillRefuses(t *testing.T) {
 	if err != nil || len(objs.Objects) != 1 {
 		t.Fatalf("setup: %+v %v", objs, err)
 	}
-	_, _, err = Remove(pdf, []pdfops.ObjectEdit{{Kind: pdfops.ObjectEditDelete, Page: 1, Ordinal: 0, Digest: objs.Objects[0].Digest}})
+	_, _, err = Edit(pdf, []pdfops.ObjectEdit{{Kind: pdfops.ObjectEditDelete, Page: 1, Ordinal: 0, Digest: objs.Objects[0].Digest}})
 	wantCause(t, err, pdfops.CauseCeremony)
 }
