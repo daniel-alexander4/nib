@@ -1,12 +1,12 @@
 diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
 --- a/internal/pdfops/pageobjectedit.go
 +++ b/internal/pdfops/pageobjectedit.go
-@@ -469,7 +469,7 @@
- 			if len(r.SharedWith) == 0 {
- 				dropFromPageTreeNodes(ctx, objNr)
- 			}
--			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
-+			r.StaysInFile = len(r.SharedWith) > 0
- 		}
+@@ -687,7 +687,7 @@
+ 	if len(shared) == 0 {
+ 		dropFromPageTreeNodes(ctx, objNr)
  	}
- 	return append(plans, extra...), nil
+-	return shared, len(shared) > 0 || formDefaultsName(ctx, objNr)
++	return shared, len(shared) > 0
+ }
+ 
+ // formDefaultsName says the form's default resources (`/AcroForm /DR`) name the object objNr — measured on the corpus

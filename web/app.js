@@ -11757,6 +11757,7 @@ const OBJECT_CAUSES = {
   'clips': 'This drawing also sets a clip that hides part of what is drawn after it, so removing or moving it would change other things on the page.',
   'patterned': 'This drawing is painted with a pattern laid on the page, so moving it would change what it shows; Nib leaves it where it is.',
   'not-a-picture': 'This is a drawing, not a picture; Nib replaces only pictures.',
+  'turned-slot': 'This picture is drawn turned or mirrored where it cannot be moved, so a new picture put in its place would show turned; Nib leaves it as it is.',
   'not-path-only': 'This drawing has other settings written inside it, so removing or moving it could change what is drawn after it.',
 };
 function objectCauseSentence(cause, fallback) {
@@ -11920,6 +11921,11 @@ async function drawObjectOutlines(owner) {
       if (owner === view) reflectObjects();
     }
   }
+  if (objs.drawingsUngrouped && !list.length) {
+    objectNotice(`Page ${n} draws too many overlapping lines and shapes for Nib to group them, so none is shown.`);
+    if (owner.objectsFocus != null) { owner.objectsFocus = null; $('objectsBtn').focus(); }
+    return;
+  }
   if (!list.length) {
     objectNotice(`Page ${n} draws no picture or drawing Nib can show.`);
     if (owner.objectsFocus != null) { owner.objectsFocus = null; $('objectsBtn').focus(); }
@@ -12011,6 +12017,7 @@ function selectedWords(o, label) {
   const parts = [`${label}, selected.`];
   parts.push(o.editable ? 'Remove from page takes it off the page.' + (o.alt ? ' Its description goes with it.' : '')
     : `It cannot be removed: ${objectCauseSentence(o.why)}`);
+  if (!isDrawing(o) && !o.replaceable && o.replaceWhy) parts.push(`It cannot be replaced: ${objectCauseSentence(o.replaceWhy)}`);
   if (o.movable && isDrawing(o)) parts.push('Drag it, or press Shift and an arrow key, to move it.');
   else if (o.movable) parts.push('Drag it, or press Shift and an arrow key, to move it; drag its corner, or press Control, Shift and an arrow key, to resize it.');
   else if (o.moveWhy) parts.push(`It cannot be moved: ${objectCauseSentence(o.moveWhy)}`);
@@ -12254,14 +12261,16 @@ function removedWords(r, canUndo = true) {
     : `Removed the ${noun} from the page. Undo cannot bring it back: this document's history was let go to keep Nib within its memory budget.`];
   if (r && r.elementRemoved) parts.push(r.alt ? `Its description, "${r.alt}", went with it.` : 'Its tag went with it.');
   if (r && r.linksOver) parts.push(`${r.linksOver} link${r.linksOver === 1 ? '' : 's'} over it ${r.linksOver === 1 ? 'is' : 'are'} still on the page.`);
-  if (r && r.staysInFile) {
-    const pages = r.sharedWith || [];
-    const who = pages.length === 1 ? `page ${pages[0]} still uses it`
-      : pages.length > 1 ? `pages ${pages.slice(0, -1).join(', ')} and ${pages[pages.length - 1]} still use it`
-        : 'the form still uses it';
-    parts.push(`The picture is still in the file, because ${who}; Redact removes it for good.`);
-  }
+  if (r && r.staysInFile) parts.push(stillInFileWords('picture', r.sharedWith));
   return parts.join(' ');
+}
+
+// stillInFileWords says a removed or replaced picture's image is still in the file, and who still uses it.
+function stillInFileWords(what, pages = []) {
+  const who = pages.length === 1 ? `page ${pages[0]} still uses it`
+    : pages.length > 1 ? `pages ${pages.slice(0, -1).join(', ')} and ${pages[pages.length - 1]} still use it`
+      : 'the form still uses it';
+  return `The ${what} is still in the file, because ${who}; Redact removes it for good.`;
 }
 
 // removeSelectedObject removes the selected picture.
@@ -12341,7 +12350,8 @@ async function replaceWithPickedFile() {
   if (!answer) return;
   // After the reload (which clears it with the rest of the tool's state), as a move does: the same picture, by place.
   owner.objectsReselect = owner.objectsPicked || { docId: sel.docId, page: sel.page, id: objectId(sel) };
-  hideObjectAlt();
+  // The row is the window's, not the document's: an install landing for a tab behind leaves the one in front alone.
+  if (owner === view && objectAltFor === objectAltKey(sel)) hideObjectAlt();
   objectNoticeFor(owner, replacedWords(answer.replaced && answer.replaced[0], answer.canUndo !== false));
   if (owner === view) reflectObjects();
   drawObjectOutlines(owner);
@@ -12356,6 +12366,7 @@ function replacedWords(r, canUndo = true) {
   if (r && r.stretched) parts.push('It is stretched to fill the old picture\'s place: its proportions differ, and this picture cannot be moved.');
   if (r && r.turned) parts.push('It was turned upright.');
   if (r && r.alt) parts.push(`Its description is "${r.alt}".`);
+  if (r && r.staysInFile) parts.push(stillInFileWords('old picture', r.sharedWith));
   return parts.join(' ');
 }
 

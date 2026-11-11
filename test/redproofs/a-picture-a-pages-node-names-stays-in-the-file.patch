@@ -1,11 +1,11 @@
 diff --git a/internal/pdfops/pageobjectedit.go b/internal/pdfops/pageobjectedit.go
 --- a/internal/pdfops/pageobjectedit.go
 +++ b/internal/pdfops/pageobjectedit.go
-@@ -467,7 +467,6 @@
- 			r := &plans[i].removed[j]
- 			r.SharedWith = pagesNamingXObject(ctx, walked, objNr)
- 			if len(r.SharedWith) == 0 {
--				dropFromPageTreeNodes(ctx, objNr)
- 			}
- 			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
- 		}
+@@ -685,7 +685,6 @@
+ func pictureResidue(ctx *model.Context, walked []pdfread.Page, objNr int) ([]int, bool) {
+ 	shared := pagesNamingXObject(ctx, walked, objNr)
+ 	if len(shared) == 0 {
+-		dropFromPageTreeNodes(ctx, objNr)
+ 	}
+ 	return shared, len(shared) > 0 || formDefaultsName(ctx, objNr)
+ }

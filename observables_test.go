@@ -396,10 +396,15 @@ var published = map[string][]string{
 	// What the server reads off a document for every answer it gives about it (ADR-147): the flags and
 	// XFA it always read, and whether it is labelled and tagged. `docResponse` is its one reader.
 	"pdfops.AnswerFacts": {"internal/server/server.go"},
-	"vault.KeyInfo":      {"internal/server/keys.go", "web/app.js"},
-	"vault.PinnedPeer":   {"internal/server/peers.go", "internal/vault/vault.go"},
-	"vault.Settings":     {"internal/server/settings.go", "internal/vault/vault.go"},
-	"vault.Image":        {"internal/server/images.go", "internal/vault/vault.go"},
+	// A page's pictures and drawings (PLAN-image-edit P01.S04, P03.S03): the route serves it, the window's Edit Objects
+	// lays an outline per entry, and `nib objects` prints it.
+	"pdfops.PageObjects": {"internal/server/pageobjects.go", "web/app.js", "internal/cli/objects.go"},
+	// What an edit of a page object did: the window says it after the install, `nib objects` prints it.
+	"pdfops.ObjectEditResult": {"internal/server/pageobjects.go", "web/app.js", "internal/cli/objects.go"},
+	"vault.KeyInfo":           {"internal/server/keys.go", "web/app.js"},
+	"vault.PinnedPeer":        {"internal/server/peers.go", "internal/vault/vault.go"},
+	"vault.Settings":          {"internal/server/settings.go", "internal/vault/vault.go"},
+	"vault.Image":             {"internal/server/images.go", "internal/vault/vault.go"},
 	// **`ImageMeta` is the listing's shape and `Image` is the fetch's** (/pending 567). Splitting
 	// them is what let the accessors deep-copy: `handleImagesList` renders id, name and MIME, so it
 	// reads this one, and `handleImageGet` and `overlay.go` still read `Image` for its `Data`. Both
@@ -424,10 +429,8 @@ var published = map[string][]string{
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
 // unread observable gets parked and forgotten, which is the failure this file exists for.
 var excluded = map[string]string{
-	"pdfops.PageObjects":      "gated on PLAN-image-edit.md P01.S04: `nib objects` publishes it (P01.S02); S04 builds `GET /api/page/objects` and the window's Edit Objects, which read it; today `nib objects` prints it, and the route tests and build/objectdelete.sh read it.",
-	"pdfops.ObjectEditResult": "gated on PLAN-image-edit.md P01.S04: `POST /api/page/objects` answers it and the window says it in S04 (the description going, links kept, the picture staying in the file); today `nib objects remove` prints every field and the route test reads it.",
-	"pdfops.ImportOptions":    "an INPUT, not an observable: `ReplacementImport` (PLAN-image-edit P03.S01) returns the options a replacement is imported under, which `pdfops.Import` reads; nothing leaves the process in it.",
-	"pdfops.PageImageResult":  "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
+	"pdfops.ImportOptions":   "an INPUT, not an observable: `ReplacementImport` (PLAN-image-edit P03.S01) returns the options a replacement is imported under, which `pdfops.Import` reads; nothing leaves the process in it.",
+	"pdfops.PageImageResult": "a download envelope (bytes, file name, media type) handed straight to sendDownload by handleAssemble; the bytes themselves are read back by pageimages_test.go and assembleformats_test.go, and the name and type by the route test.",
 }
 
 // internalShapes names each shape whose declared readers are ALL inside its own declaring

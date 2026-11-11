@@ -112,6 +112,7 @@ var objectCauseWords = map[string]string{
 	WhyClips:            "This drawing also sets a clip that hides part of what is drawn after it, so removing or moving it would change other things on the page.",
 	WhyPatterned:        "This drawing is painted with a pattern laid on the page, so moving it would change what it shows; Nib leaves it where it is.",
 	WhyNotAPicture:      "This is a drawing, not a picture; Nib replaces only pictures.",
+	WhyTurnedSlot:       "This picture is drawn turned or mirrored where it cannot be moved, so a new picture put in its place would show turned; Nib leaves it as it is.",
 	WhyNotPathOnly:      "This drawing has other settings written inside it, so removing or moving it could change what is drawn after it.",
 }
 
@@ -393,6 +394,9 @@ type objectTagging struct {
 	seq   *markedSeq
 	// alt is the owner's `/Alt`, read while the tree is in hand.
 	alt string
+	// altUnknown says the structure tree did not read, so whether the picture is described cannot be said: a replace
+	// is refused rather than keep a description silently (ADR-223 §5; P03 phase-close review).
+	altUnknown bool
 }
 
 // taggingOf answers objectTagging for every marked picture pr lists, by image index; src is the page's content. tree nil with treeErr nil
@@ -404,9 +408,34 @@ func taggingOf(ctx *model.Context, tree *structTree, treeErr error, pgObj int, p
 		if !im.marked || im.inForm {
 			continue
 		}
-		out[i] = tagVerdict(ctx, tree, treeErr, pgObj, pr, i, src)
+		t := tagVerdict(ctx, tree, treeErr, pgObj, pr, i, src)
+		// The description is read from every element naming the picture's MCID, whatever the verdict: a replace keeps
+		// the element, so a shared or doubly-claimed tag's description would otherwise describe the new picture unasked.
+		if t.alt == "" && tree != nil {
+			t.alt = ownersAlt(ctx, tree, pgObj, im.mcid)
+		}
+		t.altUnknown = treeErr != nil
+		out[i] = t
 	}
 	return out
+}
+
+// ownersAlt is the descriptions of the elements whose kids name mcid on page pgObj's own stream, distinct ones joined.
+func ownersAlt(ctx *model.Context, tree *structTree, pgObj, mcid int) string {
+	var alts []string
+	seen := map[string]bool{}
+	for _, e := range tree.elems {
+		for _, k := range e.kids {
+			if (k.kind == kidMCID || k.kind == kidMCR) && k.mcid == mcid && k.pgObj == pgObj && k.stm == 0 {
+				if a := elementAlt(ctx, e); a != "" && !seen[a] {
+					seen[a] = true
+					alts = append(alts, a)
+				}
+				break
+			}
+		}
+	}
+	return strings.Join(alts, " / ")
 }
 
 // tagVerdict is taggingOf's answer for picture i.
@@ -621,13 +650,9 @@ func removeObjects(ctx *model.Context, pages [][]ObjectEdit) ([]pageRemoval, err
 				extra = append(extra, kept)
 			}
 			r := &plans[i].removed[j]
-			r.SharedWith = pagesNamingXObject(ctx, walked, objNr)
-			if len(r.SharedWith) == 0 {
-				dropFromPageTreeNodes(ctx, objNr)
-			}
-			r.StaysInFile = len(r.SharedWith) > 0 || formDefaultsName(ctx, objNr)
+			r.SharedWith, r.StaysInFile = pictureResidue(ctx, walked, objNr)
 		}
-		for _, objNr := range plans[i].replacedObjNrs {
+		for k, objNr := range plans[i].replacedObjNrs {
 			if objNr == 0 {
 				continue
 			}
@@ -646,12 +671,23 @@ func removeObjects(ctx *model.Context, pages [][]ObjectEdit) ([]pageRemoval, err
 				}
 				extra = append(extra, kept)
 			}
-			if len(pagesNamingXObject(ctx, walked, objNr)) == 0 {
-				dropFromPageTreeNodes(ctx, objNr)
-			}
+			a := &plans[i].replacedAnswers[k]
+			a.SharedWith, a.StaysInFile = pictureResidue(ctx, walked, objNr)
 		}
 	}
 	return append(plans, extra...), nil
+}
+
+// pictureResidue is where a picture's old image object still is once the pages naming it were pruned: the pages that still
+// name it, and whether its bytes stay in the file (those pages, or the form's default resources). With no holder it is
+// taken off the page tree's own resources too. The ONE answer for a removal and a replace (P03 phase-close review: a
+// replace said nothing of the old picture staying).
+func pictureResidue(ctx *model.Context, walked []pdfread.Page, objNr int) ([]int, bool) {
+	shared := pagesNamingXObject(ctx, walked, objNr)
+	if len(shared) == 0 {
+		dropFromPageTreeNodes(ctx, objNr)
+	}
+	return shared, len(shared) > 0 || formDefaultsName(ctx, objNr)
 }
 
 // formDefaultsName says the form's default resources (`/AcroForm /DR`) name the object objNr — measured on the corpus
@@ -774,6 +810,7 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 	}
 	tagging := taggingOf(ctx, tree, treeErr, pgObj, pr, src)
 	objs := pageObjectsOf(nr, newDisplaySpace(pg), pr, tagging)
+	objs.Drawings, objs.DrawingsUngrouped = drawingsOf(nr, newDisplaySpace(pg), pr.paths)
 	edit := contentstream.NewEdit(src)
 	plan := pageRemoval{page: nr}
 	gone := map[int]bool{}
@@ -905,7 +942,7 @@ func removeOnPage(ctx *model.Context, tree *structTree, treeErr error, pg pdfrea
 			edit.Replace(o.span.start, o.span.end, op)
 			names = append(names, newName{name, l.ref})
 			replaced[e.Ordinal] = replacedWant{box: box, painter: sha256.Sum256(op), raw: l.raw}
-			plan.replacedAnswers = append(plan.replacedAnswers, ReplacedObject{Page: nr, Ordinal: e.Ordinal,
+			plan.replacedAnswers = append(plan.replacedAnswers, ReplacedObject{Page: nr, Ordinal: e.Ordinal, SharedWith: []int{},
 				Fitted: fitted, Stretched: stretched, Turned: turned, Alt: alt})
 			plan.replacedObjNrs = append(plan.replacedObjNrs, o.objNr)
 			continue

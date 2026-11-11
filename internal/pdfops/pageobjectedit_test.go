@@ -435,10 +435,10 @@ func TestEveryObjectCauseHasItsWords(t *testing.T) {
 		WhyOffPage, CauseRewriteDiffers, CauseSigned, WhyTagged, WhyTaggedLast, WhyTaggedShared, WhyUnreadableBox,
 		WhyNotAlone, WhyNotUpright, WhyPartlyOffPage, WhyClipped,
 		WhyImageMask, WhyObjectReferenced, WhyOrientation, CauseAltUnanswered, CauseNotOneImage,
-		WhyClips, WhyPatterned, WhyNotAPicture, WhyNotPathOnly}
+		WhyClips, WhyPatterned, WhyNotAPicture, WhyNotPathOnly, WhyTurnedSlot}
 	got := objectCauses()
-	if len(got) != 26 || len(want) != 26 {
-		t.Fatalf("%d causes, want 26: %v", len(got), got)
+	if len(got) != 27 || len(want) != 27 {
+		t.Fatalf("%d causes, want 27: %v", len(got), got)
 	}
 	for _, c := range want {
 		if ObjectCauseWords(c) == "" {

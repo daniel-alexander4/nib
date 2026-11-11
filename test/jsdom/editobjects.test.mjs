@@ -20,7 +20,7 @@ const pic = (ordinal, box, extra = {}) => ({
 });
 let listing = {
   page: 1, formsNotRead: 0,
-  objects: [pic(0, [0.1, 0.1, 0.3, 0.2]), pic(1, [0.5, 0.5, 0.8, 0.7], { alt: 'A cat' }), pic(2, [0.1, 0.8, 0.2, 0.9], { editable: false, why: 'form-drawn' })],
+  objects: [pic(0, [0.1, 0.1, 0.3, 0.2], { replaceable: false, replaceWhy: 'image-mask' }), pic(1, [0.5, 0.5, 0.8, 0.7], { alt: 'A cat' }), pic(2, [0.1, 0.8, 0.2, 0.9], { editable: false, why: 'form-drawn' })],
 };
 const gets = [];
 const posts = [];
@@ -104,6 +104,13 @@ test('arrows move inside the group without asking the server, and Enter selects 
     `the region says "${notice()}"`);
   assert.equal($('objectsRemoveBtn').disabled, false, 'Remove from page is off with a removable picture selected');
   assert.equal(gets.length, before, 'moving and selecting asked the server again');
+});
+
+test('a picture that cannot be replaced says why when selected', async () => {
+  outlines()[0].click();
+  await settle();
+  assert.match(notice(), /It cannot be replaced: This is a shape painted in one colour/, `the region says "${notice()}"`);
+  assert.equal($('objectsReplaceBtn').disabled, true, 'Replace… is on for a picture that cannot be replaced');
 });
 
 test('a refused picture says why and cannot be removed', async () => {

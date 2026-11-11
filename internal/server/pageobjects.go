@@ -128,12 +128,12 @@ func (s *Server) handlePageObjectsReplace(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer cleanup()
-	raw := r.FormValue("edits")
-	if len(raw) > maxObjectEditBytes {
+	if len(r.FormValue("edits")) > maxObjectEditBytes {
 		writeObjectRefusal(w, pdfops.RefuseObject(pdfops.CauseBadRequest, 0, -1, errors.New("the edit is longer than any edit this route reads")))
 		return
 	}
-	edits, err := objedit.DecodeEdits(strings.NewReader(raw))
+	// The form value is handed to the decoder as it is read, so the request-field census follows it into objedit.
+	edits, err := objedit.DecodeEdits(strings.NewReader(r.FormValue("edits")))
 	if err != nil {
 		writeObjectRefusal(w, err)
 		return

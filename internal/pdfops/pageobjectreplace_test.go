@@ -309,19 +309,27 @@ func TestAReplacedPictureReadsUprightAsDisplayed(t *testing.T) {
 
 // A picture drawn under a quarter-turned matrix keeps it, and whether it is stretched is read from the matrix's sides,
 // not from the bounding box, which a quarter turn inverts.
-func TestStretchedIsReadFromTheDrawnSides(t *testing.T) {
-	// 100 wide and 80 high as drawn, turned a quarter: the box is 80 wide and 100 high.
-	pdf := removeFixture("q 0 100 -80 0 90 10 cm /Im0 Do Q", nil)
+func TestATurnedSlotThatCannotMoveIsRefused(t *testing.T) {
+	// A picture that cannot be moved keeps its matrix, and that matrix shows the new picture's pixels as it showed the
+	// old ones' (P03 phase-close review): under a quarter turn, or on a turned page, an upright photo would show turned.
+	page := func(rotate string) map[int]string {
+		return map[int]string{3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources 9 0 R /Contents 4 0 R" + rotate + " >>"}
+	}
 	for _, c := range []struct {
-		w, h      int
-		stretched bool
-	}{{50, 40, false}, {40, 50, true}} {
-		_, res, err := replaceObject(t, pdf, 0, replacement(t, solidPNG(t, c.w, c.h, 0), "r.png"), ObjectEdit{})
-		if err != nil {
-			t.Fatal(err)
+		name, content, rotate, want string
+	}{
+		{"a quarter-turned matrix", "q 0 100 -80 0 90 10 cm /Im0 Do Q", "", WhyTurnedSlot},
+		{"a mirrored matrix", "q -100 0 0 80 110 10 cm /Im0 Do Q", "", WhyTurnedSlot},
+		{"a turned page", "q 1 0 0 1 0 0 cm 100 0 0 80 10 10 cm /Im0 Do Q", " /Rotate 90", WhyTurnedSlot},
+		{"straight on an unturned page", "q 1 0 0 1 0 0 cm 100 0 0 80 10 10 cm /Im0 Do Q", "", ""},
+	} {
+		pdf := removeFixture(c.content, page(c.rotate))
+		if readObjects(t, pdf, 1).Objects[0].Movable {
+			t.Fatalf("%s: fixture is movable", c.name)
 		}
-		if res.Replaced[0].Stretched != c.stretched {
-			t.Errorf("a %d×%d picture under a turned 100×80 slot: stretched %v, want %v", c.w, c.h, res.Replaced[0].Stretched, c.stretched)
+		_, _, err := replaceObject(t, pdf, 0, replacement(t, solidPNG(t, 50, 40, 0), "r.png"), ObjectEdit{})
+		if c.want == "" && err != nil || c.want != "" && !isCause(err, c.want) {
+			t.Errorf("%s: answered %v, want %q", c.name, err, c.want)
 		}
 	}
 }
@@ -412,4 +420,59 @@ func TestALiftOfAPictureHoldingANestedReferenceIsRefused(t *testing.T) {
 		t.Fatal("a picture with a nested reference was lifted")
 	}
 	wantRefusal(t, err, CauseNotOneImage)
+}
+
+// A described picture whose tag cannot be taken apart (it also holds text) still names its description, so a replace
+// asks about it: the element stays, and its description must not silently describe the new picture (P03 phase-close
+// review; ADR-223 §5).
+func TestASharedTagsDescriptionIsAskedAboutOnReplace(t *testing.T) {
+	shared := "/Figure <</MCID 0>> BDC q 100 0 0 80 10 10 cm /Im0 Do Q BT /F1 12 Tf 10 700 Td (Caption) Tj ET EMC\n" +
+		"/P <</MCID 1>> BDC BT /F1 12 Tf 10 600 Td (Hello) Tj ET EMC"
+	pdf := objectFigureFixture(shared, "0", "")
+	o := readObjects(t, pdf, 1).Objects[0]
+	if o.Why != WhyTaggedShared || !o.Replaceable || o.Alt != "A cat on a mat" {
+		t.Fatalf("fixture: listed why %q, replaceable %v, alt %q", o.Why, o.Replaceable, o.Alt)
+	}
+	png := replacement(t, solidPNG(t, 50, 40, 0), "r.png")
+	if _, _, err := replaceObject(t, pdf, 0, png, ObjectEdit{}); !isCause(err, CauseAltUnanswered) {
+		t.Errorf("a replace with no answer about the description: %v", err)
+	}
+	if _, _, err := replaceObject(t, pdf, 0, png, ObjectEdit{KeepAlt: true}); err != nil {
+		t.Errorf("a replace keeping the description: %v", err)
+	}
+}
+
+// A replace says where the old picture still is, as a removal does (`pictureResidue`).
+func TestAReplaceSaysTheOldPictureStaysWhereAnotherPageDrawsIt(t *testing.T) {
+	two := streamObject("", "q 100 0 0 80 10 10 cm /Im0 Do Q")
+	pdf := removeFixture("q 100 0 0 80 10 10 cm /Im0 Do Q", map[int]string{
+		2:  "<< /Type /Pages /Kids [3 0 R 20 0 R] /Count 2 >>",
+		20: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources 9 0 R /Contents 21 0 R >>",
+		21: two,
+	})
+	_, res, err := replaceObject(t, pdf, 0, replacement(t, solidPNG(t, 50, 40, 0), "r.png"), ObjectEdit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := res.Replaced[0]; !r.StaysInFile || len(r.SharedWith) != 1 || r.SharedWith[0] != 2 {
+		t.Errorf("the answer reads %+v, want the old picture said to stay because page 2 draws it", r)
+	}
+	_, res, err = replaceObject(t, removeFixture("q 100 0 0 80 10 10 cm /Im0 Do Q", nil), 0, replacement(t, solidPNG(t, 50, 40, 0), "r.png"), ObjectEdit{})
+	if err != nil || res.Replaced[0].StaysInFile || res.Replaced[0].SharedWith == nil {
+		t.Errorf("alone on its page, the answer reads %+v (%v), want it gone and an empty list", res.Replaced, err)
+	}
+}
+
+// A path whose box is not a number sorts last and joins nothing, so the drawings beside it are grouped whole.
+func TestAPathWithNoBoxDoesNotPartItsNeighbours(t *testing.T) {
+	nan := math.NaN()
+	a := drawnPath{box: [4]float64{0, 0, 10, 10}, curved: true, ops: 2, mcid: -1}
+	b := a
+	b.box = [4]float64{5, 5, 15, 15}
+	bad := a
+	bad.box = [4]float64{nan, 0, nan, 10}
+	groups, _ := groupDrawnPaths([]drawnPath{a, bad, b})
+	if len(groups) != 2 || len(groups[0].members) != 2 {
+		t.Errorf("two touching paths beside one with no box group as %+v, want them together and it alone", groups)
+	}
 }

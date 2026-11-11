@@ -237,7 +237,8 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 
 	// A body handed to another package to decode is in the population (W7): before it was followed, these routes
 	// contributed no pair at all and read exactly like routes whose every field is sent.
-	for _, pair := range []string{"/api/page/objects box", "/api/page/objects digest", "/api/tags/edit kind", "/api/tags/commit role"} {
+	for _, pair := range []string{"/api/page/objects box", "/api/page/objects digest", "/api/page/objects object", "/api/page/objects/replace keepAlt",
+		"/api/tags/edit kind", "/api/tags/commit role"} {
 		if !serverJSON[pair] {
 			t.Errorf("the server JSON scan does not see %q — a body decoded in another package has left the population", pair)
 		}

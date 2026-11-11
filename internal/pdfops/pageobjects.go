@@ -77,6 +77,9 @@ const (
 	// WhyPatterned: a path of it is painted with a pattern, which is laid in the pattern's own space: moving the path
 	// slides it over a pattern that stays where it is.
 	WhyPatterned = "patterned"
+	// WhyTurnedSlot: a replace of a picture that cannot be moved keeps its matrix, and that matrix turns or mirrors
+	// it, or its page is turned — the new picture would show turned.
+	WhyTurnedSlot = "turned-slot"
 	// WhyNotAPicture: a replace names a drawing.
 	WhyNotAPicture = "not-a-picture"
 	// WhyNotPathOnly: a path of it holds an operator a path object may not (a colour, a `cm`, a `q`) between its first
@@ -185,16 +188,20 @@ func ReadPageObjects(pdf []byte, page int) (PageObjects, error) {
 		tree, treeErr := readTreeForEdit(ctx, livePageObjects(ctx))
 		tagging = taggingOf(ctx, tree, treeErr, pg.Ref.ObjectNumber.Value(), pr, src)
 	}
-	return pageObjectsOf(page, newDisplaySpace(pg), pr, tagging), nil
+	sp := newDisplaySpace(pg)
+	objs := pageObjectsOf(page, sp, pr, tagging)
+	objs.Drawings, objs.DrawingsUngrouped = drawingsOf(page, sp, pr.paths)
+	return objs, nil
 }
 
-// pageObjectsOf lists pr's images and drawings as page objects — the one place `pageRuns.images` becomes a listing,
-// and with `untaggedPieces` one of the two callers of the path grouping (`groupDrawnPaths`). pr must come
+// pageObjectsOf lists pr's images as page objects — the one place `pageRuns.images` becomes a listing. Its drawings
+// are `drawingsOf`'s, asked only by the two readers that use them (`ReadPageObjects`, the edit door's `removeOnPage`):
+// the untagged listing and the after-check would group and hash every path for nothing. pr must come
 // from the region reader (`readPageDrawings`), the only one that sets an image's digest. tagging is what the
 // structure tree says of each marked picture (`taggingOf`); nil means it was not asked, and every marked picture is
 // then `tagged`.
 func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectTagging) PageObjects {
-	out := PageObjects{Page: nr, Objects: make([]PageObject, 0, len(pr.images)), FormsNotRead: pr.formsUnread}
+	out := PageObjects{Page: nr, Objects: make([]PageObject, 0, len(pr.images)), Drawings: []PageObject{}, FormsNotRead: pr.formsUnread}
 	twins := map[[32]byte]int{}
 	for _, im := range pr.images {
 		twins[im.digest]++
@@ -218,9 +225,11 @@ func pageObjectsOf(nr int, sp displaySpace, pr pageRuns, tagging map[int]objectT
 		o.Editable, o.Why = objectEditability(im, o.OnPage, tagWhy)
 		o.Movable, o.MoveWhy = objectMovability(im, sp)
 		o.Replaceable, o.ReplaceWhy = objectEditability(im, o.OnPage, "")
+		if t, ok := tagging[i]; ok && t.altUnknown && o.Replaceable {
+			o.Replaceable, o.ReplaceWhy = false, WhyTagged // its description cannot be read, so it cannot be asked about
+		}
 		out.Objects = append(out.Objects, o)
 	}
-	out.Drawings, out.DrawingsUngrouped = drawingsOf(nr, sp, pr.paths)
 	return out
 }
 

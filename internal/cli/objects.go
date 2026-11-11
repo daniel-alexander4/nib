@@ -271,6 +271,12 @@ func cmdObjectsReplace(args []string) int {
 		case r.Turned != 0:
 			fmt.Fprintf(os.Stderr, "the new picture was turned upright (%d degrees)\n", r.Turned)
 		}
+		switch {
+		case len(r.SharedWith) > 0:
+			fmt.Fprintf(os.Stderr, "the old picture stays in the file: page(s) %v still draw it\n", r.SharedWith)
+		case r.StaysInFile:
+			fmt.Fprintln(os.Stderr, "the old picture stays in the file: the form still uses it")
+		}
 	}
 	return writeEdited(in, out, inPlace, result)
 }

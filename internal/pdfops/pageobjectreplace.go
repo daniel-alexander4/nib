@@ -61,6 +61,9 @@ type ReplacedObject struct {
 	Stretched bool    `json:"stretched"`
 	Turned    int     `json:"turned"`
 	Alt       string  `json:"alt"`
+	// SharedWith and StaysInFile say where the OLD picture's image still is, as a removal's answer does (`pictureResidue`).
+	SharedWith  []int `json:"sharedWith"`
+	StaysInFile bool  `json:"staysInFile"`
 }
 
 // replacedWant is what the after-check holds a replaced slot to: its box, a `Do` of the new name, and that name
@@ -259,6 +262,12 @@ func replacementPlacement(im drawnImage, o PageObject, l liftedImage, pageRot in
 	}
 	if l.rotate != 0 {
 		return b, nil, 0, false, false, WhyOrientation
+	}
+	// The old matrix is kept, and it shows the old picture's pixels as they were stored: under a turned or mirrored
+	// matrix, or on a turned page, an upright photo would show turned (P03 phase-close review). Only a slot that sits
+	// straight on an unturned page takes a picture it cannot move.
+	if !im.plain || pageRot%360 != 0 {
+		return b, nil, 0, false, false, WhyTurnedSlot
 	}
 	// The drawn proportion is the unit square's two sides under the matrix, whatever way it turns them; a bounding box
 	// inverts it for a quarter-turned matrix.

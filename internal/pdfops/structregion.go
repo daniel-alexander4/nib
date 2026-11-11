@@ -418,11 +418,20 @@ func groupDrawnPaths(painted []drawnPath) ([]drawnGroup, bool) {
 	// ord is painted's indexes by left edge: the sweep compares only paths whose boxes can overlap. Members are
 	// answered as indexes into painted itself, so no path is ever named by where it sits in its stream (a form drawn
 	// twice draws the same bytes at the same offsets twice).
+	// A path whose box is not a number (a matrix that overflowed) would break the sort and the sweep's bound for
+	// every path beside it: it is placed last, where the sweep's left-edge bound (false for NaN) never reaches it
+	// (P03 phase-close review).
 	ord := make([]int, len(painted))
 	for i := range ord {
 		ord[i] = i
 	}
-	sort.SliceStable(ord, func(i, j int) bool { return painted[ord[i]].box[0] < painted[ord[j]].box[0] })
+	sort.SliceStable(ord, func(i, j int) bool {
+		a, b := painted[ord[i]].box, painted[ord[j]].box
+		if fa, fb := finiteBox(a), finiteBox(b); fa != fb {
+			return fa
+		}
+		return a[0] < b[0]
+	})
 	paths := make([]drawnPath, len(ord))
 	for k, i := range ord {
 		paths[k] = painted[i]
@@ -511,8 +520,8 @@ func untaggedPieces(nr int, sp displaySpace, text []unownedText, images []PageOb
 		}
 		drawings = append(drawings, &drawing{box: g.box, first: painted[g.members[0]], n: len(g.members)})
 	}
-	// Drawings first, then what stands alone as a rule or a plain box, each in the order the walk first met it, left
-	// edge first (`groupDrawnPaths` sorts by it).
+	// Drawings first, then what stands alone as a rule or a plain box, each in left-edge order (`groupDrawnPaths`'
+	// order).
 	for _, kind := range [3]string{"drawing", "rule", "box"} {
 		for _, d := range drawings {
 			if drawingKind(d.first, d.n) == kind {
