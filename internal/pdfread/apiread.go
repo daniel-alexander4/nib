@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/filter"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
@@ -145,6 +146,13 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 	}
 	maxPageDigits := len(strconv.Itoa(sp[len(sp)-1]))
 	for _, p := range sp {
+		for _, objNr := range pdfcpu.ImageObjNrs(ctx, p) {
+			if obj := ctx.Optimize.ImageObjects[objNr]; obj != nil && obj.ImageDict != nil {
+				if err := decodeTextFilters(ctx.XRefTable, obj.ImageDict); err != nil {
+					return err
+				}
+			}
+		}
 		mm, err := pdfcpu.ExtractPageImages(context.Background(), ctx, p, false)
 		if err != nil {
 			return err
@@ -205,6 +213,10 @@ func ExtractImagesEach(ctx context.Context, pdf []byte, selectedPages []string, 
 				skipped++
 				continue
 			}
+			if decodeTextFilters(pc.XRefTable, obj.ImageDict) != nil {
+				skipped++
+				continue
+			}
 			img, ok := extractOne(ctx, pc, obj.ImageDict, name, objNr)
 			if !ok {
 				skipped++
@@ -231,6 +243,45 @@ func imageSide(xt *model.XRefTable, o types.Object) int64 {
 		return int64(i.Value())
 	}
 	return 0
+}
+
+// decodeTextFilters hands pdfcpu's image extraction a picture whose filters END in ASCIIHexDecode or ASCII85Decode as
+// the plain samples they encode (/pending 982). pdfcpu extracts an image only when its LAST filter is DCT, JPX, JBIG2,
+// Flate, LZW, CCITTFax or RunLength and refuses any other as an unsupported resource (pdfcpu/extract.go:461-471,
+// `decodeImage`), although its filter package decodes both text filters (filter/filter.go:118, `List`). Pillow writes
+// every palette picture it saves as a PDF as `/ASCIIHexDecode` alone, so a palette scan of a W-2 came back "could not
+// extract images from any page". The pipeline is decoded here only when EVERY filter in it is one of those five
+// general filters, under the decode bound pdfcpu's own image decode uses (pdfcpu/image.go:365, `imageDecodeLimit`),
+// and the stream is then left with no filter, which pdfcpu reads as its samples (extract.go:480). Anything else —
+// an image filter later in the chain, a Crypt filter — is left as it is, for pdfcpu to decode or name. The context
+// is an extraction's and is never written, so nothing here reaches a file. Idempotent: a decoded stream has no
+// pipeline left, so a picture drawn on several pages is decoded once.
+func decodeTextFilters(xt *model.XRefTable, sd *types.StreamDict) error {
+	n := len(sd.FilterPipeline)
+	if n == 0 {
+		return nil
+	}
+	if last := sd.FilterPipeline[n-1].Name; last != filter.ASCIIHex && last != filter.ASCII85 {
+		return nil
+	}
+	for _, f := range sd.FilterPipeline {
+		switch f.Name {
+		case filter.ASCIIHex, filter.ASCII85, filter.Flate, filter.LZW, filter.RunLength:
+		default:
+			return nil
+		}
+	}
+	limit := model.DefaultResourceLimits().MaxDecodeBytes
+	if xt != nil && xt.Conf != nil {
+		limit = xt.Conf.Limits.MaxDecodeBytes
+	}
+	if err := sd.DecodeWithLimit(limit); err != nil {
+		return err
+	}
+	sd.Raw, sd.FilterPipeline = sd.Content, nil
+	delete(sd.Dict, "Filter")
+	delete(sd.Dict, "DecodeParms")
+	return nil
 }
 
 // extractImage is pdfcpu's renderer for one image; a variable only so a test can make it panic (no fixture does on demand).

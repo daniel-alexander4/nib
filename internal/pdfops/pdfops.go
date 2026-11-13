@@ -2775,7 +2775,8 @@ type ImageFile struct {
 // reported on the first), in page order. A document with none answers an empty list.
 //
 // pdfcpu's renderer hands over the encoded picture and nothing of the stream it came from, so Width and Height
-// are read from the written file's header and Filter from the stream dictionary in a second read of the
+// are read from the written file's header (from the stream dictionary where Go cannot read that header) and Filter
+// from the stream dictionary in a second read of the
 // document (one parse more, paid only here and not by the archive).
 func ExtractImageFiles(pdf []byte) ([]ImageFile, error) {
 	files, err := collectImages(pdf, false)
@@ -2800,6 +2801,14 @@ func ExtractImageFiles(pdf []byte) ([]ImageFile, error) {
 					names = append(names, f.Name)
 				}
 				files[i].Filter = strings.Join(names, " ")
+				// A file Go cannot read the header of — pdfcpu hands JPX and JBIG2 over as the stream's own bytes
+				// (`.jpx`, `.jbig2`) — takes its size from the stream dictionary, which is the picture's size in
+				// pixels, rather than reporting 0×0 (/pending 982).
+				if files[i].Width == 0 || files[i].Height == 0 {
+					if w, h := sd.IntEntry("Width"), sd.IntEntry("Height"); w != nil && h != nil && *w > 0 && *h > 0 {
+						files[i].Width, files[i].Height = *w, *h
+					}
+				}
 			}
 		}
 	}

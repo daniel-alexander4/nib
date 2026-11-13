@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -160,4 +161,45 @@ func TestImagesGivesBackThePictureAPdfWasBuiltFrom(t *testing.T) {
 			t.Errorf("exit %d, want 1", code)
 		}
 	})
+}
+
+// TestImagesReadsAPaletteScanAndSizesWhatItCannotDecode — /pending 982, RelaxTax 79. A palette picture whose samples
+// are ASCIIHexDecode alone (Pillow's PDF writer) is written as a PNG; a JBIG2 picture, which pdfcpu hands over as the
+// stream's own bytes, is listed with the size its stream dictionary gives rather than 0×0.
+func TestImagesReadsAPaletteScanAndSizesWhatItCannotDecode(t *testing.T) {
+	picture := func(dict, data string) []byte {
+		content := "q 200 0 0 100 0 0 cm /Im0 Do Q"
+		return testpdf.Assemble(map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>",
+			4: "<< /Length " + strconv.Itoa(len(content)) + " >>\nstream\n" + content + "\nendstream",
+			5: "<< /Type /XObject /Subtype /Image " + dict + " /Length " + strconv.Itoa(len(data)) + " >>\nstream\n" + data + "\nendstream",
+		})
+	}
+	dir := t.TempDir()
+	for _, c := range []struct {
+		name, dict, data, ext string
+	}{
+		{"palette", "/Width 4 /Height 2 /BitsPerComponent 8 /ColorSpace [/Indexed /DeviceRGB 1 <000000FFFFFF>] /Filter /ASCIIHexDecode", "0001010000010100>", "png"},
+		{"jbig2", "/Width 16 /Height 8 /BitsPerComponent 1 /ColorSpace /DeviceGray /Filter /JBIG2Decode", strings.Repeat("\x00", 16), "jbig2"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pdf := filepath.Join(dir, c.name+".pdf")
+			if err := os.WriteFile(pdf, picture(c.dict, c.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rows, code := listImages(t, "images", pdf, "--out-dir", filepath.Join(dir, c.name), "--json")
+			if code != 0 || len(rows) != 1 {
+				t.Fatalf("exit %d, %d rows; want 0 and one picture", code, len(rows))
+			}
+			wantW, wantH := 4.0, 2.0
+			if c.name == "jbig2" {
+				wantW, wantH = 16, 8
+			}
+			if rows[0]["width"] != wantW || rows[0]["height"] != wantH || !strings.HasSuffix(rows[0]["file"].(string), "."+c.ext) {
+				t.Fatalf("row %v; want %vx%v as .%s", rows[0], wantW, wantH, c.ext)
+			}
+		})
+	}
 }
