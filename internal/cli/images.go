@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -24,25 +27,60 @@ type imageRow struct {
 	File   string `json:"file"`
 }
 
+// streamHead is the first line of `nib images --out-dir -` (ADR-225): which stream, which version of it, and how
+// many pictures follow, so a reader can tell a stream cut short from a whole one.
+type streamHead struct {
+	Stream  string `json:"stream"`
+	Version int    `json:"version"`
+	Count   int    `json:"count"`
+}
+
+// streamPicture heads one picture in the stream: `--json`'s row with `file` replaced by `format`, the extension
+// the file would have had. Exactly Bytes raw bytes follow its newline.
+type streamPicture struct {
+	Page   int    `json:"page"`
+	Index  int    `json:"index"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Filter string `json:"filter"`
+	Format string `json:"format"`
+	Bytes  int    `json:"bytes"`
+}
+
+// imageStreamVersion is the stream's own version (ADR-225). Raise it for any change a strict reader of version 1
+// would misread; a new key in a header line is not one (a reader ignores keys it does not know, as everywhere on
+// docs/cli-machine-readable.md).
+const imageStreamVersion = 1
+
 // cmdImages writes a PDF's embedded pictures into a folder, each in the format its stream holds where
 // that can be done (a JPEG stays the same JPEG) and otherwise re-encoded by pdfcpu. It exists so a
-// program can read a scan's pages, each one picture, without rendering them.
+// program can read a scan's pages, each one picture, without rendering them. `--out-dir -` writes them to
+// stdout as one framed stream instead, and nothing reaches the disk (ADR-225).
 func cmdImages(args []string) int {
 	fs := flag.NewFlagSet("nib images", flag.ContinueOnError)
 	var outDir string
 	var asJSON bool
-	fs.StringVar(&outDir, "out-dir", "", "the folder to write each picture into (created if missing; an existing file of the same name is never overwritten) (required)")
-	fs.BoolVar(&asJSON, "json", false, "print each picture's page, index, width, height, filter, bytes and file as JSON")
-	fs.Usage = usageFunc(fs, "nib images IN --out-dir DIR [--json]", "Extract a PDF's embedded pictures into DIR as page-NNN-img-NN.EXT. A JPEG is written as the same JPEG; other pictures are re-encoded as PNG or TIFF. IN may be - (stdin). A document with none writes nothing and lists nothing.")
+	fs.StringVar(&outDir, "out-dir", "", "the folder to write each picture into (created if missing; an existing file of the same name is never overwritten), or - for one framed stream on stdout (required)")
+	fs.BoolVar(&asJSON, "json", false, "print each picture's page, index, width, height, filter, bytes and file as JSON (not with --out-dir -)")
+	fs.Usage = usageFunc(fs, "nib images IN --out-dir DIR|- [--json]", "Extract a PDF's embedded pictures into DIR as page-NNN-img-NN.EXT, or with --out-dir - onto stdout as a framed stream (docs/cli-machine-readable.md). A JPEG is written as the same JPEG; other pictures are re-encoded as PNG or TIFF. IN may be - (stdin). A document with none writes nothing and lists nothing.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
 	if outDir == "" {
-		errf("missing --out-dir (where to write the pictures)")
+		errf("missing --out-dir (where to write the pictures, or - for stdout)")
 		return 1
 	}
 	if fs.NArg() != 1 {
 		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	toStdout := outDir == "-"
+	if toStdout && asJSON {
+		errf("--json cannot be used with --out-dir -: the stream's header lines are the rows")
+		return 1
+	}
+	if toStdout && stdoutIsTerminal() {
+		errf("refusing to write pictures to the terminal; redirect with > or a pipe, or pass --out-dir DIR")
 		return 1
 	}
 	pdf, err := readInput(fs.Arg(0))
@@ -54,6 +92,15 @@ func cmdImages(args []string) int {
 	if err != nil {
 		errf("%s: %v", inputName(fs.Arg(0)), err)
 		return 1
+	}
+	if toStdout {
+		// Every picture is already in memory: nothing was written before a refusal, and the only failure left
+		// is the write itself (a reader that went away).
+		if err := writeImageStream(os.Stdout, files); err != nil {
+			errf("%v", err)
+			return 1
+		}
+		return 0
 	}
 	rows := make([]imageRow, 0, len(files))
 	if len(files) > 0 {
@@ -104,4 +151,34 @@ func cmdImages(args []string) int {
 		fmt.Println("(no embedded pictures)")
 	}
 	return 0
+}
+
+// writeImageStream writes the stream of ADR-225, version imageStreamVersion: one JSON line naming the stream and
+// the count, then for each picture one JSON line and exactly its bytes, then nothing. encoding/json escapes every
+// control character, so a header line holds no newline but its last.
+func writeImageStream(out io.Writer, files []pdfops.ImageFile) error {
+	w := bufio.NewWriter(out)
+	line := func(v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(append(b, '\n'))
+		return err
+	}
+	if err := line(streamHead{"nib-images", imageStreamVersion, len(files)}); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := line(streamPicture{f.Page, f.Index, f.Width, f.Height, f.Filter, f.Ext, len(f.Data)}); err != nil {
+			return err
+		}
+		if _, err := w.Write(f.Data); err != nil {
+			return err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return errors.New("the pictures were not all written: " + err.Error())
+	}
+	return nil
 }

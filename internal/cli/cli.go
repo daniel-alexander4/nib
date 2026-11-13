@@ -100,7 +100,14 @@ func Run(args []string, version string) (handled bool, code int) {
 // never for an addition. `TestTheMachineReadableShapesAreLocked` fails on the change that should raise it.
 const APIVersion = 1
 
-// printVersion answers `nib version`: "nib 2.18.0", or with --json {"version","api","commands"}.
+// capabilities are the behaviours a program may need to ask about before calling (ADR-225), listed by
+// `nib version --json`. One is listed only where this binary has it; each is named in
+// docs/cli-machine-readable.md (`TestEveryCapabilityIsDocumented`). A new one is an addition: APIVersion stays.
+var capabilities = []string{
+	"images-stdout", // `nib images IN --out-dir -` writes the pictures to stdout as one framed stream
+}
+
+// printVersion answers `nib version`: "nib 2.18.0", or with --json {"version","api","commands","capabilities"}.
 // commands is every verb the binary has, sorted, so a program can ask for one instead of parsing help.
 func printVersion(args []string, version string) int {
 	for _, a := range args {
@@ -119,11 +126,14 @@ func printVersion(args []string, version string) int {
 	}
 	verbs = append(verbs, "version")
 	sort.Strings(verbs)
+	caps := append([]string(nil), capabilities...)
+	sort.Strings(caps)
 	b, err := json.Marshal(struct {
-		Version  string   `json:"version"`
-		API      int      `json:"api"`
-		Commands []string `json:"commands"`
-	}{version, APIVersion, verbs})
+		Version      string   `json:"version"`
+		API          int      `json:"api"`
+		Commands     []string `json:"commands"`
+		Capabilities []string `json:"capabilities"`
+	}{version, APIVersion, verbs, caps})
 	if err != nil {
 		errf("%v", err)
 		return 1

@@ -2370,13 +2370,20 @@ func readInput(path string) ([]byte, error) {
 // dump a PDF onto a terminal, where the raw bytes would be unreadable garbage.
 func writeOutput(out string, data []byte) error {
 	if out == "-" {
-		if info, err := os.Stdout.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		if stdoutIsTerminal() {
 			return errors.New("refusing to write a PDF to the terminal; redirect with > or pass -o FILE")
 		}
 		_, err := os.Stdout.Write(data)
 		return err
 	}
 	return writeNamed(out, data)
+}
+
+// stdoutIsTerminal is the one test for "stdout is a terminal", which every command writing raw bytes to
+// stdout refuses (writeOutput's PDF, `nib images --out-dir -`'s stream).
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // inputName labels an input in messages: "-" reads as "<stdin>".

@@ -9,7 +9,7 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 
 - Set **`NIB_HEADLESS=1`**. Any first argument that is not a command is then `unknown command` (exit 1), and no argument is a usage
   error; the desktop app, its server and its browser are never started. `version` and `help` still answer.
-- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`). `fields`, `text`, `info`, `export-xfdf`, `merge`, `split`, `flatten` and `images` touch no disk at all, and so does `fill` or `author` on ASCII values. A command that draws text (`stamp`, `pagenum`, `contents`, `import`/`office`, …) or a fill/author with non-ASCII values works in a scratch directory of its own under the temporary directory (`nib-pdfcpu-*`: pdfcpu's configuration and nib's public fonts, never a document or a value) and removes it when it ends; only a killed process leaves one.
+- No command writes pdfcpu's configuration directory (`$XDG_CONFIG_HOME/pdfcpu`, or `~/.config/pdfcpu`). `fields`, `text`, `info`, `export-xfdf`, `merge`, `split`, `flatten` and `images --out-dir -` touch no disk at all (`images` into a folder writes only its pictures there), and so does `fill` or `author` on ASCII values. A command that draws text (`stamp`, `pagenum`, `contents`, `import`/`office`, …) or a fill/author with non-ASCII values works in a scratch directory of its own under the temporary directory (`nib-pdfcpu-*`: pdfcpu's configuration and nib's public fonts, never a document or a value) and removes it when it ends; only a killed process leaves one.
 - No refusal repeats a value you supplied to a form field. A field's name, a path and the options the form offers may appear in a message.
 - A command that produces a PDF writes it to `-o FILE` (staged in a `.nib-*.tmp` beside FILE until it is renamed into place) or, with
   `-o -`, to stdout, where nothing is staged. `IN` and `fill --data` accept `-` for stdin (not both at once).
@@ -31,7 +31,11 @@ meaning, a new exit code for an old condition) and never for an addition, so a p
 
 ## `nib version --json`
 
-`{"version": "2.19.0", "api": 1, "commands": ["attachments", …]}` — `commands` is every verb the binary has, sorted.
+`{"version": "2.19.0", "api": 1, "commands": ["attachments", …], "capabilities": ["images-stdout"]}` — `commands` is every verb the binary
+has, sorted; `capabilities` is every behaviour a program may need to ask about before calling, sorted (ADR-225). A capability is a string
+and a new one is an addition. The ones there are:
+
+- `images-stdout` — `nib images IN --out-dir -` writes the pictures to stdout as the stream below. A nib without the key has neither.
 
 ## `nib fields IN --json`
 
@@ -50,7 +54,7 @@ and `hidden` (true for an OCR layer) only when true. Runs are in the order the p
 
 A JSON array, one object per page: `page`, `width`, `height`, `rotate`, `mediaBox`, `cropBox` (each box `[llx, lly, urx, ury]`).
 
-## `nib images IN --out-dir DIR [--json]`
+## `nib images IN --out-dir DIR|- [--json]`
 
 Writes each embedded picture of `IN` (`-` for stdin) into `DIR` (created `0700` if missing, files `0600`, never overwriting: a name that
 already exists is exit 1 and nothing is written) as `page-NNN-img-NN.EXT`. A JPEG stream comes out as the **same JPEG** (`.jpg`, byte for
@@ -61,6 +65,21 @@ file header or any `/JBIG2Globals`, so it is not a file a JBIG2 decoder opens on
 picture, in page order: `page` and `index` (from 1; the picture's place among that page's, by ascending object number — a fixed order, not the order they are drawn in), `width`, `height` (pixels; for `.jpx` and `.jbig2`, the stream dictionary's), `filter` (the
 stream's own filter pipeline in the PDF, space-separated, e.g. `FlateDecode` or `DCTDecode`), `bytes` (the file's length) and `file`
 (its name in `DIR`). A picture drawn on several pages is listed once, on the first. A document with none prints `[]` and creates no folder.
+
+### `nib images IN --out-dir -`
+
+Writes the same pictures, byte for byte and in the same order, to **stdout** as one stream, and nothing to disk (`IN` is read whole from
+the path or stdin). Version 1 of the stream is:
+
+    {"stream":"nib-images","version":1,"count":N}\n
+    then, N times: {"page":P,"index":I,"width":W,"height":H,"filter":"F","format":"EXT","bytes":L}\n and exactly L bytes
+    then end of file
+
+Each header is one line of JSON (no newline inside it). The first line's `stream` is always `nib-images` and its `version` is raised only for a change a version-1 reader would misread. A picture's keys are `--json`'s row with `file` replaced by `format`, the extension
+its file would have had (`png`, `jpg`, `tif`, `jpx`, `jbig2`). Read the first line, then exactly `count` pictures; a stream that ends sooner
+was cut short. A document with no pictures is the first line with `count` 0. Every picture is extracted before the first byte is written,
+so a refusal is exit 1 with the cause on stderr and **nothing** on stdout; a write that fails (the reader went away) is exit 1. `--json`
+with `--out-dir -` is refused, and so is a terminal as stdout (any character device, `/dev/null` included, as for `-o -`). Before v2.61.0 `--out-dir -` made a folder named `-`.
 
 ## `nib flatten IN -o OUT [--drop-signature] [--json]`
 

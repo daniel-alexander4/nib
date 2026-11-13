@@ -1073,3 +1073,5 @@ home today.
   — `ImportOptions.Only`/`Single`/`MaxPixels` (50 MP) inside Import; `objedit.Check` before the import; one image lifted, the name added to the page's own resources; fitted when movable (EXIF turn folded), else filled and said; a described Figure needs an answer.
 - [ADR-224](224-a-drawing-is-one-object-moved-by-its-own-operands.md) — **A drawing is one object, grouped by the region reader's one door and moved by its own operands**
   — `groupDrawnPaths` the one grouping (two callers); a plain box joins nothing it holds with room (supersedes ADR-125's rule in part); `object: "drawing"` addresses; delete removes every member, move translates each path's operands; the window waits on the instrument's 0.90 (measured 0.893).
+- [ADR-225](225-nib-images-writes-to-stdout-as-one-framed-stream.md) — **`nib images --out-dir -` writes the pictures as one framed stream, and `version --json` says it can**
+  — stream version 1 (a count line, then a JSON header and exactly `bytes` raw bytes per picture, then EOF); everything extracted before the first byte; `--json` and a terminal refused; `capabilities: ["images-stdout"]`, `api` stays 1 (extends ADR-183).
