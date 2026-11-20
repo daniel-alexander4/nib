@@ -6,6 +6,21 @@
 ![100% local](https://img.shields.io/badge/data-100%25%20local-success)
 ![cgo-free](https://img.shields.io/badge/build-pure%20Go%2C%20single%20binary-00ADD8)
 
+![Nib opening a flat form, detecting its blank lines and filling them in](docs/readme-demo.gif)
+
+## Quick Start
+
+```sh
+git clone https://github.com/daniel-alexander4/nib && cd nib     # install (needs Go 1.26+)
+go build -ldflags "-X main.version=$(cat VERSION)" -o nib ./cmd/nib
+./nib form.pdf                                                    # run: the window opens in your browser
+```
+
+The first run sets up your encrypted vault (it can create the SSH key for you), then shows
+the document. Ready-made binaries for Linux, macOS and Windows are on the
+[Releases](https://github.com/daniel-alexander4/nib/releases) page, and [Get started](#get-started)
+covers the `.deb` install and the other platforms.
+
 **A complete PDF toolkit that runs entirely on your own machine.** Fill any form,
 make scans searchable with on-device OCR in 41 languages, truly redact, compare
 revisions visually, rewrite a paragraph and have it re-wrap in the document's own
