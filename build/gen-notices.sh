@@ -168,6 +168,32 @@ if [ -f web/vendor/pdfjs/VERSION ]; then
   emit ""
 fi
 
+# The image decoders (/pending 984) ship inside the pdf.js package too, and two of
+# the four licences are not Mozilla's: PDFium's JBIG2 decoder (BSD-3-Clause) and
+# OpenJPEG (BSD-2-Clause). Each licence is reproduced from the file pdf.js
+# publishes beside the decoder, so the attribution is the package's own words.
+if [ -d web/vendor/pdfjs/wasm ]; then
+  emit "## pdf.js image decoders (JBIG2 and CCITT fax, JPEG 2000)"
+  emit ""
+  emit "Vendored under \`web/vendor/pdfjs/wasm/\`, unmodified from the pdf.js package:"
+  emit "\`jbig2.wasm\` and \`jbig2_nowasm_fallback.js\` (pdf.js's build of PDFium's JBIG2"
+  emit "decoder, which also decodes CCITT fax), and \`openjpeg.wasm\` and"
+  emit "\`openjpeg_nowasm_fallback.js\` (pdf.js's build of OpenJPEG). Their licences,"
+  emit "reproduced from the files beside them:"
+  for lic in LICENSE_PDFJS_JBIG2 LICENSE_JBIG2 LICENSE_PDFJS_OPENJPEG LICENSE_OPENJPEG; do
+    [ -f "web/vendor/pdfjs/wasm/$lic" ] || { echo "gen-notices: web/vendor/pdfjs/wasm/$lic is missing" >&2; exit 1; }
+    emit ""
+    emit "\`$lic\`:"
+    emit ""
+    emit '```'
+    cat "web/vendor/pdfjs/wasm/$lic" >>"$tmp"
+    emit '```'
+  done
+  emit ""
+  emit "---"
+  emit ""
+fi
+
 # The CMap tables ship inside the pdf.js package but are NOT Mozilla's and NOT
 # Apache-2.0: they are Adobe's, under a three-clause BSD licence with its own
 # no-endorsement clause. Attributing them under the pdf.js heading above would

@@ -41,6 +41,8 @@ var contentTypes = map[string]string{
 	// interpret — and must not be left to the machine, which is this table's whole
 	// reason for existing.
 	".bcmap": "application/octet-stream",
+	// pdf.js's JBIG2 and JPEG 2000 decoders (web/vendor/pdfjs/wasm/, /pending 984).
+	".wasm": "application/wasm",
 }
 
 // registerContentTypes pins the table above, overriding whatever the OS told the

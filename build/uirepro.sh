@@ -309,7 +309,9 @@ fi
 # because Quit ends the process, and its own Chrome, because the harness's page is one Chrome will not let close.
 # 57 since /pending 889 part 4 (untypedannot.test.mjs): an annotation with no /Subtype drawn from its appearance —
 # only a real renderer draws it, and a pdf.js bump that stopped would change no real document's look.
-expect_files=66
+# 67 since /pending 984 (decoders.test.mjs): a JBIG2, CCITT, JPEG 2000 and CCITT-stencil picture read off the
+# viewer's own canvas — the decode happens in pdf.js's worker, from modules it loads at wasmUrl.
+expect_files=67
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

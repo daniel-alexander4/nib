@@ -60,10 +60,23 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
 //     system face for the standard 14, fetching font data only for Symbol and
 //     ZapfDingbats. Vendoring 800 KB for that pair with no case that proves it would be
 //     size behind an untested claim.
-//   * `wasmUrl` / `iccUrl` — JBIG2, JPEG-2000 and ICC colour. pdf.js ships JS fallbacks
-//     for the first two (`*_nowasm_fallback.js`), so these degrade rather than fail, and
-//     each needs its own fixture to tell degraded from broken.
-const PDFJS_OPTS = { cMapUrl: './vendor/pdfjs/cmaps/', cMapPacked: true };
+//   * `iccUrl` — ICC colour. With no `standardFontDataUrl` the worker does not fetch, and
+//     ICC conversion stays off whatever this says.
+//
+// `wasmUrl` is where the worker finds its JBIG2 and JPEG 2000 decoders (`wasm/`, /pending 984).
+// CCITT fax goes through the JBIG2 one, so this is every fax scan and every office-copier scan
+// whose words are CCITT stencil masks. Without it the worker drops each such picture with one
+// console warning and draws the page without it: no error, the text simply not there. It was
+// unset until v2.61.2 on the belief that the pictures would "degrade rather than fail".
+// It is ABSOLUTE because the worker imports the JS decoder itself, so a relative one resolves
+// against the worker's URL (`/vendor/pdfjs/vendor/pdfjs/wasm/`); pdf.js needs the trailing
+// slash. `useWasm` stays at pdf.js's default: the `.wasm` decoder is used, its `_nowasm_fallback.js`
+// twin when WebAssembly is refused, and `false` would also stop the worker compiling a
+// PostScript colour function to WebAssembly. Pinned by test/ui/decoders.test.mjs.
+const PDFJS_OPTS = {
+  cMapUrl: './vendor/pdfjs/cmaps/', cMapPacked: true,
+  wasmUrl: new URL('./vendor/pdfjs/wasm/', document.baseURI).href,
+};
 
 // --- element handles ---------------------------------------------------------
 const $ = (id) => document.getElementById(id);

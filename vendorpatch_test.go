@@ -21,13 +21,14 @@ import (
 //   - VERSION is the pinned version: a bump leaves the patch applied to a viewer it was not written
 //     against — or silently gone — and this fails until the patch is re-applied (or dropped, where
 //     upstream has fixed it) and the pins moved;
-//   - the two files nib does not touch hash as published;
+//   - the files nib does not touch hash as published: two of the viewer's, and the eight under wasm/
+//     (the JBIG2/CCITT and JPEG 2000 decoders, each as .wasm and as JS, and their licences — /pending 984);
 //   - each patched file carries its patched spans, and with each put back as upstream wrote it the file
 //     hashes as published — so the spans are the whole difference, and another edit is one the notice
 //     does not declare.
 //
 // The hashes are of `pdfjs-dist@<version>`'s `build/pdf.min.mjs`, `build/pdf.worker.min.mjs`,
-// `web/pdf_viewer.css` and `web/pdf_viewer.mjs` (`npm pack pdfjs-dist@<version>`).
+// `web/pdf_viewer.css`, `web/pdf_viewer.mjs` and the eight `wasm/` files (`npm pack pdfjs-dist@<version>`).
 func TestTheVendoredViewerIsUpstreamsButForItsOnePatch(t *testing.T) {
 	const (
 		dir     = "web/vendor/pdfjs"
@@ -38,6 +39,15 @@ func TestTheVendoredViewerIsUpstreamsButForItsOnePatch(t *testing.T) {
 		"pdf.worker.min.mjs": "2ab9e09667296dab1a618868b3ce6e6c23d5b8f48120ae7c5b34e7e335ed01fa",
 		"pdf_viewer.css":     "a38845ce94bd5ac25121c5b0b00a12516f75acfcc9d864e0ecd41ff99e9b437f",
 		"pdf_viewer.mjs":     "b1899e04b342991e480c113f82066f842d558e045762476e4e845be6aa0dca0d",
+		// The image decoders and their licences (/pending 984), from the package's wasm/.
+		"wasm/jbig2.wasm":                  "e6bee67724a7b5436fe8162638e3708cfc8d52b6342db69a49715e30ff27cfdc",
+		"wasm/jbig2_nowasm_fallback.js":    "04c795a6657a4553a64b781ea3e85256203d913c3b71b72b85fa3ce00622f458",
+		"wasm/openjpeg.wasm":               "004a0e62db930ba9ff2a22212f4554d0bb57a0635a8287caf70f98117cee14ba",
+		"wasm/openjpeg_nowasm_fallback.js": "0f998419819da4491d8302222aa9e2ff2494685641aa2a6c21c3760c29f3e319",
+		"wasm/LICENSE_JBIG2":               "9e66b7f1b934a28b37f3bc4dac97915de1674271e79a0a88182a18ed9731b4d1",
+		"wasm/LICENSE_OPENJPEG":            "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6",
+		"wasm/LICENSE_PDFJS_JBIG2":         "aad3cce09842e00e9e11ad5e8fef8cc02fbc3a3768fe2f007443b9cee37aaee5",
+		"wasm/LICENSE_PDFJS_OPENJPEG":      "717fc62da03292dbb4dd0c8280bd4ce7bb8550dcf31d772bc93455fb50313425",
 	}
 	// Each patched span, by file, and the span upstream has in its place.
 	patches := map[string][][2]string{
@@ -63,12 +73,14 @@ func TestTheVendoredViewerIsUpstreamsButForItsOnePatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if v := strings.TrimSpace(string(got)); v != version {
-		t.Fatalf("%s/VERSION is %s and this guard pins %s — re-apply the patch NOTICE.md describes to the new viewer (or drop it, if upstream now refuses to look for links in an aborted text layer: test/ui/autolink.test.mjs says), then move the version and the four hashes here", dir, v, version)
+		t.Fatalf("%s/VERSION is %s and this guard pins %s — re-apply the patch NOTICE.md describes to the new viewer (or drop it, if upstream now refuses to look for links in an aborted text layer: test/ui/autolink.test.mjs says), then move the version and the hashes here", dir, v, version)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "NOTICE.md")); err != nil {
 		t.Errorf("%s/NOTICE.md: %v — the modified copy must say what was modified", dir, err)
 	}
-	for _, name := range []string{"pdf.min.mjs", "pdf_viewer.css"} {
+	for _, name := range []string{"pdf.min.mjs", "pdf_viewer.css", "wasm/jbig2.wasm", "wasm/jbig2_nowasm_fallback.js",
+		"wasm/openjpeg.wasm", "wasm/openjpeg_nowasm_fallback.js", "wasm/LICENSE_JBIG2", "wasm/LICENSE_OPENJPEG",
+		"wasm/LICENSE_PDFJS_JBIG2", "wasm/LICENSE_PDFJS_OPENJPEG"} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)

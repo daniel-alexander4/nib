@@ -2,6 +2,7 @@ Mozilla pdf.js, as published in the npm package pdfjs-dist at the version in VER
 modified by Nib.
 
   pdf.min.mjs, pdf_viewer.css, cmaps/                         unmodified
+  wasm/ (two decoders, each as .wasm and as JS, and their four licences)  unmodified
   pdf.worker.min.mjs                                          modified — one span, marked "Nib (ADR-172)"
   images/annotation-note.svg                                 Nib's own drawing, in pdf.js's place for it
   pdf_viewer.mjs                                             modified — two lines, each marked "Nib (ADR-167)"
